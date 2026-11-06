@@ -6,6 +6,8 @@
 
 mod brauzer;
 mod okna;
+mod proxy;
+mod spisok_reklamy;
 
 use okna::{sistema, Mesto};
 use serde::{Deserialize, Serialize};
@@ -31,6 +33,13 @@ pub struct Nastrojki {
     pub proxy: String,
     #[serde(default = "domashnyaya")]
     pub adres: String,
+    /// Резать рекламу в этой супер-вкладке.
+    #[serde(default = "da_po_umolchaniyu")]
+    pub rezat_reklamu: bool,
+}
+
+fn da_po_umolchaniyu() -> bool {
+    true
 }
 
 fn domashnyaya() -> String {
@@ -64,6 +73,8 @@ fn sohranit_spisok(v: &[Nastrojki]) {
 
 struct Vkladka {
     nastrojki: Nastrojki,
+    /// Свой прокси этой вкладки: режет рекламу и уводит в нужный выход.
+    nash_proxy: Option<proxy::Rabotayushchij>,
     /// None = вкладка сохранена, но движок не запущен.
     /// ⛔ Запускать все сразу нельзя: каждый экземпляр ест сотни мегабайт,
     /// десять вкладок — несколько гигабайт на пустом месте.
@@ -123,6 +134,19 @@ fn spisok(s: State<Sostoyanie>) -> Vec<Vidno> {
     r
 }
 
+/// Сколько реклам зарезано в этой вкладке — чтобы человек видел пользу.
+#[tauri::command]
+fn schet_rezki(s: State<Sostoyanie>, id: String) -> (u64, u64) {
+    use std::sync::atomic::Ordering;
+    match s.vkladki.lock().unwrap().get(&id).and_then(|v| v.nash_proxy.as_ref()) {
+        Some(p) => (
+            p.schet.zarezano.load(Ordering::Relaxed),
+            p.schet.propushcheno.load(Ordering::Relaxed),
+        ),
+        None => (0, 0),
+    }
+}
+
 #[tauri::command]
 fn aktivnaya(s: State<Sostoyanie>) -> Option<String> {
     s.aktivnaya.lock().unwrap().clone()
@@ -149,7 +173,7 @@ fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, nash_proxy: None },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -163,14 +187,28 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         Some(v) => v.nastrojki.clone(),
         None => return net("такой супер-вкладки нет"),
     };
-    let proxy = if nastrojki.proxy.trim().is_empty() {
-        None
-    } else {
-        Some(nastrojki.proxy.clone())
+    // ⛔ Движок всегда ходит через НАШ прокси, даже при прямом выходе:
+    // иначе в прямом режиме не будет резки рекламы.
+    let nash = tauri::async_runtime::block_on(proxy::podnyat(proxy::Nastrojka {
+        vyhod: if nastrojki.proxy.trim().is_empty() {
+            None
+        } else {
+            Some(nastrojki.proxy.clone())
+        },
+        rezat_reklamu: nastrojki.rezat_reklamu,
+    }));
+    let nash = match nash {
+        Ok(p) => p,
+        Err(e) => return net(format!("свой прокси не поднялся: {}", e)),
     };
-    let ditya = match brauzer::zapustit(&id, proxy.as_deref(), &nastrojki.adres) {
+    let cherez = format!("http://127.0.0.1:{}", nash.port);
+
+    let ditya = match brauzer::zapustit(&id, Some(&cherez), &nastrojki.adres) {
         Ok(c) => c,
-        Err(e) => return net(e),
+        Err(e) => {
+            nash.ostanovit();
+            return net(e);
+        }
     };
     let pid = ditya.id();
 
@@ -191,6 +229,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     if let Some(v) = s.vkladki.lock().unwrap().get_mut(id) {
         v.proc = Some(ditya);
         v.okno = Some(okno);
+        v.nash_proxy = Some(nash);
     }
     pereklyuchit_vnutri(s, id);
     // ⛔ Полоса вкладок должна узнавать об изменениях, сделанных ядром, —
@@ -243,6 +282,9 @@ fn ostanovit(s: State<Sostoyanie>, id: String) -> Otvet {
             }
             vk.proc = None;
             vk.okno = None;
+            if let Some(p) = vk.nash_proxy.take() {
+                p.ostanovit();
+            }
             da()
         }
         None => net("такой супер-вкладки нет"),
@@ -307,7 +349,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, nash_proxy: None });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
@@ -323,6 +365,7 @@ pub fn run() {
                         nazvanie: "Проба".into(),
                         proxy: String::new(),
                         adres: "about:blank".into(),
+                        rezat_reklamu: true,
                     };
                     let o = otkryt(h.clone(), s, n);
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
@@ -331,7 +374,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            spisok, aktivnaya, otkryt, pereklyuchit, ostanovit, udalit,
+            spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, ostanovit, udalit,
             zadat_mesto, dvizhok_est
         ])
         .build(tauri::generate_context!())

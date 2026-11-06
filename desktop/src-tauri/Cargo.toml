@@ -18,6 +18,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
 dirs = "5"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time"] }
 
 # Встраивание чужого окна — у каждой системы свой приём.
 [target.'cfg(target_os = "linux")'.dependencies]

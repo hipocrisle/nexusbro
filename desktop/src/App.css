@@ -89,3 +89,13 @@ body {
 .tochka.spit { background: #4a5162; box-shadow: none; }
 .stop { opacity: .4; padding: 0 2px; font-size: 10px; }
 .stop:hover { opacity: 1; }
+
+.schet {
+  margin-left: auto; padding: 4px 10px; border-radius: 7px;
+  background: #1e2230; color: var(--tiho); font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.galka { flex-direction: row; align-items: flex-start; gap: 9px; cursor: pointer; }
+.galka input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--akcent); }
+.galka span { color: var(--tekst); display: flex; flex-direction: column; gap: 3px; }
+.galka small { color: var(--tiho); font-size: 12px; line-height: 1.4; }

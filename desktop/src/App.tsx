@@ -2,17 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
-type Nastrojki = { id: string; nazvanie: string; proxy: string; adres: string };
+type Nastrojki = { id: string; nazvanie: string; proxy: string; adres: string; rezat_reklamu: boolean };
 type Vidno = Nastrojki & { zapushchena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
 
 export default function App() {
   const [vkladki, setVkladki] = useState<Vidno[]>([]);
   const [aktivnaya, setAktivnaya] = useState<string | null>(null);
+  const aktivnayaRef = useRef<string | null>(null);
   const [dvizhokEst, setDvizhokEst] = useState(true);
   const [dialog, setDialog] = useState(false);
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
+  const [zarezano, setZarezano] = useState(0);
   const mesto = useRef<HTMLDivElement>(null);
 
   // ⛔ Движок — чужое окно, он НЕ часть нашей вёрстки. Поэтому каждый раз
@@ -42,18 +44,32 @@ export default function App() {
       if (e.payload) setAktivnaya(e.payload);
       soobshchitMesto();
     });
+    // Счётчик резки — редко, раз в три секунды: чаще незачем.
+    const chasy = setInterval(async () => {
+      const id = aktivnayaRef.current;
+      if (!id) return;
+      const [rez] = await invoke<[number, number]>("schet_rezki", { id });
+      setZarezano(rez);
+    }, 3000);
     return () => {
       window.removeEventListener("resize", soobshchitMesto);
       otpiska.then((f) => f());
+      clearInterval(chasy);
     };
   }, [soobshchitMesto]);
 
-  async function dobavit(nazvanie: string, proxy: string, adres: string) {
+  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean) {
     setZanyat(true);
     setOshibka("");
     const id = "sv" + Date.now().toString(36);
     const o = await invoke<Otvet>("otkryt", {
-      nastrojki: { id, nazvanie, proxy, adres: adres || "about:blank" },
+      nastrojki: {
+        id,
+        nazvanie,
+        proxy,
+        adres: adres || "about:blank",
+        rezat_reklamu: rezat,
+      },
     });
     setZanyat(false);
     if (!o.ok) {
@@ -102,6 +118,10 @@ export default function App() {
     if (aktivnaya === id) setAktivnaya(spisok[0]?.id ?? null);
   }
 
+  useEffect(() => {
+    aktivnayaRef.current = aktivnaya;
+  }, [aktivnaya]);
+
   return (
     <div className="okno">
       <div className="polosa">
@@ -134,6 +154,11 @@ export default function App() {
         <button className="plyus" onClick={() => setDialog(true)} disabled={zanyat}>
           +
         </button>
+        {zarezano > 0 && (
+          <span className="schet" title="Зарезано рекламы в этой вкладке">
+            ⛔ {zarezano}
+          </span>
+        )}
       </div>
 
       <div className="pole" ref={mesto}>
@@ -171,11 +196,12 @@ export default function App() {
 function Dialog(props: {
   zanyat: boolean;
   onOtmena: () => void;
-  onOk: (n: string, p: string, a: string) => void;
+  onOk: (n: string, p: string, a: string, r: boolean) => void;
 }) {
   const [nazvanie, setNazvanie] = useState("");
   const [proxy, setProxy] = useState("");
   const [adres, setAdres] = useState("");
+  const [rezat, setRezat] = useState(true);
   return (
     <div className="zatemnenie" onClick={props.onOtmena}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
@@ -205,12 +231,26 @@ function Dialog(props: {
             placeholder="about:blank"
           />
         </label>
+        <label className="galka">
+          <input
+            type="checkbox"
+            checked={rezat}
+            onChange={(e) => setRezat(e.target.checked)}
+          />
+          <span>
+            Резать рекламу
+            <small>
+              Работает во всех вкладках сразу, без расширений и без своего
+              сертификата в системе.
+            </small>
+          </span>
+        </label>
         <div className="knopki">
           <button onClick={props.onOtmena}>Отмена</button>
           <button
             className="glavnaya"
             disabled={props.zanyat || !nazvanie.trim()}
-            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim())}
+            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat)}
           >
             {props.zanyat ? "Запускаю…" : "Создать"}
           </button>
