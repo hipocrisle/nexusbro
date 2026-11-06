@@ -175,8 +175,9 @@ fn privyazat_k_zadanie(ditya: &Child) -> anyhow::Result<()> {
             std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
         )?;
         AssignProcessToJobObject(zadanie, HANDLE(ditya.as_raw_handle() as _))?;
-        // ⛔ Ручку задания НЕ закрываем: закроется — снимется и ограничение.
-        std::mem::forget(zadanie);
+        // ⛔ Ручку задания НЕ закрываем намеренно: закроется — снимется и
+        // ограничение, и браузер переживёт нашу программу. Она живёт до
+        // конца работы, система закроет её сама.
     }
     Ok(())
 }
