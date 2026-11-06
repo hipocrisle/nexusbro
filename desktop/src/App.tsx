@@ -220,8 +220,14 @@ function Dialog(props: {
           <input
             value={proxy}
             onChange={(e) => setProxy(e.target.value)}
-            placeholder="пусто = напрямую, или socks5://127.0.0.1:1080"
+            placeholder="пусто = напрямую"
           />
+          <small>
+            Подойдёт ссылка подписки, ссылка на узел <code>vless://…</code>,
+            адрес <code>socks5://127.0.0.1:1080</code> или веб-прокси{" "}
+            <code>http://адрес:3128</code>. Можно с именем и паролем:{" "}
+            <code>socks5://имя:пароль@адрес:порт</code>.
+          </small>
         </label>
         <label>
           Открыть сразу

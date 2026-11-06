@@ -101,7 +101,33 @@ jobs:
           mv "$VNUTRI"* chromium/
           rm -rf raspakovka dvizhok.zip
           test -f chromium/chrome.exe || { echo "::error::chrome.exe не нашёлся после распаковки"; exit 1; }
+          # ⛔ Переименовываем: в диспетчере задач должно быть видно НАШУ
+          # программу, а не «chrome.exe». Движку своё имя безразлично —
+          # chrome.dll он ищет рядом с собой, а не по имени файла.
+          mv chromium/chrome.exe chromium/nexusbro-engine.exe
+          test -f chromium/nexusbro-engine.exe
           du -sh chromium
+
+      # Движок туннеля — только движок. ⛔ Никаких наших узлов, ключей и
+      # подписок: человек вставляет своё.
+      - name: Положить xray внутрь
+        shell: bash
+        working-directory: desktop/src-tauri
+        run: |
+          set -euo pipefail
+          case "${{ matrix.target }}" in
+            x86_64-pc-windows-msvc)   ASSET=Xray-windows-64.zip; BIN=xray.exe;;
+            x86_64-unknown-linux-gnu) ASSET=Xray-linux-64.zip;   BIN=xray;;
+            *) echo "::error::нет xray под ${{ matrix.target }}"; exit 1;;
+          esac
+          curl -fSL --retry 3 -o xray.zip \
+            "https://github.com/XTLS/Xray-core/releases/latest/download/$ASSET"
+          mkdir -p binaries
+          unzip -o -q xray.zip "$BIN" -d binaries
+          rm -f xray.zip
+          chmod +x "binaries/$BIN" || true
+          test -s "binaries/$BIN"
+          ls -lh binaries
 
       - name: Поставить зависимости
         working-directory: desktop

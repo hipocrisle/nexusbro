@@ -99,3 +99,9 @@ body {
 .galka input { width: 16px; height: 16px; margin-top: 2px; accent-color: var(--akcent); }
 .galka span { color: var(--tekst); display: flex; flex-direction: column; gap: 3px; }
 .galka small { color: var(--tiho); font-size: 12px; line-height: 1.4; }
+
+.dialog label small { color: var(--tiho); font-size: 12px; line-height: 1.45; }
+.dialog label code {
+  background: #10131b; border: 1px solid var(--kraj); border-radius: 4px;
+  padding: 0 4px; font-size: 11px;
+}

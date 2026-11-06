@@ -7,6 +7,7 @@
 mod brauzer;
 mod okna;
 mod proxy;
+mod vpn;
 mod spisok_reklamy;
 
 use okna::{sistema, Mesto};
@@ -75,6 +76,8 @@ struct Vkladka {
     nastrojki: Nastrojki,
     /// Свой прокси этой вкладки: режет рекламу и уводит в нужный выход.
     nash_proxy: Option<proxy::Rabotayushchij>,
+    /// Туннель вкладки, если выход задан подпиской или ссылкой на узел.
+    tunnel: Option<std::process::Child>,
     /// None = вкладка сохранена, но движок не запущен.
     /// ⛔ Запускать все сразу нельзя: каждый экземпляр ест сотни мегабайт,
     /// десять вкладок — несколько гигабайт на пустом месте.
@@ -173,7 +176,7 @@ fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, nash_proxy: None },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, nash_proxy: None, tunnel: None },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -189,12 +192,40 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     };
     // ⛔ Движок всегда ходит через НАШ прокси, даже при прямом выходе:
     // иначе в прямом режиме не будет резки рекламы.
+    // Выход бывает трёх видов: подписка или ссылка на узел (поднимаем
+    // туннель), SOCKS5 и веб-прокси (идём напрямую в них).
+    let mut tunnel: Option<std::process::Child> = None;
+    let vyhod = if vpn::eto_podpiska(&nastrojki.proxy) {
+        let papka = brauzer::papka_profilej().join(id);
+        let zapis = nastrojki.proxy.trim().to_string();
+        let itog = tauri::async_runtime::block_on(async {
+            // ссылка подписки — скачиваем и берём первый узел
+            let ssylka = if zapis.starts_with("http") {
+                let uzly = vpn::skachat_podpisku(&zapis).await?;
+                uzly[0].ssylka.clone()
+            } else {
+                zapis.clone()
+            };
+            vpn::podnyat_tunnel(&papka, &ssylka).await
+        });
+        match itog {
+            Ok((d, port)) => {
+                tunnel = Some(d);
+                proxy::Vyhod::Socks5 {
+                    adres: format!("127.0.0.1:{}", port),
+                    vhod: None,
+                }
+            }
+            Err(e) => return net(format!("туннель не поднялся: {}", e)),
+        }
+    } else {
+        match proxy::razobrat_vyhod(&nastrojki.proxy) {
+            Ok(v) => v,
+            Err(e) => return net(format!("выход записан непонятно: {}", e)),
+        }
+    };
     let nash = tauri::async_runtime::block_on(proxy::podnyat(proxy::Nastrojka {
-        vyhod: if nastrojki.proxy.trim().is_empty() {
-            None
-        } else {
-            Some(nastrojki.proxy.clone())
-        },
+        vyhod,
         rezat_reklamu: nastrojki.rezat_reklamu,
     }));
     let nash = match nash {
@@ -230,6 +261,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         v.proc = Some(ditya);
         v.okno = Some(okno);
         v.nash_proxy = Some(nash);
+        v.tunnel = tunnel;
     }
     pereklyuchit_vnutri(s, id);
     // ⛔ Полоса вкладок должна узнавать об изменениях, сделанных ядром, —
@@ -285,6 +317,10 @@ fn ostanovit(s: State<Sostoyanie>, id: String) -> Otvet {
             if let Some(p) = vk.nash_proxy.take() {
                 p.ostanovit();
             }
+            if let Some(mut t) = vk.tunnel.take() {
+                let _ = t.kill();
+                let _ = t.wait();
+            }
             da()
         }
         None => net("такой супер-вкладки нет"),
@@ -299,9 +335,12 @@ fn udalit(s: State<Sostoyanie>, id: String) -> Otvet {
     let mut v = s.vkladki.lock().unwrap();
     match v.remove(&id) {
         Some(mut vk) => {
-            if let Some(p) = vk.proc.as_mut() {
+            for p in [vk.proc.as_mut(), vk.tunnel.as_mut()].into_iter().flatten() {
                 let _ = p.kill();
                 let _ = p.wait();
+            }
+            if let Some(p) = vk.nash_proxy.take() {
+                p.ostanovit();
             }
             let _ = std::fs::remove_dir_all(brauzer::papka_profilej().join(&id));
             let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
@@ -349,7 +388,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, nash_proxy: None });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, nash_proxy: None, tunnel: None });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
@@ -387,7 +426,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for vk in v.values_mut() {
-                    if let Some(pr) = vk.proc.as_mut() {
+                    for pr in [vk.proc.as_mut(), vk.tunnel.as_mut()].into_iter().flatten() {
                         let _ = pr.kill();
                         let _ = pr.wait();
                     }

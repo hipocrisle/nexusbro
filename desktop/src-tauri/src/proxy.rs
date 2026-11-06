@@ -19,10 +19,51 @@ use tokio::net::{TcpListener, TcpStream};
 
 use crate::spisok_reklamy::SPISOK;
 
+/// Куда уводить трафик вкладки.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Vyhod {
+    /// Напрямую, без посредника.
+    Pryamo,
+    /// SOCKS5: адрес и, если нужно, вход с паролем.
+    Socks5 { adres: String, vhod: Option<(String, String)> },
+    /// Обычный веб-прокси (HTTP CONNECT).
+    Veb { adres: String, vhod: Option<(String, String)> },
+}
+
+/// Разобрать то, что человек написал в поле «выход».
+///
+/// ⛔ Принимаем в том виде, в каком люди это копируют: со схемой и без,
+/// с именем и паролем внутри ссылки.
+pub fn razobrat_vyhod(s: &str) -> anyhow::Result<Vyhod> {
+    let s = s.trim();
+    if s.is_empty() {
+        return Ok(Vyhod::Pryamo);
+    }
+    let (shema, ostatok) = match s.split_once("://") {
+        Some((sh, o)) => (sh.to_ascii_lowercase(), o),
+        // без схемы считаем, что это SOCKS5 — так пишут чаще всего
+        None => ("socks5".to_string(), s),
+    };
+    // вход с паролем: user:pass@host:port
+    let (vhod, adres) = match ostatok.rsplit_once('@') {
+        Some((uchetka, a)) => {
+            let (u, p) = uchetka.split_once(':').unwrap_or((uchetka, ""));
+            (Some((u.to_string(), p.to_string())), a.to_string())
+        }
+        None => (None, ostatok.to_string()),
+    };
+    let adres = adres.trim_end_matches('/').to_string();
+    anyhow::ensure!(adres.contains(':'), "в адресе «{}» нет порта", adres);
+    match shema.as_str() {
+        "socks5" | "socks5h" | "socks" => Ok(Vyhod::Socks5 { adres, vhod }),
+        "http" | "https" => Ok(Vyhod::Veb { adres, vhod }),
+        inoe => anyhow::bail!("неизвестный вид выхода «{}»", inoe),
+    }
+}
+
 #[derive(Clone)]
 pub struct Nastrojka {
-    /// Куда уводить: `None` — напрямую, иначе адрес SOCKS5.
-    pub vyhod: Option<String>,
+    pub vyhod: Vyhod,
     pub rezat_reklamu: bool,
 }
 
@@ -128,8 +169,9 @@ async fn obsluzhit(mut klient: TcpStream, n: Nastrojka, s: Arc<Schet>) -> anyhow
     s.propushcheno.fetch_add(1, Ordering::Relaxed);
 
     let mut naruzhu = match &n.vyhod {
-        None => TcpStream::connect((host.as_str(), port)).await?,
-        Some(adres) => cherez_socks5(adres, &host, port).await?,
+        Vyhod::Pryamo => TcpStream::connect((host.as_str(), port)).await?,
+        Vyhod::Socks5 { adres, vhod } => cherez_socks5(adres, vhod, &host, port).await?,
+        Vyhod::Veb { adres, vhod } => cherez_veb(adres, vhod, &host, port).await?,
     };
 
     if metod.eq_ignore_ascii_case("CONNECT") {
@@ -161,16 +203,35 @@ fn razobrat_adres(s: &str, po_umolchaniyu: u16) -> (String, u16) {
 
 /// Выход через SOCKS5 (наш VPN). Имя узла отдаём ЕМУ, а не разрешаем сами:
 /// иначе запрос имени уйдёт мимо туннеля и выдаст человека.
-async fn cherez_socks5(adres: &str, host: &str, port: u16) -> anyhow::Result<TcpStream> {
-    let chistyj = adres
-        .trim_start_matches("socks5h://")
-        .trim_start_matches("socks5://");
-    let addr: SocketAddr = chistyj.parse()?;
-    let mut p = TcpStream::connect(addr).await?;
-    p.write_all(&[0x05, 0x01, 0x00]).await?;
+async fn cherez_socks5(
+    adres: &str,
+    vhod: &Option<(String, String)>,
+    host: &str,
+    port: u16,
+) -> anyhow::Result<TcpStream> {
+    let mut p = TcpStream::connect(adres).await?;
+    // Предлагаем «без пароля» и, если он задан, «с паролем».
+    if vhod.is_some() {
+        p.write_all(&[0x05, 0x02, 0x00, 0x02]).await?;
+    } else {
+        p.write_all(&[0x05, 0x01, 0x00]).await?;
+    }
     let mut otvet = [0u8; 2];
     p.read_exact(&mut otvet).await?;
-    anyhow::ensure!(otvet[0] == 5 && otvet[1] == 0, "SOCKS5 не принял соединение");
+    anyhow::ensure!(otvet[0] == 5, "это не SOCKS5");
+    if otvet[1] == 0x02 {
+        let (u, pw) = vhod.clone().ok_or_else(|| anyhow::anyhow!("выход просит имя и пароль"))?;
+        let mut z = vec![0x01, u.len() as u8];
+        z.extend_from_slice(u.as_bytes());
+        z.push(pw.len() as u8);
+        z.extend_from_slice(pw.as_bytes());
+        p.write_all(&z).await?;
+        let mut o = [0u8; 2];
+        p.read_exact(&mut o).await?;
+        anyhow::ensure!(o[1] == 0, "выход не принял имя и пароль");
+    } else {
+        anyhow::ensure!(otvet[1] == 0, "выход требует способ входа, которого у нас нет");
+    }
 
     let imya = host.as_bytes();
     anyhow::ensure!(imya.len() < 256, "слишком длинное имя узла");
@@ -196,6 +257,64 @@ async fn cherez_socks5(adres: &str, host: &str, port: u16) -> anyhow::Result<Tcp
     Ok(p)
 }
 
+/// Выход через обычный веб-прокси: просим его соединить нас с узлом.
+/// ⛔ Имя узла тоже отдаём ЕМУ, а не разрешаем сами.
+async fn cherez_veb(
+    adres: &str,
+    vhod: &Option<(String, String)>,
+    host: &str,
+    port: u16,
+) -> anyhow::Result<TcpStream> {
+    let mut p = TcpStream::connect(adres).await?;
+    let mut zapros = format!(
+        "CONNECT {h}:{po} HTTP/1.1\r\nHost: {h}:{po}\r\n",
+        h = host,
+        po = port
+    );
+    if let Some((u, pw)) = vhod {
+        let para = obychnyj_base64(format!("{}:{}", u, pw).as_bytes());
+        zapros.push_str(&format!("Proxy-Authorization: Basic {}\r\n", para));
+    }
+    zapros.push_str("Proxy-Connection: Keep-Alive\r\n\r\n");
+    p.write_all(zapros.as_bytes()).await?;
+
+    // Читаем ответ до пустой строки
+    let mut nakopleno = Vec::new();
+    let mut b = [0u8; 1024];
+    loop {
+        let n = p.read(&mut b).await?;
+        anyhow::ensure!(n > 0, "веб-прокси закрыл соединение молча");
+        nakopleno.extend_from_slice(&b[..n]);
+        if nakopleno.windows(4).any(|w| w == b"\r\n\r\n") {
+            break;
+        }
+        anyhow::ensure!(nakopleno.len() < 16384, "веб-прокси отвечает ерундой");
+    }
+    let shapka = String::from_utf8_lossy(&nakopleno);
+    let pervaya = shapka.lines().next().unwrap_or("");
+    anyhow::ensure!(
+        pervaya.contains(" 200"),
+        "веб-прокси отказал: {}",
+        pervaya
+    );
+    Ok(p)
+}
+
+/// Короткая своя реализация base64 — тащить ради этого целую библиотеку незачем.
+fn obychnyj_base64(d: &[u8]) -> String {
+    const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut r = String::new();
+    for k in d.chunks(3) {
+        let b = [k[0], *k.get(1).unwrap_or(&0), *k.get(2).unwrap_or(&0)];
+        let v = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+        r.push(A[(v >> 18 & 63) as usize] as char);
+        r.push(A[(v >> 12 & 63) as usize] as char);
+        r.push(if k.len() > 1 { A[(v >> 6 & 63) as usize] as char } else { '=' });
+        r.push(if k.len() > 2 { A[(v & 63) as usize] as char } else { '=' });
+    }
+    r
+}
+
 #[cfg(test)]
 mod proverki {
     use super::*;
@@ -214,7 +333,7 @@ mod proverki {
 
     #[tokio::test]
     async fn reklamu_rezhem_obychnoe_puskaem() {
-        let r = podnyat(Nastrojka { vyhod: None, rezat_reklamu: true })
+        let r = podnyat(Nastrojka { vyhod: Vyhod::Pryamo, rezat_reklamu: true })
             .await
             .unwrap();
         // рекламный узел — не пускаем
@@ -231,7 +350,7 @@ mod proverki {
     async fn pohozhee_imya_ne_lovim() {
         // ⛔ Главная опасность списка: поймать лишнее и сломать сайт.
         // `notdoubleclick.net` НЕ должен попасть под правило.
-        let r = podnyat(Nastrojka { vyhod: None, rezat_reklamu: true })
+        let r = podnyat(Nastrojka { vyhod: Vyhod::Pryamo, rezat_reklamu: true })
             .await
             .unwrap();
         assert!(!reklama("notdoubleclick.net"));
@@ -240,9 +359,49 @@ mod proverki {
         let _ = r;
     }
 
+    #[test]
+    fn razbiraem_lyubuyu_zapis_vyhoda() {
+        use Vyhod::*;
+        assert_eq!(razobrat_vyhod("").unwrap(), Pryamo);
+        // без схемы — считаем SOCKS5, так пишут чаще всего
+        assert_eq!(
+            razobrat_vyhod("127.0.0.1:1080").unwrap(),
+            Socks5 { adres: "127.0.0.1:1080".into(), vhod: None }
+        );
+        assert_eq!(
+            razobrat_vyhod("socks5://1.2.3.4:1080").unwrap(),
+            Socks5 { adres: "1.2.3.4:1080".into(), vhod: None }
+        );
+        assert_eq!(
+            razobrat_vyhod("socks5://vasya:tajna@1.2.3.4:1080").unwrap(),
+            Socks5 {
+                adres: "1.2.3.4:1080".into(),
+                vhod: Some(("vasya".into(), "tajna".into()))
+            }
+        );
+        assert_eq!(
+            razobrat_vyhod("http://proxy.firma.ru:3128").unwrap(),
+            Veb { adres: "proxy.firma.ru:3128".into(), vhod: None }
+        );
+        assert_eq!(
+            razobrat_vyhod("http://u:p@proxy.firma.ru:3128/").unwrap(),
+            Veb { adres: "proxy.firma.ru:3128".into(), vhod: Some(("u".into(), "p".into())) }
+        );
+        // без порта — внятная ошибка, а не падение
+        assert!(razobrat_vyhod("socks5://1.2.3.4").is_err());
+        assert!(razobrat_vyhod("ftp://1.2.3.4:21").is_err());
+    }
+
+    #[test]
+    fn base64_kak_polozheno() {
+        assert_eq!(obychnyj_base64(b"a:b"), "YTpi");
+        assert_eq!(obychnyj_base64(b"vasya:tajna"), "dmFzeWE6dGFqbmE=");
+        assert_eq!(obychnyj_base64(b"ab"), "YWI=");
+    }
+
     #[tokio::test]
     async fn bez_rezki_puskaem_vsyo() {
-        let r = podnyat(Nastrojka { vyhod: None, rezat_reklamu: false })
+        let r = podnyat(Nastrojka { vyhod: Vyhod::Pryamo, rezat_reklamu: false })
             .await
             .unwrap();
         let otvet = sprosit(r.port, "doubleclick.net:443").await;

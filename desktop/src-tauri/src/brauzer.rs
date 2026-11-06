@@ -20,21 +20,32 @@ pub fn zadat_papku_resursov(p: PathBuf) {
 /// Где лежит движок. Сначала свой — положенный сборкой, потом рядом с
 /// программой, потом системный.
 pub fn najti_dvizhok() -> Option<PathBuf> {
-    let imya = if cfg!(target_os = "windows") { "chrome.exe" } else { "chrome" };
+    // ⛔ Движок переименован при сборке: в диспетчере задач человек должен
+    // видеть НАШУ программу, а не «chrome.exe» — иначе выглядит так, будто
+    // у него завёлся чужой браузер. Старое имя оставляем запасным.
+    let imena: &[&str] = if cfg!(target_os = "windows") {
+        &["nexusbro-engine.exe", "chrome.exe"]
+    } else {
+        &["nexusbro-engine", "chrome"]
+    };
     if let Some(res) = PAPKA_RESURSOV.get() {
-        for p in ["chromium", "chromium/ungoogled-chromium"] {
-            let put = res.join(p).join(imya);
-            if put.exists() {
-                return Some(put);
+        for papka in ["chromium", "chromium/ungoogled-chromium"] {
+            for imya in imena {
+                let put = res.join(papka).join(imya);
+                if put.exists() {
+                    return Some(put);
+                }
             }
         }
     }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(ryadom) = exe.parent() {
             let svoi: &[&str] = if cfg!(target_os = "windows") {
-                &["chromium/chrome.exe", "engine/chrome.exe"]
+                &["chromium/nexusbro-engine.exe", "chromium/chrome.exe",
+                  "engine/nexusbro-engine.exe", "engine/chrome.exe"]
             } else {
-                &["chromium/chrome", "engine/chrome"]
+                &["chromium/nexusbro-engine", "chromium/chrome",
+                  "engine/nexusbro-engine", "engine/chrome"]
             };
             for p in svoi {
                 let put = ryadom.join(p);
@@ -66,11 +77,21 @@ pub fn papka_profilej() -> PathBuf {
     baza.join("NexusBro").join("profili")
 }
 
-struct Zakaz {
-    id: String,
-    proxy: Option<String>,
-    adres: String,
-    otvet: SyncSender<anyhow::Result<Child>>,
+enum Zakaz {
+    Dvizhok {
+        id: String,
+        proxy: Option<String>,
+        adres: String,
+        otvet: SyncSender<anyhow::Result<Child>>,
+    },
+    /// Любая другая программа — например xray для подписки.
+    /// ⛔ Тоже ЧЕРЕЗ ЭТОТ поток: привязка «умри вместе с родителем»
+    /// крепится к потоку, см. пояснение ниже.
+    Prosto {
+        programma: PathBuf,
+        dovody: Vec<String>,
+        otvet: SyncSender<anyhow::Result<Child>>,
+    },
 }
 
 /// ⛔ Запускать движки обязан ОДИН долгоживущий поток.
@@ -87,8 +108,14 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .name("zapuskatel-dvizhkov".into())
             .spawn(move || {
                 while let Ok(z) = rx.recv() {
-                    let r = zapustit_zdes(&z.id, z.proxy.as_deref(), &z.adres);
-                    let _ = z.otvet.send(r);
+                    match z {
+                        Zakaz::Dvizhok { id, proxy, adres, otvet } => {
+                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), &adres));
+                        }
+                        Zakaz::Prosto { programma, dovody, otvet } => {
+                            let _ = otvet.send(zapustit_prosto(&programma, &dovody));
+                        }
+                    }
                 }
             })
             .expect("не завёлся поток запуска движков");
@@ -99,7 +126,7 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
 /// Запустить движок для одной супер-вкладки.
 pub fn zapustit(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<Child> {
     let (otvet, zhdem) = sync_channel(1);
-    zapuskatel().send(Zakaz {
+    zapuskatel().send(Zakaz::Dvizhok {
         id: id.to_string(),
         proxy: proxy.map(|s| s.to_string()),
         adres: adres.to_string(),
@@ -193,4 +220,58 @@ unsafe fn libc_geteuid() -> u32 {
 #[cfg(not(target_os = "linux"))]
 unsafe fn libc_geteuid() -> u32 {
     1000
+}
+
+
+/// Запустить вспомогательную программу (xray) так же надёжно, как движок.
+pub fn zapustit_sputnik(programma: &Path, dovody: &[String]) -> anyhow::Result<Child> {
+    let (otvet, zhdem) = sync_channel(1);
+    zapuskatel().send(Zakaz::Prosto {
+        programma: programma.to_path_buf(),
+        dovody: dovody.to_vec(),
+        otvet,
+    })?;
+    zhdem.recv()?
+}
+
+fn zapustit_prosto(programma: &Path, dovody: &[String]) -> anyhow::Result<Child> {
+    let mut cmd = Command::new(programma);
+    cmd.args(dovody).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(target_os = "linux")]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
+            Ok(())
+        });
+    }
+    let ditya = cmd.spawn()?;
+    #[cfg(target_os = "windows")]
+    privyazat_k_zadanie(&ditya)?;
+    Ok(ditya)
+}
+
+/// Где лежит xray. Как и движок: сначала свой, потом системный.
+pub fn najti_xray() -> Option<PathBuf> {
+    let imya = if cfg!(target_os = "windows") { "xray.exe" } else { "xray" };
+    if let Some(res) = PAPKA_RESURSOV.get() {
+        for p in ["", "binaries", "xray"] {
+            let put = if p.is_empty() { res.join(imya) } else { res.join(p).join(imya) };
+            if put.exists() {
+                return Some(put);
+            }
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(r) = exe.parent() {
+            for p in [imya, &format!("binaries/{}", imya)] {
+                let put = r.join(p);
+                if put.exists() {
+                    return Some(put);
+                }
+            }
+        }
+    }
+    let sistemnyj = Path::new("/usr/bin/xray");
+    sistemnyj.exists().then(|| sistemnyj.to_path_buf())
 }
