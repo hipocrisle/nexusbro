@@ -1,0 +1,131 @@
+name: Build NexusBro
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
+    # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: nexusbro-windows
+          - os: ubuntu-24.04
+            target: x86_64-unknown-linux-gnu
+            artifact: nexusbro-linux
+
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # ⛔ Версия в настройках должна совпадать с меткой ДО выпуска, иначе
+      # обновлятор зациклится. Проверяем сразу и падаем.
+      - name: Сверить метку с версией
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        working-directory: desktop
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          CONF_VER=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          PKG_VER=$(node -p "require('./package.json').version")
+          echo "метка=$TAG_VER  tauri.conf.json=$CONF_VER  package.json=$PKG_VER"
+          [ "$CONF_VER" = "$TAG_VER" ] || { echo "::error::версия в tauri.conf.json ($CONF_VER) ≠ метке"; exit 1; }
+          [ "$PKG_VER" = "$TAG_VER" ]  || { echo "::error::версия в package.json ($PKG_VER) ≠ метке"; exit 1; }
+
+      - name: Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Запомнить сборочный кэш
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            desktop/src-tauri/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Зависимости Linux
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
+            libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config \
+            libxcb1-dev patchelf rpm
+
+      # Движок кладём внутрь ТОЛЬКО на Windows: там его иначе негде взять.
+      # На Linux берём системный ungoogled-chromium или chromium — он ставится
+      # из репозитория и обновляется сам, тащить 200 МБ в пакет незачем.
+      - name: Положить движок внутрь (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        working-directory: desktop/src-tauri
+        run: |
+          set -euo pipefail
+          URL=$(curl -fsSL https://api.github.com/repos/ungoogled-software/ungoogled-chromium-windows/releases/latest \
+                | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{
+                    const a=JSON.parse(s).assets.find(x=>/windows_x64\.zip$/.test(x.name));
+                    if(!a){console.error("нет сборки под windows x64");process.exit(1)}
+                    console.log(a.browser_download_url)})')
+          echo "качаю движок: $URL"
+          curl -fSL --retry 3 -o dvizhok.zip "$URL"
+          mkdir -p chromium
+          unzip -q dvizhok.zip -d raspakovka
+          # внутри архива одна папка с версией — переносим её содержимое
+          VNUTRI=$(ls -d raspakovka/*/ | head -1)
+          mv "$VNUTRI"* chromium/
+          rm -rf raspakovka dvizhok.zip
+          test -f chromium/chrome.exe || { echo "::error::chrome.exe не нашёлся после распаковки"; exit 1; }
+          du -sh chromium
+
+      - name: Поставить зависимости
+        working-directory: desktop
+        run: npm ci
+
+      - name: Собрать
+        working-directory: desktop
+        run: npm run tauri build -- --target ${{ matrix.target }}
+
+      - name: Выложить готовое
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          retention-days: 14
+          path: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
+
+      - name: Приложить к выпуску
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb
+            desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm

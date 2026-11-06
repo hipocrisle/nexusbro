@@ -1,0 +1,10 @@
+# ⛔ Движок внутрь репозитория НЕ кладём: 200 МБ, качается при сборке.
+desktop/src-tauri/chromium/*
+!desktop/src-tauri/chromium/.gitkeep
+
+node_modules/
+desktop/dist/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+*.log
+.DS_Store

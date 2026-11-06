@@ -1,0 +1,91 @@
+:root {
+  --fon: #11131a;
+  --fon2: #171a24;
+  --kraj: #272c3a;
+  --tekst: #e6e9f2;
+  --tiho: #8b93a7;
+  --akcent: #5ec8a0;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; }
+body {
+  background: var(--fon);
+  color: var(--tekst);
+  font: 14px/1.5 "Segoe UI", system-ui, sans-serif;
+  overflow: hidden;
+}
+.okno { display: flex; flex-direction: column; height: 100%; }
+
+/* полоса супер-вкладок */
+.polosa {
+  display: flex; align-items: center; gap: 4px;
+  padding: 6px 8px; background: var(--fon2);
+  border-bottom: 1px solid var(--kraj); flex: 0 0 auto;
+}
+.vkladka {
+  display: inline-flex; align-items: center; gap: 7px;
+  max-width: 220px; padding: 7px 10px;
+  background: transparent; color: var(--tiho);
+  border: 1px solid transparent; border-radius: 8px;
+  font: inherit; cursor: pointer; white-space: nowrap;
+}
+.vkladka:hover { background: #1e2230; color: var(--tekst); }
+.vkladka.aktivna {
+  background: var(--fon); color: var(--tekst); border-color: var(--kraj);
+}
+.tochka { width: 7px; height: 7px; border-radius: 50%; background: var(--akcent); }
+.tochka[data-pryamo="da"] { background: #6b7384; }
+.krest { margin-left: 2px; opacity: .45; padding: 0 2px; }
+.krest:hover { opacity: 1; }
+.plyus {
+  width: 30px; height: 30px; border-radius: 8px;
+  background: transparent; color: var(--tiho);
+  border: 1px dashed var(--kraj); font-size: 17px; cursor: pointer;
+}
+.plyus:hover { color: var(--tekst); border-color: var(--akcent); }
+
+/* место под движок — тут лежит чужое окно, своего мы не рисуем */
+.pole { flex: 1 1 auto; position: relative; background: var(--fon); }
+.pusto {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center;
+  padding: 32px; gap: 12px;
+}
+.pusto h1 { margin: 0; font-size: 26px; font-weight: 600; }
+.pusto p { margin: 0; max-width: 460px; color: var(--tiho); }
+.pusto button, .knopki button {
+  padding: 9px 16px; border-radius: 8px; border: 1px solid var(--kraj);
+  background: var(--fon2); color: var(--tekst); font: inherit; cursor: pointer;
+}
+.pusto button:hover { border-color: var(--akcent); }
+.oshibka {
+  position: absolute; left: 16px; right: 16px; bottom: 16px;
+  padding: 10px 14px; border-radius: 8px;
+  background: #3a1f24; border: 1px solid #70303a; color: #ffd9de;
+}
+
+/* окно создания */
+.zatemnenie {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55);
+  display: flex; align-items: center; justify-content: center; z-index: 10;
+}
+.dialog {
+  width: min(440px, 92vw); background: var(--fon2);
+  border: 1px solid var(--kraj); border-radius: 12px; padding: 20px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+.dialog h2 { margin: 0; font-size: 18px; font-weight: 600; }
+.dialog label { display: flex; flex-direction: column; gap: 5px; color: var(--tiho); }
+.dialog input {
+  padding: 9px 11px; border-radius: 8px; border: 1px solid var(--kraj);
+  background: var(--fon); color: var(--tekst); font: inherit; outline: none;
+}
+.dialog input:focus { border-color: var(--akcent); }
+.knopki { display: flex; gap: 8px; justify-content: flex-end; }
+.knopki .glavnaya { background: var(--akcent); color: #0c1a15; border-color: var(--akcent); }
+.knopki button:disabled { opacity: .5; cursor: default; }
+
+/* вкладка, которая сохранена, но движок не поднят */
+.tochka.spit { background: #4a5162; box-shadow: none; }
+.stop { opacity: .4; padding: 0 2px; font-size: 10px; }
+.stop:hover { opacity: 1; }
