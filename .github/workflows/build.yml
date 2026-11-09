@@ -145,11 +145,13 @@ jobs:
           set -euo pipefail
           rm -rf provera_nsisa
           7z x -y desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe -oprovera_nsisa >/dev/null
+          find provera_nsisa -maxdepth 5 -type f | sort | head -100
           test -f provera_nsisa/chromium/nexusbro-engine.exe || { echo "::error::в NSIS нет nexusbro-engine.exe"; exit 1; }
           test -f provera_nsisa/chromium/locales/en-US.pak || { echo "::error::в NSIS нет chromium/locales/en-US.pak"; exit 1; }
           echo "Проверено: движок и locales/en-US.pak лежат на своих местах"
 
       - name: Выложить готовое
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
