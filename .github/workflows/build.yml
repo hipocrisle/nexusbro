@@ -136,7 +136,15 @@ jobs:
 
       - name: Собрать
         working-directory: desktop
-        run: npm run tauri build -- --target ${{ matrix.target }}
+        shell: bash
+        run: |
+          # Кэш тащит из прошлых прогонов bundle/* прошлых версий. Тогда
+          # глоб nsis/*.exe ловит несколько установщиков, а 7z x с
+          # несколькими файлами считает лишние фильтрами имён и молча
+          # распаковывает 0 файлов. Чистим — и в артефакте/релизе всегда
+          # ровно один свежий пакет.
+          rm -rf "src-tauri/target/${{ matrix.target }}/release/bundle"
+          npm run tauri build -- --target ${{ matrix.target }}
 
       - name: Проверить содержимое установщика Windows
         if: matrix.os == 'windows-latest'
