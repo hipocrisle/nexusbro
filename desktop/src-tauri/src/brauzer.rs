@@ -140,17 +140,22 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<C
         .ok_or_else(|| anyhow::anyhow!("движок не найден: положи chromium рядом с программой"))?;
     let profil = papka_profilej().join(id);
     std::fs::create_dir_all(&profil)?;
+    let zhurnal = profil.join("engine.log");
+    let _ = std::fs::rename(&zhurnal, profil.join("engine.log.1"));
+    let stdout = std::fs::File::create(&zhurnal)?;
+    let stderr = stdout.try_clone()?;
 
     let mut cmd = Command::new(dvizhok);
     cmd.arg(format!("--user-data-dir={}", profil.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-features=Translate,MediaRouter")
+        .arg("--enable-logging=stderr")
         // ⛔ Своя метка в заголовке окна не годится: заголовок = имя страницы.
         // Окно ищем по номеру процесса, см. okna.rs.
         .arg(adres)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stdout(Stdio::from(stdout))
+        .stderr(Stdio::from(stderr));
 
     if let Some(p) = proxy {
         if !p.trim().is_empty() {

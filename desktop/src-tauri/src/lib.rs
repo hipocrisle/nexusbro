@@ -245,7 +245,13 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
 
     let okno = match sistema::najti_okno(pid, 20) {
         Ok(o) => o,
-        Err(e) => return net(format!("движок запустился, но окно не нашлось: {}", e)),
+        Err(e) => {
+            let log = brauzer::papka_profilej().join(id).join("engine.log");
+            return net(format!(
+                "движок запустился, но окно не нашлось: {}. Журнал: {}",
+                e, log.display()
+            ));
+        }
     };
 
     let nashe = match app.get_webview_window("main").and_then(|w| nash_descriptor(&w)) {

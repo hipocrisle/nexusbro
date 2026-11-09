@@ -129,11 +129,47 @@ pub mod sistema {
 pub mod sistema {
     use super::Mesto;
     use anyhow::{anyhow, Result};
-    use windows::Win32::Foundation::{BOOL, HWND, LPARAM, RECT};
+    use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM, RECT};
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32First, Process32Next,
+        PROCESSENTRY32, TH32CS_SNAPPROCESS,
+    };
     use windows::Win32::UI::WindowsAndMessaging::*;
 
+    fn derevo_processov(koren: u32) -> Vec<u32> {
+        let mut ids = vec![koren];
+        unsafe {
+            let Ok(snimok) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+                return ids;
+            };
+            let mut e = PROCESSENTRY32::default();
+            e.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+            let mut vse = Vec::new();
+            if Process32First(snimok, &mut e).is_ok() {
+                loop {
+                    vse.push((e.th32ProcessID, e.th32ParentProcessID));
+                    if Process32Next(snimok, &mut e).is_err() {
+                        break;
+                    }
+                }
+            }
+            let _ = CloseHandle(snimok);
+            let mut roslo = true;
+            while roslo {
+                roslo = false;
+                for (pid, roditel) in &vse {
+                    if ids.contains(roditel) && !ids.contains(pid) {
+                        ids.push(*pid);
+                        roslo = true;
+                    }
+                }
+            }
+        }
+        ids
+    }
+
     struct Poisk {
-        pid: u32,
+        pids: Vec<u32>,
         najdeno: HWND,
     }
 
@@ -141,14 +177,14 @@ pub mod sistema {
         let p = &mut *(lparam.0 as *mut Poisk);
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
-        if pid == p.pid && IsWindowVisible(hwnd).as_bool() {
+        if p.pids.contains(&pid) && IsWindowVisible(hwnd).as_bool() {
             let mut r = RECT::default();
             if GetWindowRect(hwnd, &mut r).is_ok()
                 && (r.right - r.left) > 100
                 && (r.bottom - r.top) > 100
             {
                 p.najdeno = hwnd;
-                return BOOL(0); // нашли, останавливаем обход
+                return BOOL(0);
             }
         }
         BOOL(1)
@@ -157,7 +193,7 @@ pub mod sistema {
     pub fn najti_okno(pid: u32, zhdat_sek: u64) -> Result<u32> {
         let srok = std::time::Instant::now();
         loop {
-            let mut p = Poisk { pid, najdeno: HWND(std::ptr::null_mut()) };
+            let mut p = Poisk { pids: derevo_processov(pid), najdeno: HWND(std::ptr::null_mut()) };
             unsafe {
                 let _ = EnumWindows(Some(proverit), LPARAM(&mut p as *mut _ as isize));
             }
