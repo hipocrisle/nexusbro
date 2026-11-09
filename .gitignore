@@ -10,3 +10,6 @@ desktop/src-tauri/gen/
 .DS_Store
 desktop/src-tauri/binaries/*
 !desktop/src-tauri/binaries/.gitkeep
+
+# Локальные инструкции Kimi Code — не для репозитория.
+.kimi-code/
