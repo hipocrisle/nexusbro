@@ -106,6 +106,7 @@ jobs:
           # chrome.dll он ищет рядом с собой, а не по имени файла.
           mv chromium/chrome.exe chromium/nexusbro-engine.exe
           test -f chromium/nexusbro-engine.exe
+          test -f chromium/locales/en-US.pak || { echo "::error::в движке нет locales/en-US.pak"; exit 1; }
           du -sh chromium
 
       # Движок туннеля — только движок. ⛔ Никаких наших узлов, ключей и
