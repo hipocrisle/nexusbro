@@ -36,9 +36,9 @@
       "icons/128x128.png",
       "icons/icon.ico"
     ],
-    "resources": [
-      "chromium/",
-      "binaries/*"
-    ]
+    "resources": {
+      "chromium/": "",
+      "binaries/*": "binaries/"
+    }
   }
 }
