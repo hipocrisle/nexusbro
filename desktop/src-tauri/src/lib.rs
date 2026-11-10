@@ -106,6 +106,23 @@ fn net(s: impl std::fmt::Display) -> Otvet {
     Otvet { ok: false, soobshchenie: s.to_string() }
 }
 
+/// Собрать ошибку запуска движка с хвостом его журнала: одного
+/// скриншота хватает, чтобы понять, что ему не понравилось.
+fn so_oshibkoj_dvizhka(id: &str, zagolovok: String) -> Otvet {
+    let log = brauzer::papka_profilej().join(id).join("engine.log");
+    let hvost = std::fs::read_to_string(&log).ok()
+        .map(|s| {
+            s.lines().rev().take(12).collect::<Vec<_>>()
+                .into_iter().rev().collect::<Vec<_>>()
+                .join("\n")
+        })
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| {
+            "(журнал пуст — движок не проронил ни строчки: его, скорее всего, не дали запуститься)".into()
+        });
+    net(format!("{}. Журнал: {}\n---\n{}", zagolovok, log.display(), hvost))
+}
+
 /// Куда встраивать движок: место сообщает лицевая часть при каждом
 /// изменении размера, чтобы окно браузера точно легло под полосу вкладок.
 #[tauri::command]
@@ -158,6 +175,25 @@ fn aktivnaya(s: State<Sostoyanie>) -> Option<String> {
 #[tauri::command]
 fn dvizhok_est() -> bool {
     brauzer::najti_dvizhok().is_some()
+}
+
+/// Спрятать/показать встроенные окна движков. Нужно лицевой части:
+/// модальный диалог рисуется ВНУТРИ нашего окна, а поверх его области
+/// лежит чужое окно движка — без скрытия диалог не видно (10.11.2026:
+/// «добавление супервкладки не видно, пока не закроешь хром»).
+/// Показываем обратно только АКТИВНУЮ вкладку: неактивные не должны
+/// выползти поверх.
+#[tauri::command]
+fn pokazat_dvizhki(s: State<Sostoyanie>, vidno: bool) -> Otvet {
+    let aktivnaya = s.aktivnaya.lock().unwrap().clone();
+    let v = s.vkladki.lock().unwrap();
+    for (k, vk) in v.iter() {
+        if let Some(o) = vk.okno {
+            let pokazat = vidno && Some(k) == aktivnaya.as_ref();
+            let _ = sistema::pokazat(o, pokazat);
+        }
+    }
+    da()
 }
 
 #[tauri::command]
@@ -234,7 +270,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     };
     let cherez = format!("http://127.0.0.1:{}", nash.port);
 
-    let ditya = match brauzer::zapustit(&id, Some(&cherez), &nastrojki.adres) {
+    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), &nastrojki.adres) {
         Ok(c) => c,
         Err(e) => {
             nash.ostanovit();
@@ -243,35 +279,69 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     };
     let pid = ditya.id();
 
-    let okno = match sistema::najti_okno(pid, 20) {
-        Ok(o) => o,
-        Err(e) => {
-            let log = brauzer::papka_profilej().join(id).join("engine.log");
-            // Хвост журнала — в текст ошибки: одного скриншота хватает,
-            // чтобы понять, что движку не понравилось, не лазя по дискам.
-            let hvost = std::fs::read_to_string(&log).ok()
-                .map(|s| {
-                    s.lines().rev().take(12).collect::<Vec<_>>()
-                        .into_iter().rev().collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .filter(|s| !s.is_empty())
-                .unwrap_or_else(|| {
-                    "(журнал пуст — движок не проронил ни строчки: его, скорее всего, не дали запуститься)".into()
-                });
-            return net(format!(
-                "движок запустился, но окно не нашлось: {}. Журнал: {}\n---\n{}",
-                e, log.display(), hvost
-            ));
+    // Окно ищем кусками: если движок умер сразу (или его команда
+    // перехватилась сиротой от прошлого раза), узнаем об этом за секунды,
+    // а не через 20 с тупого ожидания. ⛔ Уходя с ошибкой, движка НЕ
+    // оставляем жить: живой процесс с тем же профилем ломает следующие
+    // запуски — Chromium пересылает команду ему, а он открывает ОБЫЧНОЕ
+    // окно поверх всего.
+    let okno = {
+        let nachalo = std::time::Instant::now();
+        loop {
+            match sistema::najti_okno(pid, 5) {
+                Ok(o) => break o,
+                Err(e) => {
+                    if let Ok(Some(kod)) = ditya.try_wait() {
+                        nash.ostanovit();
+                        if let Some(mut t) = tunnel {
+                            let _ = t.kill();
+                            let _ = t.wait();
+                        }
+                        return so_oshibkoj_dvizhka(
+                            &id,
+                            format!("движок умер сразу после запуска ({})", kod),
+                        );
+                    }
+                    if nachalo.elapsed().as_secs() >= 20 {
+                        let _ = ditya.kill();
+                        let _ = ditya.wait();
+                        nash.ostanovit();
+                        if let Some(mut t) = tunnel {
+                            let _ = t.kill();
+                            let _ = t.wait();
+                        }
+                        return so_oshibkoj_dvizhka(
+                            &id,
+                            format!("движок запустился, но окно не нашлось: {}", e),
+                        );
+                    }
+                }
+            }
         }
     };
 
     let nashe = match app.get_webview_window("main").and_then(|w| nash_descriptor(&w)) {
         Some(h) => h,
-        None => return net("не получил указатель на своё окно"),
+        None => {
+            let _ = ditya.kill();
+            let _ = ditya.wait();
+            nash.ostanovit();
+            if let Some(mut t) = tunnel {
+                let _ = t.kill();
+                let _ = t.wait();
+            }
+            return net("не получил указатель на своё окно");
+        }
     };
     let m = s.mesto.lock().unwrap().unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
     if let Err(e) = sistema::vstroit(okno, nashe, m) {
+        let _ = ditya.kill();
+        let _ = ditya.wait();
+        nash.ostanovit();
+        if let Some(mut t) = tunnel {
+            let _ = t.kill();
+            let _ = t.wait();
+        }
         return net(format!("встроить не вышло: {}", e));
     }
 
@@ -282,6 +352,13 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         v.tunnel = tunnel;
     }
     pereklyuchit_vnutri(s, id);
+    // ⛔ Ввод: встроенное окно живёт в ЧУЖОЙ очереди ввода, клавиатура до
+    // него не доходит, пока очереди не прикреплены (AttachThreadInput).
+    // Прикрепляет поток, владеющий нашим окном, — наш UI-поток.
+    let _ = app.run_on_main_thread(move || {
+        sistema::prisoedinit_vvod(okno);
+        sistema::fokus_dvizhku(okno);
+    });
     // ⛔ Полоса вкладок должна узнавать об изменениях, сделанных ядром, —
     // иначе вкладка есть, а в полосе её нет (ловили на самопроверке).
     let _ = app.emit("vkladki-izmenilis", id.to_string());
@@ -300,6 +377,10 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
         return zapustit_vnutri(&app, &s, &id);
     }
     pereklyuchit_vnutri(&s, &id);
+    // Клавиатуру — показанному движку (очереди уже прикреплены).
+    if let Some(o) = s.vkladki.lock().unwrap().get(&id).and_then(|v| v.okno) {
+        let _ = app.run_on_main_thread(move || sistema::fokus_dvizhku(o));
+    }
     da()
 }
 
@@ -322,10 +403,15 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
 
 /// Остановить движок, но вкладку и её профиль сохранить.
 #[tauri::command]
-fn ostanovit(s: State<Sostoyanie>, id: String) -> Otvet {
+fn ostanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
     let mut v = s.vkladki.lock().unwrap();
     match v.get_mut(&id) {
         Some(vk) => {
+            // Открепляем очередь ввода — иначе после остановки наш ввод
+            // останется привязан к потоку чужого окна.
+            if let Some(o) = vk.okno.take() {
+                let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
+            }
             if let Some(p) = vk.proc.as_mut() {
                 let _ = p.kill();
                 let _ = p.wait();
@@ -349,10 +435,13 @@ fn ostanovit(s: State<Sostoyanie>, id: String) -> Otvet {
 /// ⛔ В профиле лежат входы в почту и прочее — спрашивать подтверждение
 /// обязан тот, кто вызывает.
 #[tauri::command]
-fn udalit(s: State<Sostoyanie>, id: String) -> Otvet {
+fn udalit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
     let mut v = s.vkladki.lock().unwrap();
     match v.remove(&id) {
         Some(mut vk) => {
+            if let Some(o) = vk.okno.take() {
+                let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
+            }
             for p in [vk.proc.as_mut(), vk.tunnel.as_mut()].into_iter().flatten() {
                 let _ = p.kill();
                 let _ = p.wait();
@@ -391,11 +480,37 @@ fn nash_descriptor(w: &tauri::WebviewWindow) -> Option<u64> {
     }
 }
 
+/// Показать и поставить на место окно активной вкладки — после
+/// сворачивания/возврата нашего окна: встроенное чужое окно из другой
+/// очереди само за нами не следует (ловили 10.11.2026: «свернул и
+/// больше не развернёшь»).
+fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
+    let s: tauri::State<Sostoyanie> = app.state();
+    let naideno = {
+        let aktivnaya = s.aktivnaya.lock().unwrap().clone();
+        let vkladki = s.vkladki.lock().unwrap();
+        aktivnaya.and_then(|id| vkladki.get(&id).and_then(|vk| vk.okno.map(|o| (id, o))))
+    };
+    let Some((_id, okno)) = naideno else { return };
+    let m = s.mesto.lock().unwrap().clone();
+    let _ = sistema::pokazat(okno, true);
+    if let Some(mm) = m {
+        let _ = sistema::peremestit(okno, mm);
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(Sostoyanie::default())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            // Движки, оставшиеся от прошлого запуска, ломают новые:
+            // Chromium пересылает команду старому процессу, а тот открывает
+            // обычное окно поверх всего. Режем по уникальному имени exe.
+            brauzer::pribit_proshlyh_dvizhkov();
             // Где лежит движок, положенный сборкой
             if let Ok(res) = app.path().resource_dir() {
                 brauzer::zadat_papku_resursov(res);
@@ -432,11 +547,28 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, ostanovit, udalit,
-            zadat_mesto, dvizhok_est
+            zadat_mesto, dvizhok_est, pokazat_dvizhki
         ])
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")
         .run(|app, sobytie| {
+            // Восстановление встроенного окна после сворачивания/фокуса:
+            // чужое окно само не возвращается — показываем и ставим на место.
+            match &sobytie {
+                tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Resized(r), .. }
+                    if label == "main" && (r.width > 0 || r.height > 0) =>
+                {
+                    vosstanovit_dvizhok(app);
+                }
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::Focused(true),
+                    ..
+                } if label == "main" => {
+                    vosstanovit_dvizhok(app);
+                }
+                _ => {}
+            }
             // ⛔ При закрытии программы движки ОСТАЮТСЯ жить: поймали
             // 06.11.2026 — закрыли окно, в памяти висело 13 процессов
             // браузера. Гасим все при выходе.

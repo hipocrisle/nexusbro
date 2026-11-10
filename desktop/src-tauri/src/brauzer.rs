@@ -260,9 +260,59 @@ fn zapustit_prosto(programma: &Path, dovody: &[String]) -> anyhow::Result<Child>
     Ok(ditya)
 }
 
+/// Убить движки, оставшиеся от прошлого запуска программы.
+///
+/// ⛔ Зачем: если движок остался жить (мы упали, не дождались окна,
+/// антивирус помешал), повторный запуск с тем же профилем НЕ поднимает
+/// новый процесс — Chromium пересылает команду старому, а тот открывает
+/// ОБЫЧНОЕ окно поверх всего. Человек видит «новое окно хрома», а наша
+/// оболочка ждёт окна, которое не появилось. Имя у нашего exe уникальное —
+/// чужих процессов так не назовут, резать по имени безопасно.
+#[cfg(target_os = "windows")]
+pub fn pribit_proshlyh_dvizhkov() {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    unsafe {
+        let Ok(snimok) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return;
+        };
+        let mut e = PROCESSENTRY32::default();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+        let mut zhertvy = Vec::new();
+        if Process32First(snimok, &mut e).is_ok() {
+            loop {
+                let imya = String::from_utf16_lossy(&e.szExeFile);
+                if imya.trim_end_matches('\0') == "nexusbro-engine.exe" {
+                    zhertvy.push(e.th32ProcessID);
+                }
+                if Process32Next(snimok, &mut e).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snimok);
+        for pid in zhertvy {
+            if pid == std::process::id() {
+                continue;
+            }
+            if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+                let _ = TerminateProcess(h, 1);
+                let _ = CloseHandle(h);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn pribit_proshlyh_dvizhkov() {}
+
 /// Где лежит xray. Как и движок: сначала свой, потом системный.
-pub fn najti_xray() -> Option<PathBuf> {
-    let imya = if cfg!(target_os = "windows") { "xray.exe" } else { "xray" };
+pub fn najti_xray() -> Option<PathBuf> {    let imya = if cfg!(target_os = "windows") { "xray.exe" } else { "xray" };
     if let Some(res) = PAPKA_RESURSOV.get() {
         for p in ["", "binaries", "xray"] {
             let put = if p.is_empty() { res.join(imya) } else { res.join(p).join(imya) };

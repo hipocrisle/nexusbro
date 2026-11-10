@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { proverit_obnovlenie } from "./updater";
 
 type Nastrojki = { id: string; nazvanie: string; proxy: string; adres: string; rezat_reklamu: boolean };
 type Vidno = Nastrojki & { zapushchena: boolean };
@@ -37,6 +38,7 @@ export default function App() {
     invoke<Vidno[]>("spisok").then(setVkladki);
     invoke<string | null>("aktivnaya").then(setAktivnaya);
     soobshchitMesto();
+    proverit_obnovlenie();
     window.addEventListener("resize", soobshchitMesto);
     // ядро само сообщает, когда список изменился
     const otpiska = listen<string>("vkladki-izmenilis", async (e) => {
@@ -62,27 +64,42 @@ export default function App() {
     setZanyat(true);
     setOshibka("");
     const id = "sv" + Date.now().toString(36);
-    const o = await invoke<Otvet>("otkryt", {
-      nastrojki: {
-        id,
-        nazvanie,
-        proxy,
-        adres: adres || "about:blank",
-        rezat_reklamu: rezat,
-      },
-    });
-    setZanyat(false);
-    if (!o.ok) {
-      // ⛔ Ошибку рисуем ПОД полосой вкладок: за закрытым диалогом её не видно,
-      // и поломка выглядит как вечное «Запускаю…».
-      setOshibka(o.soobshchenie);
+    try {
+      const o = await invoke<Otvet>("otkryt", {
+        nastrojki: {
+          id,
+          nazvanie,
+          proxy,
+          adres: adres || "about:blank",
+          rezat_reklamu: rezat,
+        },
+      });
+      if (!o.ok) {
+        // ⛔ Ошибку рисуем ПОД полосой вкладок: за закрытым диалогом её не видно,
+        // и поломка выглядит как вечное «Запускаю…».
+        setOshibka(o.soobshchenie);
+        return;
+      }
+      setVkladki(await invoke<Vidno[]>("spisok"));
+      setAktivnaya(id);
+      setTimeout(soobshchitMesto, 100);
+    } finally {
+      setZanyat(false);
       setDialog(false);
-      return;
+      // Движки прятали, пока диалог открыт, — возвращаем активный.
+      await invoke("pokazat_dvizhki", { vidno: true });
     }
-    setVkladki(await invoke<Vidno[]>("spisok"));
-    setAktivnaya(id);
+  }
+
+  // Диалог рисуется внутри нашего окна, а поверх его лежит чужое окно
+  // движка: без скрытия диалог не видно (10.11.2026).
+  async function otkrytDialog() {
+    await invoke("pokazat_dvizhki", { vidno: false });
+    setDialog(true);
+  }
+  async function zakrytDialog() {
     setDialog(false);
-    setTimeout(soobshchitMesto, 100);
+    await invoke("pokazat_dvizhki", { vidno: true });
   }
 
   async function pereklyuchit(id: string) {
@@ -154,7 +171,7 @@ export default function App() {
             </span>
           </button>
         ))}
-        <button className="plyus" onClick={() => setDialog(true)} disabled={zanyat}>
+        <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
           +
         </button>
         {zarezano > 0 && (
@@ -175,7 +192,7 @@ export default function App() {
                   Внутри неё открывай сколько угодно обычных вкладок: весь сайт
                   со всеми его адресами пойдёт через выбранный выход.
                 </p>
-                <button onClick={() => setDialog(true)}>Создать первую</button>
+                <button onClick={() => otkrytDialog()}>Создать первую</button>
               </>
             ) : (
               <>
@@ -191,7 +208,7 @@ export default function App() {
         {oshibka && <div className="oshibka">{oshibka}</div>}
       </div>
 
-      {dialog && <Dialog zanyat={zanyat} onOtmena={() => setDialog(false)} onOk={dobavit} />}
+      {dialog && <Dialog zanyat={zanyat} onOtmena={() => zakrytDialog()} onOk={dobavit} />}
     </div>
   );
 }

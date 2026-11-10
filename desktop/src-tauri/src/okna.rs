@@ -122,6 +122,11 @@ pub mod sistema {
         conn.flush()?;
         Ok(())
     }
+
+    // На X11 ввод до встроенного окна доходит сам — заглушки.
+    pub fn prisoedinit_vvod(_chuzhoe: u32) {}
+    pub fn otsoedinit_vvod(_chuzhoe: u32) {}
+    pub fn fokus_dvizhku(_chuzhoe: u32) {}
 }
 
 // ──────────────────────────────── Windows ──────────────────────────────
@@ -211,6 +216,45 @@ pub mod sistema {
         HWND(v as usize as *mut core::ffi::c_void)
     }
 
+    /// Подключить ввод ко встроенному окну. ⛔ ГРАБЛЬ SetParent: чужое
+    /// окно живёт в СВОЕЙ очереди ввода, и клавиатура до него не доходит,
+    /// пока очереди не прикреплены. Вызывать с потока, владеющего НАШИМ
+    /// окном (иначе прикрепится не тот поток, и ввода всё равно не будет).
+    pub fn prisoedinit_vvod(chuzhoe: u32) {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::Input::KeyboardAndMouse::AttachThreadInput;
+        unsafe {
+            let ch = hwnd(chuzhoe);
+            let potok_dvizhka = GetWindowThreadProcessId(ch, None);
+            let nash = GetCurrentThreadId();
+            if potok_dvizhka != 0 && potok_dvizhka != nash {
+                let _ = AttachThreadInput(nash, potok_dvizhka, true.into());
+            }
+        }
+    }
+
+    /// Открепить очередь ввода — при остановке/удалении вкладки.
+    pub fn otsoedinit_vvod(chuzhoe: u32) {
+        use windows::Win32::System::Threading::GetCurrentThreadId;
+        use windows::Win32::UI::Input::KeyboardAndMouse::AttachThreadInput;
+        unsafe {
+            let ch = hwnd(chuzhoe);
+            let potok_dvizhka = GetWindowThreadProcessId(ch, None);
+            let nash = GetCurrentThreadId();
+            if potok_dvizhka != 0 && potok_dvizhka != nash {
+                let _ = AttachThreadInput(nash, potok_dvizhka, false.into());
+            }
+        }
+    }
+
+    /// Отдать клавиатуру встроенному окну. Работает, только когда очереди
+    /// прикреплены (см. prisoedinit_vvod) и вызов идёт с нашего UI-потока.
+    pub fn fokus_dvizhku(chuzhoe: u32) {
+        unsafe {
+            let _ = SetFocus(hwnd(chuzhoe));
+        }
+    }
+
     pub fn vstroit(chuzhoe: u32, nashe: u64, m: Mesto) -> Result<()> {
         unsafe {
             let ch = hwnd(chuzhoe);
@@ -266,4 +310,7 @@ pub mod sistema {
     pub fn pokazat(_c: u32, _v: bool) -> Result<()> {
         Ok(())
     }
+    pub fn prisoedinit_vvod(_c: u32) {}
+    pub fn otsoedinit_vvod(_c: u32) {}
+    pub fn fokus_dvizhku(_c: u32) {}
 }
