@@ -402,33 +402,66 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
 }
 
 /// Остановить движок, но вкладку и её профиль сохранить.
+fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
+    let mut v = s.vkladki.lock().unwrap();
+    if let Some(vk) = v.get_mut(id) {
+        // Открепляем очередь ввода — иначе после остановки наш ввод
+        // останется привязан к потоку чужого окна.
+        if let Some(o) = vk.okno.take() {
+            let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
+        }
+        if let Some(p) = vk.proc.as_mut() {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+        vk.proc = None;
+        vk.okno = None;
+        if let Some(p) = vk.nash_proxy.take() {
+            p.ostanovit();
+        }
+        if let Some(mut t) = vk.tunnel.take() {
+            let _ = t.kill();
+            let _ = t.wait();
+        }
+    }
+}
+
 #[tauri::command]
 fn ostanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
-    let mut v = s.vkladki.lock().unwrap();
-    match v.get_mut(&id) {
-        Some(vk) => {
-            // Открепляем очередь ввода — иначе после остановки наш ввод
-            // останется привязан к потоку чужого окна.
-            if let Some(o) = vk.okno.take() {
-                let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
-            }
-            if let Some(p) = vk.proc.as_mut() {
-                let _ = p.kill();
-                let _ = p.wait();
-            }
-            vk.proc = None;
-            vk.okno = None;
-            if let Some(p) = vk.nash_proxy.take() {
-                p.ostanovit();
-            }
-            if let Some(mut t) = vk.tunnel.take() {
-                let _ = t.kill();
-                let _ = t.wait();
-            }
-            da()
-        }
-        None => net("такой супер-вкладки нет"),
+    if s.vkladki.lock().unwrap().contains_key(&id) {
+        ostanovit_vnutri(&app, &s, &id);
+        da()
+    } else {
+        net("такой супер-вкладки нет")
     }
+}
+
+/// Правка настроек супер-вкладки после создания. Работающую перезапускаем
+/// с новыми настройками (прокси и резка рекламы задаются на запуск),
+/// остановленную просто перезаписываем.
+#[tauri::command]
+fn izmenit(app: tauri::AppHandle, s: State<Sostoyanie>, nastrojki: Nastrojki) -> Otvet {
+    let rabotaet = {
+        let mut v = s.vkladki.lock().unwrap();
+        match v.get_mut(&nastrojki.id) {
+            Some(vk) => {
+                vk.nastrojki = nastrojki.clone();
+                vk.proc.is_some()
+            }
+            None => return net("такой супер-вкладки нет"),
+        }
+    };
+    {
+        let v = s.vkladki.lock().unwrap();
+        let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
+        sohranit_spisok(&vse);
+    }
+    if rabotaet {
+        ostanovit_vnutri(&app, &s, &nastrojki.id);
+        return zapustit_vnutri(&app, &s, &nastrojki.id);
+    }
+    let _ = app.emit("vkladki-izmenilis", nastrojki.id);
+    da()
 }
 
 /// Удалить вкладку насовсем вместе с её профилем.
@@ -547,7 +580,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, ostanovit, udalit,
-            zadat_mesto, dvizhok_est, pokazat_dvizhki
+            zadat_mesto, dvizhok_est, pokazat_dvizhki, izmenit
         ])
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")

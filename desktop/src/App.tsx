@@ -13,6 +13,7 @@ export default function App() {
   const aktivnayaRef = useRef<string | null>(null);
   const [dvizhokEst, setDvizhokEst] = useState(true);
   const [dialog, setDialog] = useState(false);
+  const [pravka, setPravka] = useState<Nastrojki | null>(null);
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
   const [zarezano, setZarezano] = useState(0);
@@ -99,7 +100,37 @@ export default function App() {
   }
   async function zakrytDialog() {
     setDialog(false);
+    setPravka(null);
     await invoke("pokazat_dvizhki", { vidno: true });
+  }
+
+  // Правка супер-вкладки: тот же диалог, но с её настройками.
+  async function nachatPravku(n: Nastrojki) {
+    await invoke("pokazat_dvizhki", { vidno: false });
+    setPravka(n);
+    setDialog(true);
+  }
+
+  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean) {
+    if (!pravka) return;
+    setZanyat(true);
+    setOshibka("");
+    try {
+      const o = await invoke<Otvet>("izmenit", {
+        nastrojki: { ...pravka, nazvanie, proxy, adres: adres || "about:blank", rezat_reklamu: rezat },
+      });
+      if (!o.ok) {
+        setOshibka(o.soobshchenie);
+        return;
+      }
+      setVkladki(await invoke<Vidno[]>("spisok"));
+      setTimeout(soobshchitMesto, 100);
+    } finally {
+      setZanyat(false);
+      setDialog(false);
+      setPravka(null);
+      await invoke("pokazat_dvizhki", { vidno: true });
+    }
   }
 
   async function pereklyuchit(id: string) {
@@ -166,6 +197,16 @@ export default function App() {
                 ■
               </span>
             )}
+            <span
+              className="pravka"
+              title="Настройки супер-вкладки"
+              onClick={(e) => {
+                e.stopPropagation();
+                nachatPravku(v);
+              }}
+            >
+              ✎
+            </span>
             <span className="krest" title="Удалить" onClick={(e) => udalit(v.id, v.nazvanie, e)}>
               ×
             </span>
@@ -208,24 +249,32 @@ export default function App() {
         {oshibka && <div className="oshibka">{oshibka}</div>}
       </div>
 
-      {dialog && <Dialog zanyat={zanyat} onOtmena={() => zakrytDialog()} onOk={dobavit} />}
+      {dialog && (
+        <Dialog
+          zanyat={zanyat}
+          pravka={pravka}
+          onOtmena={() => zakrytDialog()}
+          onOk={pravka ? pravit : dobavit}
+        />
+      )}
     </div>
   );
 }
 
 function Dialog(props: {
   zanyat: boolean;
+  pravka: Nastrojki | null;
   onOtmena: () => void;
   onOk: (n: string, p: string, a: string, r: boolean) => void;
 }) {
-  const [nazvanie, setNazvanie] = useState("");
-  const [proxy, setProxy] = useState("");
-  const [adres, setAdres] = useState("");
-  const [rezat, setRezat] = useState(true);
+  const [nazvanie, setNazvanie] = useState(props.pravka?.nazvanie ?? "");
+  const [proxy, setProxy] = useState(props.pravka?.proxy ?? "");
+  const [adres, setAdres] = useState(props.pravka?.adres ?? "");
+  const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
   return (
     <div className="zatemnenie" onClick={props.onOtmena}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
-        <h2>Новая супер-вкладка</h2>
+        <h2>{props.pravka ? "Настройки супер-вкладки" : "Новая супер-вкладка"}</h2>
         <label>
           Название
           <input
@@ -278,7 +327,13 @@ function Dialog(props: {
             disabled={props.zanyat || !nazvanie.trim()}
             onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat)}
           >
-            {props.zanyat ? "Запускаю…" : "Создать"}
+            {props.zanyat
+              ? props.pravka
+                ? "Перезапускаю…"
+                : "Запускаю…"
+              : props.pravka
+                ? "Сохранить"
+                : "Создать"}
           </button>
         </div>
       </div>

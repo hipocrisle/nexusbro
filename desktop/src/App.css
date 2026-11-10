@@ -90,6 +90,9 @@ body {
 .stop { opacity: .4; padding: 0 2px; font-size: 10px; }
 .stop:hover { opacity: 1; }
 
+.pravka { margin-left: 2px; opacity: .45; padding: 0 2px; font-size: 12px; }
+.pravka:hover { opacity: 1; }
+
 .schet {
   margin-left: auto; padding: 4px 10px; border-radius: 7px;
   background: #1e2230; color: var(--tiho); font-size: 12px;
