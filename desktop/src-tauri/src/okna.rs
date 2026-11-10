@@ -157,6 +157,10 @@ pub mod sistema {
     pub fn prisoedinit_vvod(_chuzhoe: u32) {}
     pub fn otsoedinit_vvod(_chuzhoe: u32) {}
     pub fn fokus_dvizhku(_chuzhoe: u32) {}
+    pub fn kto_v_peredne() -> String {
+        String::new()
+    }
+    pub fn spryatat_chuzhie(_korni: &[u32]) {}
 }
 
 // ──────────────────────────────── Windows ──────────────────────────────
@@ -357,6 +361,49 @@ pub mod sistema {
             );
         }
     }
+
+    /// Кто сейчас впереди (для диагностики): pid и заголовок.
+    pub fn kto_v_peredne() -> String {
+        unsafe {
+            let fg = GetForegroundWindow();
+            if fg.0.is_null() {
+                return "нет".into();
+            }
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(fg, Some(&mut pid));
+            let mut zaglavie = [0u16; 256];
+            let n = GetWindowTextW(fg, &mut zaglavie);
+            format!("pid {pid} «{}»", String::from_utf16_lossy(&zaglavie[..n as usize]))
+        }
+    }
+
+    /// Спрятать ВСЕ окна движков — не только известные нам хэндлы.
+    /// Chromium пересоздаёт окно, и старый хэндл его уже не видит:
+    /// незнакомое окно лежит поверх и ест клики (10.11.2026, поймал
+    /// user: «кнопки Сохранить/Не сохранять/Отмена не работают»).
+    pub fn spryatat_chuzhie(korni: &[u32]) {
+        if korni.is_empty() {
+            return;
+        }
+        let vse: std::collections::HashSet<u32> = korni
+            .iter()
+            .flat_map(|&k| derevo_processov(k))
+            .collect();
+        unsafe {
+            struct P { pids: std::collections::HashSet<u32> }
+            unsafe extern "system" fn proverit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+                let p = &mut *(lparam.0 as *mut P);
+                let mut pid = 0u32;
+                GetWindowThreadProcessId(hwnd, Some(&mut pid));
+                if p.pids.contains(&pid) {
+                    let _ = ShowWindow(hwnd, SW_HIDE);
+                }
+                BOOL(1)
+            }
+            let mut p = P { pids: vse };
+            let _ = EnumWindows(Some(proverit), LPARAM(&mut p as *mut _ as isize));
+        }
+    }
 }
 
 // ──────────────────────── остальные системы ────────────────────────────
@@ -380,6 +427,10 @@ pub mod sistema {
     pub fn nash_li(_c: u32, _n: u64) -> bool {
         true
     }
+    pub fn kto_v_peredne() -> String {
+        String::new()
+    }
+    pub fn spryatat_chuzhie(_k: &[u32]) {}
     pub fn prisoedinit_vvod(_c: u32) {}
     pub fn otsoedinit_vvod(_c: u32) {}
     pub fn fokus_dvizhku(_c: u32) {}

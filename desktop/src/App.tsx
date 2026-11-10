@@ -30,6 +30,8 @@ export default function App() {
   const [menuSohranennyh, setMenuSohranennyh] = useState<Nastrojki[] | null>(null);
   // Итог ручной проверки обновлений — показываем у кнопки.
   const [obnovlenie, setObnovlenie] = useState("");
+  // Текст диагностики — для копирования и отправки разработчику.
+  const [diagnostika, setDiagnostika] = useState<string | null>(null);
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
   const [zarezano, setZarezano] = useState(0);
@@ -283,6 +285,17 @@ export default function App() {
         >
           ⟳
         </button>
+        <button
+          className="plyus"
+          title="Диагностика"
+          onClick={async () => {
+            await invoke("pokazat_dvizhki", { vidno: false });
+            const tekst = await invoke<string>("diagnostika");
+            setDiagnostika(tekst);
+          }}
+        >
+          🛠
+        </button>
         {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
         {zarezano > 0 && (
           <span className="schet" title="Зарезано рекламы в этой вкладке">
@@ -357,6 +370,32 @@ export default function App() {
               <button onClick={() => vopros.razreshit(false)}>Не сохранять</button>
               <button className="glavnaya" onClick={() => vopros.razreshit(true)}>
                 Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {diagnostika !== null && (
+        <div className="zatemnenie">
+          <div className="dialog diagnostika-okno" onClick={(e) => e.stopPropagation()}>
+            <h2>Диагностика</h2>
+            <pre>{diagnostika}</pre>
+            <div className="knopki">
+              <button
+                onClick={async () => {
+                  await navigator.clipboard.writeText(diagnostika).catch(() => {});
+                }}
+              >
+                Скопировать
+              </button>
+              <button
+                className="glavnaya"
+                onClick={async () => {
+                  setDiagnostika(null);
+                  await invoke("pokazat_dvizhki", { vidno: true });
+                }}
+              >
+                Закрыть
               </button>
             </div>
           </div>

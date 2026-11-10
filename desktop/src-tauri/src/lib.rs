@@ -125,6 +125,21 @@ struct Sostoyanie {
 /// обязаны остановиться, чтобы не мешать гашению движков.
 static ZAVERSHENIE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// Журнал сторожа и запусков — последние события с метками времени.
+/// Диагностика показывает его человеку, человек присылает нам факты
+/// вместо гаданий (10.11.2026).
+static ZHURNAL: std::sync::Mutex<std::collections::VecDeque<(std::time::Instant, String)>> =
+    std::sync::Mutex::new(std::collections::VecDeque::new());
+
+fn zapisat_v_zhurnal(sobytie: String) {
+    if let Ok(mut z) = ZHURNAL.lock() {
+        z.push_back((std::time::Instant::now(), sobytie));
+        while z.len() > 40 {
+            z.pop_front();
+        }
+    }
+}
+
 #[derive(Serialize)]
 pub struct Otvet {
     pub ok: bool,
@@ -213,10 +228,18 @@ fn dvizhok_est() -> bool {
 /// модальный диалог рисуется ВНУТРИ нашего окна, а поверх его области
 /// лежит чужое окно движка — без скрытия диалог не видно (10.11.2026:
 /// «добавление супервкладки не видно, пока не закроешь хром»).
-/// Показываем обратно только АКТИВНУЮ вкладку: неактивные не должны
-/// выползти поверх.
+/// ⛔ При скрытии прячем не только известные хэндлы, но ВСЕ окна наших
+/// движков: пересозданное окно старым хэндлом не видно и лежит поверх,
+/// поедая клики по диалогу.
 #[tauri::command]
 fn pokazat_dvizhki(s: State<Sostoyanie>, vidno: bool) -> Otvet {
+    if !vidno {
+        let pids: Vec<u32> = {
+            let v = s.vkladki.lock().unwrap();
+            v.values().filter_map(|vk| vk.proc.as_ref().map(|p| p.id())).collect()
+        };
+        sistema::spryatat_chuzhie(&pids);
+    }
     let aktivnaya = s.aktivnaya.lock().unwrap().clone();
     let v = s.vkladki.lock().unwrap();
     for (k, vk) in v.iter() {
@@ -338,6 +361,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
                             let _ = t.kill();
                             let _ = t.wait();
                         }
+                        zapisat_v_zhurnal(format!("{id}: движок умер сразу после запуска ({kod})"));
                         return so_oshibkoj_dvizhka(
                             &id,
                             format!("движок умер сразу после запуска ({})", kod),
@@ -400,6 +424,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         sistema::prisoedinit_vvod(okno);
         sistema::fokus_dvizhku(okno);
     });
+    zapisat_v_zhurnal(format!("{id}: запуск ок, окно {okno}"));
     // ⛔ Полоса вкладок должна узнавать об изменениях, сделанных ядром, —
     // иначе вкладка есть, а в полосе её нет (ловили на самопроверке).
     let _ = app.emit("vkladki-izmenilis", id.to_string());
@@ -408,8 +433,30 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
 
 #[tauri::command]
 fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
-    let zapushchena = match s.vkladki.lock().unwrap().get(&id) {
-        Some(v) => v.proc.is_some(),
+    let zapushchena = match s.vkladki.lock().unwrap().get_mut(&id) {
+        Some(vk) => {
+            // ⛔ Движок мог умереть (закрыли все вкладки внутри и т.п.):
+            // не ждать сторожа, а сразу считать вкладку спящей.
+            let umer = matches!(
+                vk.proc.as_mut().map(|p| p.try_wait()),
+                Some(Ok(Some(_)))
+            );
+            if umer {
+                zapisat_v_zhurnal(format!("{id}: мёртвый движок при переключении, поднимаю заново"));
+                vk.proc = None;
+                vk.okno = None;
+                if let Some(p) = vk.nash_proxy.take() {
+                    p.ostanovit();
+                }
+                if let Some(mut t) = vk.tunnel.take() {
+                    let _ = t.kill();
+                    let _ = t.wait();
+                }
+                false
+            } else {
+                vk.proc.is_some()
+            }
+        }
         None => return net("такой супер-вкладки нет"),
     };
     // Вкладку поднимаем в тот момент, когда на неё нажали, а не при запуске
@@ -637,6 +684,61 @@ fn udalit_sohranennuyu(id: String) -> Otvet {
     }
 }
 
+/// Диагностика по живому: состояние вкладок, окна, журнал сторожа,
+/// хвосты engine.log. Человек копирует и присылает — разбираем факты,
+/// а не гадания (10.11.2026).
+#[tauri::command]
+fn diagnostika(app: tauri::AppHandle, s: State<Sostoyanie>) -> String {
+    let mut out = String::from("=== NexusBro диагностика ===\n");
+    let nashe = app
+        .get_webview_window("main")
+        .and_then(|w| nash_descriptor(&w))
+        .map(|h| h.to_string())
+        .unwrap_or_else(|| "нет".into());
+    out.push_str(&format!("наше окно: {nashe}\n"));
+    out.push_str(&format!("впереди сейчас: {}\n", sistema::kto_v_peredne()));
+    {
+        let v = s.vkladki.lock().unwrap();
+        for (id, vk) in v.iter() {
+            let proc_s = match &vk.proc {
+                Some(p) => format!("pid {}", p.id()),
+                None => "нет".into(),
+            };
+            let okno_s = match vk.okno {
+                Some(o) => {
+                    let nash = sistema::nash_li(o, nashe.parse().unwrap_or(0));
+                    format!("{o} (наше: {nash})")
+                }
+                None => "нет".into(),
+            };
+            out.push_str(&format!("вкладка {id}: движок {proc_s}, окно {okno_s}\n"));
+        }
+    }
+    out.push_str("\n--- журнал ---\n");
+    if let Ok(z) = ZHURNAL.lock() {
+        let start = z.front().map(|(t, _)| *t);
+        for (t, m) in z.iter() {
+            let secs = start.map(|st| t.duration_since(st).as_secs()).unwrap_or(0);
+            out.push_str(&format!("+{secs}s {m}\n"));
+        }
+    }
+    out.push_str("\n--- engine.log (хвосты) ---\n");
+    {
+        let v = s.vkladki.lock().unwrap();
+        for (id, _) in v.iter() {
+            let log = brauzer::papka_profilej().join(id).join("engine.log");
+            if let Ok(soderzhimoe) = std::fs::read_to_string(&log) {
+                let hvost: Vec<&str> = soderzhimoe.lines().rev().take(5).collect();
+                out.push_str(&format!("[{id}]\n"));
+                for stroka in hvost.iter().rev() {
+                    out.push_str(&format!("  {stroka}\n"));
+                }
+            }
+        }
+    }
+    out
+}
+
 /// Указатель на наше окно в том виде, какого ждёт система.
 fn nash_descriptor(w: &tauri::WebviewWindow) -> Option<u64> {
     #[cfg(target_os = "windows")]
@@ -738,7 +840,7 @@ pub fn run() {
             {
                 let h = app.handle().clone();
                 std::thread::spawn(move || loop {
-                    std::thread::sleep(std::time::Duration::from_millis(2500));
+                    std::thread::sleep(std::time::Duration::from_millis(1000));
                     if ZAVERSHENIE.load(std::sync::atomic::Ordering::SeqCst) {
                         return;
                     }
@@ -764,6 +866,7 @@ pub fn run() {
                         // Окно потерялось. Вдруг движок просто умер?
                         match sistema::najti_okno(pid, 5) {
                             Ok(novoe) => {
+                                zapisat_v_zhurnal(format!("{id}: окно пересоздано ({staroe} → {novoe}), встраиваю"));
                                 let s: tauri::State<Sostoyanie> = h.state();
                                 let m = s
                                     .mesto
@@ -784,6 +887,7 @@ pub fn run() {
                             }
                             Err(_) => {
                                 // Движка нет — вкладка снова спит.
+                                zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
                                 let s: tauri::State<Sostoyanie> = h.state();
                                 if let Ok(mut v) = s.vkladki.try_lock() {
                                     if let Some(vk) = v.get_mut(&id) {
@@ -809,7 +913,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
-            sohranennye, vosstanovit, udalit_sohranennuyu
+            sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika
         ])
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")

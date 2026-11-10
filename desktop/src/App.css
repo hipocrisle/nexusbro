@@ -120,3 +120,10 @@ body {
 .stroka-menyu:hover { background: #1e2230; }
 .stroka-menyu .krest { margin-left: auto; }
 .pusto-v-menyu { padding: 10px; color: var(--tiho); font-size: 13px; }
+
+.diagnostika-okno { max-width: 720px; width: 90%; }
+.diagnostika-okno pre {
+  max-height: 50vh; overflow: auto; background: #0d0f16; color: #b7c0d4;
+  padding: 10px; border-radius: 8px; font-size: 12px; line-height: 1.5;
+  white-space: pre-wrap; user-select: text;
+}
