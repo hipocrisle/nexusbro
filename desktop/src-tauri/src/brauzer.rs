@@ -82,6 +82,7 @@ enum Zakaz {
         id: String,
         proxy: Option<String>,
         adres: Option<String>,
+        vosstanavlivat: bool,
         otvet: SyncSender<anyhow::Result<Child>>,
     },
     /// Любая другая программа — например xray для подписки.
@@ -109,8 +110,8 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .spawn(move || {
                 while let Ok(z) = rx.recv() {
                     match z {
-                        Zakaz::Dvizhok { id, proxy, adres, otvet } => {
-                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref()));
+                        Zakaz::Dvizhok { id, proxy, adres, vosstanavlivat, otvet } => {
+                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref(), vosstanavlivat));
                         }
                         Zakaz::Prosto { programma, dovody, otvet } => {
                             let _ = otvet.send(zapustit_prosto(&programma, &dovody));
@@ -124,13 +125,15 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
 }
 
 /// Запустить движок для одной супер-вкладки. `adres` — только для режима
-/// «открывать пустой» или первого запуска; None = восстановить вкладки.
-pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
+/// «открывать пустой» или первого запуска; `vosstanavlivat` — вернуть
+/// вкладки прошлой сессии.
+pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
     let (otvet, zhdem) = sync_channel(1);
     zapuskatel().send(Zakaz::Dvizhok {
         id: id.to_string(),
         proxy: proxy.map(|s| s.to_string()),
         adres: adres.map(|s| s.to_string()),
+        vosstanavlivat,
         otvet,
     })?;
     // ⛔ Ожидание без края превращало неудачный запуск в вечное «Запускаю…».
@@ -199,33 +202,7 @@ pub fn profil_svety(id: &str) -> bool {
     !profil.join("Cookies").exists() && !profil.join("History").exists()
 }
 
-/// Включить/выключить восстановление вкладок прошлой сессии. Пишем
-/// в Preferences ДО запуска: Chromium такой файл принимает и перенимает.
-/// Без этой записи вкладки прошлого раза не вернутся — появится пустая.
-/// Заодно помечаем «выход был чистый»: мы глушим процесс принудительно,
-/// и без этой записи Chromium каждый раз лез бы с «восстановить сессию».
-pub fn zapisat_vosstanovlenie(id: &str, vosstanavlivat: bool) {
-    let prefs = papka_profilej().join(id).join("Default").join("Preferences");
-    let mut v: serde_json::Value = std::fs::read_to_string(&prefs)
-        .ok()
-        .and_then(|s| serde_json::from_str(&s).ok())
-        .unwrap_or_else(|| serde_json::json!({}));
-    if vosstanavlivat {
-        v["session"]["restore_on_startup"] = serde_json::json!(1);
-    } else if let Some(session) = v.get_mut("session").and_then(|s| s.as_object_mut()) {
-        session.remove("restore_on_startup");
-    }
-    v["profile"]["exited_cleanly"] = serde_json::json!(true);
-    v["profile"]["exit_type"] = serde_json::json!("Normal");
-    if let Some(roditel) = prefs.parent() {
-        let _ = std::fs::create_dir_all(roditel);
-    }
-    if let Ok(s) = serde_json::to_string(&v) {
-        let _ = std::fs::write(&prefs, s);
-    }
-}
-
-fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
+fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
     let dvizhok = najti_dvizhok()
         .ok_or_else(|| anyhow::anyhow!("движок не найден: положи chromium рядом с программой"))?;
     let profil = papka_profilej().join(id);
@@ -256,6 +233,13 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::
         .arg("--enable-logging=stderr")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    // Восстановление вкладок: ⛔ настройку restore_on_startup в профиль
+    // записать НЕЛЬЗЯ — движок 157 сбрасывает externally-written префы
+    // (защита tracked-prefs; проверено CDP на живой машине 10.11.2026).
+    // Рабочий механизм: ЧИСТЫЙ выход движка + этот флаг при старте.
+    if vosstanavlivat {
+        cmd.arg("--restore-last-session");
+    }
     // ⛔ Своя метка в заголовке окна не годится: заголовок = имя страницы.
     // Окно ищем по номеру процесса, см. okna.rs.
     // Адрес подаём ТОЛЬКО когда сказано «открывать пустой» (или профиль
@@ -446,34 +430,34 @@ pub fn najti_xray() -> Option<PathBuf> {    let imya = if cfg!(target_os = "wind
 mod proverki {
     use super::*;
 
-    #[test]
-    fn vosstanovlenie_pishetsya_i_ubiraetsya() {
-        let koren = std::env::temp_dir().join("nexusbro_proba_vosstanovleniya");
-        let id = "test-vkladka";
-        let profil = koren.join("NexusBro/profili").join(id);
-        let _ = std::fs::remove_dir_all(&koren);
-        std::env::set_var("XDG_DATA_HOME", &koren);
-
-        zapisat_vosstanovlenie(id, true);
-        let prefs: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(profil.join("Default/Preferences")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(prefs["session"]["restore_on_startup"], 1);
-
-        // существующие ключи не затираем
-        zapisat_vosstanovlenie(id, false);
-        let prefs: serde_json::Value = serde_json::from_str(
-            &std::fs::read_to_string(profil.join("Default/Preferences")).unwrap(),
-        )
-        .unwrap();
-        assert!(prefs.get("session").is_none() || prefs["session"].get("restore_on_startup").is_none());
-
-        assert!(profil_svety(id));
-        std::fs::create_dir_all(profil.join("Default")).unwrap();
-        std::fs::write(profil.join("Default/Cookies"), "x").unwrap();
-        assert!(!profil_svety(id));
-        let _ = std::fs::remove_dir_all(&koren);
-        std::env::remove_var("XDG_DATA_HOME");
+}
+/// Попросить движок выйти ЧИСТО, не убивая. ⛔ Восстановление вкладок
+/// работает только после чистого выхода (exit_type=Normal), поэтому при
+/// завершении программы просим, а не глушим заданием: WM_CLOSE (Windows,
+/// короткий таймаут, вызывать с нашего UI-потока после открепления
+/// ввода!) или SIGTERM (Linux). Не ждёт — система всё равно добьёт
+/// дерево при закрытии, но чистый выход успевает сбросить сессию.
+pub fn poprosit_o_chem_vyhode(pid: u32, okno: Option<u32>) {
+    #[cfg(target_os = "windows")]
+    if let Some(o) = okno {
+        crate::okna::sistema::otsoedinit_vvod(o);
+        unsafe {
+            let mut otvet: usize = 0;
+            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
+                windows::Win32::Foundation::HWND(o as usize as *mut core::ffi::c_void),
+                windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                windows::Win32::Foundation::WPARAM(0),
+                windows::Win32::Foundation::LPARAM(0),
+                windows::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG,
+                2000,
+                Some(std::ptr::from_mut(&mut otvet)),
+            );
+        }
     }
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    let _ = (pid, okno);
 }

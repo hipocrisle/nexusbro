@@ -328,13 +328,12 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     // Вкладки прошлой сессии восстанавливаются по умолчанию; адрес
     // подаём только для режима «открывать пустой» или самого первого
     // запуска — иначе Chromium открыл бы адрес вместо восстановления.
-    brauzer::zapisat_vosstanovlenie(&id, !nastrojki.pustaya);
     let adres = if nastrojki.pustaya || brauzer::profil_svety(&id) {
         Some(nastrojki.adres.as_str())
     } else {
         None
     };
-    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres) {
+    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres, !nastrojki.pustaya) {
         Ok(c) => c,
         Err(e) => {
             nash.ostanovit();
@@ -1007,13 +1006,24 @@ pub fn run() {
                     let _ = h.emit("vkladki-izmenilis", id);
                 });
             }
-            // ⛔ При закрытии программы движки НЕ глушим руками: убийство
-            // прикреплённого процесса вешает очередь ввода. Система сама
-            // добьёт дерево — задание с KILL_ON_JOB_CLOSE (Windows) и
-            // PR_SET_PDEATHSIG (Linux). Поймали 06.11.2026: без такого
-            // прибивания в памяти оставалось 13 процессов браузера.
+            // ⛔ При закрытии программы просим движки выйти ЧИСТО —
+            // иначе сессии вкладок не восстановятся (проверено: kill →
+            // exit_type=Crashed → вкладки пропадают). Обработчик Exit
+            // и так крутится на нашем UI-потоке — открепляем ввод и
+            // шлём WM_CLOSE/SIGTERM прямо здесь, без ожидания; кто не
+            // успел — того добьёт задание/PDEATHSIG при выходе процесса.
             if let tauri::RunEvent::Exit = sobytie {
                 ZAVERSHENIE.store(true, std::sync::atomic::Ordering::SeqCst);
+                let spisok: Vec<(u32, Option<u32>)> = {
+                    let s: tauri::State<Sostoyanie> = app.state();
+                    let v = s.vkladki.lock().unwrap();
+                    v.values()
+                        .filter_map(|vk| vk.proc.as_ref().map(|p| (p.id(), vk.okno)))
+                        .collect()
+                };
+                for (pid, okno) in spisok {
+                    brauzer::poprosit_o_chem_vyhode(pid, okno);
+                }
             }
         });
 }

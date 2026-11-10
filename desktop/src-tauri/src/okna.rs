@@ -38,8 +38,10 @@ pub mod sistema {
             .atom;
         let srok = std::time::Instant::now();
         loop {
-            if let Some(w) = obojti(&conn, koren, atom_pid, pid)? {
-                return Ok(w);
+            let mut kandidaty: Vec<(u32, i64)> = Vec::new();
+            sobrat(&conn, koren, atom_pid, pid, &mut kandidaty)?;
+            if let Some((okno, _)) = kandidaty.iter().max_by_key(|(_, a)| *a) {
+                return Ok(*okno);
             }
             if srok.elapsed().as_secs() >= zhdat_sek {
                 return Err(anyhow!("окно браузера не появилось за {} с", zhdat_sek));
@@ -48,7 +50,16 @@ pub mod sistema {
         }
     }
 
-    fn obojti(conn: &RustConnection, okno: u32, atom_pid: Atom, pid: u32) -> Result<Option<u32>> {
+    /// Обойти дерево и собрать видимые окна (>100×100) с площадью:
+    /// берём САМОЕ БОЛЬШОЕ — иначе вместо браузера можно поймать
+    /// пузырь или служебное окно (10.11.2026).
+    fn sobrat(
+        conn: &RustConnection,
+        okno: u32,
+        atom_pid: Atom,
+        pid: u32,
+        kuda: &mut Vec<(u32, i64)>,
+    ) -> Result<()> {
         let derevo = conn.query_tree(okno)?.reply()?;
         for ch in derevo.children {
             let svojstvo = conn
@@ -57,20 +68,17 @@ pub mod sistema {
             if let Ok(p) = svojstvo {
                 if let Some(mut v) = p.value32() {
                     if v.next() == Some(pid) {
-                        // Берём только видимые окна: у chromium есть служебные 1x1.
                         if let Ok(g) = conn.get_geometry(ch)?.reply() {
                             if g.width > 100 && g.height > 100 {
-                                return Ok(Some(ch));
+                                kuda.push((ch, g.width as i64 * g.height as i64));
                             }
                         }
                     }
                 }
             }
-            if let Some(najdeno) = obojti(conn, ch, atom_pid, pid)? {
-                return Ok(Some(najdeno));
-            }
+            sobrat(conn, ch, atom_pid, pid, kuda)?;
         }
-        Ok(None)
+        Ok(())
     }
 
     pub fn vstroit(chuzhoe: u32, nashe: u64, m: Mesto) -> Result<()> {
@@ -209,7 +217,7 @@ pub mod sistema {
 
     struct Poisk {
         pids: Vec<u32>,
-        najdeno: HWND,
+        naideno: Vec<(HWND, i64)>,
     }
 
     unsafe extern "system" fn proverit(hwnd: HWND, lparam: LPARAM) -> BOOL {
@@ -217,13 +225,18 @@ pub mod sistema {
         let mut pid = 0u32;
         GetWindowThreadProcessId(hwnd, Some(&mut pid));
         if p.pids.contains(&pid) && IsWindowVisible(hwnd).as_bool() {
+            // ⛔ Свёрнутое окно (160x28) фильтр размера не пропустит —
+            // возвращаем на место и берём на следующем проходе.
+            if IsIconic(hwnd).as_bool() {
+                let _ = ShowWindow(hwnd, SW_RESTORE);
+                return BOOL(1);
+            }
             let mut r = RECT::default();
-            if GetWindowRect(hwnd, &mut r).is_ok()
-                && (r.right - r.left) > 100
-                && (r.bottom - r.top) > 100
-            {
-                p.najdeno = hwnd;
-                return BOOL(0);
+            if GetWindowRect(hwnd, &mut r).is_ok() {
+                let ploshad = (r.right - r.left) as i64 * (r.bottom - r.top) as i64;
+                if (r.right - r.left) > 100 && (r.bottom - r.top) > 100 {
+                    p.naideno.push((hwnd, ploshad));
+                }
             }
         }
         BOOL(1)
@@ -232,12 +245,16 @@ pub mod sistema {
     pub fn najti_okno(pid: u32, zhdat_sek: u64) -> Result<u32> {
         let srok = std::time::Instant::now();
         loop {
-            let mut p = Poisk { pids: derevo_processov(pid), najdeno: HWND(std::ptr::null_mut()) };
+            let mut p = Poisk { pids: derevo_processov(pid), naideno: Vec::new() };
             unsafe {
                 let _ = EnumWindows(Some(proverit), LPARAM(&mut p as *mut _ as isize));
             }
-            if !p.najdeno.0.is_null() {
-                return Ok(p.najdeno.0 as usize as u32);
+            // ⛔ Берём САМОЕ БОЛЬШОЕ окно: пузырь «Восстановить
+            // страницы?» (334x180, тот же класс Chrome_WidgetWin_1)
+            // иначе может быть встроен вместо браузера
+            // (проверено на машине user'а 10.11.2026).
+            if let Some((okno, _)) = p.naideno.iter().max_by_key(|(_, a)| *a) {
+                return Ok(okno.0 as usize as u32);
             }
             if srok.elapsed().as_secs() >= zhdat_sek {
                 return Err(anyhow!("окно браузера не появилось за {} с", zhdat_sek));
