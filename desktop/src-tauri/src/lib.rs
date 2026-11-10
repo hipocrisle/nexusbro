@@ -385,6 +385,22 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         }
     };
 
+    // Окно нашлось — но вдруг это окно ОШИБКИ («профиль занят»), а наш
+    // процесс уже переслал команду сироте и вышел? Встраивать окно
+    // ошибки нельзя: перепроверяем жизнь ДО встраивания.
+    if let Ok(Some(kod)) = ditya.try_wait() {
+        nash.ostanovit();
+        if let Some(mut t) = tunnel {
+            let _ = t.kill();
+            let _ = t.wait();
+        }
+        zapisat_v_zhurnal(format!("{id}: окно найдено, но процесс уже мёртв ({kod}) — не встраиваю"));
+        return so_oshibkoj_dvizhka(
+            &id,
+            format!("движок отказал сразу после старта (код {}): профиль, вероятно, занят сиротой", kod),
+        );
+    }
+
     let nashe = match app.get_webview_window("main").and_then(|w| nash_descriptor(&w)) {
         Some(h) => h,
         None => {

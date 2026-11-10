@@ -231,6 +231,14 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::
     let profil = papka_profilej().join(id);
     let zhurnal = profil.join("engine.log");
     std::fs::create_dir_all(&profil)?;
+    // ⛔ Блокировки профиля: после жёсткого убийства остаются, и движок
+    // на старте решает, что профиль занят, — открывает окно ОШИБКИ и
+    // выходит с кодом 0 (поймал user 10.11.2026: «движок умер сразу»,
+    // «новое окно с ошибкой хром»). Живого владельца в этот момент
+    // быть не должно — сироты режет pribit_proshlyh_dvizhkov.
+    for imya in ["SingletonLock", "SingletonSocket", "SingletonCookie"] {
+        let _ = std::fs::remove_file(profil.join(imya));
+    }
     let _ = std::fs::rename(&zhurnal, profil.join("engine.log.1"));
     let stdout = std::fs::File::create(&zhurnal)?;
     let stderr = stdout.try_clone()?;
@@ -380,6 +388,7 @@ pub fn pribit_proshlyh_dvizhkov() {
         let mut e = PROCESSENTRY32W::default();
         e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         let mut zhertvy = Vec::new();
+        let mut ubito = 0;
         if Process32FirstW(snimok, &mut e).is_ok() {
             loop {
                 let imya = String::from_utf16_lossy(&e.szExeFile);
@@ -399,8 +408,10 @@ pub fn pribit_proshlyh_dvizhkov() {
             if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
                 let _ = TerminateProcess(h, 1);
                 let _ = CloseHandle(h);
+                ubito += 1;
             }
         }
+        crate::zapisat_v_zhurnal(format!("при старте убито сирот-движков: {ubito}"));
     }
 }
 

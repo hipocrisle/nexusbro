@@ -1,6 +1,6 @@
 [package]
 name = "nexusbro"
-version = "0.1.8"
+version = "0.1.9"
 description = "NexusBro — браузер с супер-вкладками поверх ungoogled-chromium"
 authors = ["hipogas"]
 edition = "2021"
