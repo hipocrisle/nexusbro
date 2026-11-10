@@ -272,7 +272,7 @@ fn zapustit_prosto(programma: &Path, dovody: &[String]) -> anyhow::Result<Child>
 pub fn pribit_proshlyh_dvizhkov() {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
         TH32CS_SNAPPROCESS,
     };
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
@@ -281,16 +281,16 @@ pub fn pribit_proshlyh_dvizhkov() {
         let Ok(snimok) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return;
         };
-        let mut e = PROCESSENTRY32::default();
-        e.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+        let mut e = PROCESSENTRY32W::default();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         let mut zhertvy = Vec::new();
-        if Process32First(snimok, &mut e).is_ok() {
+        if Process32FirstW(snimok, &mut e).is_ok() {
             loop {
                 let imya = String::from_utf16_lossy(&e.szExeFile);
                 if imya.trim_end_matches('\0') == "nexusbro-engine.exe" {
                     zhertvy.push(e.th32ProcessID);
                 }
-                if Process32Next(snimok, &mut e).is_err() {
+                if Process32NextW(snimok, &mut e).is_err() {
                     break;
                 }
             }

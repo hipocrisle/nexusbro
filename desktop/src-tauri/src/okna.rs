@@ -221,28 +221,28 @@ pub mod sistema {
     /// пока очереди не прикреплены. Вызывать с потока, владеющего НАШИМ
     /// окном (иначе прикрепится не тот поток, и ввода всё равно не будет).
     pub fn prisoedinit_vvod(chuzhoe: u32) {
-        use windows::Win32::System::Threading::GetCurrentThreadId;
-        use windows::Win32::UI::Input::KeyboardAndMouse::AttachThreadInput;
+        use windows::Win32::Foundation::BOOL;
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
         unsafe {
             let ch = hwnd(chuzhoe);
             let potok_dvizhka = GetWindowThreadProcessId(ch, None);
             let nash = GetCurrentThreadId();
             if potok_dvizhka != 0 && potok_dvizhka != nash {
-                let _ = AttachThreadInput(nash, potok_dvizhka, true.into());
+                let _ = AttachThreadInput(nash, potok_dvizhka, BOOL(1));
             }
         }
     }
 
     /// Открепить очередь ввода — при остановке/удалении вкладки.
     pub fn otsoedinit_vvod(chuzhoe: u32) {
-        use windows::Win32::System::Threading::GetCurrentThreadId;
-        use windows::Win32::UI::Input::KeyboardAndMouse::AttachThreadInput;
+        use windows::Win32::Foundation::BOOL;
+        use windows::Win32::System::Threading::{AttachThreadInput, GetCurrentThreadId};
         unsafe {
             let ch = hwnd(chuzhoe);
             let potok_dvizhka = GetWindowThreadProcessId(ch, None);
             let nash = GetCurrentThreadId();
             if potok_dvizhka != 0 && potok_dvizhka != nash {
-                let _ = AttachThreadInput(nash, potok_dvizhka, false.into());
+                let _ = AttachThreadInput(nash, potok_dvizhka, BOOL(0));
             }
         }
     }
@@ -250,6 +250,7 @@ pub mod sistema {
     /// Отдать клавиатуру встроенному окну. Работает, только когда очереди
     /// прикреплены (см. prisoedinit_vvod) и вызов идёт с нашего UI-потока.
     pub fn fokus_dvizhku(chuzhoe: u32) {
+        use windows::Win32::UI::Input::KeyboardAndMouse::SetFocus;
         unsafe {
             let _ = SetFocus(hwnd(chuzhoe));
         }
