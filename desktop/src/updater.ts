@@ -12,24 +12,43 @@ const LAST_CHECK_LS = "nexusbro.lastUpdateCheck";
 const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Проверить обновление и, если есть, поставить его с перезапуском.
- *  Тихо ничего не делает при сетевых ошибках и если проверка не пора. */
-export async function proverit_obnovlenie(): Promise<void> {
+ *  prinuditelno — кнопкой: игнорируем часовой интервал и сообщаем итог.
+ *  tiho — без всяких сообщений при отсутствии обновлений (автопроверка
+ *  при старте). Сетевые ошибки всегда глотаем, чтобы не мешать работе. */
+export async function proverit_obnovlenie(
+  prinuditelno = false,
+  tiho = true,
+  soobshchit?: (s: string) => void
+): Promise<void> {
   try {
-    const last = parseInt(localStorage.getItem(LAST_CHECK_LS) ?? "0", 10);
-    if (Date.now() - last < CHECK_INTERVAL_MS) return;
-    localStorage.setItem(LAST_CHECK_LS, String(Date.now()));
+    if (!prinuditelno) {
+      const last = parseInt(localStorage.getItem(LAST_CHECK_LS) ?? "0", 10);
+      if (Date.now() - last < CHECK_INTERVAL_MS) return;
+      localStorage.setItem(LAST_CHECK_LS, String(Date.now()));
+    }
 
     const update = await check();
-    if (!update) return;
+    if (!update) {
+      if (!tiho) soobshchit?.("Обновлений нет — стоит последняя версия.");
+      return;
+    }
 
-    const soglasen = await ask(
-      `Вышла версия ${update.version}. Обновить сейчас?`,
-      { title: "Обновление NexusBro", kind: "info" }
-    );
+    // Диалог рисуется внутри нашего окна, а поверх лежит чужое окно
+    // движка — прячем его, иначе вопрос не видно.
+    await invoke("pokazat_dvizhki", { vidno: false });
+    let soglasen = false;
+    try {
+      soglasen = await ask(
+        `Вышла версия ${update.version}. Обновить сейчас?`,
+        { title: "Обновление NexusBro", kind: "info" }
+      );
+    } finally {
+      await invoke("pokazat_dvizhki", { vidno: true });
+    }
     if (!soglasen) return;
 
-    // Движки прячем: установщик перезапустит программу, чужие окна
-    // за ней не умеют следовать.
+    // Установщик перезапустит программу, чужие окна за ней не умеют
+    // следовать — прячем их заранее.
     await invoke("pokazat_dvizhki", { vidno: false });
 
     let soobshchenie = "Скачиваю обновление…";
@@ -39,7 +58,7 @@ export async function proverit_obnovlenie(): Promise<void> {
     console.log(soobshchenie);
     await relaunch();
   } catch (e) {
-    // Сеть недоступна, GitHub лежит — не мешаем работе.
+    if (!tiho) soobshchit?.("Проверка обновления не удалась: " + e);
     console.warn("проверка обновления не удалась:", e);
   }
 }

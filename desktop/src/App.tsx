@@ -28,6 +28,8 @@ export default function App() {
   } | null>(null);
   // Меню сохранённых вкладок у кнопки «+».
   const [menuSohranennyh, setMenuSohranennyh] = useState<Nastrojki[] | null>(null);
+  // Итог ручной проверки обновлений — показываем у кнопки.
+  const [obnovlenie, setObnovlenie] = useState("");
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
   const [zarezano, setZarezano] = useState(0);
@@ -170,7 +172,15 @@ export default function App() {
     // Свежая закрывается сразу, без вопросов.
     let sohranit = false;
     if (await invoke<boolean>("nuzhno_sohranenie", { id })) {
-      const otvet = await voprosSohraneniya(nazvanie);
+      // Вопрос рисуется в нашем окне, а поверх лежит чужое окно движка —
+      // иначе диалог не видно (10.11.2026, поймал user).
+      await invoke("pokazat_dvizhki", { vidno: false });
+      let otvet: boolean | null = null;
+      try {
+        otvet = await voprosSohraneniya(nazvanie);
+      } finally {
+        await invoke("pokazat_dvizhki", { vidno: true });
+      }
       if (otvet === null) return;
       sohranit = otvet;
     }
@@ -259,6 +269,21 @@ export default function App() {
         >
           ▾
         </button>
+        <button
+          className="plyus"
+          title="Проверить обновления"
+          onClick={async () => {
+            setObnovlenie("Проверяю…");
+            await proverit_obnovlenie(true, false, (s) => {
+              setObnovlenie(s);
+              setTimeout(() => setObnovlenie(""), 8000);
+            });
+            if (obnovlenie === "Проверяю…") setObnovlenie("");
+          }}
+        >
+          ⟳
+        </button>
+        {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
         {zarezano > 0 && (
           <span className="schet" title="Зарезано рекламы в этой вкладке">
             ⛔ {zarezano}

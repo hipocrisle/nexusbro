@@ -121,6 +121,10 @@ struct Sostoyanie {
     aktivnaya: Mutex<Option<String>>,
 }
 
+/// Выставляется при завершении программы: фоновые потоки (сторож окон)
+/// обязаны остановиться, чтобы не мешать гашению движков.
+static ZAVERSHENIE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[derive(Serialize)]
 pub struct Otvet {
     pub ok: bool,
@@ -520,6 +524,20 @@ fn nuzhno_sohranenie(id: String) -> bool {
     !brauzer::profil_svety(&id)
 }
 
+/// Стереть профиль вкладки. Файлы могут быть ещё подхвачены только что
+/// убитым движком (Windows держит блокировки) — повторяем несколько раз,
+/// иначе «не сохраняет/не удаляет».
+fn steret_profil(id: &str) {
+    let put = brauzer::papka_profilej().join(id);
+    for _ in 0..5 {
+        if std::fs::remove_dir_all(&put).is_ok() {
+            return;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(400));
+    }
+    let _ = std::fs::remove_dir_all(&put);
+}
+
 /// Закрыть супер-вкладку. `sohranit` — true: профиль и настройки кладём
 /// в список сохранённых (открыть заново через меню у «+»); false: профиль
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
@@ -546,7 +564,7 @@ fn zakryt(app: tauri::AppHandle, s: State<Sostoyanie>, id: String, sohranit: boo
         sohr.push(nastrojki);
         sohranit_sohranennye(&sohr);
     } else {
-        let _ = std::fs::remove_dir_all(brauzer::papka_profilej().join(&id));
+        steret_profil(&id);
     }
     let _ = app.emit("vkladki-izmenilis", id);
     da()
@@ -593,7 +611,7 @@ fn udalit_sohranennuyu(id: String) -> Otvet {
     if sohr.iter().any(|n| n.id == id) {
         sohr.retain(|n| n.id != id);
         sohranit_sohranennye(&sohr);
-        let _ = std::fs::remove_dir_all(brauzer::papka_profilej().join(&id));
+        steret_profil(&id);
         da()
     } else {
         net("такой сохранённой вкладки нет")
@@ -648,6 +666,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_process::init())
+        // Размер, позиция и монитор окна запоминаются сами.
+        .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
             // Движки, оставшиеся от прошлого запуска, ломают новые:
             // Chromium пересылает команду старому процессу, а тот открывает
@@ -684,6 +704,81 @@ pub fn run() {
                     };
                     let o = otkryt(h.clone(), s, n);
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
+                });
+            }
+            // Сторож встроенных окон: Chromium иногда ПЕРЕСОЗДАЁТ своё
+            // окно (новое — уже не наш потомок, с рамкой и минимизацией,
+            // живёт своей жизнью поверх). Раз в пару секунд проверяем,
+            // что окно каждой работающей вкладки всё ещё наше, и если
+            // нет — ищем новое и встраиваем заново (10.11.2026, поймал
+            // user: «окно внутри супервкладки живёт своей жизнью»).
+            {
+                let h = app.handle().clone();
+                std::thread::spawn(move || loop {
+                    std::thread::sleep(std::time::Duration::from_millis(2500));
+                    if ZAVERSHENIE.load(std::sync::atomic::Ordering::SeqCst) {
+                        return;
+                    }
+                    let Some(nashe) =
+                        h.get_webview_window("main").and_then(|w| nash_descriptor(&w))
+                    else {
+                        continue;
+                    };
+                    let nado: Vec<(String, u32, u32)> = {
+                        let s: tauri::State<Sostoyanie> = h.state();
+                        let Ok(v) = s.vkladki.try_lock() else { continue };
+                        v.iter()
+                            .filter_map(|(id, vk)| match (vk.proc.as_ref(), vk.okno) {
+                                (Some(p), Some(o)) => Some((id.clone(), p.id(), o)),
+                                _ => None,
+                            })
+                            .collect()
+                    };
+                    for (id, pid, staroe) in nado {
+                        if sistema::nash_li(staroe, nashe) {
+                            continue;
+                        }
+                        // Окно потерялось. Вдруг движок просто умер?
+                        match sistema::najti_okno(pid, 5) {
+                            Ok(novoe) => {
+                                let s: tauri::State<Sostoyanie> = h.state();
+                                let m = s
+                                    .mesto
+                                    .lock()
+                                    .unwrap()
+                                    .unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
+                                let _ = sistema::vstroit(novoe, nashe, m);
+                                if let Ok(mut v) = s.vkladki.try_lock() {
+                                    if let Some(vk) = v.get_mut(&id) {
+                                        vk.okno = Some(novoe);
+                                    }
+                                }
+                                let _ = h.run_on_main_thread(move || {
+                                    sistema::prisoedinit_vvod(novoe);
+                                    sistema::fokus_dvizhku(novoe);
+                                });
+                                let _ = h.emit("vkladki-izmenilis", id);
+                            }
+                            Err(_) => {
+                                // Движка нет — вкладка снова спит.
+                                let s: tauri::State<Sostoyanie> = h.state();
+                                if let Ok(mut v) = s.vkladki.try_lock() {
+                                    if let Some(vk) = v.get_mut(&id) {
+                                        vk.okno = None;
+                                        vk.proc = None;
+                                        if let Some(p) = vk.nash_proxy.take() {
+                                            p.ostanovit();
+                                        }
+                                        if let Some(mut t) = vk.tunnel.take() {
+                                            let _ = t.kill();
+                                            let _ = t.wait();
+                                        }
+                                    }
+                                }
+                                let _ = h.emit("vkladki-izmenilis", id);
+                            }
+                        }
+                    }
                 });
             }
             Ok(())
@@ -759,6 +854,7 @@ pub fn run() {
             // тупят — добиваем. Поймали 06.11.2026: без этого в памяти
             // оставалось 13 процессов браузера.
             if let tauri::RunEvent::Exit = sobytie {
+                ZAVERSHENIE.store(true, std::sync::atomic::Ordering::SeqCst);
                 let ids: Vec<String> = {
                     let s: tauri::State<Sostoyanie> = app.state();
                     let v = s.vkladki.lock().unwrap();

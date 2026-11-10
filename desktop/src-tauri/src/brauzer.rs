@@ -140,23 +140,22 @@ pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::R
         .map_err(|_| anyhow::anyhow!("поток запуска движков молчит 25 с — вероятно, антивирус держит exe"))?
 }
 
-/// Остановить движок: сначала ВЕЖЛИВО (окно закрывается как по крестику —
-/// Chromium сохраняет сессию сам и при следующем запуске не лезет с
-/// «восстановить страницы»), по таймауту — убить. Возвращается, когда
-/// процесса нет.
-pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
-    if let Some(o) = okno {
+/// Остановить движок: завершить процесс. ⛔ Вежливое WM_CLOSE НЕ
+/// работает: окно движка — чужой ПОТОМОК, Chromium может не завершиться
+/// (диалоги, зависание), а с флагом SMTO_NOTIMEOUTIFNOTHUNG ожидание
+/// бесконечное — закрытие вкладки/программы висло навсегда
+/// (10.11.2026, поймал user). «Восстановить сессию» не появляется,
+/// потому что при запуске в Preferences пишем exited_cleanly (см.
+/// zapisat_vosstanovlenie). Возвращается, когда процесса нет.
+pub fn ostanovit_dvizhka(ditya: &mut Child, _okno: Option<u32>) {
+    #[cfg(target_os = "linux")]
+    if let Some(o) = _okno {
+        // X11: сообщение уходит без ожидания — вдруг успеет выйти сам.
         let _ = crate::okna::sistema::zakryt_vezhlivo(o);
-    }
-    let srok = std::time::Instant::now();
-    loop {
+        std::thread::sleep(std::time::Duration::from_millis(600));
         if matches!(ditya.try_wait(), Ok(Some(_))) {
             return;
         }
-        if srok.elapsed().as_secs() >= 5 {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(150));
     }
     let _ = ditya.kill();
     let _ = ditya.wait();
@@ -173,6 +172,8 @@ pub fn profil_svety(id: &str) -> bool {
 /// Включить/выключить восстановление вкладок прошлой сессии. Пишем
 /// в Preferences ДО запуска: Chromium такой файл принимает и перенимает.
 /// Без этой записи вкладки прошлого раза не вернутся — появится пустая.
+/// Заодно помечаем «выход был чистый»: мы глушим процесс принудительно,
+/// и без этой записи Chromium каждый раз лез бы с «восстановить сессию».
 pub fn zapisat_vosstanovlenie(id: &str, vosstanavlivat: bool) {
     let prefs = papka_profilej().join(id).join("Default").join("Preferences");
     let mut v: serde_json::Value = std::fs::read_to_string(&prefs)
@@ -184,6 +185,8 @@ pub fn zapisat_vosstanovlenie(id: &str, vosstanavlivat: bool) {
     } else if let Some(session) = v.get_mut("session").and_then(|s| s.as_object_mut()) {
         session.remove("restore_on_startup");
     }
+    v["profile"]["exited_cleanly"] = serde_json::json!(true);
+    v["profile"]["exit_type"] = serde_json::json!("Normal");
     if let Some(roditel) = prefs.parent() {
         let _ = std::fs::create_dir_all(roditel);
     }

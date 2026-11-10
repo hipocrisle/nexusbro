@@ -143,6 +143,16 @@ pub mod sistema {
         Ok(())
     }
 
+    /// Живо ли встроенное окно и осталось ли нашим потомком: Chromium
+    /// иногда ПЕРЕСОЗДАЁТ своё окно — новое рождается чужим, с рамкой
+    /// и своей жизнью (10.11.2026, поймал user).
+    pub fn nash_li(chuzhoe: u32, nashe: u64) -> bool {
+        let Ok((conn, _)) = svyaz() else { return false };
+        let Ok(derevo) = conn.query_tree(chuzhoe) else { return false };
+        let Ok(d) = derevo.reply() else { return false };
+        d.parent == nashe as u32
+    }
+
     // На X11 ввод до встроенного окна доходит сам — заглушки.
     pub fn prisoedinit_vvod(_chuzhoe: u32) {}
     pub fn otsoedinit_vvod(_chuzhoe: u32) {}
@@ -313,10 +323,27 @@ pub mod sistema {
         Ok(())
     }
 
+    /// Живо ли встроенное окно и осталось ли нашим потомком: Chromium
+    /// иногда ПЕРЕСОЗДАЁТ своё окно — новое рождается чужим, с рамкой
+    /// и своей жизнью (10.11.2026, поймал user).
+    pub fn nash_li(chuzhoe: u32, nashe: u64) -> bool {
+        unsafe {
+            let ch = hwnd(chuzhoe);
+            if !IsWindow(ch).as_bool() {
+                return false;
+            }
+            let Ok(roditel) = GetParent(ch) else {
+                return false;
+            };
+            roditel.0 == nashe as usize as *mut core::ffi::c_void
+        }
+    }
+
     /// Вежливо попросить чужое окно закрыться (как клик по крестику):
     /// Chromium так сохраняет сессию и не считает это крахом. Без этого
     /// после убийства процесса он лез с «восстановить сессию».
     pub fn zakryt_vezhlivo(chuzhoe: u32) {
+        use windows::Win32::Foundation::LRESULT;
         unsafe {
             let mut otvet: usize = 0;
             let _ = SendMessageTimeoutW(
@@ -350,6 +377,9 @@ pub mod sistema {
         Ok(())
     }
     pub fn zakryt_vezhlivo(_c: u32) {}
+    pub fn nash_li(_c: u32, _n: u64) -> bool {
+        true
+    }
     pub fn prisoedinit_vvod(_c: u32) {}
     pub fn otsoedinit_vvod(_c: u32) {}
     pub fn fokus_dvizhku(_c: u32) {}
