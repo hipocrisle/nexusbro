@@ -111,6 +111,9 @@ struct Vkladka {
     /// десять вкладок — несколько гигабайт на пустом месте.
     proc: Option<Child>,
     okno: Option<u32>,
+    /// Реальный pid браузера, когда Chromium перезапустил себя из-под
+    /// нашего мёртвого дочернего процесса (10.11.2026). Убиваем по нему.
+    zapas_pid: Option<u32>,
 }
 
 #[derive(Default)]
@@ -267,7 +270,7 @@ fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, nash_proxy: None, tunnel: None },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -333,71 +336,102 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     } else {
         None
     };
-    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres, !nastrojki.pustaya) {
-        Ok(c) => c,
-        Err(e) => {
-            nash.ostanovit();
-            return net(e);
-        }
-    };
-    let pid = ditya.id();
+    // ⛔ Перед стартом подметаем сирот: живой чужой движок с этим
+    // профилем = новый процесс перешлёт ему команду и выйдет с кодом 0,
+    // а сирота откроет «новое окно хрома» (жалобы user'а 10.11.2026).
+    // Имя бинарника уникально — чужих таких процессов не бывает.
+    {
+        let nashi: Vec<u32> = {
+            let v = s.vkladki.lock().unwrap();
+            v.values().filter_map(|vk| vk.proc.as_ref().map(|p| p.id())).collect()
+        };
+        brauzer::ubit_chuzhie_dvizhki(&nashi);
+    }
 
-    // Окно ищем кусками: если движок умер сразу (или его команда
-    // перехватилась сиротой от прошлого раза), узнаем об этом за секунды,
-    // а не через 20 с тупого ожидания. ⛔ Уходя с ошибкой, движка НЕ
-    // оставляем жить: живой процесс с тем же профилем ломает следующие
-    // запуски — Chromium пересылает команду ему, а он открывает ОБЫЧНОЕ
-    // окно поверх всего.
-    let okno = {
-        let nachalo = std::time::Instant::now();
-        loop {
-            match sistema::najti_okno(pid, 5) {
-                Ok(o) => break o,
+    // Две попытки: мгновенная смерть движка чинится подметанием сирот
+    // и повторным стартом.
+    let para: Result<(std::process::Child, u32), String> = 'popitki: {
+        let mut poslednyaya = String::from("движок не запустился");
+        for popitka in 1..=2 {
+            let mut d = match brauzer::zapustit(&id, Some(&cherez), adres, !nastrojki.pustaya) {
+                Ok(c) => c,
                 Err(e) => {
-                    if let Ok(Some(kod)) = ditya.try_wait() {
-                        nash.ostanovit();
-                        if let Some(mut t) = tunnel {
-                            let _ = t.kill();
-                            let _ = t.wait();
-                        }
-                        zapisat_v_zhurnal(format!("{id}: движок умер сразу после запуска ({kod})"));
-                        return so_oshibkoj_dvizhka(
-                            &id,
-                            format!("движок умер сразу после запуска ({})", kod),
-                        );
+                    poslednyaya = e.to_string();
+                    if popitka == 1 {
+                        zapisat_v_zhurnal(format!("{id}: запуск не состоялся, повторяю: {e}"));
+                        continue;
                     }
-                    if nachalo.elapsed().as_secs() >= 20 {
-                        let _ = ditya.kill();
-                        let _ = ditya.wait();
-                        nash.ostanovit();
-                        if let Some(mut t) = tunnel {
-                            let _ = t.kill();
-                            let _ = t.wait();
+                    break 'popitki Err(poslednyaya);
+                }
+            };
+            let pid = d.id();
+            let nachalo = std::time::Instant::now();
+            let okno = loop {
+                match sistema::najti_okno(pid, 5) {
+                    Ok(o) => break Some(o),
+                    Err(e) => {
+                        if let Ok(Some(kod)) = d.try_wait() {
+                            poslednyaya = format!("движок умер сразу после запуска ({kod})");
+                            zapisat_v_zhurnal(format!("{id}: {poslednyaya}"));
+                            break None;
                         }
-                        return so_oshibkoj_dvizhka(
-                            &id,
-                            format!("движок запустился, но окно не нашлось: {}", e),
-                        );
+                        if nachalo.elapsed().as_secs() >= 20 {
+                            let _ = d.kill();
+                            let _ = d.wait();
+                            poslednyaya = format!("движок запустился, но окно не нашлось: {e}");
+                            zapisat_v_zhurnal(format!("{id}: {poslednyaya}"));
+                            break None;
+                        }
                     }
                 }
+            };
+            if let Some(o) = okno {
+                break 'popitki Ok((d, o));
             }
+            if popitka == 1 {
+                // вероятно, сирота перехватила: подметаем и повторяем
+                let nashi: Vec<u32> = {
+                    let v = s.vkladki.lock().unwrap();
+                    v.values().filter_map(|vk| vk.proc.as_ref().map(|p| p.id())).collect()
+                };
+                brauzer::ubit_chuzhie_dvizhki(&nashi);
+                zapisat_v_zhurnal(format!("{id}: повторный запуск после мгновенной смерти"));
+            }
+        }
+        break 'popitki Err(poslednyaya);
+    };
+    let (mut ditya, okno) = match para {
+        Ok(para) => para,
+        Err(soobshchenie) => {
+            nash.ostanovit();
+            if let Some(mut t) = tunnel {
+                let _ = t.kill();
+                let _ = t.wait();
+            }
+            return so_oshibkoj_dvizhka(&id, soobshchenie);
         }
     };
 
-    // Окно нашлось — но вдруг это окно ОШИБКИ («профиль занят»), а наш
-    // процесс уже переслал команду сироте и вышел? Встраивать окно
-    // ошибки нельзя: перепроверяем жизнь ДО встраивания.
-    if let Ok(Some(kod)) = ditya.try_wait() {
+    // Окно нашлось. Но наш дочерний процесс может быть уже мёртв:
+    // Chromium иногда ПЕРЕЗАПУСКАЕТ себя с новым pid (уходит из job
+    // object; смену pid поймали на машине user'а). Тогда окно живо —
+    // продолжаем с ним, запомнив реальный pid. Если же окно живо без
+    // всякого pid — это окно ОШИБКИ («профиль занят»): не встраиваем.
+    let zapas = sistema::pid_okna(okno);
+    if matches!(ditya.try_wait(), Ok(Some(_))) && zapas.is_none() {
         nash.ostanovit();
         if let Some(mut t) = tunnel {
             let _ = t.kill();
             let _ = t.wait();
         }
-        zapisat_v_zhurnal(format!("{id}: окно найдено, но процесс уже мёртв ({kod}) — не встраиваю"));
+        zapisat_v_zhurnal(format!("{id}: окно есть, но живого движка нет — не встраиваю"));
         return so_oshibkoj_dvizhka(
             &id,
-            format!("движок отказал сразу после старта (код {}): профиль, вероятно, занят сиротой", kod),
+            "движок отказал сразу после старта: профиль, вероятно, занят сиротой".into(),
         );
+    }
+    if matches!(ditya.try_wait(), Ok(Some(_))) {
+        zapisat_v_zhurnal(format!("{id}: дочерний процесс умер, окно живо — перезапуск движка, запасной pid {:?}", zapas));
     }
 
     let nashe = match app.get_webview_window("main").and_then(|w| nash_descriptor(&w)) {
@@ -428,6 +462,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     if let Some(v) = s.vkladki.lock().unwrap().get_mut(id) {
         v.proc = Some(ditya);
         v.okno = Some(okno);
+        v.zapas_pid = zapas;
         v.nash_proxy = Some(nash);
         v.tunnel = tunnel;
     }
@@ -531,13 +566,20 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
 /// ввода — после закрытия вкладки программа перестаёт реагировать,
 /// а окно движка остаётся висеть (10.11.2026, поймал user).
 fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
-    let (proc, okno) = {
+    let (proc, okno, zapas) = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(id) {
-            Some(vk) => (vk.proc.take(), vk.okno.take()),
+            Some(vk) => (vk.proc.take(), vk.okno.take(), vk.zapas_pid.take()),
             None => return,
         }
     };
+    // ⛔ Движок, перезапустивший себя (новый pid вне job object),
+    // дочерним процессом не убить — добиваем по запасному pid.
+    if let Some(pz) = zapas {
+        if proc.as_ref().map(|p| p.id()) != Some(pz) {
+            sistema::ubit_po_pid(pz);
+        }
+    }
     if let Some(mut p) = proc {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let otpravleno = app.run_on_main_thread(move || {
@@ -677,7 +719,7 @@ fn vosstanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet
         if v.contains_key(&id) {
             return net("такая супер-вкладка уже открыта");
         }
-        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, nash_proxy: None, tunnel: None });
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
@@ -833,7 +875,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, nash_proxy: None, tunnel: None });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
@@ -879,7 +921,9 @@ pub fn run() {
                         let Ok(v) = s.vkladki.try_lock() else { continue };
                         v.iter()
                             .filter_map(|(id, vk)| match (vk.proc.as_ref(), vk.okno) {
-                                (Some(p), Some(o)) => Some((id.clone(), p.id(), o)),
+                                (Some(p), Some(o)) => {
+                                    Some((id.clone(), vk.zapas_pid.unwrap_or_else(|| p.id()), o))
+                                }
                                 _ => None,
                             })
                             .collect()
@@ -992,6 +1036,12 @@ pub fn run() {
                 let h = app.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(600));
+                    // ⛔ Окно могло сохраниться свёрнутым (видели
+                    // WS_MINIMIZE на машине user'а) — разворачиваем,
+                    // иначе движок стартует в минимизированное окно.
+                    if let Some(w) = h.get_webview_window("main") {
+                        let _ = w.unminimize();
+                    }
                     let Some(id) = zagruzit_aktivnuyu() else { return };
                     let est = {
                         let s: tauri::State<Sostoyanie> = h.state();

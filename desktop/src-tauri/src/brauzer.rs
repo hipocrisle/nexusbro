@@ -348,6 +348,59 @@ fn zapustit_prosto(programma: &Path, dovody: &[String]) -> anyhow::Result<Child>
     Ok(ditya)
 }
 
+/// Убить всех движков, кроме перечисленных (наших живых). Имя бинарника
+/// уникальное — чужих nexusbro-engine.exe не бывает, резать по имени
+/// безопасно. Перед каждым запуском движка подметает сирот, иначе новый
+/// процесс пересылает команду сироте и выходит с кодом 0, а сирота
+/// открывает «новое окно хрома» (10.11.2026, жалобы user'а).
+#[cfg(target_os = "windows")]
+pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+    use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+    unsafe {
+        let Ok(snimok) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
+            return;
+        };
+        let mut e = PROCESSENTRY32W::default();
+        e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut zhertvy = Vec::new();
+        if Process32FirstW(snimok, &mut e).is_ok() {
+            loop {
+                let imya = String::from_utf16_lossy(&e.szExeFile);
+                if imya.trim_end_matches('\0') == "nexusbro-engine.exe" && !krome.contains(&e.th32ProcessID) {
+                    zhertvy.push(e.th32ProcessID);
+                }
+                if Process32NextW(snimok, &mut e).is_err() {
+                    break;
+                }
+            }
+        }
+        let _ = CloseHandle(snimok);
+        let mut ubito = 0;
+        for pid in zhertvy {
+            if pid == std::process::id() {
+                continue;
+            }
+            if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+                let _ = TerminateProcess(h, 1);
+                let _ = CloseHandle(h);
+                ubito += 1;
+            }
+        }
+        if ubito > 0 {
+            crate::zapisat_v_zhurnal(format!("подметание: убито сирот-движков {ubito}"));
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn ubit_chuzhie_dvizhki(_krome: &[u32]) {}
+
 /// Убить движки, оставшиеся от прошлого запуска программы.
 ///
 /// ⛔ Зачем: если движок остался жить (мы упали, не дождались окна,

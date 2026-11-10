@@ -168,6 +168,10 @@ pub mod sistema {
     pub fn kto_v_peredne() -> String {
         String::new()
     }
+    pub fn pid_okna(_c: u32) -> Option<u32> {
+        None
+    }
+    pub fn ubit_po_pid(_p: u32) {}
     pub fn spryatat_chuzhie(_korni: &[u32]) {}
 }
 
@@ -394,6 +398,28 @@ pub mod sistema {
         }
     }
 
+    /// Pid процесса, владеющего окном: когда Chromium перезапускает
+    /// себя (уходит из job object), наш дочерний процесс мёртв, а окно
+    /// живёт у нового pid (10.11.2026, пойман сменой pid на машине).
+    pub fn pid_okna(chuzhoe: u32) -> Option<u32> {
+        unsafe {
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd(chuzhoe), Some(&mut pid));
+            (pid != 0).then_some(pid)
+        }
+    }
+
+    /// Добить процесс по pid (запасной движок, ушедший из job object).
+    pub fn ubit_po_pid(pid: u32) {
+        use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+        unsafe {
+            if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
+                let _ = TerminateProcess(h, 1);
+                let _ = CloseHandle(h);
+            }
+        }
+    }
+
     /// Спрятать ВСЕ окна движков — не только известные нам хэндлы.
     /// Chromium пересоздаёт окно, и старый хэндл его уже не видит:
     /// незнакомое окно лежит поверх и ест клики (10.11.2026, поймал
@@ -447,6 +473,10 @@ pub mod sistema {
     pub fn kto_v_peredne() -> String {
         String::new()
     }
+    pub fn pid_okna(_c: u32) -> Option<u32> {
+        None
+    }
+    pub fn ubit_po_pid(_p: u32) {}
     pub fn spryatat_chuzhie(_k: &[u32]) {}
     pub fn prisoedinit_vvod(_c: u32) {}
     pub fn otsoedinit_vvod(_c: u32) {}
