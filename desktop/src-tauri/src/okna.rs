@@ -123,6 +123,26 @@ pub mod sistema {
         Ok(())
     }
 
+    /// Вежливо попросить окно закрыться (как клик по крестику):
+    /// WM_DELETE_WINDOW по протоколу ICCCM. Chromium так СОХРАНЯЕТ
+    /// сессию сам, и при следующем запуске не лезет с «восстановить».
+    pub fn zakryt_vezhlivo(chuzhoe: u32) -> Result<()> {
+        let (conn, _) = svyaz()?;
+        let protokoly = conn.intern_atom(false, b"WM_PROTOCOLS")?.reply()?.atom;
+        let udalenie = conn.intern_atom(false, b"WM_DELETE_WINDOW")?.reply()?.atom;
+        let sobytie = ClientMessageEvent {
+            response_type: CLIENT_MESSAGE_EVENT,
+            format: 32,
+            sequence: 0,
+            window: chuzhoe,
+            type_: protokoly,
+            data: ClientMessageData::from([udalenie, 0, 0, 0, 0]),
+        };
+        conn.send_event(false, chuzhoe, EventMask::NO_EVENT, &sobytie)?;
+        conn.flush()?;
+        Ok(())
+    }
+
     // На X11 ввод до встроенного окна доходит сам — заглушки.
     pub fn prisoedinit_vvod(_chuzhoe: u32) {}
     pub fn otsoedinit_vvod(_chuzhoe: u32) {}
@@ -134,7 +154,7 @@ pub mod sistema {
 pub mod sistema {
     use super::Mesto;
     use anyhow::{anyhow, Result};
-    use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM, RECT};
+    use windows::Win32::Foundation::{BOOL, CloseHandle, HWND, LPARAM, RECT, WPARAM};
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Process32First, Process32Next,
         PROCESSENTRY32, TH32CS_SNAPPROCESS,
@@ -292,6 +312,24 @@ pub mod sistema {
         }
         Ok(())
     }
+
+    /// Вежливо попросить чужое окно закрыться (как клик по крестику):
+    /// Chromium так сохраняет сессию и не считает это крахом. Без этого
+    /// после убийства процесса он лез с «восстановить сессию».
+    pub fn zakryt_vezhlivo(chuzhoe: u32) {
+        unsafe {
+            let mut otvet: usize = 0;
+            let _ = SendMessageTimeoutW(
+                hwnd(chuzhoe),
+                WM_CLOSE,
+                WPARAM(0),
+                LPARAM(0),
+                SMTO_ABORTIFHUNG | SMTO_NOTIMEOUTIFNOTHUNG,
+                3000,
+                Some(std::ptr::from_mut(&mut otvet)),
+            );
+        }
+    }
 }
 
 // ──────────────────────── остальные системы ────────────────────────────
@@ -311,6 +349,7 @@ pub mod sistema {
     pub fn pokazat(_c: u32, _v: bool) -> Result<()> {
         Ok(())
     }
+    pub fn zakryt_vezhlivo(_c: u32) {}
     pub fn prisoedinit_vvod(_c: u32) {}
     pub fn otsoedinit_vvod(_c: u32) {}
     pub fn fokus_dvizhku(_c: u32) {}

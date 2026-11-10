@@ -37,6 +37,9 @@ pub struct Nastrojki {
     /// Резать рекламу в этой супер-вкладке.
     #[serde(default = "da_po_umolchaniyu")]
     pub rezat_reklamu: bool,
+    /// Открывать пустой: не восстанавливать вкладки прошлой сессии.
+    #[serde(default)]
+    pub pustaya: bool,
 }
 
 fn da_po_umolchaniyu() -> bool {
@@ -47,12 +50,20 @@ fn domashnyaya() -> String {
     "about:blank".into()
 }
 
-/// Файл со списком супер-вкладок. Лежит рядом с профилями.
+/// Файл со списком открытых супер-вкладок. Лежит рядом с профилями.
 fn fajl_spiska() -> std::path::PathBuf {
     brauzer::papka_profilej()
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("vkladki.json")
+}
+
+/// Файл с сохранёнными (закрытыми, но не выброшенными) супер-вкладками.
+fn fajl_sohranennyh() -> std::path::PathBuf {
+    brauzer::papka_profilej()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("sohranennye.json")
 }
 
 fn zagruzit_spisok() -> Vec<Nastrojki> {
@@ -62,8 +73,25 @@ fn zagruzit_spisok() -> Vec<Nastrojki> {
         .unwrap_or_default()
 }
 
+fn zagruzit_sohranennye() -> Vec<Nastrojki> {
+    std::fs::read_to_string(fajl_sohranennyh())
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_default()
+}
+
 fn sohranit_spisok(v: &[Nastrojki]) {
     let f = fajl_spiska();
+    if let Some(d) = f.parent() {
+        let _ = std::fs::create_dir_all(d);
+    }
+    if let Ok(s) = serde_json::to_string_pretty(v) {
+        let _ = std::fs::write(f, s);
+    }
+}
+
+fn sohranit_sohranennye(v: &[Nastrojki]) {
+    let f = fajl_sohranennyh();
     if let Some(d) = f.parent() {
         let _ = std::fs::create_dir_all(d);
     }
@@ -270,7 +298,16 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     };
     let cherez = format!("http://127.0.0.1:{}", nash.port);
 
-    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), &nastrojki.adres) {
+    // Вкладки прошлой сессии восстанавливаются по умолчанию; адрес
+    // подаём только для режима «открывать пустой» или самого первого
+    // запуска — иначе Chromium открыл бы адрес вместо восстановления.
+    brauzer::zapisat_vosstanovlenie(&id, !nastrojki.pustaya);
+    let adres = if nastrojki.pustaya || brauzer::profil_svety(&id) {
+        Some(nastrojki.adres.as_str())
+    } else {
+        None
+    };
+    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres) {
         Ok(c) => c,
         Err(e) => {
             nash.ostanovit();
@@ -384,6 +421,24 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
     da()
 }
 
+fn sohranit_aktivnuyu(id: &str) {
+    let f = brauzer::papka_profilej()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("aktivnaya.json");
+    let _ = std::fs::write(f, serde_json::to_string(id).unwrap_or_default());
+}
+
+fn zagruzit_aktivnuyu() -> Option<String> {
+    let f = brauzer::papka_profilej()
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."))
+        .join("aktivnaya.json");
+    std::fs::read_to_string(f)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+}
+
 fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
     let m = s.mesto.lock().unwrap().clone();
     let v = s.vkladki.lock().unwrap();
@@ -399,20 +454,24 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
         }
     }
     *s.aktivnaya.lock().unwrap() = Some(id.to_string());
+    // Помним, на какой вкладке закрыли программу, — при следующем
+    // запуске откроется именно она (10.11.2026, задал user).
+    sohranit_aktivnuyu(id);
 }
 
-/// Остановить движок, но вкладку и её профиль сохранить.
+/// Глушить экземпляр вкладки: вежливо (сессия движка сохраняется), с
+/// добивкой по таймауту. Вкладку, профиль и настройки не трогает.
 fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
     let mut v = s.vkladki.lock().unwrap();
     if let Some(vk) = v.get_mut(id) {
-        // Открепляем очередь ввода — иначе после остановки наш ввод
-        // останется привязан к потоку чужого окна.
-        if let Some(o) = vk.okno.take() {
+        let okno = vk.okno.take();
+        // Открепляем очередь ввода — иначе наш ввод останется привязан
+        // к потоку чужого окна.
+        if let Some(o) = okno {
             let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
         }
         if let Some(p) = vk.proc.as_mut() {
-            let _ = p.kill();
-            let _ = p.wait();
+            brauzer::ostanovit_dvizhka(p, okno);
         }
         vk.proc = None;
         vk.okno = None;
@@ -423,16 +482,6 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
             let _ = t.kill();
             let _ = t.wait();
         }
-    }
-}
-
-#[tauri::command]
-fn ostanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
-    if s.vkladki.lock().unwrap().contains_key(&id) {
-        ostanovit_vnutri(&app, &s, &id);
-        da()
-    } else {
-        net("такой супер-вкладки нет")
     }
 }
 
@@ -464,30 +513,90 @@ fn izmenit(app: tauri::AppHandle, s: State<Sostoyanie>, nastrojki: Nastrojki) ->
     da()
 }
 
-/// Удалить вкладку насовсем вместе с её профилем.
-/// ⛔ В профиле лежат входы в почту и прочее — спрашивать подтверждение
-/// обязан тот, кто вызывает.
+/// Есть ли в профиле что-то стоящее сохранять: куки, история. Свежая
+/// вкладка закрывается без вопросов; жилая спрашивает «сохранить?».
 #[tauri::command]
-fn udalit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
-    let mut v = s.vkladki.lock().unwrap();
-    match v.remove(&id) {
-        Some(mut vk) => {
-            if let Some(o) = vk.okno.take() {
-                let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
-            }
-            for p in [vk.proc.as_mut(), vk.tunnel.as_mut()].into_iter().flatten() {
-                let _ = p.kill();
-                let _ = p.wait();
-            }
-            if let Some(p) = vk.nash_proxy.take() {
-                p.ostanovit();
-            }
-            let _ = std::fs::remove_dir_all(brauzer::papka_profilej().join(&id));
-            let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
-            sohranit_spisok(&vse);
-            da()
+fn nuzhno_sohranenie(id: String) -> bool {
+    !brauzer::profil_svety(&id)
+}
+
+/// Закрыть супер-вкладку. `sohranit` — true: профиль и настройки кладём
+/// в список сохранённых (открыть заново через меню у «+»); false: профиль
+/// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
+#[tauri::command]
+fn zakryt(app: tauri::AppHandle, s: State<Sostoyanie>, id: String, sohranit: bool) -> Otvet {
+    // Убираем из списка ПЕРВЫМ и отпускаем мьютекс — остановка движка
+    // сама берёт этот мьютекс, держать его тут = тупик.
+    let udalena = {
+        let mut v = s.vkladki.lock().unwrap();
+        v.remove(&id).map(|vk| vk.nastrojki)
+    };
+    let Some(nastrojki) = udalena else {
+        return net("такой супер-вкладки нет");
+    };
+    ostanovit_vnutri(&app, &s, &id);
+    {
+        let v = s.vkladki.lock().unwrap();
+        let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
+        sohranit_spisok(&vse);
+    }
+    if sohranit {
+        let mut sohr = zagruzit_sohranennye();
+        sohr.retain(|n| n.id != id);
+        sohr.push(nastrojki);
+        sohranit_sohranennye(&sohr);
+    } else {
+        let _ = std::fs::remove_dir_all(brauzer::papka_profilej().join(&id));
+    }
+    let _ = app.emit("vkladki-izmenilis", id);
+    da()
+}
+
+/// Сохранённые супер-вкладки — для меню у кнопки «+».
+#[tauri::command]
+fn sohranennye() -> Vec<Nastrojki> {
+    let mut v = zagruzit_sohranennye();
+    v.sort_by(|a, b| a.nazvanie.cmp(&b.nazvanie));
+    v
+}
+
+/// Открыть сохранённую супер-вкладку заново: из списка сохранённых —
+/// в полосу, движок поднимается.
+#[tauri::command]
+fn vosstanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
+    let nastrojki = {
+        let mut sohr = zagruzit_sohranennye();
+        let n = match sohr.iter().position(|n| n.id == id) {
+            Some(i) => sohr.remove(i),
+            None => return net("такой сохранённой вкладки нет"),
+        };
+        sohranit_sohranennye(&sohr);
+        n
+    };
+    {
+        let mut v = s.vkladki.lock().unwrap();
+        if v.contains_key(&id) {
+            return net("такая супер-вкладка уже открыта");
         }
-        None => net("такой супер-вкладки нет"),
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, nash_proxy: None, tunnel: None });
+        let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
+        sohranit_spisok(&vse);
+    }
+    zapustit_vnutri(&app, &s, &id)
+}
+
+/// Выбросить сохранённую супер-вкладку насовсем: настройки и профиль
+/// со всеми входами. Подтверждение спрашивает лицевая часть.
+#[tauri::command]
+fn udalit_sohranennuyu(id: String) -> Otvet {
+    let mut sohr = zagruzit_sohranennye();
+    if sohr.iter().any(|n| n.id == id) {
+        sohr.retain(|n| n.id != id);
+        sohranit_sohranennye(&sohr);
+        let _ = std::fs::remove_dir_all(brauzer::papka_profilej().join(&id));
+        da()
+    } else {
+        net("такой сохранённой вкладки нет")
     }
 }
 
@@ -571,6 +680,7 @@ pub fn run() {
                         proxy: String::new(),
                         adres: "about:blank".into(),
                         rezat_reklamu: true,
+                        pustaya: true,
                     };
                     let o = otkryt(h.clone(), s, n);
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
@@ -579,8 +689,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, ostanovit, udalit,
-            zadat_mesto, dvizhok_est, pokazat_dvizhki, izmenit
+            spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
+            sohranennye, vosstanovit, udalit_sohranennuyu
         ])
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")
@@ -602,17 +713,59 @@ pub fn run() {
                 }
                 _ => {}
             }
-            // ⛔ При закрытии программы движки ОСТАЮТСЯ жить: поймали
-            // 06.11.2026 — закрыли окно, в памяти висело 13 процессов
-            // браузера. Гасим все при выходе.
-            if let tauri::RunEvent::Exit = sobytie {
-                let s: tauri::State<Sostoyanie> = app.state();
-                let mut v = s.vkladki.lock().unwrap();
-                for vk in v.values_mut() {
-                    for pr in [vk.proc.as_mut(), vk.tunnel.as_mut()].into_iter().flatten() {
-                        let _ = pr.kill();
-                        let _ = pr.wait();
+            static AVTOSTART_SDELAN: std::sync::atomic::AtomicBool =
+                std::sync::atomic::AtomicBool::new(false);
+            // Триггер — ПЕРВЫЙ фокус или первый непустой размер окна: под
+            // Xvfb при старте приходит только Focused (10.11.2026).
+            let okno_zhivo = matches!(
+                &sobytie,
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::Resized(r),
+                    ..
+                } if label == "main" && r.width > 0 && r.height > 0
+            ) || matches!(
+                &sobytie,
+                tauri::RunEvent::WindowEvent {
+                    label,
+                    event: tauri::WindowEvent::Focused(true),
+                    ..
+                } if label == "main"
+            );
+            if okno_zhivo && !AVTOSTART_SDELAN.swap(true, std::sync::atomic::Ordering::SeqCst)
+            {
+                // При запуске поднимается ТОЛЬКО вкладка, которая была
+                // активна при закрытии (10.11.2026, задал user). Остальные
+                // спят до клика — вкладки не жрут память понапрасну.
+                let h = app.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(600));
+                    let Some(id) = zagruzit_aktivnuyu() else { return };
+                    let est = {
+                        let s: tauri::State<Sostoyanie> = h.state();
+                        let v = s.vkladki.lock().unwrap();
+                        v.contains_key(&id)
+                    };
+                    if !est {
+                        return;
                     }
+                    let s: tauri::State<Sostoyanie> = h.state();
+                    let _ = zapustit_vnutri(&h, &s, &id);
+                    let _ = h.emit("vkladki-izmenilis", id);
+                });
+            }
+            // ⛔ При закрытии программы гасим движки ВЕЖЛИВО (сессии
+            // сохраняются, при следующем запуске — без «восстановить»);
+            // тупят — добиваем. Поймали 06.11.2026: без этого в памяти
+            // оставалось 13 процессов браузера.
+            if let tauri::RunEvent::Exit = sobytie {
+                let ids: Vec<String> = {
+                    let s: tauri::State<Sostoyanie> = app.state();
+                    let v = s.vkladki.lock().unwrap();
+                    v.values().map(|vk| vk.nastrojki.id.clone()).collect()
+                };
+                for id in ids {
+                    ostanovit_vnutri(app, &app.state(), &id);
                 }
             }
         });

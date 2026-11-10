@@ -18,6 +18,7 @@ body {
 
 /* полоса супер-вкладок */
 .polosa {
+  position: relative;
   display: flex; align-items: center; gap: 4px;
   padding: 6px 8px; background: var(--fon2);
   border-bottom: 1px solid var(--kraj); flex: 0 0 auto;
@@ -87,8 +88,6 @@ body {
 
 /* вкладка, которая сохранена, но движок не поднят */
 .tochka.spit { background: #4a5162; box-shadow: none; }
-.stop { opacity: .4; padding: 0 2px; font-size: 10px; }
-.stop:hover { opacity: 1; }
 
 .pravka { margin-left: 2px; opacity: .45; padding: 0 2px; font-size: 12px; }
 .pravka:hover { opacity: 1; }
@@ -108,3 +107,16 @@ body {
   background: #10131b; border: 1px solid var(--kraj); border-radius: 4px;
   padding: 0 4px; font-size: 11px;
 }
+
+.vypadajka {
+  position: absolute; top: 44px; right: 8px; z-index: 30; min-width: 220px;
+  background: #161a26; border: 1px solid var(--kraj); border-radius: 10px;
+  padding: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.5);
+}
+.stroka-menyu {
+  display: flex; align-items: center; gap: 6px; padding: 7px 8px;
+  border-radius: 7px; cursor: pointer; color: var(--tekst);
+}
+.stroka-menyu:hover { background: #1e2230; }
+.stroka-menyu .krest { margin-left: auto; }
+.pusto-v-menyu { padding: 10px; color: var(--tiho); font-size: 13px; }

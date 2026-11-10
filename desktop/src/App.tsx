@@ -3,7 +3,14 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { proverit_obnovlenie } from "./updater";
 
-type Nastrojki = { id: string; nazvanie: string; proxy: string; adres: string; rezat_reklamu: boolean };
+type Nastrojki = {
+  id: string;
+  nazvanie: string;
+  proxy: string;
+  adres: string;
+  rezat_reklamu: boolean;
+  pustaya: boolean;
+};
 type Vidno = Nastrojki & { zapushchena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
 
@@ -14,6 +21,13 @@ export default function App() {
   const [dvizhokEst, setDvizhokEst] = useState(true);
   const [dialog, setDialog] = useState(false);
   const [pravka, setPravka] = useState<Nastrojki | null>(null);
+  // Вопрос «сохранить вкладку?»: null = не спрашиваем, иначе обещание.
+  const [vopros, setVopros] = useState<{
+    nazvanie: string;
+    razreshit: (sohranit: boolean | null) => void;
+  } | null>(null);
+  // Меню сохранённых вкладок у кнопки «+».
+  const [menuSohranennyh, setMenuSohranennyh] = useState<Nastrojki[] | null>(null);
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
   const [zarezano, setZarezano] = useState(0);
@@ -61,7 +75,7 @@ export default function App() {
     };
   }, [soobshchitMesto]);
 
-  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean) {
+  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean) {
     setZanyat(true);
     setOshibka("");
     const id = "sv" + Date.now().toString(36);
@@ -73,6 +87,7 @@ export default function App() {
           proxy,
           adres: adres || "about:blank",
           rezat_reklamu: rezat,
+          pustaya,
         },
       });
       if (!o.ok) {
@@ -111,13 +126,13 @@ export default function App() {
     setDialog(true);
   }
 
-  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean) {
+  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean) {
     if (!pravka) return;
     setZanyat(true);
     setOshibka("");
     try {
       const o = await invoke<Otvet>("izmenit", {
-        nastrojki: { ...pravka, nazvanie, proxy, adres: adres || "about:blank", rezat_reklamu: rezat },
+        nastrojki: { ...pravka, nazvanie, proxy, adres: adres || "about:blank", rezat_reklamu: rezat, pustaya },
       });
       if (!o.ok) {
         setOshibka(o.soobshchenie);
@@ -149,24 +164,48 @@ export default function App() {
     soobshchitMesto();
   }
 
-  async function ostanovit(id: string, e: React.MouseEvent) {
+  async function zakrytVkladku(id: string, nazvanie: string, e: React.MouseEvent) {
     e.stopPropagation();
-    await invoke<Otvet>("ostanovit", { id });
-    setVkladki(await invoke<Vidno[]>("spisok"));
-  }
-
-  async function udalit(id: string, nazvanie: string, e: React.MouseEvent) {
-    e.stopPropagation();
-    // ⛔ В профиле вкладки лежат входы в почту и прочее — спрашиваем.
-    const ok = window.confirm(
-      "Удалить супер-вкладку «" + nazvanie + "»?\n\n" +
-        "Вместе с ней пропадёт её профиль: входы на сайты, закладки и история."
-    );
-    if (!ok) return;
-    await invoke<Otvet>("udalit", { id });
+    // Вкладка с данными (входы, история) спрашивает: сохранить или нет.
+    // Свежая закрывается сразу, без вопросов.
+    let sohranit = false;
+    if (await invoke<boolean>("nuzhno_sohranenie", { id })) {
+      const otvet = await voprosSohraneniya(nazvanie);
+      if (otvet === null) return;
+      sohranit = otvet;
+    }
+    await invoke<Otvet>("zakryt", { id, sohranit });
     const spisok = await invoke<Vidno[]>("spisok");
     setVkladki(spisok);
     if (aktivnaya === id) setAktivnaya(spisok[0]?.id ?? null);
+  }
+
+  // Трёхкнопочный вопрос «сохранить?» — window.confirm умеет только два.
+  function voprosSohraneniya(nazvanie: string): Promise<boolean | null> {
+    return new Promise((razreshit) => {
+      setVopros({ nazvanie, razreshit });
+    });
+  }
+
+  async function otkrytSohranennuyu(id: string) {
+    setMenuSohranennyh(null);
+    const o = await invoke<Otvet>("vosstanovit", { id });
+    if (!o.ok) {
+      setOshibka(o.soobshchenie);
+      return;
+    }
+    setVkladki(await invoke<Vidno[]>("spisok"));
+    setAktivnaya(id);
+    soobshchitMesto();
+  }
+
+  async function udalitSohranennuyu(id: string, nazvanie: string, e: React.MouseEvent) {
+    e.stopPropagation();
+    if (!window.confirm(`Выбросить сохранённую вкладку «${nazvanie}» насовсем?\n\nПрофиль со всеми входами будет стёрт.`)) {
+      return;
+    }
+    await invoke<Otvet>("udalit_sohranennuyu", { id });
+    setMenuSohranennyh(await invoke<Nastrojki[]>("sohranennye"));
   }
 
   useEffect(() => {
@@ -188,15 +227,6 @@ export default function App() {
               data-pryamo={v.proxy ? "net" : "da"}
             />
             {v.nazvanie}
-            {v.zapushchena && (
-              <span
-                className="stop"
-                title="Остановить, не удаляя"
-                onClick={(e) => ostanovit(v.id, e)}
-              >
-                ■
-              </span>
-            )}
             <span
               className="pravka"
               title="Настройки супер-вкладки"
@@ -207,13 +237,27 @@ export default function App() {
             >
               ✎
             </span>
-            <span className="krest" title="Удалить" onClick={(e) => udalit(v.id, v.nazvanie, e)}>
+            <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
               ×
             </span>
           </button>
         ))}
         <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
           +
+        </button>
+        <button
+          className="plyus"
+          title="Сохранённые супер-вкладки"
+          disabled={zanyat}
+          onClick={async () => {
+            if (menuSohranennyh) {
+              setMenuSohranennyh(null);
+            } else {
+              setMenuSohranennyh(await invoke<Nastrojki[]>("sohranennye"));
+            }
+          }}
+        >
+          ▾
         </button>
         {zarezano > 0 && (
           <span className="schet" title="Зарезано рекламы в этой вкладке">
@@ -257,6 +301,42 @@ export default function App() {
           onOk={pravka ? pravit : dobavit}
         />
       )}
+      {menuSohranennyh !== null && (
+        <div className="vypadajka">
+          {menuSohranennyh.length === 0 && <div className="pusto-v-menyu">Нет сохранённых</div>}
+          {menuSohranennyh.map((n) => (
+            <div key={n.id} className="stroka-menyu" onClick={() => otkrytSohranennuyu(n.id)}>
+              <span className="tochka" data-pryamo={n.proxy ? "net" : "da"} />
+              {n.nazvanie}
+              <span
+                className="krest"
+                title="Выбросить насовсем"
+                onClick={(e) => udalitSohranennuyu(n.id, n.nazvanie, e)}
+              >
+                ×
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+      {vopros && (
+        <div className="zatemnenie" onClick={() => vopros.razreshit(null)}>
+          <div className="dialog" onClick={(e) => e.stopPropagation()}>
+            <h2>Сохранить вкладку «{vopros.nazvanie}»?</h2>
+            <p>
+              В её профиле есть входы, история и открытые страницы.
+              Сохранённую вкладку можно открыть заново через ▾ у кнопки «+».
+            </p>
+            <div className="knopki">
+              <button onClick={() => vopros.razreshit(null)}>Отмена</button>
+              <button onClick={() => vopros.razreshit(false)}>Не сохранять</button>
+              <button className="glavnaya" onClick={() => vopros.razreshit(true)}>
+                Сохранить
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -265,12 +345,13 @@ function Dialog(props: {
   zanyat: boolean;
   pravka: Nastrojki | null;
   onOtmena: () => void;
-  onOk: (n: string, p: string, a: string, r: boolean) => void;
+  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean) => void;
 }) {
   const [nazvanie, setNazvanie] = useState(props.pravka?.nazvanie ?? "");
   const [proxy, setProxy] = useState(props.pravka?.proxy ?? "");
   const [adres, setAdres] = useState(props.pravka?.adres ?? "");
   const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
+  const [pustaya, setPustaya] = useState(props.pravka?.pustaya ?? false);
   return (
     <div className="zatemnenie" onClick={props.onOtmena}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
@@ -320,12 +401,26 @@ function Dialog(props: {
             </small>
           </span>
         </label>
+        <label className="galka">
+          <input
+            type="checkbox"
+            checked={pustaya}
+            onChange={(e) => setPustaya(e.target.checked)}
+          />
+          <span>
+            Открывать пустой
+            <small>
+              Не восстанавливать открытые вкладки с прошлого раза — начинать
+              со страницы «Открыть сразу».
+            </small>
+          </span>
+        </label>
         <div className="knopki">
           <button onClick={props.onOtmena}>Отмена</button>
           <button
             className="glavnaya"
             disabled={props.zanyat || !nazvanie.trim()}
-            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat)}
+            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya)}
           >
             {props.zanyat
               ? props.pravka

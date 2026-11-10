@@ -81,7 +81,7 @@ enum Zakaz {
     Dvizhok {
         id: String,
         proxy: Option<String>,
-        adres: String,
+        adres: Option<String>,
         otvet: SyncSender<anyhow::Result<Child>>,
     },
     /// Любая другая программа — например xray для подписки.
@@ -110,7 +110,7 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
                 while let Ok(z) = rx.recv() {
                     match z {
                         Zakaz::Dvizhok { id, proxy, adres, otvet } => {
-                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), &adres));
+                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref()));
                         }
                         Zakaz::Prosto { programma, dovody, otvet } => {
                             let _ = otvet.send(zapustit_prosto(&programma, &dovody));
@@ -123,13 +123,14 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
     })
 }
 
-/// Запустить движок для одной супер-вкладки.
-pub fn zapustit(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<Child> {
+/// Запустить движок для одной супер-вкладки. `adres` — только для режима
+/// «открывать пустой» или первого запуска; None = восстановить вкладки.
+pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
     let (otvet, zhdem) = sync_channel(1);
     zapuskatel().send(Zakaz::Dvizhok {
         id: id.to_string(),
         proxy: proxy.map(|s| s.to_string()),
-        adres: adres.to_string(),
+        adres: adres.map(|s| s.to_string()),
         otvet,
     })?;
     // ⛔ Ожидание без края превращало неудачный запуск в вечное «Запускаю…».
@@ -139,12 +140,64 @@ pub fn zapustit(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<Ch
         .map_err(|_| anyhow::anyhow!("поток запуска движков молчит 25 с — вероятно, антивирус держит exe"))?
 }
 
-fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<Child> {
+/// Остановить движок: сначала ВЕЖЛИВО (окно закрывается как по крестику —
+/// Chromium сохраняет сессию сам и при следующем запуске не лезет с
+/// «восстановить страницы»), по таймауту — убить. Возвращается, когда
+/// процесса нет.
+pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
+    if let Some(o) = okno {
+        let _ = crate::okna::sistema::zakryt_vezhlivo(o);
+    }
+    let srok = std::time::Instant::now();
+    loop {
+        if matches!(ditya.try_wait(), Ok(Some(_))) {
+            return;
+        }
+        if srok.elapsed().as_secs() >= 5 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
+    }
+    let _ = ditya.kill();
+    let _ = ditya.wait();
+}
+
+/// Профиль ещё пуст: ни куки, ни истории. Свежую вкладку открываем
+/// по настройке «открыть сразу»; у жилой по умолчанию восстанавливаем
+/// вкладки прошлой сессии.
+pub fn profil_svety(id: &str) -> bool {
+    let profil = papka_profilej().join(id).join("Default");
+    !profil.join("Cookies").exists() && !profil.join("History").exists()
+}
+
+/// Включить/выключить восстановление вкладок прошлой сессии. Пишем
+/// в Preferences ДО запуска: Chromium такой файл принимает и перенимает.
+/// Без этой записи вкладки прошлого раза не вернутся — появится пустая.
+pub fn zapisat_vosstanovlenie(id: &str, vosstanavlivat: bool) {
+    let prefs = papka_profilej().join(id).join("Default").join("Preferences");
+    let mut v: serde_json::Value = std::fs::read_to_string(&prefs)
+        .ok()
+        .and_then(|s| serde_json::from_str(&s).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    if vosstanavlivat {
+        v["session"]["restore_on_startup"] = serde_json::json!(1);
+    } else if let Some(session) = v.get_mut("session").and_then(|s| s.as_object_mut()) {
+        session.remove("restore_on_startup");
+    }
+    if let Some(roditel) = prefs.parent() {
+        let _ = std::fs::create_dir_all(roditel);
+    }
+    if let Ok(s) = serde_json::to_string(&v) {
+        let _ = std::fs::write(&prefs, s);
+    }
+}
+
+fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
     let dvizhok = najti_dvizhok()
         .ok_or_else(|| anyhow::anyhow!("движок не найден: положи chromium рядом с программой"))?;
     let profil = papka_profilej().join(id);
-    std::fs::create_dir_all(&profil)?;
     let zhurnal = profil.join("engine.log");
+    std::fs::create_dir_all(&profil)?;
     let _ = std::fs::rename(&zhurnal, profil.join("engine.log.1"));
     let stdout = std::fs::File::create(&zhurnal)?;
     let stderr = stdout.try_clone()?;
@@ -154,12 +207,18 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<C
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-features=Translate,MediaRouter")
+        .arg("--hide-crash-restore-bubble")
         .arg("--enable-logging=stderr")
-        // ⛔ Своя метка в заголовке окна не годится: заголовок = имя страницы.
-        // Окно ищем по номеру процесса, см. okna.rs.
-        .arg(adres)
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    // ⛔ Своя метка в заголовке окна не годится: заголовок = имя страницы.
+    // Окно ищем по номеру процесса, см. okna.rs.
+    // Адрес подаём ТОЛЬКО когда сказано «открывать пустой» (или профиль
+    // ещё свежий): иначе Chromium открыл бы его вместо восстановления
+    // вкладок прошлой сессии.
+    if let Some(a) = adres {
+        cmd.arg(a);
+    }
 
     if let Some(p) = proxy {
         if !p.trim().is_empty() {
@@ -333,4 +392,40 @@ pub fn najti_xray() -> Option<PathBuf> {    let imya = if cfg!(target_os = "wind
     }
     let sistemnyj = Path::new("/usr/bin/xray");
     sistemnyj.exists().then(|| sistemnyj.to_path_buf())
+}
+
+#[cfg(test)]
+mod proverki {
+    use super::*;
+
+    #[test]
+    fn vosstanovlenie_pishetsya_i_ubiraetsya() {
+        let koren = std::env::temp_dir().join("nexusbro_proba_vosstanovleniya");
+        let id = "test-vkladka";
+        let profil = koren.join("NexusBro/profili").join(id);
+        let _ = std::fs::remove_dir_all(&koren);
+        std::env::set_var("XDG_DATA_HOME", &koren);
+
+        zapisat_vosstanovlenie(id, true);
+        let prefs: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(profil.join("Default/Preferences")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(prefs["session"]["restore_on_startup"], 1);
+
+        // существующие ключи не затираем
+        zapisat_vosstanovlenie(id, false);
+        let prefs: serde_json::Value = serde_json::from_str(
+            &std::fs::read_to_string(profil.join("Default/Preferences")).unwrap(),
+        )
+        .unwrap();
+        assert!(prefs.get("session").is_none() || prefs["session"].get("restore_on_startup").is_none());
+
+        assert!(profil_svety(id));
+        std::fs::create_dir_all(profil.join("Default")).unwrap();
+        std::fs::write(profil.join("Default/Cookies"), "x").unwrap();
+        assert!(!profil_svety(id));
+        let _ = std::fs::remove_dir_all(&koren);
+        std::env::remove_var("XDG_DATA_HOME");
+    }
 }
