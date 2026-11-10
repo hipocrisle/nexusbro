@@ -247,9 +247,21 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         Ok(o) => o,
         Err(e) => {
             let log = brauzer::papka_profilej().join(id).join("engine.log");
+            // Хвост журнала — в текст ошибки: одного скриншота хватает,
+            // чтобы понять, что движку не понравилось, не лазя по дискам.
+            let hvost = std::fs::read_to_string(&log).ok()
+                .map(|s| {
+                    s.lines().rev().take(12).collect::<Vec<_>>()
+                        .into_iter().rev().collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| {
+                    "(журнал пуст — движок не проронил ни строчки: его, скорее всего, не дали запуститься)".into()
+                });
             return net(format!(
-                "движок запустился, но окно не нашлось: {}. Журнал: {}",
-                e, log.display()
+                "движок запустился, но окно не нашлось: {}. Журнал: {}\n---\n{}",
+                e, log.display(), hvost
             ));
         }
     };

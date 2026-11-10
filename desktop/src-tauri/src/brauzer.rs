@@ -132,7 +132,11 @@ pub fn zapustit(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<Ch
         adres: adres.to_string(),
         otvet,
     })?;
-    zhdem.recv()?
+    // ⛔ Ожидание без края превращало неудачный запуск в вечное «Запускаю…».
+    // Если поток запуска не ответил — говорим об этом прямо.
+    zhdem
+        .recv_timeout(std::time::Duration::from_secs(25))
+        .map_err(|_| anyhow::anyhow!("поток запуска движков молчит 25 с — вероятно, антивирус держит exe"))?
 }
 
 fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: &str) -> anyhow::Result<Child> {

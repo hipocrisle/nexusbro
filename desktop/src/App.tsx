@@ -73,7 +73,10 @@ export default function App() {
     });
     setZanyat(false);
     if (!o.ok) {
+      // ⛔ Ошибку рисуем ПОД полосой вкладок: за закрытым диалогом её не видно,
+      // и поломка выглядит как вечное «Запускаю…».
       setOshibka(o.soobshchenie);
+      setDialog(false);
       return;
     }
     setVkladki(await invoke<Vidno[]>("spisok"));
