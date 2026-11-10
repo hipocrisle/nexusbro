@@ -82,6 +82,7 @@ enum Zakaz {
         id: String,
         proxy: Option<String>,
         adres: Option<String>,
+        vosstanavlivat: bool,
         otvet: SyncSender<anyhow::Result<Child>>,
     },
     /// Любая другая программа — например xray для подписки.
@@ -109,8 +110,8 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .spawn(move || {
                 while let Ok(z) = rx.recv() {
                     match z {
-                        Zakaz::Dvizhok { id, proxy, adres, otvet } => {
-                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref()));
+                        Zakaz::Dvizhok { id, proxy, adres, vosstanavlivat, otvet } => {
+                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref(), vosstanavlivat));
                         }
                         Zakaz::Prosto { programma, dovody, otvet } => {
                             let _ = otvet.send(zapustit_prosto(&programma, &dovody));
@@ -125,12 +126,13 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
 
 /// Запустить движок для одной супер-вкладки. `adres` — только для режима
 /// «открывать пустой» или первого запуска; None = восстановить вкладки.
-pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
+pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
     let (otvet, zhdem) = sync_channel(1);
     zapuskatel().send(Zakaz::Dvizhok {
         id: id.to_string(),
         proxy: proxy.map(|s| s.to_string()),
         adres: adres.map(|s| s.to_string()),
+        vosstanavlivat,
         otvet,
     })?;
     // ⛔ Ожидание без края превращало неудачный запуск в вечное «Запускаю…».
@@ -195,7 +197,7 @@ pub fn zapisat_vosstanovlenie(id: &str, vosstanavlivat: bool) {
     }
 }
 
-fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
+fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
     let dvizhok = najti_dvizhok()
         .ok_or_else(|| anyhow::anyhow!("движок не найден: положи chromium рядом с программой"))?;
     let profil = papka_profilej().join(id);
@@ -210,10 +212,20 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
         .arg("--disable-features=Translate,MediaRouter")
+        // Тёмная тема интерфейса и принудительное затемнение сайтов:
+        // движок должен выглядеть как часть NexusBro, а не белым пятном
+        // посреди тёмного окна (10.11.2026, задал user).
+        .arg("--force-dark-mode")
+        .arg("--enable-features=WebContentsForceDark")
         .arg("--hide-crash-restore-bubble")
         .arg("--enable-logging=stderr")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
+    // Явное восстановление прошлой сессии — не зависим только от
+    // настройки в профиле (10.11.2026: «перезапуск не переоткрыл вкладки»).
+    if vosstanavlivat {
+        cmd.arg("--restore-last-session");
+    }
     // ⛔ Своя метка в заголовке окна не годится: заголовок = имя страницы.
     // Окно ищем по номеру процесса, см. okna.rs.
     // Адрес подаём ТОЛЬКО когда сказано «открывать пустой» (или профиль

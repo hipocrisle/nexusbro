@@ -311,7 +311,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     } else {
         None
     };
-    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres) {
+    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres, !nastrojki.pustaya) {
         Ok(c) => c,
         Err(e) => {
             nash.ostanovit();
@@ -463,29 +463,48 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
     sohranit_aktivnuyu(id);
 }
 
-/// Глушить экземпляр вкладки: вежливо (сессия движка сохраняется), с
-/// добивкой по таймауту. Вкладку, профиль и настройки не трогает.
+/// Глушить экземпляр вкладки: открепляем ввод и убиваем процесс НА
+/// НАШЕМ UI-ПОТОКЕ. ⛔ Убить чужой процесс, к потоку которого мы
+/// прикреплены AttachThreadInput, НЕЛЬЗЯ: Windows вешает нашу очередь
+/// ввода — после закрытия вкладки программа перестаёт реагировать,
+/// а окно движка остаётся висеть (10.11.2026, поймал user).
 fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
-    let mut v = s.vkladki.lock().unwrap();
-    if let Some(vk) = v.get_mut(id) {
-        let okno = vk.okno.take();
-        // Открепляем очередь ввода — иначе наш ввод останется привязан
-        // к потоку чужого окна.
-        if let Some(o) = okno {
-            let _ = app.run_on_main_thread(move || sistema::otsoedinit_vvod(o));
+    let (proc, okno) = {
+        let mut v = s.vkladki.lock().unwrap();
+        match v.get_mut(id) {
+            Some(vk) => (vk.proc.take(), vk.okno.take()),
+            None => return,
         }
-        if let Some(p) = vk.proc.as_mut() {
-            brauzer::ostanovit_dvizhka(p, okno);
+    };
+    if let Some(mut p) = proc {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        let otpravleno = app.run_on_main_thread(move || {
+            if let Some(o) = okno {
+                sistema::otsoedinit_vvod(o);
+            }
+            brauzer::ostanovit_dvizhka(&mut p, None);
+            let _ = tx.send(());
+        });
+        if otpravleno.is_ok() {
+            // Не ждём дольше 10 с: задание всё равно добьёт дерево.
+            let _ = rx.recv_timeout(std::time::Duration::from_secs(10));
         }
-        vk.proc = None;
-        vk.okno = None;
-        if let Some(p) = vk.nash_proxy.take() {
-            p.ostanovit();
+        // is_err = главный поток уже остановлен (завершение программы):
+        // процесс вот-вот закроется, задание само добьёт дерево движков.
+    }
+    let (proxy, tunnel) = {
+        let mut v = s.vkladki.lock().unwrap();
+        match v.get_mut(id) {
+            Some(vk) => (vk.nash_proxy.take(), vk.tunnel.take()),
+            None => (None, None),
         }
-        if let Some(mut t) = vk.tunnel.take() {
-            let _ = t.kill();
-            let _ = t.wait();
-        }
+    };
+    if let Some(p) = proxy {
+        p.ostanovit();
+    }
+    if let Some(mut t) = tunnel {
+        let _ = t.kill();
+        let _ = t.wait();
     }
 }
 
@@ -657,6 +676,10 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
     if let Some(mm) = m {
         let _ = sistema::peremestit(okno, mm);
     }
+    // ⛔ Фокус при возврате из другого приложения оседает на нашем
+    // окне — вернём клавиатуру движку, иначе текст не набирается
+    // (10.11.2026, поймал user).
+    let _ = app.run_on_main_thread(move || sistema::fokus_dvizhku(okno));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -849,20 +872,13 @@ pub fn run() {
                     let _ = h.emit("vkladki-izmenilis", id);
                 });
             }
-            // ⛔ При закрытии программы гасим движки ВЕЖЛИВО (сессии
-            // сохраняются, при следующем запуске — без «восстановить»);
-            // тупят — добиваем. Поймали 06.11.2026: без этого в памяти
-            // оставалось 13 процессов браузера.
+            // ⛔ При закрытии программы движки НЕ глушим руками: убийство
+            // прикреплённого процесса вешает очередь ввода. Система сама
+            // добьёт дерево — задание с KILL_ON_JOB_CLOSE (Windows) и
+            // PR_SET_PDEATHSIG (Linux). Поймали 06.11.2026: без такого
+            // прибивания в памяти оставалось 13 процессов браузера.
             if let tauri::RunEvent::Exit = sobytie {
                 ZAVERSHENIE.store(true, std::sync::atomic::Ordering::SeqCst);
-                let ids: Vec<String> = {
-                    let s: tauri::State<Sostoyanie> = app.state();
-                    let v = s.vkladki.lock().unwrap();
-                    v.values().map(|vk| vk.nastrojki.id.clone()).collect()
-                };
-                for id in ids {
-                    ostanovit_vnutri(app, &app.state(), &id);
-                }
             }
         });
 }

@@ -3,5 +3,12 @@
   "identifier": "default",
   "description": "Права окна NexusBro",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "updater:default",
+    "dialog:default",
+    "process:allow-exit",
+    "process:allow-restart",
+    "window-state:default"
+  ]
 }
