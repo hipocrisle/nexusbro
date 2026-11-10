@@ -21,13 +21,18 @@ export async function proverit_obnovlenie(
   soobshchit?: (s: string) => void
 ): Promise<void> {
   try {
+    let last = 0;
     if (!prinuditelno) {
-      const last = parseInt(localStorage.getItem(LAST_CHECK_LS) ?? "0", 10);
+      last = parseInt(localStorage.getItem(LAST_CHECK_LS) ?? "0", 10);
       if (Date.now() - last < CHECK_INTERVAL_MS) return;
-      localStorage.setItem(LAST_CHECK_LS, String(Date.now()));
     }
 
     const update = await check();
+    // Метку ставим ТОЛЬКО после удачной проверки: сбой сети не должен
+    // откладывать следующую попытку на час (10.11.2026, поймал user).
+    if (!prinuditelno) {
+      localStorage.setItem(LAST_CHECK_LS, String(Date.now()));
+    }
     if (!update) {
       if (!tiho) soobshchit?.("Обновлений нет — стоит последняя версия.");
       return;
