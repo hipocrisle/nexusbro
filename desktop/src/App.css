@@ -127,3 +127,13 @@ body {
   padding: 10px; border-radius: 8px; font-size: 12px; line-height: 1.5;
   white-space: pre-wrap; user-select: text;
 }
+
+.zatemnenie-prozrachnoe { position: fixed; inset: 0; z-index: 40; }
+.vypadajka { position: absolute; }
+.polosa-progress {
+  display: flex; align-items: center; gap: 10px; padding: 4px 12px;
+  background: var(--fon2); border-bottom: 1px solid var(--kraj);
+}
+.progress-liniya { flex: 1; height: 6px; background: #0d0f16; border-radius: 3px; overflow: hidden; }
+.progress-zalivka { height: 100%; background: var(--akcent); transition: width .3s; }
+.progress-tekst { color: var(--tiho); font-size: 12px; font-variant-numeric: tabular-nums; }

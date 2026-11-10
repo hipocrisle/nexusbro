@@ -32,6 +32,10 @@ export default function App() {
   const [obnovlenie, setObnovlenie] = useState("");
   // Текст диагностики — для копирования и отправки разработчику.
   const [diagnostika, setDiagnostika] = useState<string | null>(null);
+  // Контекстное меню супервкладки (правый клик).
+  const [menyu, setMenyu] = useState<{ x: number; y: number; vkladka: Vidno } | null>(null);
+  // Прогресс скачивания обновления: байты и общий размер (0 = неизвестен).
+  const [progress, setProgress] = useState<{ polucheno: number; vsego: number } | null>(null);
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
   const [zarezano, setZarezano] = useState(0);
@@ -168,8 +172,8 @@ export default function App() {
     soobshchitMesto();
   }
 
-  async function zakrytVkladku(id: string, nazvanie: string, e: React.MouseEvent) {
-    e.stopPropagation();
+  async function zakrytVkladku(id: string, nazvanie: string, e?: React.MouseEvent) {
+    e?.stopPropagation();
     // Вкладка с данными (входы, история) спрашивает: сохранить или нет.
     // Свежая закрывается сразу, без вопросов.
     let sohranit = false;
@@ -225,13 +229,18 @@ export default function App() {
   }, [aktivnaya]);
 
   return (
-    <div className="okno">
+    <div className="okno" onContextMenu={(e) => e.preventDefault()}>
       <div className="polosa">
         {vkladki.map((v) => (
           <button
             key={v.id}
             className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "")}
             onClick={() => pereklyuchit(v.id)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setMenyu({ x: e.clientX, y: e.clientY, vkladka: v });
+            }}
             title={v.proxy || "прямое соединение"}
           >
             <span
@@ -239,16 +248,6 @@ export default function App() {
               data-pryamo={v.proxy ? "net" : "da"}
             />
             {v.nazvanie}
-            <span
-              className="pravka"
-              title="Настройки супер-вкладки"
-              onClick={(e) => {
-                e.stopPropagation();
-                nachatPravku(v);
-              }}
-            >
-              ✎
-            </span>
             <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
               ×
             </span>
@@ -276,10 +275,16 @@ export default function App() {
           title="Проверить обновления"
           onClick={async () => {
             setObnovlenie("Проверяю…");
-            await proverit_obnovlenie(true, false, (s) => {
-              setObnovlenie(s);
-              setTimeout(() => setObnovlenie(""), 8000);
-            });
+            await proverit_obnovlenie(
+              true,
+              false,
+              (s) => {
+                setObnovlenie(s);
+                setTimeout(() => setObnovlenie(""), 8000);
+              },
+              (polucheno, vsego) => setProgress({ polucheno, vsego })
+            );
+            setProgress(null);
             if (obnovlenie === "Проверяю…") setObnovlenie("");
           }}
         >
@@ -355,6 +360,84 @@ export default function App() {
               </span>
             </div>
           ))}
+        </div>
+      )}
+      {menyu && (
+        <div
+          className="zatemnenie-prozrachnoe"
+          onClick={() => setMenyu(null)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setMenyu(null);
+          }}
+        >
+          <div
+            className="vypadajka"
+            style={{ left: menyu.x, top: menyu.y, right: "auto" }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              className="stroka-menyu"
+              onClick={async () => {
+                const v = menyu.vkladka;
+                setMenyu(null);
+                await nachatPravku(v);
+              }}
+            >
+              Настройки
+            </div>
+            <div
+              className="stroka-menyu"
+              onClick={async () => {
+                const v = menyu.vkladka;
+                setMenyu(null);
+                await invoke<Otvet>("zakryt", { id: v.id, sohranit: true });
+                setVkladki(await invoke<Vidno[]>("spisok"));
+                if (aktivnaya === v.id) setAktivnaya(null);
+              }}
+            >
+              Сохранить и закрыть
+            </div>
+            <div
+              className="stroka-menyu"
+              onClick={async () => {
+                const v = menyu.vkladka;
+                setMenyu(null);
+                await zakrytVkladku(v.id, v.nazvanie);
+              }}
+            >
+              Закрыть…
+            </div>
+            <div
+              className="stroka-menyu"
+              onClick={async () => {
+                const v = menyu.vkladka;
+                setMenyu(null);
+                const o = await invoke<Otvet>("perezagruzit", { id: v.id });
+                if (!o.ok) setOshibka(o.soobshchenie);
+                setVkladki(await invoke<Vidno[]>("spisok"));
+              }}
+            >
+              Перезагрузить
+            </div>
+          </div>
+        </div>
+      )}
+      {progress && (
+        <div className="polosa-progress">
+          <div className="progress-liniya">
+            <div
+              className="progress-zalivka"
+              style={{
+                width: progress.vsego > 0 ? `${Math.min(100, (progress.polucheno / progress.vsego) * 100)}%` : "30%",
+              }}
+            />
+          </div>
+          <span className="progress-tekst">
+            {progress.vsego > 0
+              ? `${Math.round((progress.polucheno / progress.vsego) * 100)}%`
+              : `${(progress.polucheno / 1048576).toFixed(1)} МБ`}
+          </span>
         </div>
       )}
       {vopros && (

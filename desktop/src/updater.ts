@@ -18,7 +18,8 @@ const CHECK_INTERVAL_MS = 60 * 60 * 1000;
 export async function proverit_obnovlenie(
   prinuditelno = false,
   tiho = true,
-  soobshchit?: (s: string) => void
+  soobshchit?: (s: string) => void,
+  progress?: (polucheno: number, vsego: number) => void
 ): Promise<void> {
   try {
     let last = 0;
@@ -57,8 +58,20 @@ export async function proverit_obnovlenie(
     await invoke("pokazat_dvizhki", { vidno: false });
 
     let soobshchenie = "Скачиваю обновление…";
+    let vsego = 0;
+    let polucheno = 0;
     await update.downloadAndInstall((sobytie) => {
-      if (sobytie.event === "Finished") soobshchenie = "Ставлю обновление…";
+      if (sobytie.event === "Started" && sobytie.data.contentLength) {
+        vsego = sobytie.data.contentLength;
+      }
+      if (sobytie.event === "Progress") {
+        polucheno += sobytie.data.chunkLength;
+        progress?.(polucheno, vsego);
+      }
+      if (sobytie.event === "Finished") {
+        soobshchenie = "Ставлю обновление…";
+        progress?.(vsego || polucheno, vsego || polucheno);
+      }
     });
     console.log(soobshchenie);
     await relaunch();

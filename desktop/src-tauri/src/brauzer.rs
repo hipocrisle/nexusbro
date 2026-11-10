@@ -82,7 +82,6 @@ enum Zakaz {
         id: String,
         proxy: Option<String>,
         adres: Option<String>,
-        vosstanavlivat: bool,
         otvet: SyncSender<anyhow::Result<Child>>,
     },
     /// Любая другая программа — например xray для подписки.
@@ -110,8 +109,8 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .spawn(move || {
                 while let Ok(z) = rx.recv() {
                     match z {
-                        Zakaz::Dvizhok { id, proxy, adres, vosstanavlivat, otvet } => {
-                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref(), vosstanavlivat));
+                        Zakaz::Dvizhok { id, proxy, adres, otvet } => {
+                            let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref()));
                         }
                         Zakaz::Prosto { programma, dovody, otvet } => {
                             let _ = otvet.send(zapustit_prosto(&programma, &dovody));
@@ -126,13 +125,12 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
 
 /// Запустить движок для одной супер-вкладки. `adres` — только для режима
 /// «открывать пустой» или первого запуска; None = восстановить вкладки.
-pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
+pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
     let (otvet, zhdem) = sync_channel(1);
     zapuskatel().send(Zakaz::Dvizhok {
         id: id.to_string(),
         proxy: proxy.map(|s| s.to_string()),
         adres: adres.map(|s| s.to_string()),
-        vosstanavlivat,
         otvet,
     })?;
     // ⛔ Ожидание без края превращало неудачный запуск в вечное «Запускаю…».
@@ -142,22 +140,52 @@ pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavliv
         .map_err(|_| anyhow::anyhow!("поток запуска движков молчит 25 с — вероятно, антивирус держит exe"))?
 }
 
-/// Остановить движок: завершить процесс. ⛔ Вежливое WM_CLOSE НЕ
-/// работает: окно движка — чужой ПОТОМОК, Chromium может не завершиться
-/// (диалоги, зависание), а с флагом SMTO_NOTIMEOUTIFNOTHUNG ожидание
-/// бесконечное — закрытие вкладки/программы висло навсегда
-/// (10.11.2026, поймал user). «Восстановить сессию» не появляется,
-/// потому что при запуске в Preferences пишем exited_cleanly (см.
-/// zapisat_vosstanovlenie). Возвращается, когда процесса нет.
-pub fn ostanovit_dvizhka(ditya: &mut Child, _okno: Option<u32>) {
+/// Остановить движок: СНАЧАЛА чисто (Windows: WM_CLOSE с честным
+/// таймаутом 3 с; Linux: SIGTERM), ждём выхода до 5 с, в крайнем
+/// случае добиваем. ⛔ Восстановление вкладок работает ТОЛЬКО после
+/// чистого выхода: после kill -9 Chromium не восстанавливает сессию
+/// ни с каким флагом (проверено опытом 10.11.2026). ⛔ Убийство
+/// прикреплённого (AttachThreadInput) процесса вешает нашу очередь
+/// ввода — поэтому вызывать только с нашего UI-потока после открепления.
+pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
+    let pid = ditya.id();
+
+    #[cfg(target_os = "windows")]
+    if let Some(o) = okno {
+        unsafe {
+            let mut otvet: usize = 0;
+            // ⛔ ТОЛЬКО SMTO_ABORTIFHUNG: флаг NOTIMEOUTIFNOTHUNG ждёт
+            // бесконечно, пока чужой поток жив — им и сидели в вечном
+            // зависании (10.11.2026).
+            let _ = windows::Win32::UI::WindowsAndMessaging::SendMessageTimeoutW(
+                windows::Win32::Foundation::HWND(o as usize as *mut core::ffi::c_void),
+                windows::Win32::UI::WindowsAndMessaging::WM_CLOSE,
+                windows::Win32::Foundation::WPARAM(0),
+                windows::Win32::Foundation::LPARAM(0),
+                windows::Win32::UI::WindowsAndMessaging::SMTO_ABORTIFHUNG,
+                3000,
+                Some(std::ptr::from_mut(&mut otvet)),
+            );
+        }
+    }
+
     #[cfg(target_os = "linux")]
-    if let Some(o) = _okno {
-        // X11: сообщение уходит без ожидания — вдруг успеет выйти сам.
-        let _ = crate::okna::sistema::zakryt_vezhlivo(o);
-        std::thread::sleep(std::time::Duration::from_millis(600));
+    {
+        // Chromium обрабатывает SIGTERM как чистое завершение.
+        unsafe {
+            libc::kill(pid as i32, libc::SIGTERM);
+        }
+    }
+
+    let srok = std::time::Instant::now();
+    loop {
         if matches!(ditya.try_wait(), Ok(Some(_))) {
             return;
         }
+        if srok.elapsed().as_secs() >= 5 {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(150));
     }
     let _ = ditya.kill();
     let _ = ditya.wait();
@@ -197,7 +225,7 @@ pub fn zapisat_vosstanovlenie(id: &str, vosstanavlivat: bool) {
     }
 }
 
-fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
+fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>) -> anyhow::Result<Child> {
     let dvizhok = najti_dvizhok()
         .ok_or_else(|| anyhow::anyhow!("движок не найден: положи chromium рядом с программой"))?;
     let profil = papka_profilej().join(id);
@@ -217,15 +245,9 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavli
         // посреди тёмного окна (10.11.2026, задал user).
         .arg("--force-dark-mode")
         .arg("--enable-features=WebContentsForceDark")
-        .arg("--hide-crash-restore-bubble")
         .arg("--enable-logging=stderr")
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
-    // Явное восстановление прошлой сессии — не зависим только от
-    // настройки в профиле (10.11.2026: «перезапуск не переоткрыл вкладки»).
-    if vosstanavlivat {
-        cmd.arg("--restore-last-session");
-    }
     // ⛔ Своя метка в заголовке окна не годится: заголовок = имя страницы.
     // Окно ищем по номеру процесса, см. okna.rs.
     // Адрес подаём ТОЛЬКО когда сказано «открывать пустой» (или профиль

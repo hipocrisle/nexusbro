@@ -334,7 +334,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     } else {
         None
     };
-    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres, !nastrojki.pustaya) {
+    let mut ditya = match brauzer::zapustit(&id, Some(&cherez), adres) {
         Ok(c) => c,
         Err(e) => {
             nash.ostanovit();
@@ -529,7 +529,7 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
             if let Some(o) = okno {
                 sistema::otsoedinit_vvod(o);
             }
-            brauzer::ostanovit_dvizhka(&mut p, None);
+            brauzer::ostanovit_dvizhka(&mut p, okno);
             let _ = tx.send(());
         });
         if otpravleno.is_ok() {
@@ -682,6 +682,16 @@ fn udalit_sohranennuyu(id: String) -> Otvet {
     } else {
         net("такой сохранённой вкладки нет")
     }
+}
+
+/// Перезагрузить движок вкладки (контекстное меню вкладки).
+#[tauri::command]
+fn perezagruzit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
+    if !s.vkladki.lock().unwrap().contains_key(&id) {
+        return net("такой супер-вкладки нет");
+    }
+    ostanovit_vnutri(&app, &s, &id);
+    zapustit_vnutri(&app, &s, &id)
 }
 
 /// Диагностика по живому: состояние вкладок, окна, журнал сторожа,
@@ -860,12 +870,14 @@ pub fn run() {
                             .collect()
                     };
                     for (id, pid, staroe) in nado {
-                        if sistema::nash_li(staroe, nashe) {
-                            continue;
-                        }
-                        // Окно потерялось. Вдруг движок просто умер?
-                        match sistema::najti_okno(pid, 5) {
-                            Ok(novoe) => {
+                        // ⛔ Отслеживаем ДРУЖЕСКОЕ окно, а не «всё ли у
+                        // старого хорошо»: Chromium пересоздаёт окно,
+                        // зомби остаётся нашим потомком (nash_li=true),
+                        // а живёт уже в новом — с рамкой и кнопками
+                        // (10.11.2026, поймал user по кнопкам управления
+                        // во встроенном хроме).
+                        match sistema::najti_okno(pid, 1) {
+                            Ok(novoe) if novoe != staroe => {
                                 zapisat_v_zhurnal(format!("{id}: окно пересоздано ({staroe} → {novoe}), встраиваю"));
                                 let s: tauri::State<Sostoyanie> = h.state();
                                 let m = s
@@ -885,24 +897,27 @@ pub fn run() {
                                 });
                                 let _ = h.emit("vkladki-izmenilis", id);
                             }
+                            Ok(_) => {}
                             Err(_) => {
-                                // Движка нет — вкладка снова спит.
-                                zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
-                                let s: tauri::State<Sostoyanie> = h.state();
-                                if let Ok(mut v) = s.vkladki.try_lock() {
-                                    if let Some(vk) = v.get_mut(&id) {
-                                        vk.okno = None;
-                                        vk.proc = None;
-                                        if let Some(p) = vk.nash_proxy.take() {
-                                            p.ostanovit();
-                                        }
-                                        if let Some(mut t) = vk.tunnel.take() {
-                                            let _ = t.kill();
-                                            let _ = t.wait();
+                                if !sistema::nash_li(staroe, nashe) {
+                                    // Движка нет — вкладка снова спит.
+                                    zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
+                                    let s: tauri::State<Sostoyanie> = h.state();
+                                    if let Ok(mut v) = s.vkladki.try_lock() {
+                                        if let Some(vk) = v.get_mut(&id) {
+                                            vk.okno = None;
+                                            vk.proc = None;
+                                            if let Some(p) = vk.nash_proxy.take() {
+                                                p.ostanovit();
+                                            }
+                                            if let Some(mut t) = vk.tunnel.take() {
+                                                let _ = t.kill();
+                                                let _ = t.wait();
+                                            }
                                         }
                                     }
+                                    let _ = h.emit("vkladki-izmenilis", id);
                                 }
-                                let _ = h.emit("vkladki-izmenilis", id);
                             }
                         }
                     }
@@ -913,7 +928,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
-            sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika
+            sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
         ])
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")
