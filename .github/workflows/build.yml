@@ -113,6 +113,9 @@ jobs:
           mv cef/Release/* cef/ 2>/dev/null || true
           mv cef/Resources/* cef/ 2>/dev/null || true
           rm -rf cef/Release cef/Resources
+          # cef-dll-sys валидирует CEF_PATH по archive.json — пишем его.
+          printf '{"type":"minimal","name":"%s","sha1":"%s"}' \
+            "${CEF_BASE}_${PLAT}_minimal.tar.bz2" "$SHA" > cef/archive.json
           test -f cef/libcef.dll || test -f cef/libcef.so || { echo "::error::libcef не нашёлся после распаковки"; exit 1; }
           test -f cef/locales/en-US.pak || { echo "::error::в CEF нет locales/en-US.pak"; exit 1; }
           du -sh cef
