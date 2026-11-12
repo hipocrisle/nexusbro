@@ -132,23 +132,21 @@ pub mod sistema {
         conn.configure_window(
             chuzhoe,
             &ConfigureWindowAux::new().x(m.x).y(m.y).width(m.w).height(m.h),
-        )?;
-        conn.flush()?;
+        )?.check()?;
         Ok(())
     }
 
     pub fn pokazat(chuzhoe: u32, vidno: bool) -> Result<()> {
         let (conn, _) = svyaz()?;
         if vidno {
-            conn.map_window(chuzhoe)?;
+            conn.map_window(chuzhoe)?.check()?;
             conn.configure_window(
                 chuzhoe,
                 &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
-            )?;
+            )?.check()?;
         } else {
-            conn.unmap_window(chuzhoe)?;
+            conn.unmap_window(chuzhoe)?.check()?;
         }
-        conn.flush()?;
         Ok(())
     }
 
