@@ -2,7 +2,7 @@ name: Build NexusBro
 
 on:
   push:
-    branches: [main]
+    branches: [main, cef-migration]
     tags: ["v*"]
   pull_request:
     branches: [main]

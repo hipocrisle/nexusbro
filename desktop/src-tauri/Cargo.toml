@@ -24,6 +24,9 @@ anyhow = "1"
 dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "process"] }
+# CEF — движок рождается дочерним окном в нашем (ветка cef-migration).
+# Файлы движка: CEF_PATH на дев-машине или рядом с exe в сборке.
+cef = { version = "156.4", default-features = false }
 
 # Встраивание чужого окна — у каждой системы свой приём.
 [target.'cfg(target_os = "linux")'.dependencies]

@@ -280,6 +280,17 @@ fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavli
     Ok(ditya)
 }
 
+/// Обёртка для cef_dvizhok: привязать процесс к заданию «умри с нами».
+#[cfg(target_os = "windows")]
+pub fn privyazat_k_zadanie_pub(ditya: &Child) -> anyhow::Result<()> {
+    privyazat_k_zadanie(ditya)
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn privyazat_k_zadanie_pub(_ditya: &Child) -> anyhow::Result<()> {
+    Ok(())
+}
+
 /// Windows: тот же приём, что у нас для xray в NexuSSH — задание с флагом
 /// «убить всё при закрытии». Система сама погасит браузер, даже если наша
 /// программа упала.
