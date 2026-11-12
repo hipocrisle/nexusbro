@@ -39,7 +39,7 @@
     ],
     "createUpdaterArtifacts": true,
     "resources": {
-      "chromium/": "chromium",
+      "cef/": "",
       "binaries/*": "binaries/"
     }
   },
