@@ -1,0 +1,13 @@
+
+> nexusbro@0.2.4 build
+> tsc && vite build
+
+vite v5.4.21 building for production...
+transforming...
+✓ 39 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/index.html                   0.39 kB │ gzip:  0.27 kB
+dist/assets/index-cJmITCjc.css    6.78 kB │ gzip:  1.91 kB
+dist/assets/index-CAjxFz7t.js   162.32 kB │ gzip: 52.69 kB
+✓ built in 1.55s

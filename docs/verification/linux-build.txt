@@ -1,0 +1,132 @@
+   Compiling nexusbro v0.2.4 (<repo>/desktop/src-tauri)
+warning: unused import: `std::net::SocketAddr`
+  --> src/proxy.rs:14:5
+   |
+14 | use std::net::SocketAddr;
+   |     ^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `okno`
+   --> src/brauzer.rs:171:45
+    |
+171 | pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
+    |                                             ^^^^ help: if this is intentional, prefix it with an underscore: `_okno`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `okno`
+   --> src/brauzer.rs:574:41
+    |
+574 | pub fn poprosit_o_chem_vyhode(pid: u32, okno: Option<u32>) {
+    |                                         ^^^^ help: if this is intentional, prefix it with an underscore: `_okno`
+
+warning: function `so_oshibkoj_dvizhka` is never used
+   --> src/lib.rs:192:4
+    |
+192 | fn so_oshibkoj_dvizhka(id: &str, zagolovok: String) -> Otvet {
+    |    ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `vstroit_vse_okna` is never used
+   --> src/lib.rs:327:4
+    |
+327 | fn vstroit_vse_okna(
+    |    ^^^^^^^^^^^^^^^^
+
+warning: variant `Dvizhok` is never constructed
+  --> src/brauzer.rs:85:5
+   |
+80 | enum Zakaz {
+   |      ----- variant in this enum
+...
+85 |     Dvizhok {
+   |     ^^^^^^^
+
+warning: function `zapustit` is never used
+   --> src/brauzer.rs:148:8
+    |
+148 | pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
+    |        ^^^^^^^^
+
+warning: function `ostanovit_dvizhka` is never used
+   --> src/brauzer.rs:171:8
+    |
+171 | pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `privyazat_k_zadanie_pub` is never used
+   --> src/brauzer.rs:314:8
+    |
+314 | pub fn privyazat_k_zadanie_pub(_ditya: &Child) -> anyhow::Result<()> {
+    |        ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `ubit_chuzhie_dvizhki` is never used
+   --> src/brauzer.rs:456:8
+    |
+456 | pub fn ubit_chuzhie_dvizhki(_krome: &[u32]) {}
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `poprosit_o_chem_vyhode` is never used
+   --> src/brauzer.rs:574:8
+    |
+574 | pub fn poprosit_o_chem_vyhode(pid: u32, okno: Option<u32>) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `najti_okno` is never used
+  --> src/okna.rs:32:12
+   |
+32 |     pub fn najti_okno(pid: u32, zhdat_sek: u64) -> Result<u32> {
+   |            ^^^^^^^^^^
+
+warning: function `sobrat` is never used
+  --> src/okna.rs:56:8
+   |
+56 |     fn sobrat(
+   |        ^^^^^^
+
+warning: function `vse_okna` is never used
+  --> src/okna.rs:86:12
+   |
+86 |     pub fn vse_okna(korni: &[u32]) -> Vec<u32> {
+   |            ^^^^^^^^
+
+warning: function `vstroit` is never used
+   --> src/okna.rs:105:12
+    |
+105 |     pub fn vstroit(chuzhoe: u32, nashe: u64, m: Mesto) -> Result<()> {
+    |            ^^^^^^^
+
+warning: function `zakryt_vezhlivo` is never used
+   --> src/okna.rs:162:12
+    |
+162 |     pub fn zakryt_vezhlivo(chuzhoe: u32) -> Result<()> {
+    |            ^^^^^^^^^^^^^^^
+
+warning: function `prisoedinit_vvod` is never used
+   --> src/okna.rs:190:12
+    |
+190 |     pub fn prisoedinit_vvod(_chuzhoe: u32) {}
+    |            ^^^^^^^^^^^^^^^^
+
+warning: function `otsoedinit_vvod` is never used
+   --> src/okna.rs:191:12
+    |
+191 |     pub fn otsoedinit_vvod(_chuzhoe: u32) {}
+    |            ^^^^^^^^^^^^^^^
+
+warning: function `fokus_dvizhku` is never used
+   --> src/okna.rs:192:12
+    |
+192 |     pub fn fokus_dvizhku(_chuzhoe: u32) {}
+    |            ^^^^^^^^^^^^^
+
+warning: function `pid_okna` is never used
+   --> src/okna.rs:196:12
+    |
+196 |     pub fn pid_okna(_c: u32) -> Option<u32> {
+    |            ^^^^^^^^
+
+warning: `nexusbro` (lib) generated 20 warnings (run `cargo fix --lib -p nexusbro` to apply 3 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 26.16s

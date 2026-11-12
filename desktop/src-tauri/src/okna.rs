@@ -127,6 +127,12 @@ pub mod sistema {
         Err(anyhow!("окно браузера не встало внутрь нашего за 6 попыток"))
     }
 
+    pub fn fokus_obolochke(nashe: u64) -> Result<()> {
+        let (conn, _) = svyaz()?;
+        conn.set_input_focus(InputFocus::PARENT, nashe as u32, x11rb::CURRENT_TIME)?.check()?;
+        Ok(())
+    }
+
     pub fn peremestit(chuzhoe: u32, m: Mesto) -> Result<()> {
         let (conn, _) = svyaz()?;
         conn.configure_window(
@@ -407,7 +413,7 @@ pub mod sistema {
 
     pub fn pokazat(chuzhoe: u32, vidno: bool) -> Result<()> {
         unsafe {
-            let _ = ShowWindowAsync(hwnd(chuzhoe), if vidno { SW_SHOW } else { SW_HIDE });
+            let _ = ShowWindowAsync(hwnd(chuzhoe), if vidno { SW_SHOWNOACTIVATE } else { SW_HIDE });
         }
         Ok(())
     }

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";
 
 type Nastrojki = {
@@ -247,7 +248,7 @@ export default function App() {
   }, [aktivnaya]);
 
   return (
-    <div className="okno" onContextMenu={(e) => e.preventDefault()}>
+    <div className="okno" onMouseDownCapture={() => { void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => e.preventDefault()}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
           горизонтальная полоса съедала высоту широкоформатников. */}
       <div className="reika">
@@ -334,17 +335,14 @@ export default function App() {
       <div className="kolonka">
         {/* Тонкая полоса сверху: имя активной супер-вкладки и счётчики.
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
-        <div className="polosa">
-          <span className="aktivnaya-imya">
-            {vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}
-          </span>
+        <ObychnyeVkladki id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
           {zarezano > 0 && (
             <span className="schet" title="Зарезано рекламы в этой вкладке">
               ⛔ {zarezano}
             </span>
           )}
-        </div>
+        </ObychnyeVkladki>
         {progress && (
           <div className="polosa-progress">
             <div className="progress-liniya">

@@ -61,12 +61,6 @@ wrap_app! {
     }
 }
 
-wrap_client! {
-    struct DvizhokClient;
-
-    impl Client {}
-}
-
 /// Процесс одной супер-вкладки: поднимает CEF с СВОИМ профилем и прокси,
 /// создаёт окно дочерним к нашему, сообщает хэндл в stdout, крутит петлю.
 fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i32 {
@@ -81,7 +75,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         _ => (0, 0, 1200, 700),
     };
     let profil = znachenie("--user-data-dir=").unwrap_or_else(|| "nb-cefp".into());
-    let url = znachenie("--nb-url=").unwrap_or_else(|| "about:blank".into());
+    let url = znachenie("--nb-url=");
     if roditel == 0 {
         eprintln!("dvizhok: нет --nb-roditel");
         return 1;
@@ -130,108 +124,11 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         return 1;
     }
 
-    #[cfg(target_os = "windows")]
-    let roditel_handle: sys::cef_window_handle_t =
-        sys::HWND(roditel as usize as *mut sys::HWND__);
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    let roditel_handle: sys::cef_window_handle_t =
-        roditel as usize as sys::cef_window_handle_t;
-
-    #[cfg(target_os = "linux")]
-    let (svyaz, konteyner) = match sozdat_konteyner(roditel, x, y, w, h) {
-        Ok(k) => k,
-        Err(e) => {
-            eprintln!("cef: контейнер окна: {e}");
-            return 1;
-        }
-    };
-    #[cfg(target_os = "linux")]
-    let (roditel_handle, x, y) = (konteyner as sys::cef_window_handle_t, 0, 0);
-    eprintln!("cef: окно движка…");
-    let info = WindowInfo::default().set_as_child(
-        roditel_handle,
-        &Rect { x, y, width: w, height: h },
-    );
-    let mut klient = DvizhokClient::new();
-    let url_cef = CefString::from(url.as_str());
-    let nastrojki_brauzera = BrowserSettings::default();
-    let Some(dvizhok) = browser_host_create_browser_sync(
-        Some(&info),
-        Some(&mut klient),
-        Some(&url_cef),
-        Some(&nastrojki_brauzera),
-        None,
-        None,
-    ) else {
-        eprintln!("dvizhok: браузер не создался");
-        return 1;
-    };
-    // Хэндл окна приводим к u32 независимо от платформы: на Linux это
-    // XID (u64), на Windows — HWND (указатель).
-    eprintln!("cef: браузер создан");
-    let okno = dvizhok
-        .host()
-        .map(|x| {
-            #[cfg(target_os = "linux")]
-            {
-                x.window_handle() as u32
-            }
-            #[cfg(target_os = "windows")]
-            {
-                x.window_handle().0 as usize as u32
-            }
-            #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-            {
-                x.window_handle() as usize as u32
-            }
-        })
-        .unwrap_or(0);
-    // Родитель ждёт эту строку, чтобы знать хэндл окна.
-    #[cfg(target_os = "linux")]
-    let okno_obolochki = konteyner;
-    #[cfg(not(target_os = "linux"))]
-    let okno_obolochki = okno;
-    println!("NB-OKNO {okno_obolochki}");
-    let _ = std::io::stdout().flush();
-
-    // Внешняя петля сообщений: движок живёт, пока родитель не убьёт процесс.
-    loop {
-        #[cfg(target_os = "linux")]
-        {
-            use x11rb::connection::Connection;
-            use x11rb::protocol::{Event, xproto::*};
-            while let Ok(Some(sobytie)) = svyaz.poll_for_event() {
-                if let Event::ConfigureNotify(r) = sobytie {
-                    if r.window == konteyner {
-                        let _ = svyaz.configure_window(okno, &ConfigureWindowAux::new()
-                            .width(r.width as u32).height(r.height as u32));
-                        let _ = svyaz.flush();
-                    }
-                }
-            }
-        }
-        do_message_loop_work();
-        std::thread::sleep(std::time::Duration::from_millis(8));
+    match crate::cef_vkladki::rabotat(roditel, crate::okna::Mesto {x,y,w:w as u32,h:h as u32},
+        std::path::Path::new(&profil), url.as_deref()) {
+        Ok(()) => 0,
+        Err(e) => { eprintln!("cef: {e}"); 1 }
     }
-}
-
-#[cfg(target_os = "linux")]
-fn sozdat_konteyner(
-    roditel: u64, x: i32, y: i32, w: i32, h: i32,
-) -> anyhow::Result<(x11rb::rust_connection::RustConnection, u32)> {
-    use x11rb::connection::Connection;
-    use x11rb::protocol::xproto::*;
-    let (svyaz, ekran) = x11rb::connect(None)?;
-    let ekran = &svyaz.setup().roots[ekran];
-    let okno = svyaz.generate_id()?;
-    // CEF наследует colormap родителя, но выбирает root visual; у GTK visual может отличаться.
-    svyaz.create_window(ekran.root_depth, okno, roditel as u32,
-        x as i16, y as i16, w as u16, h as u16, 0,
-        WindowClass::INPUT_OUTPUT, ekran.root_visual,
-        &CreateWindowAux::new().colormap(ekran.default_colormap)
-            .event_mask(EventMask::STRUCTURE_NOTIFY))?.check()?;
-    svyaz.flush()?;
-    Ok((svyaz, okno))
 }
 
 /// Запустить процесс супер-вкладки. Прокси движку — командной строкой
@@ -260,6 +157,7 @@ pub fn zapustit_cep(
         .arg(format!("--nb-roditel={roditel}"))
         .arg(format!("--nb-rect={},{},{},{}", m.x, m.y, m.w, m.h))
         .stdout(stdout)
+        .stdin(std::process::Stdio::piped())
         .stderr(stderr);
     if let Some(u) = url {
         cmd.arg(format!("--nb-url={u}"));
@@ -304,6 +202,7 @@ pub fn ostanovit_process(mut ditya: std::process::Child) {
 pub fn dozhdatsya_okna(
     stdout: std::process::ChildStdout,
     sek: u64,
+    sessiya: impl Fn(crate::sessiya::Sessiya) + Send + 'static,
 ) -> Option<u32> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
     std::thread::spawn(move || {
@@ -313,7 +212,8 @@ pub fn dozhdatsya_okna(
                 Ok(s) => {
                     if let Some(h) = s.strip_prefix("NB-OKNO ") {
                         let _ = tx.send(h.trim().parse().ok());
-                        return;
+                    } else if let Some(json) = s.strip_prefix("NB-VKLADKI ") {
+                        if let Ok(s) = serde_json::from_str(json) { sessiya(s); }
                     }
                 }
                 Err(_) => break,
@@ -325,4 +225,15 @@ pub fn dozhdatsya_okna(
         Ok(okno) => okno,
         Err(_) => None,
     }
+}
+
+pub fn kanal_komand(mut stdin: std::process::ChildStdin) -> std::sync::mpsc::SyncSender<crate::sessiya::Komanda> {
+    let (tx,rx) = std::sync::mpsc::sync_channel::<crate::sessiya::Komanda>(32);
+    std::thread::spawn(move || {
+        for k in rx {
+            let Ok(json) = serde_json::to_string(&k) else { continue };
+            if writeln!(stdin,"{json}").and_then(|_| stdin.flush()).is_err() { break }
+        }
+    });
+    tx
 }

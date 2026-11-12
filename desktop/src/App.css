@@ -74,7 +74,7 @@ body {
 .polosa {
   flex: 0 0 auto;
   display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; background: var(--fon2);
+  padding: 4px 8px; background: var(--fon2);
   border-bottom: 1px solid var(--kraj);
   min-height: 37px;
 }
@@ -166,3 +166,17 @@ body {
 .progress-liniya { flex: 1; height: 6px; background: #0d0f16; border-radius: 3px; overflow: hidden; }
 .progress-zalivka { height: 100%; background: var(--akcent); transition: width .3s; }
 .progress-tekst { color: var(--tiho); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+.polosa .aktivnaya-imya { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.obychnye { display: flex; flex: 1; gap: 3px; overflow-x: auto; min-width: 0; }
+.obychnaya { display: flex; align-items: center; height: 26px; line-height: 20px; gap: 4px; padding: 1px 6px; min-width: 100px; max-width: 210px; flex: 0 0 auto; border: 1px solid var(--kraj); border-radius: 6px; color: var(--tiho); cursor: pointer; }
+.obychnaya.vybrana { background: var(--fon); color: var(--tekst); border-bottom-color: var(--akcent); }
+.obychnaya.zakreplena { min-width: 62px; max-width: 80px; }
+.obychnaya-imya { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 140px; }
+.obychnaya button, .novaya-obychnaya, .navigaciya button { border: 0; background: transparent; color: var(--tiho); cursor: pointer; padding: 2px 4px; font: inherit; }
+.obychnaya button:hover, .novaya-obychnaya:hover, .navigaciya button:hover { color: var(--akcent); }
+.novaya-obychnaya { flex-shrink: 0; font-size: 19px; }
+.navigaciya { display: flex; align-items: center; gap: 6px; padding: 4px 10px; min-height: 36px; border-bottom: 1px solid var(--kraj); background: var(--fon2); }
+.navigaciya input { flex: 1; min-width: 50px; padding: 3px 9px; line-height: 20px; background: var(--fon); color: var(--tekst); border: 1px solid var(--kraj); border-radius: 6px; font: inherit; outline-color: var(--akcent); }
+.navigaciya button:disabled { opacity: .35; cursor: default; }
+.oshibka-navigacii { color: #ffd9de; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }

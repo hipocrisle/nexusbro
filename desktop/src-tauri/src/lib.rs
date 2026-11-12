@@ -5,6 +5,8 @@
 //! вкладок, и весь сервис со всеми его адресами идёт через нужный выход.
 
 mod brauzer;
+mod sessiya;
+mod cef_vkladki;
 pub mod cef_dvizhok;
 mod okna;
 mod proxy;
@@ -115,6 +117,8 @@ struct Vkladka {
     /// NB-OKNO). Пока true — повторный запуск не начинать.
     zapusk_idet: bool,
     zapusk_id: u64,
+    kanal: Option<std::sync::mpsc::SyncSender<sessiya::Komanda>>,
+    obychnye: Option<sessiya::Sessiya>,
     okno: Option<u32>,
     /// Реальный pid браузера, когда Chromium перезапустил себя из-под
     /// нашего мёртвого дочернего процесса (10.11.2026). Убиваем по нему.
@@ -307,7 +311,7 @@ async fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0 },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -458,11 +462,13 @@ async fn podgotovit_dvizhok(
     };
 
     let stdout = ditya.stdout.take().unwrap();
+    let kanal = cef_dvizhok::kanal_komand(ditya.stdin.take().unwrap());
     {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet) {
             Some(vk) => {
                 vk.proc = Some(ditya);
+                vk.kanal = Some(kanal);
                 vk.nash_proxy = Some(nash);
                 vk.tunnel = tunnel;
             }
@@ -476,7 +482,21 @@ async fn podgotovit_dvizhok(
     let h = app.clone();
     let id_fon = id.to_string();
     std::thread::spawn(move || {
-        let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25);
+        let h_sessii = h.clone();
+        let id_sessii = id_fon.clone();
+        let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25, move |sessiya| {
+            let _zapis = sessiya::ZAPIS.lock().unwrap();
+            let s: State<Sostoyanie> = h_sessii.state();
+            {
+                let mut v = s.vkladki.lock().unwrap();
+                let Some(vk) = v.get_mut(&id_sessii).filter(|vk| vk.zapusk_id == zapusk_id && vk.proc.is_some()) else { return };
+                vk.obychnye = Some(sessiya.clone());
+            }
+            if let Err(e) = sessiya.sohranit(&brauzer::papka_profilej().join(&id_sessii)) {
+                zapisat_v_zhurnal(format!("{id_sessii}: сессия не записана: {e}"));
+            }
+            let _ = h_sessii.emit("obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
+        });
         let s: State<Sostoyanie> = h.state();
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(&id_fon)
@@ -633,6 +653,7 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(id) else { return };
         vk.zapusk_idet = false;
+        vk.kanal = None;
         vk.okno = None;
         vk.zapas_pid = None;
         (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take())
@@ -682,6 +703,7 @@ fn nuzhno_sohranenie(id: String) -> bool {
 /// убитым движком (Windows держит блокировки) — повторяем несколько раз,
 /// иначе «не сохраняет/не удаляет».
 fn steret_profil(id: &str) {
+    let _zapis = sessiya::ZAPIS.lock().unwrap();
     let put = brauzer::papka_profilej().join(id);
     for _ in 0..5 {
         match std::fs::remove_dir_all(&put) {
@@ -769,7 +791,7 @@ async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String
         if v.contains_key(&id) {
             return Ok(net("такая супер-вкладка уже открыта"));
         }
-        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0 });
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
@@ -801,6 +823,42 @@ async fn perezagruzit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
     }
     ostanovit_vnutri(&s, &id).await;
     Ok(zapustit_vnutri(&app, &s, &id).await)
+}
+
+#[tauri::command]
+async fn fokus_obolochke(window: tauri::WebviewWindow) -> Result<(),String> {
+    #[cfg(target_os = "linux")]
+    {
+        let nashe = nash_descriptor(&window).ok_or("не найдено окно оболочки")?;
+        sistema::fokus_obolochke(nashe).map_err(|e|e.to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        window.set_focus().map_err(|e|e.to_string())?;
+        let webview: &tauri::Webview = window.as_ref();
+        webview.set_focus().map_err(|e|e.to_string())
+    }
+}
+
+#[tauri::command]
+async fn obychnye_spisok(s: State<'_, Sostoyanie>, id: String) -> Result<sessiya::Sessiya,String> {
+    {
+        let v = s.vkladki.lock().unwrap();
+        let vk = v.get(&id).ok_or("такой супер-вкладки нет")?;
+        if let Some(sessiya) = &vk.obychnye { return Ok(sessiya.clone()) }
+    }
+    tauri::async_runtime::spawn_blocking(move || sessiya::Sessiya::zagruzit(&brauzer::papka_profilej().join(id)))
+        .await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn obychnaya_komanda(s: State<'_, Sostoyanie>, id: String, komanda: sessiya::Komanda) -> Result<(),String> {
+    let kanal = s.vkladki.lock().unwrap().get(&id).and_then(|v|v.kanal.clone())
+        .ok_or("движок ещё не запущен")?;
+    kanal.try_send(komanda).map_err(|e| match e {
+        std::sync::mpsc::TrySendError::Full(_) => "Движок занят. Повторите действие.".into(),
+        std::sync::mpsc::TrySendError::Disconnected(_) => "Движок остановлен. Откройте супер-вкладку снова.".into(),
+    })
 }
 
 /// Диагностика по живому: состояние вкладок, окна, журнал сторожа,
@@ -943,7 +1001,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0 });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
@@ -1021,6 +1079,7 @@ pub fn run() {
                             let umer = matches!(vk.proc.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
                             if !umer { return None }
                             vk.okno = None;
+                            vk.kanal = None;
                             vk.zapas_pid = None;
                             Some((id.clone(), vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take()))
                         }).collect()
@@ -1035,7 +1094,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
         ])
