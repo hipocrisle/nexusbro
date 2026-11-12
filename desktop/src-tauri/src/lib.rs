@@ -1134,6 +1134,27 @@ pub fn run() {
                             let s: tauri::State<Sostoyanie> = h.state();
                             if let Ok(mut v) = s.vkladki.try_lock() {
                                 if let Some(vk) = v.get_mut(&id) {
+                                    // ⛔ Снимок мог устареть, пока сторож искал
+                                    // окно (до секунды): вкладку успели
+                                    // перезапустить (правка/перезагрузка) — и
+                                    // в vk уже СЛЕДУЮЩИЙ движок. Глушить его по
+                                    // старым pid/окну нельзя: вкладка «умирает»
+                                    // при живом движке, а следующий запуск
+                                    // бьётся с ним за профиль (подвисания
+                                    // при открытии/правке/удалении,
+                                    // поймано прогоном PROBA=3, 12.11.2026).
+                                    let tot_zhe = !vk.zapusk_idet
+                                        && vk.okno == Some(staroe)
+                                        && vk
+                                            .zapas_pid
+                                            .or(vk.proc.as_ref().map(|p| p.id()))
+                                            == Some(pid);
+                                    if !tot_zhe {
+                                        zapisat_v_zhurnal(format!(
+                                            "{id}: снимок сторожа устарел, вкладку не трогаю"
+                                        ));
+                                        continue;
+                                    }
                                     vk.okno = None;
                                     vk.proc = None;
                                     if let Some(p) = vk.nash_proxy.take() {
