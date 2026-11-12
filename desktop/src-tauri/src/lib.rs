@@ -426,7 +426,7 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
         }
     };
     let m = s.mesto.lock().unwrap().unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
-    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, m) {
+    let ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, m) {
         Ok(d) => d,
         Err(e) => {
             nash.ostanovit();
@@ -438,10 +438,8 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
         }
     };
 
-    // ⛔ Хэндл окна дописывает ФОНОВЫЙ поток: команды Tauri крутятся на
-    // главном потоке, а дочка при создании окна ждёт родительское — если
-    // ждать здесь, оба повисают навсегда (намертво зависало при создании
-    // первой вкладки, 12.11.2026). Ошибку шлём событием в интерфейс.
+    // ⛔ Хэндл окна дописывает ФОНОВЫЙ поток, ожидание асинхронное через oneshot:
+    // команды Tauri async, поэтому главный поток интерфейса не блокируется.
     {
         let mut v = s.vkladki.lock().unwrap();
         if let Some(vk) = v.get_mut(id) {
@@ -450,48 +448,52 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
             vk.tunnel = tunnel;
         }
     }
-    let h = app.clone();
-    let id_fon = id.to_string();
+    let (tx, rx) = tokio::sync::oneshot::channel();
     std::thread::spawn(move || {
-        match cef_dvizhok::dozhdatsya_okna(ditya, 25) {
-            Some((ditya, okno)) => {
-                let s: State<Sostoyanie> = h.state();
-                if let Some(vk) = s.vkladki.lock().unwrap().get_mut(&id_fon) {
+        let res = cef_dvizhok::dozhdatsya_okna(ditya, 8);
+        let _ = tx.send(res);
+    });
+
+    let id_str = id.to_string();
+    match rx.await {
+        Ok(Some((ditya, okno))) => {
+            {
+                let mut v = s.vkladki.lock().unwrap();
+                if let Some(vk) = v.get_mut(&id_str) {
                     vk.proc = Some(ditya);
                     vk.okno = Some(okno);
                     vk.zapusk_idet = false;
                 }
-                pereklyuchit_vnutri(&s, &id_fon);
-                zapisat_v_zhurnal(format!("{id_fon}: запуск ок, окно {okno}"));
-                let _ = h.emit("vkladki-izmenilis", id_fon);
             }
-            None => {
-                // Дочка молчит/умерла: убираем прокси-туннель и сообщаем.
-                let s: State<Sostoyanie> = h.state();
-                let (proxy, tunnel) = {
-                    let mut v = s.vkladki.lock().unwrap();
-                    match v.get_mut(&id_fon) {
-                        Some(vk) => {
-                            vk.zapusk_idet = false;
-                            (vk.nash_proxy.take(), vk.tunnel.take())
-                        }
-                        None => (None, None),
-                    }
-                };
-                if let Some(p) = proxy {
-                    p.ostanovit();
-                }
-                if let Some(mut t) = tunnel {
-                    let _ = t.kill();
-                    let _ = t.wait();
-                }
-                zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
-                let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с. Журнал: %LOCALAPPDATA%/NexusBro/profili/{id_fon}/cef.log"));
-                let _ = h.emit("vkladki-izmenilis", id_fon);
-            }
+            pereklyuchit_vnutri(s, &id_str);
+            zapisat_v_zhurnal(format!("{id_str}: запуск ок, окно {okno}"));
+            let _ = app.emit("vkladki-izmenilis", id_str);
+            da()
         }
-    });
-    da()
+        _ => {
+            let (proxy, tunnel) = {
+                let mut v = s.vkladki.lock().unwrap();
+                match v.get_mut(&id_str) {
+                    Some(vk) => {
+                        vk.zapusk_idet = false;
+                        (vk.nash_proxy.take(), vk.tunnel.take())
+                    }
+                    None => (None, None),
+                }
+            };
+            if let Some(p) = proxy {
+                p.ostanovit();
+            }
+            if let Some(mut t) = tunnel {
+                let _ = t.kill();
+                let _ = t.wait();
+            }
+            zapisat_v_zhurnal(format!("{id_str}: движок не ответил (см. cef.log)"));
+            let _ = app.emit("oshibka-dvizhka", format!("{id_str}: движок не ответил за 8 с. Журнал: %LOCALAPPDATA%/NexusBro/profili/{id_str}/cef.log"));
+            let _ = app.emit("vkladki-izmenilis", id_str.clone());
+            so_oshibkoj_dvizhka(&id_str, "движок не ответил за 8 с".into())
+        }
+    }
 }
 
 #[tauri::command]
@@ -544,6 +546,7 @@ async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
                         let _ = t.kill();
                         let _ = t.wait();
                     }
+                    brauzer::ochistit_blokirovki(&id);
                     false
                 }
             }
@@ -554,7 +557,10 @@ async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
     // Вкладку поднимаем в тот момент, когда на неё нажали, а не при запуске
     // программы — иначе десять вкладок сразу съедят всю память.
     if !zapushchena {
-        return Ok(zapustit_vnutri(&app, &s, &id).await);
+        brauzer::ochistit_blokirovki(&id);
+        let otv = zapustit_vnutri(&app, &s, &id).await;
+        let _ = app.emit("vkladki-izmenilis", id);
+        return Ok(otv);
     }
     pereklyuchit_vnutri(&s, &id);
     // ⛔ SetFocus в чужое окно с главного потока на Windows может повиснуть
@@ -606,7 +612,7 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
 /// старой схемой; сессии обычных вкладок переедут в наш JSON (этап 3).
 fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
     let _ = app;
-    let (mut proc, _okno, _zapas) = {
+    let (proc, okno, zapas) = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(id) {
             Some(vk) => {
@@ -616,9 +622,27 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
             None => return,
         }
     };
+    if let Some(o) = okno {
+        let _ = sistema::pokazat(o, false);
+    }
     if let Some(mut p) = proc {
-        let _ = p.kill();
-        let _ = p.wait();
+        #[cfg(target_os = "windows")]
+        {
+            let derevo = sistema::derevo_processov(p.id());
+            let _ = p.kill();
+            let _ = p.wait();
+            for child_pid in derevo {
+                sistema::ubit_po_pid(child_pid);
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = p.kill();
+            let _ = p.wait();
+        }
+    }
+    if let Some(zp) = zapas {
+        sistema::ubit_po_pid(zp);
     }
     let (proxy, tunnel) = {
         let mut v = s.vkladki.lock().unwrap();
@@ -634,6 +658,7 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
         let _ = t.kill();
         let _ = t.wait();
     }
+    brauzer::ochistit_blokirovki(id);
 }
 
 /// Правка настроек супер-вкладки после создания. Работающую перезапускаем
@@ -658,7 +683,9 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
     }
     if rabotaet {
         ostanovit_vnutri(&app, &s, &nastrojki.id);
-        return Ok(zapustit_vnutri(&app, &s, &nastrojki.id).await);
+        let otv = zapustit_vnutri(&app, &s, &nastrojki.id).await;
+        let _ = app.emit("vkladki-izmenilis", nastrojki.id);
+        return Ok(otv);
     }
     let _ = app.emit("vkladki-izmenilis", nastrojki.id);
     Ok(da())
@@ -690,8 +717,10 @@ fn steret_profil(id: &str) {
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
-    // Убираем из списка ПЕРВЫМ и отпускаем мьютекс — остановка движка
-    // сама берёт этот мьютекс, держать его тут = тупик.
+    v_zhurnal_granica("zakryt", &id, "останавливаю движок");
+    ostanovit_vnutri(&app, &s, &id);
+    v_zhurnal_granica("zakryt", &id, "движок остановлен");
+
     let udalena = {
         let mut v = s.vkladki.lock().unwrap();
         v.remove(&id).map(|vk| vk.nastrojki)
@@ -699,21 +728,39 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     let Some(nastrojki) = udalena else {
         return Ok(net("такой супер-вкладки нет"));
     };
-    v_zhurnal_granica("zakryt", &id, "останавливаю движок");
-    ostanovit_vnutri(&app, &s, &id);
-    v_zhurnal_granica("zakryt", &id, "движок остановлен");
     {
         let v = s.vkladki.lock().unwrap();
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
+
+    // Если удалена активная — переключаем бэкенд на следующую оставшуюся вкладку
+    let sled_id = {
+        let mut akt = s.aktivnaya.lock().unwrap();
+        if akt.as_deref() == Some(&id) {
+            let v = s.vkladki.lock().unwrap();
+            let sled = v.keys().next().cloned();
+            *akt = sled.clone();
+            sohranit_aktivnuyu(sled.as_deref().unwrap_or(""));
+            sled
+        } else {
+            akt.clone()
+        }
+    };
+    if let Some(ref novaya) = sled_id {
+        pereklyuchit_vnutri(&s, novaya);
+    }
+
     if sohranit {
         let mut sohr = zagruzit_sohranennye();
         sohr.retain(|n| n.id != id);
         sohr.push(nastrojki);
         sohranit_sohranennye(&sohr);
     } else {
-        steret_profil(&id);
+        let id_udalit = id.clone();
+        std::thread::spawn(move || {
+            steret_profil(&id_udalit);
+        });
     }
     let _ = app.emit("vkladki-izmenilis", id);
     Ok(da())
@@ -749,7 +796,10 @@ async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
-    Ok(zapustit_vnutri(&app, &s, &id).await)
+    brauzer::ochistit_blokirovki(&id);
+    let otv = zapustit_vnutri(&app, &s, &id).await;
+    let _ = app.emit("vkladki-izmenilis", id);
+    Ok(otv)
 }
 
 /// Выбросить сохранённую супер-вкладку насовсем: настройки и профиль
@@ -934,7 +984,7 @@ pub fn run() {
             // чтобы весь путь (запуск → поиск окна → встраивание) можно было
             // проверить без рук.
             let proba = std::env::var("NEXUSBRO_PROBA").unwrap_or_default();
-            if proba == "1" || proba == "2" {
+            if proba == "1" || proba == "2" || proba == "3" {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -950,6 +1000,86 @@ pub fn run() {
                     let o = tauri::async_runtime::block_on(otkryt(h.clone(), s, n))
                         .unwrap_or_else(|e| net(e));
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
+                    // СЦЕНАРИЙ 3: точное воспроизведение и верификация всех критериев
+                    if proba == "3" {
+                        let shag = |t: &str| println!("СЦЕНАРИЙ 3: {t}");
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                        shag("1. Создание второй вкладки proba2...");
+                        let n2 = Nastrojki {
+                            id: "proba2".into(),
+                            nazvanie: "Проба 2".into(),
+                            proxy: String::new(),
+                            adres: "about:blank".into(),
+                            rezat_reklamu: true,
+                            pustaya: true,
+                        };
+                        let s2: tauri::State<Sostoyanie> = h.state();
+                        let o2 = tauri::async_runtime::block_on(otkryt(h.clone(), s2, n2))
+                            .unwrap_or_else(|e| net(e));
+                        println!("СОЗДАНИЕ proba2: ok={}", o2.ok);
+
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        shag("2. Переключение на proba2 и обратно на proba...");
+                        let t_sw1 = std::time::Instant::now();
+                        let s_sw1: tauri::State<Sostoyanie> = h.state();
+                        let o_sw1 = tauri::async_runtime::block_on(pereklyuchit(h.clone(), s_sw1, "proba2".into()))
+                            .unwrap_or_else(|e| net(e));
+                        println!("ПЕРЕКЛЮЧЕНИЕ на proba2: ok={} за {:?}", o_sw1.ok, t_sw1.elapsed());
+
+                        let t_sw2 = std::time::Instant::now();
+                        let s_sw2: tauri::State<Sostoyanie> = h.state();
+                        let o_sw2 = tauri::async_runtime::block_on(pereklyuchit(h.clone(), s_sw2, "proba".into()))
+                            .unwrap_or_else(|e| net(e));
+                        println!("ПЕРЕКЛЮЧЕНИЕ на proba: ok={} за {:?}", o_sw2.ok, t_sw2.elapsed());
+
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        shag("3. Правка работающей вкладки (izmenit)...");
+                        let t0 = std::time::Instant::now();
+                        let n_edit = Nastrojki {
+                            id: "proba".into(),
+                            nazvanie: "Проба Изменена".into(),
+                            proxy: String::new(),
+                            adres: "about:blank".into(),
+                            rezat_reklamu: true,
+                            pustaya: true,
+                        };
+                        let s_edit: tauri::State<Sostoyanie> = h.state();
+                        let o_edit = tauri::async_runtime::block_on(izmenit(h.clone(), s_edit, n_edit))
+                            .unwrap_or_else(|e| net(e));
+                        println!("ПРАВКА: ok={} {} за {:?}", o_edit.ok, o_edit.soobshchenie, t0.elapsed());
+
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        shag("4. Закрытие с сохранением (zakryt sohranit=true)...");
+                        let t1 = std::time::Instant::now();
+                        let s_close: tauri::State<Sostoyanie> = h.state();
+                        let o_close = tauri::async_runtime::block_on(zakryt(h.clone(), s_close, "proba".into(), true))
+                            .unwrap_or_else(|e| net(e));
+                        println!("ЗАКРЫТИЕ (сохранить): ok={} {} за {:?}", o_close.ok, o_close.soobshchenie, t1.elapsed());
+
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        shag("5. Открытие сохранённой вкладки (vosstanovit)...");
+                        let t2 = std::time::Instant::now();
+                        let s_res: tauri::State<Sostoyanie> = h.state();
+                        let o_res = tauri::async_runtime::block_on(vosstanovit(h.clone(), s_res, "proba".into()))
+                            .unwrap_or_else(|e| net(e));
+                        println!("ВОССТАНОВЛЕНИЕ: ok={} {} за {:?}", o_res.ok, o_res.soobshchenie, t2.elapsed());
+
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        shag("6. Удаление насовсем (zakryt sohranit=false)...");
+                        let t3 = std::time::Instant::now();
+                        let s_del1: tauri::State<Sostoyanie> = h.state();
+                        let o_del1 = tauri::async_runtime::block_on(zakryt(h.clone(), s_del1, "proba".into(), false))
+                            .unwrap_or_else(|e| net(e));
+                        println!("УДАЛЕНИЕ proba: ok={} {} за {:?}", o_del1.ok, o_del1.soobshchenie, t3.elapsed());
+
+                        let t4 = std::time::Instant::now();
+                        let s_del2: tauri::State<Sostoyanie> = h.state();
+                        let o_del2 = tauri::async_runtime::block_on(zakryt(h.clone(), s_del2, "proba2".into(), false))
+                            .unwrap_or_else(|e| net(e));
+                        println!("УДАЛЕНИЕ proba2: ok={} {} за {:?}", o_del2.ok, o_del2.soobshchenie, t4.elapsed());
+
+                        shag("ГОТОВ");
+                    }
                     // СЦЕНАРИЙ 2: воспроизводим жалобы user'а — вторая
                     // вкладка и удаление (висло на машине, 12.11.2026).
                     if proba == "2" {
@@ -997,7 +1127,7 @@ pub fn run() {
                     if ZAVERSHENIE.load(std::sync::atomic::Ordering::SeqCst) {
                         return;
                     }
-                    let Some(nashe) =
+                    let Some(_nashe) =
                         h.get_webview_window("main").and_then(|w| nash_descriptor(&w))
                     else {
                         continue;
@@ -1018,15 +1148,11 @@ pub fn run() {
                             })
                             .collect()
                     };
-                    for (id, pid, staroe) in nado {
+                    for (id, pid, _staroe) in nado {
                         // CEF-окна не пересоздаются и не «сбегают» — сторожу
                         // осталась одна работа: заметить мёртвый процесс и
-                        // усыпить вкладку. Перевстраивание и свип окон —
-                        // наследие старой схемы, удалены (12.11.2026).
-                        if sistema::najti_okno(pid, 1).is_err()
-                            && !sistema::nash_li(staroe, nashe)
-                            && !sistema::pid_zhiv(pid)
-                        {
+                        // усыпить вкладку.
+                        if !sistema::pid_zhiv(pid) {
                             zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
                             let s: tauri::State<Sostoyanie> = h.state();
                             if let Ok(mut v) = s.vkladki.try_lock() {

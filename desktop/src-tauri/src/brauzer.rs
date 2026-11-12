@@ -198,8 +198,14 @@ pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
 /// по настройке «открыть сразу»; у жилой по умолчанию восстанавливаем
 /// вкладки прошлой сессии.
 pub fn profil_svety(id: &str) -> bool {
-    let profil = papka_profilej().join(id).join("Default");
-    !profil.join("Cookies").exists() && !profil.join("History").exists()
+    let profil = papka_profilej().join(id);
+    let def = profil.join("Default");
+    let has_cookies = def.join("Cookies").exists()
+        || profil.join("Cookies").exists()
+        || profil.join("Network").join("Cookies").exists()
+        || def.join("Network").join("Cookies").exists();
+    let has_history = def.join("History").exists() || profil.join("History").exists();
+    !has_cookies && !has_history
 }
 
 fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
@@ -420,6 +426,14 @@ pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
     }
 }
 
+/// Очистить старые блокировки профиля (SingletonLock, SingletonSocket, SingletonCookie, lockfile).
+pub fn ochistit_blokirovki(id: &str) {
+    let profil = papka_profilej().join(id);
+    for imya in ["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"] {
+        let _ = std::fs::remove_file(profil.join(imya));
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
 pub fn ubit_chuzhie_dvizhki(_krome: &[u32]) {}
 
@@ -429,8 +443,7 @@ pub fn ubit_chuzhie_dvizhki(_krome: &[u32]) {}
 /// антивирус помешал), повторный запуск с тем же профилем НЕ поднимает
 /// новый процесс — Chromium пересылает команду старому, а тот открывает
 /// ОБЫЧНОЕ окно поверх всего. Человек видит «новое окно хрома», а наша
-/// оболочка ждёт окна, которое не появилось. Имя у нашего exe уникальное —
-/// чужих процессов так не назовут, резать по имени безопасно.
+/// оболочка ждёт окна, которое не появилось.
 #[cfg(target_os = "windows")]
 pub fn pribit_proshlyh_dvizhkov() {
     use windows::Win32::Foundation::CloseHandle;
@@ -448,10 +461,12 @@ pub fn pribit_proshlyh_dvizhkov() {
         e.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
         let mut zhertvy = Vec::new();
         let mut ubito = 0;
+        let moj_pid = std::process::id();
         if Process32FirstW(snimok, &mut e).is_ok() {
             loop {
                 let imya = String::from_utf16_lossy(&e.szExeFile);
-                if imya.trim_end_matches('\0') == "nexusbro-engine.exe" {
+                let exe = imya.trim_end_matches('\0');
+                if (exe == "nexusbro-engine.exe" || exe == "nexusbro.exe") && e.th32ProcessID != moj_pid {
                     zhertvy.push(e.th32ProcessID);
                 }
                 if Process32NextW(snimok, &mut e).is_err() {
@@ -461,9 +476,6 @@ pub fn pribit_proshlyh_dvizhkov() {
         }
         let _ = CloseHandle(snimok);
         for pid in zhertvy {
-            if pid == std::process::id() {
-                continue;
-            }
             if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
                 let _ = TerminateProcess(h, 1);
                 let _ = CloseHandle(h);
@@ -474,7 +486,36 @@ pub fn pribit_proshlyh_dvizhkov() {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "linux")]
+pub fn pribit_proshlyh_dvizhkov() {
+    let my_pid = std::process::id();
+    let mut ubito = 0;
+    if let Ok(entries) = std::fs::read_dir("/proc") {
+        for entry in entries.flatten() {
+            if let Ok(name) = entry.file_name().into_string() {
+                if let Ok(pid) = name.parse::<u32>() {
+                    if pid == my_pid {
+                        continue;
+                    }
+                    let cmdline_path = entry.path().join("cmdline");
+                    if let Ok(cmdline) = std::fs::read(cmdline_path) {
+                        let cmd_str = String::from_utf8_lossy(&cmdline);
+                        if cmd_str.contains("--nb-dvizhok") || cmd_str.contains("nexusbro-engine") {
+                            unsafe {
+                                if libc::kill(pid as i32, libc::SIGKILL) == 0 {
+                                    ubito += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    crate::zapisat_v_zhurnal(format!("при старте убито сирот-движков: {ubito}"));
+}
+
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
 pub fn pribit_proshlyh_dvizhkov() {}
 
 /// Где лежит xray. Как и движок: сначала свой, потом системный.
