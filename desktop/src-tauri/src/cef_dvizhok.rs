@@ -246,6 +246,7 @@ pub fn zapustit_cep(
     let exe = std::env::current_exe()?;
     let profil = crate::brauzer::papka_profilej().join(id);
     std::fs::create_dir_all(&profil)?;
+    crate::brauzer::ochistit_blokirovki(id);
     let stdout = std::process::Stdio::piped();
     // ⛔ stderr — в файл: при зависании/падении дочка причина видна
     // (раньше был null, и диагностика слепая).
