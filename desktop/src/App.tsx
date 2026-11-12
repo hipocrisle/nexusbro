@@ -230,110 +230,144 @@ export default function App() {
 
   return (
     <div className="okno" onContextMenu={(e) => e.preventDefault()}>
-      <div className="polosa">
-        {vkladki.map((v) => (
-          <button
-            key={v.id}
-            className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "")}
-            onClick={() => pereklyuchit(v.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setMenyu({ x: e.clientX, y: e.clientY, vkladka: v });
-            }}
-            title={v.proxy || "прямое соединение"}
-          >
-            <span
-              className={"tochka" + (v.zapushchena ? "" : " spit")}
-              data-pryamo={v.proxy ? "net" : "da"}
-            />
-            {v.nazvanie}
-            <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
-              ×
-            </span>
+      {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
+          горизонтальная полоса съедала высоту широкоформатников. */}
+      <div className="reika">
+        <div className="zagolovok">NexusBro</div>
+        <div className="spisok">
+          {vkladki.map((v) => (
+            <button
+              key={v.id}
+              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "")}
+              onClick={() => pereklyuchit(v.id)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                setMenyu({ x: e.clientX, y: e.clientY, vkladka: v });
+              }}
+              title={v.proxy || "прямое соединение"}
+            >
+              <span
+                className={"tochka" + (v.zapushchena ? "" : " spit")}
+                data-pryamo={v.proxy ? "net" : "da"}
+              />
+              <span className="imya">{v.nazvanie}</span>
+              <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
+                ×
+              </span>
+            </button>
+          ))}
+        </div>
+        <div className="niz">
+          <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
+            +
           </button>
-        ))}
-        <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
-          +
-        </button>
-        <button
-          className="plyus"
-          title="Сохранённые супер-вкладки"
-          disabled={zanyat}
-          onClick={async () => {
-            if (menuSohranennyh) {
-              setMenuSohranennyh(null);
-            } else {
-              setMenuSohranennyh(await invoke<Nastrojki[]>("sohranennye"));
-            }
-          }}
-        >
-          ▾
-        </button>
-        <button
-          className="plyus"
-          title="Проверить обновления"
-          onClick={async () => {
-            setObnovlenie("Проверяю…");
-            await proverit_obnovlenie(
-              true,
-              false,
-              (s) => {
-                setObnovlenie(s);
-                setTimeout(() => setObnovlenie(""), 8000);
-              },
-              (polucheno, vsego) => setProgress({ polucheno, vsego })
-            );
-            setProgress(null);
-            if (obnovlenie === "Проверяю…") setObnovlenie("");
-          }}
-        >
-          ⟳
-        </button>
-        <button
-          className="plyus"
-          title="Диагностика"
-          onClick={async () => {
-            await invoke("pokazat_dvizhki", { vidno: false });
-            const tekst = await invoke<string>("diagnostika");
-            setDiagnostika(tekst);
-          }}
-        >
-          🛠
-        </button>
-        {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
-        {zarezano > 0 && (
-          <span className="schet" title="Зарезано рекламы в этой вкладке">
-            ⛔ {zarezano}
-          </span>
-        )}
+          <button
+            className="plyus"
+            title="Сохранённые супер-вкладки"
+            disabled={zanyat}
+            onClick={async () => {
+              if (menuSohranennyh) {
+                setMenuSohranennyh(null);
+              } else {
+                setMenuSohranennyh(await invoke<Nastrojki[]>("sohranennye"));
+              }
+            }}
+          >
+            ▾
+          </button>
+          <button
+            className="plyus"
+            title="Проверить обновления"
+            onClick={async () => {
+              setObnovlenie("Проверяю…");
+              await proverit_obnovlenie(
+                true,
+                false,
+                (s) => {
+                  setObnovlenie(s);
+                  setTimeout(() => setObnovlenie(""), 8000);
+                },
+                (polucheno, vsego) => setProgress({ polucheno, vsego })
+              );
+              setProgress(null);
+              if (obnovlenie === "Проверяю…") setObnovlenie("");
+            }}
+          >
+            ⟳
+          </button>
+          <button
+            className="plyus"
+            title="Диагностика"
+            onClick={async () => {
+              await invoke("pokazat_dvizhki", { vidno: false });
+              const tekst = await invoke<string>("diagnostika");
+              setDiagnostika(tekst);
+            }}
+          >
+            🛠
+          </button>
+        </div>
       </div>
 
-      <div className="pole" ref={mesto}>
-        {vkladki.length === 0 && (
-          <div className="pusto">
-            {dvizhokEst ? (
-              <>
-                <h1>NexusBro</h1>
-                <p>
-                  Супер-вкладка — это отдельный браузер со своим выходом в сеть.
-                  Внутри неё открывай сколько угодно обычных вкладок: весь сайт
-                  со всеми его адресами пойдёт через выбранный выход.
-                </p>
-                <button onClick={() => otkrytDialog()}>Создать первую</button>
-              </>
-            ) : (
-              <>
-                <h1>Движок не найден</h1>
-                <p>
-                  Положи ungoogled-chromium в папку <code>chromium</code> рядом с
-                  программой — или установи его в систему.
-                </p>
-              </>
-            )}
+      <div className="kolonka">
+        {/* Тонкая полоса сверху: имя активной супер-вкладки и счётчики.
+            Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
+        <div className="polosa">
+          <span className="aktivnaya-imya">
+            {vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}
+          </span>
+          {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
+          {zarezano > 0 && (
+            <span className="schet" title="Зарезано рекламы в этой вкладке">
+              ⛔ {zarezano}
+            </span>
+          )}
+        </div>
+        {progress && (
+          <div className="polosa-progress">
+            <div className="progress-liniya">
+              <div
+                className="progress-zalivka"
+                style={{
+                  width: progress.vsego > 0 ? `${Math.min(100, (progress.polucheno / progress.vsego) * 100)}%` : "30%",
+                }}
+              />
+            </div>
+            <span className="progress-tekst">
+              {progress.vsego > 0
+                ? `${Math.round((progress.polucheno / progress.vsego) * 100)}%`
+                : `${(progress.polucheno / 1048576).toFixed(1)} МБ`}
+            </span>
           </div>
         )}
-        {oshibka && <div className="oshibka">{oshibka}</div>}
+
+        <div className="pole" ref={mesto}>
+          {vkladki.length === 0 && (
+            <div className="pusto">
+              {dvizhokEst ? (
+                <>
+                  <h1>NexusBro</h1>
+                  <p>
+                    Супер-вкладка — это отдельный браузер со своим выходом в сеть.
+                    Внутри неё открывай сколько угодно обычных вкладок: весь сайт
+                    со всеми его адресами пойдёт через выбранный выход.
+                  </p>
+                  <button onClick={() => otkrytDialog()}>Создать первую</button>
+                </>
+              ) : (
+                <>
+                  <h1>Движок не найден</h1>
+                  <p>
+                    Файлы движка CEF должны лежать рядом с программой.
+                    Переустанови NexusBro.
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+          {oshibka && <div className="oshibka">{oshibka}</div>}
+        </div>
       </div>
 
       {dialog && (
@@ -421,23 +455,6 @@ export default function App() {
               Перезагрузить
             </div>
           </div>
-        </div>
-      )}
-      {progress && (
-        <div className="polosa-progress">
-          <div className="progress-liniya">
-            <div
-              className="progress-zalivka"
-              style={{
-                width: progress.vsego > 0 ? `${Math.min(100, (progress.polucheno / progress.vsego) * 100)}%` : "30%",
-              }}
-            />
-          </div>
-          <span className="progress-tekst">
-            {progress.vsego > 0
-              ? `${Math.round((progress.polucheno / progress.vsego) * 100)}%`
-              : `${(progress.polucheno / 1048576).toFixed(1)} МБ`}
-          </span>
         </div>
       )}
       {vopros && (
