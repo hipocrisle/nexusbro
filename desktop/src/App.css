@@ -5,7 +5,7 @@
   --tekst: #e6e9f2;
   --tiho: #8b93a7;
   --akcent: #5ec8a0;
-  --reika-w: 212px;
+  --reika-w: 152px;
 }
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }

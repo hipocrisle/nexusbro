@@ -225,7 +225,20 @@ fn aktivnaya(s: State<Sostoyanie>) -> Option<String> {
 
 #[tauri::command]
 fn dvizhok_est() -> bool {
-    brauzer::najti_dvizhok().is_some()
+    // ⛔ Старая проверка искала chromium/ungoogled-chromium — со схемой
+    // CEF она врала «движок не найден», хотя файлы лежали рядом (12.11.2026,
+    // промежуточная сборка ветки cef-migration). Ищем libcef рядом с exe
+    // или в CEF_PATH.
+    let ryadom = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|x| x.to_path_buf()))
+        .unwrap_or_default();
+    for baza in [ryadom, std::env::var("CEF_PATH").map(std::path::PathBuf::from).unwrap_or_default()] {
+        if baza.join("libcef.dll").exists() || baza.join("libcef.so").exists() {
+            return true;
+        }
+    }
+    false
 }
 
 /// Спрятать/показать встроенные окна движков. Нужно лицевой части:
