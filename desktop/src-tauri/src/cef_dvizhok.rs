@@ -8,6 +8,7 @@
 
 use cef::*;
 use std::io::{BufRead, Write};
+use std::sync::OnceLock;
 
 /// Это перезапуск нашего exe как процесса движка? (--type=... — подпроцесс
 /// CEF; --nb-dvizhok — процесс супер-вкладки.)
@@ -194,9 +195,40 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     }
 }
 
-/// Запустить процесс супер-вкладки. Прокси движку — командной строкой
-/// (⛔ прокси в CEF только так: на весь процесс).
-pub fn zapustit_cep(
+/// Заказ на спавн процесса супер-вкладки: всё, что нужно потоку-спавнеру.
+struct ZakazCefa {
+    id: String,
+    proxy: String,
+    url: Option<String>,
+    roditel: u64,
+    m: crate::okna::Mesto,
+    otvet: std::sync::mpsc::SyncSender<anyhow::Result<std::process::Child>>,
+}
+
+/// ⛔ Спавнить CEF-детей обязан ОДИН долгоживущий поток. PR_SET_PDEATHSIG
+/// (ниже) привязана к ПОТОКУ, а не к программе: поток, сделавший spawn,
+/// завершился — система тут же убила движок, ещё не родив окно. Так
+/// умирал движок автостарта: его спавнила короткая служебная нить,
+/// успевшая выйти сразу после spawn (поймано прогоном PROBA=3: процесса
+/// нет в ps, «движок не ответил за 25 с», 12.11.2026).
+static ZAPUSKATEL_CEFA: OnceLock<std::sync::mpsc::Sender<ZakazCefa>> = OnceLock::new();
+
+fn zapuskatel_cefa() -> &'static std::sync::mpsc::Sender<ZakazCefa> {
+    ZAPUSKATEL_CEFA.get_or_init(|| {
+        let (tx, rx) = std::sync::mpsc::channel::<ZakazCefa>();
+        std::thread::Builder::new()
+            .name("zapuskatel-cefa".into())
+            .spawn(move || {
+                while let Ok(z) = rx.recv() {
+                    let _ = z.otvet.send(zapustit_zdes(&z.id, &z.proxy, z.url.as_deref(), z.roditel, z.m));
+                }
+            })
+            .expect("не завёлся поток запуска движков CEF");
+        tx
+    })
+}
+
+fn zapustit_zdes(
     id: &str,
     proxy: &str,
     url: Option<&str>,
@@ -237,6 +269,30 @@ pub fn zapustit_cep(
     Ok(ditya)
 }
 
+/// Запустить процесс супер-вкладки. Прокси движку — командной строкой
+/// (⛔ прокси в CEF только так: на весь процесс).
+pub fn zapustit_cep(
+    id: &str,
+    proxy: &str,
+    url: Option<&str>,
+    roditel: u64,
+    m: crate::okna::Mesto,
+) -> anyhow::Result<std::process::Child> {
+    let (otvet, zhdem) = std::sync::mpsc::sync_channel(1);
+    zapuskatel_cefa().send(ZakazCefa {
+        id: id.to_string(),
+        proxy: proxy.to_string(),
+        url: url.map(|s| s.to_string()),
+        roditel,
+        m,
+        otvet,
+    })?;
+    // ⛔ Ожидание без края превращало неудачный запуск в вечное «Запускаю…».
+    zhdem
+        .recv_timeout(std::time::Duration::from_secs(25))
+        .map_err(|_| anyhow::anyhow!("поток запуска движков CEF молчит 25 с"))?
+}
+
 /// Дождаться строки «NB-OKNO <hwnd>» от процесса супер-вкладки.
 /// ⛔ Таймаут честный: чтение stdout идёт в отдельном потоке, основной
 /// ждёт через recv_timeout — иначе при молчащем дочке ждали бы вечно
@@ -248,6 +304,7 @@ pub fn dozhdatsya_okna(
     mut ditya: std::process::Child,
     sek: u64,
 ) -> Option<(std::process::Child, u32)> {
+    let pid = ditya.id();
     let stdout = ditya.stdout.take()?;
     let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
     std::thread::spawn(move || {
@@ -268,6 +325,13 @@ pub fn dozhdatsya_okna(
     match rx.recv_timeout(std::time::Duration::from_secs(sek)) {
         Ok(Some(h)) => Some((ditya, h)),
         _ => {
+            // Честно различаем молчание и мгновенную смерть: диагнозы
+            // разные (профиль/флаги против вечного «Запускаю…»).
+            let prichina = match ditya.try_wait() {
+                Ok(Some(k)) => format!("движок умер сразу после запуска (код {k})"),
+                _ => format!("движок не ответил за {sek} с (см. cef.log)"),
+            };
+            eprintln!("dozhdatsya_okna({pid}): {prichina}");
             let _ = ditya.kill();
             let _ = ditya.wait();
             None
