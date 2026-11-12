@@ -135,25 +135,12 @@ wrap_app! {
                     Some(&cef::CefString::from("http://127.0.0.1:8899")),
                 );
                 ks.append_switch(Some(&cef::CefString::from("force-dark-mode")));
-                if std::env::var("NEXUSBRO_PROBA").is_ok() || unsafe { libc_geteuid() } == 0 {
-                    ks.append_switch(Some(&cef::CefString::from("no-sandbox")));
-                }
+                // Спайк без песочницы (crate собран без sandbox-фичи).
+                ks.append_switch(Some(&cef::CefString::from("no-sandbox")));
             }
             let _ = tip_processa;
         }
     }
-}
-
-#[cfg(target_os = "linux")]
-unsafe fn libc_geteuid() -> u32 {
-    extern "C" {
-        fn geteuid() -> u32;
-    }
-    geteuid()
-}
-#[cfg(not(target_os = "linux"))]
-unsafe fn libc_geteuid() -> u32 {
-    1000
 }
 
 fn main() {

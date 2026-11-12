@@ -1,0 +1,89 @@
+# Спайк CEF: проверка жизнеспособности архитектуры «движок рождён
+# дочерним для нашего окна + трафик через наш прокси».
+#
+# Linux-джоба ещё и ГОНЯЕТ спайк под Xvfb: считается пройденной, только
+# если движок встроился и страница прошла через мини-прокси.
+# Windows-джоба собирает и упаковывает архив для ручной проверки на
+# машине пользователя (CI не может нажимать кнопки в GUI).
+
+name: CEF-спайк
+
+on:
+  push:
+    paths:
+      - "cef-spike/**"
+      - ".github/workflows/cef-spike.yml"
+  workflow_dispatch:
+
+env:
+  # CEF 156.0.26 — ровно тот, что ждёт crate cef = 156.4.
+  CEF_VERSION: "156.0.26+g8ea0c73+chromium-156.0.8078.88"
+  CEF_BASE: "cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Зависимости X11
+        run: sudo apt-get update && sudo apt-get install -y libxkbcommon-x11-0 xvfb xauth x11-utils
+      - name: Скачать CEF (linux64 minimal)
+        run: |
+          set -e
+          curl -fSL "https://cef-builds.spotifycdn.com/${CEF_BASE}_linux64_minimal.tar.bz2" -o /tmp/cef.tar.bz2
+          mkdir -p "$HOME/.local/share/cef"
+          tar -xjf /tmp/cef.tar.bz2 -C "$HOME/.local/share/cef" --strip-components=1
+      - name: Сборка
+        run: |
+          cd cef-spike
+          export CEF_PATH="$HOME/.local/share/cef"
+          cargo build --release
+      - name: Прогон под Xvfb
+        run: |
+          cd cef-spike
+          export CEF_PATH="$HOME/.local/share/cef"
+          export LD_LIBRARY_PATH="$HOME/.local/share/cef"
+          timeout 30 xvfb-run -a ./target/release/cef-spike > /tmp/spike.log 2>&1 || true
+          echo "--- журнал спайка:"
+          grep -E 'СПАЙК|ПРОКСИ' /tmp/spike.log | head -10
+          grep -q 'СПАЙК: движок создан и встроен в наше окно' /tmp/spike.log
+          grep -q 'ПРОКСИ: GET http://spike.nexusbro/' /tmp/spike.log
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Скачать CEF (windows64 minimal)
+        shell: pwsh
+        run: |
+          $ProgressPreference = 'SilentlyContinue'
+          Invoke-WebRequest "https://cef-builds.spotifycdn.com/${env:CEF_BASE}_windows64_minimal.tar.bz2" -OutFile "$env:TEMP\cef.tar.bz2"
+          $hash = (Get-FileHash "$env:TEMP\cef.tar.bz2" -Algorithm SHA1).Hash.ToLower()
+          if ($hash -ne "15d29eea209d857c22dc163706080295aea69b5c") { throw "SHA1 CEF не сошёлся: $hash" }
+          New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\share\cef" | Out-Null
+          tar -xjf "$env:TEMP\cef.tar.bz2" -C "$env:USERPROFILE\.local\share\cef" --strip-components=1
+      - name: Сборка
+        shell: pwsh
+        run: |
+          $env:CEF_PATH = "$env:USERPROFILE\.local\share\cef"
+          cd cef-spike
+          cargo build --release
+      - name: Упаковка
+        shell: pwsh
+        run: |
+          $dist = "cef-spike\dist"
+          New-Item -ItemType Directory -Force $dist | Out-Null
+          Copy-Item cef-spike\target\release\cef-spike.exe $dist\
+          $cef = "$env:USERPROFILE\.local\share\cef"
+          foreach ($f in @("libcef.dll","chrome_elf.dll","icudtl.dat","v8_context_snapshot.bin","resources.pak","chrome_100_percent.pak","chrome_200_percent.pak","libEGL.dll","libGLESv2.dll","vk_swiftshader.dll","vulkan-1.dll","dxcompiler.dll","libvk_swiftshader.dll")) {
+            if (Test-Path "$cef\$f") { Copy-Item "$cef\$f" $dist\ }
+          }
+          Copy-Item "$cef\locales" $dist\locales -Recurse
+          Compress-Archive -Path "$dist\*" -DestinationPath cef-spike-windows.zip
+      - name: Артефакт
+        uses: actions/upload-artifact@v4
+        with:
+          name: cef-spike-windows
+          path: cef-spike-windows.zip
