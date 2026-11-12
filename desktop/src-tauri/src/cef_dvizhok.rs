@@ -42,7 +42,23 @@ pub fn process_vhod() -> i32 {
 wrap_app! {
     struct DvizhokApp;
 
-    impl App {}
+    impl App {
+        fn on_before_command_line_processing(
+            &self,
+            _tip_processa: Option<&CefString>,
+            komandnaya_stroka: Option<&mut CommandLine>,
+        ) {
+            if let Some(ks) = komandnaya_stroka {
+                // ⛔ GPU-процесс падал в цикле на машине user'а (12.11.2026):
+                // программный рендер — медленнее, но стабилен везде.
+                ks.append_switch(Some(&CefString::from("disable-gpu")));
+                // Движок не должен стучаться за обновлениями к Google.
+                ks.append_switch(Some(&CefString::from("disable-component-update")));
+                // Движок — тёмный, как вся программа.
+                ks.append_switch(Some(&CefString::from("force-dark-mode")));
+            }
+        }
+    }
 }
 
 wrap_client! {

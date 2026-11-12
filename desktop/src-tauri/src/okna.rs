@@ -450,6 +450,8 @@ pub mod sistema {
     }
 
     /// Кто сейчас впереди (для диагностики): pid и заголовок.
+    /// ⛔ GetWindowTextW может ВЕЧНО ждать чужой зависший поток — шлём
+    /// WM_GETTEXT через SendMessageTimeoutW (12.11.2026: зависание при 🛠).
     pub fn kto_v_peredne() -> String {
         unsafe {
             let fg = GetForegroundWindow();
@@ -459,8 +461,18 @@ pub mod sistema {
             let mut pid = 0u32;
             GetWindowThreadProcessId(fg, Some(&mut pid));
             let mut zaglavie = [0u16; 256];
-            let n = GetWindowTextW(fg, &mut zaglavie);
-            format!("pid {pid} «{}»", String::from_utf16_lossy(&zaglavie[..n as usize]))
+            let mut otvet: usize = 0;
+            let _ = SendMessageTimeoutW(
+                fg,
+                WM_GETTEXT,
+                WPARAM(zaglavie.len()),
+                LPARAM(zaglavie.as_mut_ptr() as isize),
+                SMTO_ABORTIFHUNG,
+                500,
+                Some(std::ptr::from_mut(&mut otvet)),
+            );
+            let n = otvet.min(zaglavie.len());
+            format!("pid {pid} «{}»", String::from_utf16_lossy(&zaglavie[..n]))
         }
     }
 

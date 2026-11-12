@@ -252,7 +252,7 @@ fn dvizhok_est() -> bool {
 /// движков: пересозданное окно старым хэндлом не видно и лежит поверх,
 /// поедая клики по диалогу.
 #[tauri::command]
-fn pokazat_dvizhki(s: State<Sostoyanie>, vidno: bool) -> Otvet {
+async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet, String> {
     if !vidno {
         let pids: Vec<u32> = {
             let v = s.vkladki.lock().unwrap();
@@ -270,7 +270,7 @@ fn pokazat_dvizhki(s: State<Sostoyanie>, vidno: bool) -> Otvet {
             let _ = sistema::pokazat(o, pokazat);
         }
     }
-    da()
+    Ok(da())
 }
 
 #[tauri::command]
@@ -753,7 +753,7 @@ fn perezagruzit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
 /// хвосты engine.log. Человек копирует и присылает — разбираем факты,
 /// а не гадания (10.11.2026).
 #[tauri::command]
-fn diagnostika(app: tauri::AppHandle, s: State<Sostoyanie>) -> String {
+async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<String, String> {
     let mut out = String::from("=== NexusBro диагностика ===\n");
     let nashe = app
         .get_webview_window("main")
@@ -817,7 +817,7 @@ fn diagnostika(app: tauri::AppHandle, s: State<Sostoyanie>) -> String {
             }
         }
     }
-    out
+    Ok(out)
 }
 
 /// Указатель на наше окно в том виде, какого ждёт система.
