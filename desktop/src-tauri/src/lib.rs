@@ -140,11 +140,31 @@ static ZHURNAL: std::sync::Mutex<std::collections::VecDeque<(std::time::Instant,
 
 fn zapisat_v_zhurnal(sobytie: String) {
     if let Ok(mut z) = ZHURNAL.lock() {
-        z.push_back((std::time::Instant::now(), sobytie));
+        z.push_back((std::time::Instant::now(), sobytie.clone()));
         while z.len() > 40 {
             z.pop_front();
         }
     }
+    // ⛔ И на диск: при зависании in-memory журнал умирает вместе с
+    // программой и бесполезен (12.11.2026, user). Пишем терпимо к
+    // ошибкам: журнал не должен ломать основной путь.
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(brauzer::papka_profilej().parent().unwrap_or(std::path::Path::new(".")).join("zhurnal.log"))
+    {
+        use std::io::Write;
+        let _ = writeln!(f, "{secs} {sobytie}");
+    }
+}
+
+/// Границы команд — чтобы зависание находилось по последней строке файла.
+fn v_zhurnal_granica(komanda: &str, id: &str, shag: &str) {
+    zapisat_v_zhurnal(format!("{komanda}({id}): {shag}"));
 }
 
 #[derive(Serialize)]
@@ -253,6 +273,7 @@ fn dvizhok_est() -> bool {
 /// поедая клики по диалогу.
 #[tauri::command]
 async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet, String> {
+    v_zhurnal_granica("pokazat_dvizhki", "-", &format!("vidno={vidno}"));
     if !vidno {
         let pids: Vec<u32> = {
             let v = s.vkladki.lock().unwrap();
@@ -270,6 +291,8 @@ async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet,
             let _ = sistema::pokazat(o, pokazat);
         }
     }
+    drop(v);
+    v_zhurnal_granica("pokazat_dvizhki", "-", "готово");
     Ok(da())
 }
 
@@ -280,6 +303,7 @@ async fn otkryt(
     nastrojki: Nastrojki,
 ) -> Result<Otvet, String> {
     let id = nastrojki.id.clone();
+    v_zhurnal_granica("otkryt", &id, "вход");
     {
         let mut v = s.vkladki.lock().unwrap();
         if v.contains_key(&id) {
@@ -472,6 +496,7 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
 
 #[tauri::command]
 async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+    v_zhurnal_granica("pereklyuchit", &id, "вход");
     let zapushchena = match s.vkladki.lock().unwrap().get_mut(&id) {
         Some(vk) => {
             // ⛔ Дочерний процесс — «пусковая ракета»: Chromium на Windows
@@ -532,10 +557,9 @@ async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
         return Ok(zapustit_vnutri(&app, &s, &id).await);
     }
     pereklyuchit_vnutri(&s, &id);
-    // Клавиатуру — показанному движку (очереди уже прикреплены).
-    if let Some(o) = s.vkladki.lock().unwrap().get(&id).and_then(|v| v.okno) {
-        let _ = app.run_on_main_thread(move || sistema::fokus_dvizhku(o));
-    }
+    // ⛔ SetFocus в чужое окно с главного потока на Windows может повиснуть
+    // вместе с потоком движка (12.11.2026, «виснет в рандомные моменты»).
+    // Фокус движку отдаст клик мышью — штатно.
     Ok(da())
 }
 
@@ -675,7 +699,9 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     let Some(nastrojki) = udalena else {
         return Ok(net("такой супер-вкладки нет"));
     };
+    v_zhurnal_granica("zakryt", &id, "останавливаю движок");
     ostanovit_vnutri(&app, &s, &id);
+    v_zhurnal_granica("zakryt", &id, "движок остановлен");
     {
         let v = s.vkladki.lock().unwrap();
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
@@ -756,6 +782,7 @@ async fn perezagruzit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
 /// а не гадания (10.11.2026).
 #[tauri::command]
 async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<String, String> {
+    v_zhurnal_granica("diagnostika", "-", "вход");
     let mut out = String::from("=== NexusBro диагностика ===\n");
     let nashe = app
         .get_webview_window("main")
@@ -789,6 +816,16 @@ async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<
         for (t, m) in z.iter() {
             let secs = start.map(|st| t.duration_since(st).as_secs()).unwrap_or(0);
             out.push_str(&format!("+{secs}s {m}\n"));
+        }
+    }
+    out.push_str("\n--- zhurnal.log (живой журнал с диска, хвост) ---\n");
+    {
+        let f = brauzer::papka_profilej().parent().unwrap_or(std::path::Path::new(".")).join("zhurnal.log");
+        if let Ok(soderzhimoe) = std::fs::read_to_string(&f) {
+            let hvost: Vec<&str> = soderzhimoe.lines().rev().take(15).collect();
+            for stroka in hvost.iter().rev() {
+                out.push_str(&format!("  {stroka}\n"));
+            }
         }
     }
     out.push_str("\n--- cef.log (хвосты, процессы движка) ---\n");
@@ -861,10 +898,9 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
     if let Some(mm) = m {
         let _ = sistema::peremestit(okno, mm);
     }
-    // ⛔ Фокус при возврате из другого приложения оседает на нашем
-    // окне — вернём клавиатуру движку, иначе текст не набирается
-    // (10.11.2026, поймал user).
-    let _ = app.run_on_main_thread(move || sistema::fokus_dvizhku(okno));
+    // Фокус движку возвращает клик мышью; принудительный SetFocus
+    // в чужое окно с главного потока убран (взаимные блокировки).
+    let _ = app;
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -897,7 +933,8 @@ pub fn run() {
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
             // чтобы весь путь (запуск → поиск окна → встраивание) можно было
             // проверить без рук.
-            if std::env::var("NEXUSBRO_PROBA").as_deref() == Ok("1") {
+            let proba = std::env::var("NEXUSBRO_PROBA").unwrap_or_default();
+            if proba == "1" || proba == "2" {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -913,6 +950,38 @@ pub fn run() {
                     let o = tauri::async_runtime::block_on(otkryt(h.clone(), s, n))
                         .unwrap_or_else(|e| net(e));
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
+                    // СЦЕНАРИЙ 2: воспроизводим жалобы user'а — вторая
+                    // вкладка и удаление (висло на машине, 12.11.2026).
+                    if proba == "2" {
+                        let shag = |t: &str| println!("СЦЕНАРИЙ: {t}");
+                        std::thread::sleep(std::time::Duration::from_secs(4));
+                        shag("создаю вторую…");
+                        let n2 = Nastrojki {
+                            id: "proba2".into(),
+                            nazvanie: "Проба2".into(),
+                            proxy: String::new(),
+                            adres: "about:blank".into(),
+                            rezat_reklamu: true,
+                            pustaya: true,
+                        };
+                        let s2: tauri::State<Sostoyanie> = h.state();
+                        let o2 = tauri::async_runtime::block_on(otkryt(h.clone(), s2, n2))
+                            .unwrap_or_else(|e| net(e));
+                        println!("СЦЕНАРИЙ: вторая ok={} {}", o2.ok, o2.soobshchenie);
+                        std::thread::sleep(std::time::Duration::from_secs(4));
+                        shag("удаляю вторую…");
+                        let s3: tauri::State<Sostoyanie> = h.state();
+                        let o3 = tauri::async_runtime::block_on(zakryt(h.clone(), s3, "proba2".into(), false))
+                            .unwrap_or_else(|e| net(e));
+                        println!("СЦЕНАРИЙ: удалена ok={} {}", o3.ok, o3.soobshchenie);
+                        std::thread::sleep(std::time::Duration::from_secs(3));
+                        shag("удаляю первую…");
+                        let s4: tauri::State<Sostoyanie> = h.state();
+                        let o4 = tauri::async_runtime::block_on(zakryt(h.clone(), s4, "proba".into(), true))
+                            .unwrap_or_else(|e| net(e));
+                        println!("СЦЕНАРИЙ: удалена ok={} {}", o4.ok, o4.soobshchenie);
+                        shag("ГОТОВ");
+                    }
                 });
             }
             // Сторож встроенных окон: Chromium иногда ПЕРЕСОЗДАЁТ своё
@@ -950,77 +1019,30 @@ pub fn run() {
                             .collect()
                     };
                     for (id, pid, staroe) in nado {
-                        // ⛔ Отслеживаем ДРУЖЕСКОЕ окно, а не «всё ли у
-                        // старого хорошо»: Chromium пересоздаёт окно,
-                        // зомби остаётся нашим потомком (nash_li=true),
-                        // а живёт уже в новом — с рамкой и кнопками
-                        // (10.11.2026, поймал user по кнопкам управления
-                        // во встроенном хроме).
-                        match sistema::najti_okno(pid, 1) {
-                            Ok(novoe) if novoe != staroe => {
-                                zapisat_v_zhurnal(format!("{id}: окно пересоздано ({staroe} → {novoe}), встраиваю"));
-                                let s: tauri::State<Sostoyanie> = h.state();
-                                let m = s
-                                    .mesto
-                                    .lock()
-                                    .unwrap()
-                                    .unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
-                                let _ = sistema::vstroit(novoe, nashe, m);
-                                if let Ok(mut v) = s.vkladki.try_lock() {
-                                    if let Some(vk) = v.get_mut(&id) {
-                                        vk.okno = Some(novoe);
+                        // CEF-окна не пересоздаются и не «сбегают» — сторожу
+                        // осталась одна работа: заметить мёртвый процесс и
+                        // усыпить вкладку. Перевстраивание и свип окон —
+                        // наследие старой схемы, удалены (12.11.2026).
+                        if sistema::najti_okno(pid, 1).is_err()
+                            && !sistema::nash_li(staroe, nashe)
+                            && !sistema::pid_zhiv(pid)
+                        {
+                            zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
+                            let s: tauri::State<Sostoyanie> = h.state();
+                            if let Ok(mut v) = s.vkladki.try_lock() {
+                                if let Some(vk) = v.get_mut(&id) {
+                                    vk.okno = None;
+                                    vk.proc = None;
+                                    if let Some(p) = vk.nash_proxy.take() {
+                                        p.ostanovit();
                                     }
-                                }
-                                let _ = h.run_on_main_thread(move || {
-                                    sistema::prisoedinit_vvod(novoe);
-                                    sistema::fokus_dvizhku(novoe);
-                                });
-                                let _ = h.emit("vkladki-izmenilis", id.clone());
-                            }
-                            Ok(_) => {}
-                            Err(_) => {
-                                // ⛔ Спим ТОЛЬКО при мёртвом процессе: окно
-                                // могло пересоздаться или пропасть на
-                                // секунду (свип ниже его найдёт и встроит).
-                                // Иначе хоронили живой движок — а его окно
-                                // дальше жило своей жизнью поверх (12.11.2026:
-                                // «движок перезапущен, окно нет», движок
-                                // при этом писал в engine.log).
-                                if !sistema::nash_li(staroe, nashe)
-                                    && !sistema::pid_zhiv(pid)
-                                {
-                                    zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
-                                    let s: tauri::State<Sostoyanie> = h.state();
-                                    if let Ok(mut v) = s.vkladki.try_lock() {
-                                        if let Some(vk) = v.get_mut(&id) {
-                                            vk.okno = None;
-                                            vk.proc = None;
-                                            if let Some(p) = vk.nash_proxy.take() {
-                                                p.ostanovit();
-                                            }
-                                            if let Some(mut t) = vk.tunnel.take() {
-                                                let _ = t.kill();
-                                                let _ = t.wait();
-                                            }
-                                        }
-                                    }
-                                    let _ = h.emit("vkladki-izmenilis", id.clone());
-                                }
-                            }
-                        }
-                        // Плюс подметаем чужие окна этого движка: сессия
-                        // с несколькими окнами, попапы, пересозданное окно.
-                        // Если известное окно погибло — крупнейшее чужое
-                        // становится главным.
-                        let s2: tauri::State<Sostoyanie> = h.state();
-                        if let Some(glavnoe) = vstroit_vse_okna(&h, &s2, &id, pid) {
-                            if !sistema::nash_li(staroe, nashe) {
-                                if let Ok(mut v) = s2.vkladki.try_lock() {
-                                    if let Some(vk) = v.get_mut(&id) {
-                                        vk.okno = Some(glavnoe);
+                                    if let Some(mut t) = vk.tunnel.take() {
+                                        let _ = t.kill();
+                                        let _ = t.wait();
                                     }
                                 }
                             }
+                            let _ = h.emit("vkladki-izmenilis", id.clone());
                         }
                     }
                 });
