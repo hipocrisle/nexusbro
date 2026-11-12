@@ -64,6 +64,9 @@ export default function App() {
     proverit_obnovlenie();
     window.addEventListener("resize", soobshchitMesto);
     // ядро само сообщает, когда список изменился
+    const otpiskaOshibki = listen<string>("oshibka-dvizhka", (e) => {
+      setOshibka(e.payload);
+    });
     const otpiska = listen<string>("vkladki-izmenilis", async (e) => {
       setVkladki(await invoke<Vidno[]>("spisok"));
       if (e.payload) setAktivnaya(e.payload);
@@ -79,6 +82,7 @@ export default function App() {
     return () => {
       window.removeEventListener("resize", soobshchitMesto);
       otpiska.then((f) => f());
+      otpiskaOshibki.then((f) => f());
       clearInterval(chasy);
     };
   }, [soobshchitMesto]);

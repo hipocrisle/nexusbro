@@ -111,6 +111,9 @@ struct Vkladka {
     /// ⛔ Запускать все сразу нельзя: каждый экземпляр ест сотни мегабайт,
     /// десять вкладок — несколько гигабайт на пустом месте.
     proc: Option<Child>,
+    /// Движок спавнится, хэндл окна ещё не получен (фоновый поток ждёт
+    /// NB-OKNO). Пока true — повторный запуск не начинать.
+    zapusk_idet: bool,
     okno: Option<u32>,
     /// Реальный pid браузера, когда Chromium перезапустил себя из-под
     /// нашего мёртвого дочернего процесса (10.11.2026). Убиваем по нему.
@@ -286,7 +289,7 @@ fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -397,21 +400,8 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         }
     };
     let m = s.mesto.lock().unwrap().unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
-    let (ditya, okno) = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, m) {
-        Ok(mut d) => match cef_dvizhok::zhdat_okno(&mut d, 25) {
-            Some(o) => (d, o),
-            None => {
-                let _ = d.kill();
-                let _ = d.wait();
-                nash.ostanovit();
-                if let Some(mut t) = tunnel {
-                    let _ = t.kill();
-                    let _ = t.wait();
-                }
-                zapisat_v_zhurnal(format!("{id}: движок не сообщил хэндл окна за 25 с"));
-                return so_oshibkoj_dvizhka(&id, "движок не ответил за 25 с".into());
-            }
-        },
+    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, m) {
+        Ok(d) => d,
         Err(e) => {
             nash.ostanovit();
             if let Some(mut t) = tunnel {
@@ -422,20 +412,59 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         }
     };
 
-    if let Some(v) = s.vkladki.lock().unwrap().get_mut(id) {
-        // Смерть дочернего = смерть движка: перезапусков-призраков,
-        // запасных pid и сторожа-возвращальщика больше не нужно.
-        v.proc = Some(ditya);
-        v.okno = Some(okno);
-        v.zapas_pid = None;
-        v.nash_proxy = Some(nash);
-        v.tunnel = tunnel;
+    // ⛔ Хэндл окна дописывает ФОНОВЫЙ поток: команды Tauri крутятся на
+    // главном потоке, а дочка при создании окна ждёт родительское — если
+    // ждать здесь, оба повисают навсегда (намертво зависало при создании
+    // первой вкладки, 12.11.2026). Ошибку шлём событием в интерфейс.
+    {
+        let mut v = s.vkladki.lock().unwrap();
+        if let Some(vk) = v.get_mut(id) {
+            vk.zapusk_idet = true;
+            vk.nash_proxy = Some(nash);
+            vk.tunnel = tunnel;
+        }
     }
-    pereklyuchit_vnutri(s, id);
-    zapisat_v_zhurnal(format!("{id}: запуск ок, окно {okno}"));
-    // ⛔ Полоса вкладок должна узнавать об изменениях, сделанных ядром, —
-    // иначе вкладка есть, а в полосе её нет (ловили на самопроверке).
-    let _ = app.emit("vkladki-izmenilis", id.to_string());
+    let h = app.clone();
+    let id_fon = id.to_string();
+    std::thread::spawn(move || {
+        match cef_dvizhok::dozhdatsya_okna(ditya, 25) {
+            Some((ditya, okno)) => {
+                let s: State<Sostoyanie> = h.state();
+                if let Some(vk) = s.vkladki.lock().unwrap().get_mut(&id_fon) {
+                    vk.proc = Some(ditya);
+                    vk.okno = Some(okno);
+                    vk.zapusk_idet = false;
+                }
+                pereklyuchit_vnutri(&s, &id_fon);
+                zapisat_v_zhurnal(format!("{id_fon}: запуск ок, окно {okno}"));
+                let _ = h.emit("vkladki-izmenilis", id_fon);
+            }
+            None => {
+                // Дочка молчит/умерла: убираем прокси-туннель и сообщаем.
+                let s: State<Sostoyanie> = h.state();
+                let (proxy, tunnel) = {
+                    let mut v = s.vkladki.lock().unwrap();
+                    match v.get_mut(&id_fon) {
+                        Some(vk) => {
+                            vk.zapusk_idet = false;
+                            (vk.nash_proxy.take(), vk.tunnel.take())
+                        }
+                        None => (None, None),
+                    }
+                };
+                if let Some(p) = proxy {
+                    p.ostanovit();
+                }
+                if let Some(mut t) = tunnel {
+                    let _ = t.kill();
+                    let _ = t.wait();
+                }
+                zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
+                let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с. Журнал: %LOCALAPPDATA%/NexusBro/profili/{id_fon}/cef.log"));
+                let _ = h.emit("vkladki-izmenilis", id_fon);
+            }
+        }
+    });
     da()
 }
 
@@ -450,6 +479,11 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
             // его — а подметание при перезапуске резало соседнюю вкладку
             // (12.11.2026, диагностика user'а: «мёртвый движок при
             // переключении» через 2 с после успешного запуска).
+            if vk.zapusk_idet {
+                // Движок спавнится прямо сейчас — считаем запущенной,
+                // повторный спавн не начинаем.
+                true
+            } else {
             let rebenok_zhiv = matches!(
                 vk.proc.as_mut().map(|p| p.try_wait()),
                 Some(Ok(None))
@@ -485,6 +519,7 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
                     }
                     false
                 }
+            }
             }
         }
         None => return net("такой супер-вкладки нет"),
@@ -548,7 +583,10 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
     let (mut proc, _okno, _zapas) = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(id) {
-            Some(vk) => (vk.proc.take(), vk.okno.take(), vk.zapas_pid.take()),
+            Some(vk) => {
+                vk.zapusk_idet = false;
+                (vk.proc.take(), vk.okno.take(), vk.zapas_pid.take())
+            }
             None => return,
         }
     };
@@ -679,7 +717,7 @@ fn vosstanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet
         if v.contains_key(&id) {
             return net("такая супер-вкладка уже открыта");
         }
-        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None });
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
@@ -749,6 +787,20 @@ fn diagnostika(app: tauri::AppHandle, s: State<Sostoyanie>) -> String {
         for (t, m) in z.iter() {
             let secs = start.map(|st| t.duration_since(st).as_secs()).unwrap_or(0);
             out.push_str(&format!("+{secs}s {m}\n"));
+        }
+    }
+    out.push_str("\n--- cef.log (хвосты, процессы движка) ---\n");
+    {
+        let v = s.vkladki.lock().unwrap();
+        for (id, _) in v.iter() {
+            let log = brauzer::papka_profilej().join(id).join("cef.log");
+            if let Ok(soderzhimoe) = std::fs::read_to_string(&log) {
+                let hvost: Vec<&str> = soderzhimoe.lines().rev().take(8).collect();
+                out.push_str(&format!("[{id}] {}\n", log.display()));
+                for stroka in hvost.iter().rev() {
+                    out.push_str(&format!("  {stroka}\n"));
+                }
+            }
         }
     }
     out.push_str("\n--- engine.log (хвосты) ---\n");
@@ -837,7 +889,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,

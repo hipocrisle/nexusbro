@@ -70,6 +70,13 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         eprintln!("dvizhok: нет --nb-roditel");
         return 1;
     }
+    // Журнал этапов: родитель смотрит этот файл, если окно не появилось.
+    // На Windows stderr уже перенаправлен родителем в этот же файл.
+    #[cfg(target_os = "linux")]
+    if let Ok(f) = std::fs::File::create(std::path::Path::new(&profil).join("cef.log")) {
+        use std::os::unix::io::AsRawFd;
+        let _ = unsafe { libc::dup2(f.as_raw_fd(), 2) };
+    }
 
     // Файлы движка: рядом с exe или CEF_PATH (dev).
     let cef_dir = std::env::var("CEF_PATH")
@@ -94,6 +101,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
             .as_ref(),
     );
 
+    eprintln!("cef: initialize…");
     let mut prilozhenie = DvizhokApp::new();
     if initialize(
         Some(main_args),
@@ -115,6 +123,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     let roditel_handle: sys::cef_window_handle_t =
         roditel as usize as sys::cef_window_handle_t;
 
+    eprintln!("cef: окно движка…");
     let info = WindowInfo::default().set_as_child(
         roditel_handle,
         &Rect {
@@ -140,6 +149,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     };
     // Хэндл окна приводим к u32 независимо от платформы: на Linux это
     // XID (u64), на Windows — HWND (указатель).
+    eprintln!("cef: браузер создан");
     let okno = dvizhok
         .host()
         .map(|x| {
@@ -181,6 +191,11 @@ pub fn zapustit_cep(
     let profil = crate::brauzer::papka_profilej().join(id);
     std::fs::create_dir_all(&profil)?;
     let stdout = std::process::Stdio::piped();
+    // ⛔ stderr — в файл: при зависании/падении дочка причина видна
+    // (раньше был null, и диагностика слепая).
+    let stderr = std::fs::File::create(profil.join("cef.log"))
+        .map(std::process::Stdio::from)
+        .unwrap_or(std::process::Stdio::null());
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--nb-dvizhok")
         .arg(format!("--user-data-dir={}", profil.display()))
@@ -188,7 +203,7 @@ pub fn zapustit_cep(
         .arg(format!("--nb-roditel={roditel}"))
         .arg(format!("--nb-rect={},{},{},{}", m.x, m.y, m.w, m.h))
         .stdout(stdout)
-        .stderr(std::process::Stdio::null());
+        .stderr(stderr);
     if let Some(u) = url {
         cmd.arg(format!("--nb-url={u}"));
     }
@@ -207,23 +222,39 @@ pub fn zapustit_cep(
 }
 
 /// Дождаться строки «NB-OKNO <hwnd>» от процесса супер-вкладки.
-/// Хэндл окна движка — чтобы показывать/прятать/двигать его как раньше.
-pub fn zhdat_okno(ditya: &mut std::process::Child, sek: u64) -> Option<u32> {
-    let srok = std::time::Instant::now();
+/// ⛔ Таймаут честный: чтение stdout идёт в отдельном потоке, основной
+/// ждёт через recv_timeout — иначе при молчащем дочке ждали бы вечно
+/// (намертво висло при создании вкладки, 12.11.2026). Вызывать ТОЛЬКО
+/// из фонового потока: команды Tauri крутятся на главном потоке, а
+/// дочка при создании окна ждёт ответа родительского — взаимный
+/// дедлок иначе неизбежен.
+pub fn dozhdatsya_okna(
+    mut ditya: std::process::Child,
+    sek: u64,
+) -> Option<(std::process::Child, u32)> {
     let stdout = ditya.stdout.take()?;
-    let chitat = std::io::BufReader::new(stdout);
-    for stroka in chitat.lines() {
-        if let Ok(s) = stroka {
-            if let Some(h) = s.strip_prefix("NB-OKNO ") {
-                return h.trim().parse().ok();
+    let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
+    std::thread::spawn(move || {
+        let chitat = std::io::BufReader::new(stdout);
+        for stroka in chitat.lines() {
+            match stroka {
+                Ok(s) => {
+                    if let Some(h) = s.strip_prefix("NB-OKNO ") {
+                        let _ = tx.send(h.trim().parse().ok());
+                        return;
+                    }
+                }
+                Err(_) => break,
             }
         }
-        if srok.elapsed().as_secs() >= sek {
-            return None;
-        }
-        if matches!(ditya.try_wait(), Ok(Some(_))) {
-            return None;
+        let _ = tx.send(None);
+    });
+    match rx.recv_timeout(std::time::Duration::from_secs(sek)) {
+        Ok(Some(h)) => Some((ditya, h)),
+        _ => {
+            let _ = ditya.kill();
+            let _ = ditya.wait();
+            None
         }
     }
-    None
 }
