@@ -44,9 +44,11 @@ jobs:
           cd cef-spike
           export CEF_PATH="$HOME/.local/share/cef"
           export LD_LIBRARY_PATH="$HOME/.local/share/cef"
+          echo "--- недостающие библиотеки:"
+          ldd ./target/release/cef-spike | grep 'not found' || echo "(все на месте)"
           timeout 30 xvfb-run -a ./target/release/cef-spike > /tmp/spike.log 2>&1 || true
-          echo "--- журнал спайка:"
-          grep -E 'СПАЙК|ПРОКСИ' /tmp/spike.log | head -10
+          echo "--- журнал спайка (хвост):"
+          tail -40 /tmp/spike.log
           grep -q 'СПАЙК: движок создан и встроен в наше окно' /tmp/spike.log
           grep -q 'ПРОКСИ: GET http://spike.nexusbro/' /tmp/spike.log
 
