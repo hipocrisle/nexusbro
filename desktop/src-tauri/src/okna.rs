@@ -257,7 +257,7 @@ pub mod sistema {
             // ⛔ Свёрнутое окно (160x28) фильтр размера не пропустит —
             // возвращаем на место и берём на следующем проходе.
             if IsIconic(hwnd).as_bool() {
-                let _ = ShowWindow(hwnd, SW_RESTORE);
+                let _ = ShowWindowAsync(hwnd, SW_RESTORE);
                 return BOOL(1);
             }
             let mut r = RECT::default();
@@ -385,7 +385,7 @@ pub mod sistema {
             SetWindowLongPtrW(ch, GWL_STYLE, novyj as isize);
             SetParent(ch, HWND(nashe as usize as *mut core::ffi::c_void))?;
             peremestit(chuzhoe, m)?;
-            let _ = ShowWindow(ch, SW_SHOW);
+            let _ = ShowWindowAsync(ch, SW_SHOW);
         }
         Ok(())
     }
@@ -538,7 +538,7 @@ pub mod sistema {
                 let mut pid = 0u32;
                 GetWindowThreadProcessId(hwnd, Some(&mut pid));
                 if p.pids.contains(&pid) {
-                    let _ = ShowWindow(hwnd, SW_HIDE);
+                    let _ = ShowWindowAsync(hwnd, SW_HIDE);
                 }
                 BOOL(1)
             }
