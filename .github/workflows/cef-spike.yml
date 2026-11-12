@@ -10,6 +10,7 @@ name: CEF-спайк
 
 on:
   push:
+    branches: [main, cef-migration]
     paths:
       - "cef-spike/**"
       - ".github/workflows/cef-spike.yml"
