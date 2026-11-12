@@ -619,9 +619,8 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
 fn ostanovit_resursy(
     proc: Option<Child>, proxy: Option<proxy::Rabotayushchij>, tunnel: Option<Child>,
 ) {
-    if let Some(mut p) = proc {
-        let _ = p.kill();
-        let _ = p.wait();
+    if let Some(p) = proc {
+        cef_dvizhok::ostanovit_process(p);
     }
     if let Some(p) = proxy {
         p.ostanovit();

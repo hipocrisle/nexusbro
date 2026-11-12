@@ -117,9 +117,8 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
                         Zakaz::Cef { mut komanda, otvet } => {
                             let itog = komanda.spawn().map_err(anyhow::Error::from);
                             if let Err(e) = otvet.send(itog) {
-                                if let Ok(mut ditya) = e.0 {
-                                    let _ = ditya.kill();
-                                    let _ = ditya.wait();
+                                if let Ok(ditya) = e.0 {
+                                    crate::cef_dvizhok::ostanovit_process(ditya);
                                 }
                             }
                         }

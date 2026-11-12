@@ -266,6 +266,7 @@ pub fn zapustit_cep(
     #[cfg(target_os = "linux")]
     unsafe {
         use std::os::unix::process::CommandExt;
+        cmd.process_group(0);
         cmd.pre_exec(|| {
             libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
             Ok(())
@@ -281,6 +282,15 @@ pub fn zapustit_cep(
         return Err(e);
     }
     Ok(ditya)
+}
+
+pub fn ostanovit_process(mut ditya: std::process::Child) {
+    #[cfg(target_os = "linux")]
+    unsafe {
+        libc::kill(-(ditya.id() as i32), libc::SIGKILL);
+    }
+    let _ = ditya.kill();
+    let _ = ditya.wait();
 }
 
 /// Дождаться строки «NB-OKNO <hwnd>» от процесса супер-вкладки.
