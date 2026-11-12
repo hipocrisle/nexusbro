@@ -122,8 +122,15 @@ export default function App() {
   // Диалог рисуется внутри нашего окна, а поверх его лежит чужое окно
   // движка: без скрытия диалог не видно (10.11.2026).
   async function otkrytDialog() {
+    setMenuSohranennyh(null);
     await invoke("pokazat_dvizhki", { vidno: false });
     setDialog(true);
+  }
+
+  async function zakrytMenyu() {
+    setMenyu(null);
+    setMenuSohranennyh(null);
+    await invoke("pokazat_dvizhki", { vidno: true });
   }
   async function zakrytDialog() {
     setDialog(false);
@@ -212,14 +219,18 @@ export default function App() {
 
   async function otkrytSohranennuyu(id: string) {
     setMenuSohranennyh(null);
-    const o = await invoke<Otvet>("vosstanovit", { id });
-    if (!o.ok) {
-      setOshibka(o.soobshchenie);
-      return;
+    try {
+      const o = await invoke<Otvet>("vosstanovit", { id });
+      if (!o.ok) {
+        setOshibka(o.soobshchenie);
+        return;
+      }
+      setVkladki(await invoke<Vidno[]>("spisok"));
+      setAktivnaya(id);
+      soobshchitMesto();
+    } finally {
+      await invoke("pokazat_dvizhki", { vidno: true });
     }
-    setVkladki(await invoke<Vidno[]>("spisok"));
-    setAktivnaya(id);
-    soobshchitMesto();
   }
 
   async function udalitSohranennuyu(id: string, nazvanie: string, e: React.MouseEvent) {
@@ -247,10 +258,12 @@ export default function App() {
               key={v.id}
               className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "")}
               onClick={() => pereklyuchit(v.id)}
-              onContextMenu={(e) => {
+              onContextMenu={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                setMenyu({ x: e.clientX, y: e.clientY, vkladka: v });
+                const poziciya = { x: e.clientX, y: e.clientY, vkladka: v };
+                await invoke("pokazat_dvizhki", { vidno: false });
+                setMenyu(poziciya);
               }}
               title={v.proxy || "прямое соединение"}
             >
@@ -275,8 +288,9 @@ export default function App() {
             disabled={zanyat}
             onClick={async () => {
               if (menuSohranennyh) {
-                setMenuSohranennyh(null);
+                await zakrytMenyu();
               } else {
+                await invoke("pokazat_dvizhki", { vidno: false });
                 setMenuSohranennyh(await invoke<Nastrojki[]>("sohranennye"));
               }
             }}
@@ -386,30 +400,32 @@ export default function App() {
         />
       )}
       {menuSohranennyh !== null && (
-        <div className="vypadajka">
-          {menuSohranennyh.length === 0 && <div className="pusto-v-menyu">Нет сохранённых</div>}
-          {menuSohranennyh.map((n) => (
-            <div key={n.id} className="stroka-menyu" onClick={() => otkrytSohranennuyu(n.id)}>
-              <span className="tochka" data-pryamo={n.proxy ? "net" : "da"} />
-              {n.nazvanie}
-              <span
-                className="krest"
-                title="Выбросить насовсем"
-                onClick={(e) => udalitSohranennuyu(n.id, n.nazvanie, e)}
-              >
-                ×
-              </span>
-            </div>
-          ))}
+        <div className="zatemnenie-prozrachnoe" onClick={() => zakrytMenyu()}>
+          <div className="vypadajka" onClick={(e) => e.stopPropagation()}>
+            {menuSohranennyh.length === 0 && <div className="pusto-v-menyu">Нет сохранённых</div>}
+            {menuSohranennyh.map((n) => (
+              <div key={n.id} className="stroka-menyu" onClick={() => otkrytSohranennuyu(n.id)}>
+                <span className="tochka" data-pryamo={n.proxy ? "net" : "da"} />
+                {n.nazvanie}
+                <span
+                  className="krest"
+                  title="Выбросить насовсем"
+                  onClick={(e) => udalitSohranennuyu(n.id, n.nazvanie, e)}
+                >
+                  ×
+                </span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
       {menyu && (
         <div
           className="zatemnenie-prozrachnoe"
-          onClick={() => setMenyu(null)}
+          onClick={() => zakrytMenyu()}
           onContextMenu={(e) => {
             e.preventDefault();
-            setMenyu(null);
+            void zakrytMenyu();
           }}
         >
           <div
@@ -432,9 +448,13 @@ export default function App() {
               onClick={async () => {
                 const v = menyu.vkladka;
                 setMenyu(null);
-                await invoke<Otvet>("zakryt", { id: v.id, sohranit: true });
-                setVkladki(await invoke<Vidno[]>("spisok"));
-                setAktivnaya(await invoke<string | null>("aktivnaya"));
+                try {
+                  await invoke<Otvet>("zakryt", { id: v.id, sohranit: true });
+                  setVkladki(await invoke<Vidno[]>("spisok"));
+                  setAktivnaya(await invoke<string | null>("aktivnaya"));
+                } finally {
+                  await invoke("pokazat_dvizhki", { vidno: true });
+                }
               }}
             >
               Сохранить и закрыть
@@ -444,7 +464,11 @@ export default function App() {
               onClick={async () => {
                 const v = menyu.vkladka;
                 setMenyu(null);
-                await zakrytVkladku(v.id, v.nazvanie);
+                try {
+                  await zakrytVkladku(v.id, v.nazvanie);
+                } finally {
+                  await invoke("pokazat_dvizhki", { vidno: true });
+                }
               }}
             >
               Закрыть…
@@ -454,9 +478,13 @@ export default function App() {
               onClick={async () => {
                 const v = menyu.vkladka;
                 setMenyu(null);
-                const o = await invoke<Otvet>("perezagruzit", { id: v.id });
-                if (!o.ok) setOshibka(o.soobshchenie);
-                setVkladki(await invoke<Vidno[]>("spisok"));
+                try {
+                  const o = await invoke<Otvet>("perezagruzit", { id: v.id });
+                  if (!o.ok) setOshibka(o.soobshchenie);
+                  setVkladki(await invoke<Vidno[]>("spisok"));
+                } finally {
+                  await invoke("pokazat_dvizhki", { vidno: true });
+                }
               }}
             >
               Перезагрузить
