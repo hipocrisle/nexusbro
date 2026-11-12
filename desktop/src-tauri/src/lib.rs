@@ -128,6 +128,7 @@ struct Sostoyanie {
     mesto: Mutex<Option<Mesto>>,
     aktivnaya: Mutex<Option<String>>,
     dvizhki_skryty: std::sync::atomic::AtomicBool,
+    izmenenie_okon: Mutex<()>,
 }
 
 /// Выставляется при завершении программы: фоновые потоки (сторож окон)
@@ -273,6 +274,7 @@ fn dvizhok_est() -> bool {
 #[tauri::command]
 async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet, String> {
     v_zhurnal_granica("pokazat_dvizhki", "-", &format!("vidno={vidno}"));
+    let _okna = s.izmenenie_okon.lock().unwrap();
     s.dvizhki_skryty.store(!vidno, std::sync::atomic::Ordering::SeqCst);
     if !vidno {
         let pids: Vec<u32> = {
@@ -283,12 +285,7 @@ async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet,
         };
         sistema::spryatat_chuzhie(&pids);
     }
-    let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-    let okna: Vec<_> = s.vkladki.lock().unwrap().iter()
-        .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o))).collect();
-    for (id, o) in okna {
-        let _ = sistema::pokazat(o, vidno && Some(&id) == aktivnaya.as_ref());
-    }
+    primenit_vidimost(&s);
     v_zhurnal_granica("pokazat_dvizhki", "-", "готово");
     Ok(da())
 }
@@ -489,11 +486,9 @@ async fn podgotovit_dvizhok(
         if let Some(okno) = okno {
             vk.okno = Some(okno);
             drop(v);
-            let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-            if aktivnaya.as_deref() == Some(&id_fon) {
-                pereklyuchit_vnutri(&s, &id_fon);
-            } else {
-                let _ = sistema::pokazat(okno, false);
+            {
+                let _okna = s.izmenenie_okon.lock().unwrap();
+                primenit_vidimost(&s);
             }
             zapisat_v_zhurnal(format!("{id_fon}: запуск ок, окно {okno}"));
         } else {
@@ -595,24 +590,26 @@ fn zagruzit_aktivnuyu() -> Option<String> {
         .and_then(|s| serde_json::from_str(&s).ok())
 }
 
-fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
+fn primenit_vidimost(s: &State<Sostoyanie>) {
     let m = *s.mesto.lock().unwrap();
-    let okna: Vec<_> = {
-        let v = s.vkladki.lock().unwrap();
-        if !v.contains_key(id) { return }
-        v.iter().filter_map(|(k, vk)| vk.okno.map(|o| (k.clone(), o))).collect()
-    };
-    *s.aktivnaya.lock().unwrap() = Some(id.to_string());
+    let aktivnaya = s.aktivnaya.lock().unwrap().clone();
     let skryty = s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst);
-    for (k, o) in okna {
-        let nuzhna = k == id && !skryty;
-        let _ = sistema::pokazat(o, nuzhna);
-        if nuzhna {
-            if let Some(mm) = m {
-                let _ = sistema::peremestit(o, mm);
-            }
+    let okna: Vec<_> = s.vkladki.lock().unwrap().iter()
+        .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o))).collect();
+    for (id, o) in okna {
+        let vidno = !skryty && Some(&id) == aktivnaya.as_ref();
+        let _ = sistema::pokazat(o, vidno);
+        if vidno {
+            if let Some(m) = m { let _ = sistema::peremestit(o, m); }
         }
     }
+}
+
+fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
+    let _okna = s.izmenenie_okon.lock().unwrap();
+    if !s.vkladki.lock().unwrap().contains_key(id) { return }
+    *s.aktivnaya.lock().unwrap() = Some(id.to_string());
+    primenit_vidimost(s);
     sohranit_aktivnuyu(id);
 }
 
@@ -916,21 +913,10 @@ fn nash_descriptor(w: &tauri::WebviewWindow) -> Option<u64> {
 /// больше не развернёшь»).
 fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
     let s: tauri::State<Sostoyanie> = app.state();
-    if s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst) { return }
-    let naideno = {
-        let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-        let vkladki = s.vkladki.lock().unwrap();
-        aktivnaya.and_then(|id| vkladki.get(&id).and_then(|vk| vk.okno.map(|o| (id, o))))
+    if let Ok(_okna) = s.izmenenie_okon.try_lock() {
+        primenit_vidimost(&s);
     };
-    let Some((_id, okno)) = naideno else { return };
-    let m = s.mesto.lock().unwrap().clone();
-    let _ = sistema::pokazat(okno, true);
-    if let Some(mm) = m {
-        let _ = sistema::peremestit(okno, mm);
-    }
-    // Фокус движку возвращает клик мышью; принудительный SetFocus
-    // в чужое окно с главного потока убран (взаимные блокировки).
-    let _ = app;
+
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -1027,53 +1013,22 @@ pub fn run() {
                     if ZAVERSHENIE.load(std::sync::atomic::Ordering::SeqCst) {
                         return;
                     }
-                    let Some(nashe) =
-                        h.get_webview_window("main").and_then(|w| nash_descriptor(&w))
-                    else {
-                        continue;
+                    let s: State<Sostoyanie> = h.state();
+                    let mertvye: Vec<_> = {
+                        let Ok(mut v) = s.vkladki.try_lock() else { continue };
+                        v.iter_mut().filter_map(|(id, vk)| {
+                            if vk.zapusk_idet { return None }
+                            let umer = matches!(vk.proc.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
+                            if !umer { return None }
+                            vk.okno = None;
+                            vk.zapas_pid = None;
+                            Some((id.clone(), vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take()))
+                        }).collect()
                     };
-                    let nado: Vec<(String, u32, u32)> = {
-                        let s: tauri::State<Sostoyanie> = h.state();
-                        let Ok(v) = s.vkladki.try_lock() else { continue };
-                        v.iter()
-                            .filter_map(|(id, vk)| {
-                                // Движок живёт и по дочернему pid, и по
-                                // запасному (перезапустивший себя Chromium):
-                                // сторож смотрит оба варианта.
-                                let real = vk
-                                    .zapas_pid
-                                    .or(vk.proc.as_ref().map(|p| p.id()))?;
-                                let o = vk.okno?;
-                                Some((id.clone(), real, o))
-                            })
-                            .collect()
-                    };
-                    for (id, pid, staroe) in nado {
-                        // CEF-окна не пересоздаются и не «сбегают» — сторожу
-                        // осталась одна работа: заметить мёртвый процесс и
-                        // усыпить вкладку. Перевстраивание и свип окон —
-                        // наследие старой схемы, удалены (12.11.2026).
-                        if sistema::najti_okno(pid, 1).is_err()
-                            && !sistema::nash_li(staroe, nashe)
-                            && !sistema::pid_zhiv(pid)
-                        {
-                            zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
-                            let s: tauri::State<Sostoyanie> = h.state();
-                            if let Ok(mut v) = s.vkladki.try_lock() {
-                                if let Some(vk) = v.get_mut(&id) {
-                                    vk.okno = None;
-                                    vk.proc = None;
-                                    if let Some(p) = vk.nash_proxy.take() {
-                                        p.ostanovit();
-                                    }
-                                    if let Some(mut t) = vk.tunnel.take() {
-                                        let _ = t.kill();
-                                        let _ = t.wait();
-                                    }
-                                }
-                            }
-                            let _ = h.emit("vkladki-izmenilis", id.clone());
-                        }
+                    for (id, proc, proxy, tunnel) in mertvye {
+                        ostanovit_resursy(proc, proxy, tunnel);
+                        zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
+                        let _ = h.emit("vkladki-izmenilis", "");
                     }
                 });
             }

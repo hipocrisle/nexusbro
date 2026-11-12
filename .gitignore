@@ -13,3 +13,6 @@ desktop/src-tauri/binaries/*
 
 # Локальные инструкции Kimi Code — не для репозитория.
 .kimi-code/
+
+# Локальные данные GUI-проверок.
+.dev-check/
