@@ -938,7 +938,10 @@ pub fn run() {
             if !proba.is_empty() && proba != "0" {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
+                    let nachalo = std::time::Instant::now();
+                    eprintln!("PROBA: поток стартовал");
                     std::thread::sleep(std::time::Duration::from_millis(1500));
+                    eprintln!("PROBA: сон 1.5 с кончился, {:.3} с от старта", nachalo.elapsed().as_secs_f64());
                     let s: tauri::State<Sostoyanie> = h.state();
                     let n = Nastrojki {
                         id: "proba".into(),
@@ -950,6 +953,7 @@ pub fn run() {
                     };
                     let o = tauri::async_runtime::block_on(otkryt(h.clone(), s, n))
                         .unwrap_or_else(|e| net(e));
+                    eprintln!("PROBA: otkryt вернулся, {:.3} с от старта", nachalo.elapsed().as_secs_f64());
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
                     // СЦЕНАРИЙ 2: воспроизводим жалобы user'а — вторая
                     // вкладка и удаление (висло на машине, 12.11.2026).
@@ -1224,6 +1228,7 @@ pub fn run() {
                 // спят до клика — вкладки не жрут память понапрасну.
                 let h = app.clone();
                 std::thread::spawn(move || {
+                    eprintln!("AVTOSTART: поток стартовал");
                     std::thread::sleep(std::time::Duration::from_millis(600));
                     // ⛔ Окно могло сохраниться свёрнутым (видели
                     // WS_MINIMIZE на машине user'а) — разворачиваем,
