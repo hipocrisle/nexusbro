@@ -715,6 +715,7 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     } else {
         steret_profil(&id);
     }
+    v_zhurnal_granica("zakryt", &id, "готово");
     let _ = app.emit("vkladki-izmenilis", id);
     Ok(da())
 }
@@ -934,7 +935,7 @@ pub fn run() {
             // чтобы весь путь (запуск → поиск окна → встраивание) можно было
             // проверить без рук.
             let proba = std::env::var("NEXUSBRO_PROBA").unwrap_or_default();
-            if proba == "1" || proba == "2" {
+            if !proba.is_empty() && proba != "0" {
                 let h = app.handle().clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(1500));
@@ -952,6 +953,108 @@ pub fn run() {
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
                     // СЦЕНАРИЙ 2: воспроизводим жалобы user'а — вторая
                     // вкладка и удаление (висло на машине, 12.11.2026).
+                    if proba == "4" {
+                        std::thread::sleep(std::time::Duration::from_secs(2));
+                        let n2 = Nastrojki {
+                            id: "proba2".into(),
+                            nazvanie: "Проба2".into(),
+                            proxy: String::new(),
+                            adres: "about:blank".into(),
+                            rezat_reklamu: true,
+                            pustaya: true,
+                        };
+                        let s2: tauri::State<Sostoyanie> = h.state();
+                        let o2 = tauri::async_runtime::block_on(otkryt(h.clone(), s2, n2))
+                            .unwrap_or_else(|e| net(e));
+                        println!("СЦЕНАРИЙ: вторая ok={} {}", o2.ok, o2.soobshchenie);
+                        std::thread::sleep(std::time::Duration::from_secs(6));
+                    }
+                    if proba == "3" {
+                        let shag = |name: &str, t: &mut std::time::Instant| {
+                            println!("ШАГ {name}: {:.3} с", t.elapsed().as_secs_f64());
+                            *t = std::time::Instant::now();
+                        };
+                        // Зонд главного потока: закрытие выполнится на нём, как
+                        // только он освободится. Задержка = главный поток занят.
+                        let zond = |h: &tauri::AppHandle| {
+                            let nachalo = std::time::Instant::now();
+                            let (tx, rx) = std::sync::mpsc::channel::<()>();
+                            let _ = h.run_on_main_thread(move || {
+                                let _ = tx.send(());
+                            });
+                            match rx.recv_timeout(std::time::Duration::from_secs(10)) {
+                                Ok(()) => println!("ЗОНД главного потока: {:.3} с", nachalo.elapsed().as_secs_f64()),
+                                Err(_) => println!("ЗОНД главного потока: НЕ ОТВЕТИЛ ЗА 10 с (зависание!)"),
+                            }
+                        };
+                        // Сюда приходим после перезапуска программы: активная
+                        // вкладка прошлого запуска поднялась сама, ОСТАЛЬНЫЕ
+                        // спят — «уже созданные ранее» из жалобы user'а.
+                        let aktiv = zagruzit_aktivnuyu().unwrap_or_else(|| "proba".into());
+                        let drugaya = if aktiv == "proba" { "proba2" } else { "proba" };
+                        let mut t = std::time::Instant::now();
+                        for _ in 0..30 {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            let gotovo = {
+                                let s: tauri::State<Sostoyanie> = h.state();
+                                let v = s.vkladki.lock().unwrap();
+                                v.get(&aktiv).map(|vk| vk.okno.is_some()).unwrap_or(false)
+                            };
+                            if gotovo { break; }
+                        }
+                        shag(&format!("ожидание автостарта {aktiv}"), &mut t);
+                        zond(&h);
+                        // 1. ОТКРЫТИЕ УЖЕ СОЗДАННОЙ (спящей `drugaya`)
+                        let s: tauri::State<Sostoyanie> = h.state();
+                        let o = tauri::async_runtime::block_on(pereklyuchit(h.clone(), s, drugaya.to_string()))
+                            .unwrap_or_else(|e| net(e));
+                        shag(&format!("pereklyuchit({drugaya}) [открытие созданной ранее]"), &mut t);
+                        if !o.ok { println!("ШАГ ОШИБКА: {}", o.soobshchenie); }
+                        // Убеждаемся, что движок реально поднялся, а не только
+                        // команда вернулась.
+                        for _ in 0..30 {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            let gotovo = {
+                                let s: tauri::State<Sostoyanie> = h.state();
+                                let v = s.vkladki.lock().unwrap();
+                                v.get(drugaya).map(|vk| vk.okno.is_some()).unwrap_or(false)
+                            };
+                            if gotovo { break; }
+                        }
+                        zond(&h);
+                        // 2. ПРАВКА созданной (перезапускает движок)
+                        let s: tauri::State<Sostoyanie> = h.state();
+                        let nastrojki = s.vkladki.lock().unwrap().get(drugaya).map(|vk| vk.nastrojki.clone());
+                        if let Some(mut n) = nastrojki {
+                            n.nazvanie = format!("{drugaya}-правка");
+                            let o = tauri::async_runtime::block_on(izmenit(h.clone(), s, n))
+                                .unwrap_or_else(|e| net(e));
+                            shag(&format!("izmenit({drugaya}) [правка]"), &mut t);
+                            if !o.ok { println!("ШАГ ОШИБКА: {}", o.soobshchenie); }
+                        }
+                        for _ in 0..30 {
+                            std::thread::sleep(std::time::Duration::from_secs(1));
+                            let gotovo = {
+                                let s: tauri::State<Sostoyanie> = h.state();
+                                let v = s.vkladki.lock().unwrap();
+                                v.get(drugaya).map(|vk| vk.okno.is_some()).unwrap_or(false)
+                            };
+                            if gotovo { break; }
+                        }
+                        zond(&h);
+                        // 3. УДАЛЕНИЕ
+                        let s: tauri::State<Sostoyanie> = h.state();
+                        let o = tauri::async_runtime::block_on(zakryt(h.clone(), s, drugaya.to_string(), false))
+                            .unwrap_or_else(|e| net(e));
+                        shag(&format!("zakryt({drugaya}) [удаление]"), &mut t);
+                        if !o.ok { println!("ШАГ ОШИБКА: {}", o.soobshchenie); }
+                        zond(&h);
+                        // уборка
+                        let s: tauri::State<Sostoyanie> = h.state();
+                        let _ = tauri::async_runtime::block_on(zakryt(h.clone(), s, aktiv.clone(), false));
+                        shag(&format!("zakryt({aktiv}) [уборка]"), &mut t);
+                        println!("СЦЕНАРИЙ: ГОТОВ");
+                    }
                     if proba == "2" {
                         let shag = |t: &str| println!("СЦЕНАРИЙ: {t}");
                         std::thread::sleep(std::time::Duration::from_secs(4));
