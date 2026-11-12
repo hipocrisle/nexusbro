@@ -1,0 +1,4 @@
+000:<:00e0: 52: Request(1): CreateWindow depth=0x18 window=0x01a00002 parent=0x00200003 x=200 y=37 width=1080 height=783 border-width=0 class=InputOutput(0x0001) visual=0x00000021 value-list={background-pixel=0xfff6f5f4 border-pixel=0x00000000 bit-gravity=NorthWest(0x01) override-redirect=true(0x01) colormap=CopyFromParent(0x00000000)}
+000:>:00e0:Error 8=Match: major=1, minor=0, bad=0x00200003, seq=00e0
+Parent GTK: depth=24 visual=0x3b7 colormap=0x200002
+CEF requested: depth=24 visual=0x21 colormap=CopyFromParent

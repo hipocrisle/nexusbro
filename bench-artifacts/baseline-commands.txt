@@ -1,0 +1,52 @@
+1794504344 proba: запуск ок, окно 8388610
+1794504347 otkryt(proba2): вход
+1794504347 proba2: запуск ок, окно 18874370
+1794504351 zakryt(proba2): останавливаю движок
+1794504351 zakryt(proba2): движок остановлен
+1794504354 zakryt(proba): останавливаю движок
+1794504354 zakryt(proba): движок остановлен
+1794504361 pokazat_dvizhki(-): vidno=false
+1794504361 pokazat_dvizhki(-): готово
+1794504372 otkryt(svmwdtkjup): вход
+1794504372 pokazat_dvizhki(-): vidno=true
+1794504372 pokazat_dvizhki(-): готово
+1794504398 pokazat_dvizhki(-): vidno=false
+1794504398 pokazat_dvizhki(-): готово
+1794504398 otkryt(svmwdtl405): вход
+1794504398 pokazat_dvizhki(-): vidno=true
+1794504398 pokazat_dvizhki(-): готово
+1794504402 svmwdtl405: запуск ок, окно 8388610
+1794504424 pokazat_dvizhki(-): vidno=false
+1794504424 pokazat_dvizhki(-): готово
+1794504435 pokazat_dvizhki(-): vidno=true
+1794504435 pokazat_dvizhki(-): готово
+1794504437 pereklyuchit(svmwdtkjup): вход
+1794504437 svmwdtkjup: запуск ок, окно 18874370
+1794504440 pokazat_dvizhki(-): vidno=false
+1794504440 pokazat_dvizhki(-): готово
+1794504450 pokazat_dvizhki(-): vidno=true
+1794504450 pokazat_dvizhki(-): готово
+1794504451 pokazat_dvizhki(-): vidno=false
+1794504451 pokazat_dvizhki(-): готово
+1794504451 pokazat_dvizhki(-): vidno=true
+1794504451 pokazat_dvizhki(-): готово
+1794504451 svmwdtkjup: движок умер, вкладка спит
+1794504452 svmwdtkjup: запуск ок, окно 16777218
+1794504453 pokazat_dvizhki(-): vidno=false
+1794504453 pokazat_dvizhki(-): готово
+1794504463 pokazat_dvizhki(-): vidno=true
+1794504463 pokazat_dvizhki(-): готово
+1794504463 pokazat_dvizhki(-): vidno=false
+1794504463 pokazat_dvizhki(-): готово
+1794504473 pokazat_dvizhki(-): vidno=true
+1794504473 pokazat_dvizhki(-): готово
+1794504473 zakryt(svmwdtkjup): останавливаю движок
+1794504473 zakryt(svmwdtkjup): движок остановлен
+1794504610 pereklyuchit(svmwdtl405): вход
+1794504612 svmwdtl405: запуск ок, окно 8388610
+1794504612 pokazat_dvizhki(-): vidno=false
+1794504612 pokazat_dvizhki(-): готово
+1794504620 pokazat_dvizhki(-): vidno=true
+1794504620 pokazat_dvizhki(-): готово
+1794504620 zakryt(svmwdtl405): останавливаю движок
+1794504620 zakryt(svmwdtl405): движок остановлен

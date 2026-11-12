@@ -1,0 +1,121 @@
+    Blocking waiting for file lock on package cache
+    Checking nexusbro v0.2.4 (<repo>/desktop/src-tauri)
+warning: unused import: `windows::Win32::Foundation::LRESULT`
+   --> src/okna.rs:435:13
+    |
+435 |         use windows::Win32::Foundation::LRESULT;
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `std::net::SocketAddr`
+  --> src/proxy.rs:14:5
+   |
+14 | use std::net::SocketAddr;
+   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: unused variable: `pid`
+   --> src/brauzer.rs:172:9
+    |
+172 |     let pid = ditya.id();
+    |         ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `pid`
+   --> src/brauzer.rs:533:31
+    |
+533 | pub fn poprosit_o_chem_vyhode(pid: u32, okno: Option<u32>) {
+    |                               ^^^ help: if this is intentional, prefix it with an underscore: `_pid`
+
+warning: function `so_oshibkoj_dvizhka` is never used
+   --> src/lib.rs:187:4
+    |
+187 | fn so_oshibkoj_dvizhka(id: &str, zagolovok: String) -> Otvet {
+    |    ^^^^^^^^^^^^^^^^^^^
+    |
+    = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: function `vstroit_vse_okna` is never used
+   --> src/lib.rs:326:4
+    |
+326 | fn vstroit_vse_okna(
+    |    ^^^^^^^^^^^^^^^^
+
+warning: variant `Dvizhok` is never constructed
+  --> src/brauzer.rs:85:5
+   |
+80 | enum Zakaz {
+   |      ----- variant in this enum
+...
+85 |     Dvizhok {
+   |     ^^^^^^^
+
+warning: function `zapustit` is never used
+   --> src/brauzer.rs:148:8
+    |
+148 | pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
+    |        ^^^^^^^^
+
+warning: function `ostanovit_dvizhka` is never used
+   --> src/brauzer.rs:171:8
+    |
+171 | pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
+    |        ^^^^^^^^^^^^^^^^^
+
+warning: function `ubit_chuzhie_dvizhki` is never used
+   --> src/brauzer.rs:386:8
+    |
+386 | pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
+    |        ^^^^^^^^^^^^^^^^^^^^
+
+warning: function `poprosit_o_chem_vyhode` is never used
+   --> src/brauzer.rs:533:8
+    |
+533 | pub fn poprosit_o_chem_vyhode(pid: u32, okno: Option<u32>) {
+    |        ^^^^^^^^^^^^^^^^^^^^^^
+
+warning: function `vse_okna` is never used
+   --> src/okna.rs:300:12
+    |
+300 |     pub fn vse_okna(korni: &[u32]) -> Vec<u32> {
+    |            ^^^^^^^^
+
+warning: function `prisoedinit_vvod` is never used
+   --> src/okna.rs:342:12
+    |
+342 |     pub fn prisoedinit_vvod(chuzhoe: u32) {
+    |            ^^^^^^^^^^^^^^^^
+
+warning: function `otsoedinit_vvod` is never used
+   --> src/okna.rs:356:12
+    |
+356 |     pub fn otsoedinit_vvod(chuzhoe: u32) {
+    |            ^^^^^^^^^^^^^^^
+
+warning: function `fokus_dvizhku` is never used
+   --> src/okna.rs:371:12
+    |
+371 |     pub fn fokus_dvizhku(chuzhoe: u32) {
+    |            ^^^^^^^^^^^^^
+
+warning: function `vstroit` is never used
+   --> src/okna.rs:378:12
+    |
+378 |     pub fn vstroit(chuzhoe: u32, nashe: u64, m: Mesto) -> Result<()> {
+    |            ^^^^^^^
+
+warning: function `zakryt_vezhlivo` is never used
+   --> src/okna.rs:434:12
+    |
+434 |     pub fn zakryt_vezhlivo(chuzhoe: u32) {
+    |            ^^^^^^^^^^^^^^^
+
+warning: function `pid_okna` is never used
+   --> src/okna.rs:480:12
+    |
+480 |     pub fn pid_okna(chuzhoe: u32) -> Option<u32> {
+    |            ^^^^^^^^
+
+warning: `nexusbro` (lib) generated 18 warnings (run `cargo fix --lib -p nexusbro` to apply 4 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 3.36s

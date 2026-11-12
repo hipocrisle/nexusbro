@@ -1,0 +1,150 @@
+1794505763 pokazat_dvizhki(-): vidno=true
+1794505763 pokazat_dvizhki(-): готово
+1794505764 svmwdued1n: запуск ок, окно 16777216
+1794505765 pokazat_dvizhki(-): vidno=false
+1794505765 pokazat_dvizhki(-): готово
+1794505765 pokazat_dvizhki(-): vidno=true
+1794505765 pokazat_dvizhki(-): готово
+1794505766 pokazat_dvizhki(-): vidno=false
+1794505766 pokazat_dvizhki(-): готово
+1794505766 pokazat_dvizhki(-): vidno=true
+1794505766 pokazat_dvizhki(-): готово
+1794505766 pokazat_dvizhki(-): vidno=false
+1794505766 pokazat_dvizhki(-): готово
+1794505766 pokazat_dvizhki(-): vidno=true
+1794505766 pokazat_dvizhki(-): готово
+1794505766 zakryt(svmwdued1n): останавливаю движок
+1794505766 zakryt(svmwdued1n): движок остановлен
+1794505767 pokazat_dvizhki(-): vidno=false
+1794505767 pokazat_dvizhki(-): готово
+1794505767 svmwdued1n: запуск ок, окно 16777216
+1794505767 pokazat_dvizhki(-): vidno=true
+1794505767 pokazat_dvizhki(-): готово
+1794505768 pokazat_dvizhki(-): vidno=false
+1794505768 pokazat_dvizhki(-): готово
+1794505768 pokazat_dvizhki(-): vidno=false
+1794505768 pokazat_dvizhki(-): готово
+1794505768 izmenit(svmwdued1n): вход
+1794505768 pokazat_dvizhki(-): vidno=true
+1794505768 pokazat_dvizhki(-): готово
+1794505768 svmwdued1n: запуск ок, окно 16777216
+1794505769 pokazat_dvizhki(-): vidno=false
+1794505769 pokazat_dvizhki(-): готово
+1794505769 otkryt(svmwdueh9i): вход
+1794505769 pokazat_dvizhki(-): vidno=true
+1794505769 pokazat_dvizhki(-): готово
+1794505769 svmwdueh9i: запуск ок, окно 27262976
+1794505769 pereklyuchit(svmwdued1n): вход
+1794505769 pereklyuchit(svmwdueh9i): вход
+1794505769 pokazat_dvizhki(-): vidno=false
+1794505769 pokazat_dvizhki(-): готово
+1794505770 pokazat_dvizhki(-): vidno=true
+1794505770 pokazat_dvizhki(-): готово
+1794505770 zakryt(svmwdueh9i): останавливаю движок
+1794505770 zakryt(svmwdueh9i): движок остановлен
+1794505770 pokazat_dvizhki(-): vidno=false
+1794505770 pokazat_dvizhki(-): готово
+1794505770 pokazat_dvizhki(-): vidno=true
+1794505770 pokazat_dvizhki(-): готово
+1794505770 zakryt(svmwdued1n): останавливаю движок
+1794505770 zakryt(svmwdued1n): движок остановлен
+1794505770 pokazat_dvizhki(-): vidno=false
+1794505770 pokazat_dvizhki(-): готово
+1794505770 pokazat_dvizhki(-): vidno=true
+1794505770 pokazat_dvizhki(-): готово
+1794505770 svmwdued1n: запуск ок, окно 16777216
+1794505771 pokazat_dvizhki(-): vidno=false
+1794505771 pokazat_dvizhki(-): готово
+1794505771 pokazat_dvizhki(-): vidno=true
+1794505771 pokazat_dvizhki(-): готово
+1794505771 zakryt(svmwdued1n): останавливаю движок
+1794505771 zakryt(svmwdued1n): движок остановлен
+1794505771 pokazat_dvizhki(-): vidno=false
+1794505771 pokazat_dvizhki(-): готово
+1794505771 pokazat_dvizhki(-): vidno=true
+1794505771 pokazat_dvizhki(-): готово
+1794505771 svmwdued1n: запуск ок, окно 16777216
+1794505771 pokazat_dvizhki(-): vidno=false
+1794505771 pokazat_dvizhki(-): готово
+1794505771 pokazat_dvizhki(-): vidno=true
+1794505771 pokazat_dvizhki(-): готово
+1794505771 zakryt(svmwdued1n): останавливаю движок
+1794505771 zakryt(svmwdued1n): движок остановлен
+1794505771 pokazat_dvizhki(-): vidno=false
+1794505771 pokazat_dvizhki(-): готово
+1794505772 pokazat_dvizhki(-): vidno=true
+1794505772 pokazat_dvizhki(-): готово
+1794505772 svmwdued1n: запуск ок, окно 16777216
+1794505772 otkryt(bench-pending-0): вход
+1794505772 zakryt(bench-pending-0): останавливаю движок
+1794505772 zakryt(bench-pending-0): движок остановлен
+1794505772 otkryt(bench-pending-1): вход
+1794505772 zakryt(bench-pending-1): останавливаю движок
+1794505772 zakryt(bench-pending-1): движок остановлен
+1794505772 otkryt(bench-pending-2): вход
+1794505772 zakryt(bench-pending-2): останавливаю движок
+1794505772 zakryt(bench-pending-2): движок остановлен
+1794505772 otkryt(bench-pending-3): вход
+1794505773 zakryt(bench-pending-3): останавливаю движок
+1794505773 zakryt(bench-pending-3): движок остановлен
+1794505773 otkryt(bench-pending-4): вход
+1794505773 zakryt(bench-pending-4): останавливаю движок
+1794505773 zakryt(bench-pending-4): движок остановлен
+1794505773 otkryt(bench-pending-edit): вход
+1794505773 izmenit(bench-pending-edit): вход
+1794505773 bench-pending-edit: запуск ок, окно 27262976
+1794505773 zakryt(bench-pending-edit): останавливаю движок
+1794505773 zakryt(bench-pending-edit): движок остановлен
+1794505773 otkryt(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(bench-delayed): вход
+17945057741794505774  pereklyuchit(bench-delayed): входpereklyuchit(bench-delayed): вход
+
+1794505774 pereklyuchit(bench-delayed): вход
+1794505774 pereklyuchit(svmwdued1n): вход
+1794505774 bench-delayed: запуск ок, окно 27262976
+1794505774 zakryt(bench-delayed): останавливаю движок
+1794505774 zakryt(bench-delayed): движок остановлен
+1794505788 pokazat_dvizhki(-): vidno=false
+1794505788 pokazat_dvizhki(-): готово
+1794505788 pokazat_dvizhki(-): vidno=false
+1794505788 pokazat_dvizhki(-): готово
+1794505789 izmenit(svmwdued1n): вход
+1794505789 pokazat_dvizhki(-): vidno=true
+1794505789 pokazat_dvizhki(-): готово
+1794505790 svmwdued1n: запуск ок, окно 16777216
+1794505790 pokazat_dvizhki(-): vidno=false
+1794505790 pokazat_dvizhki(-): готово
+1794505791 pokazat_dvizhki(-): vidno=true
+1794505791 pokazat_dvizhki(-): готово
+1794505792 pokazat_dvizhki(-): vidno=false
+1794505792 pokazat_dvizhki(-): готово
+1794505792 pokazat_dvizhki(-): vidno=true
+1794505792 pokazat_dvizhki(-): готово
+1794505792 zakryt(svmwdued1n): останавливаю движок
+1794505792 zakryt(svmwdued1n): движок остановлен
+1794505793 pokazat_dvizhki(-): vidno=false
+1794505793 pokazat_dvizhki(-): готово
+1794505793 pokazat_dvizhki(-): vidno=true
+1794505793 pokazat_dvizhki(-): готово
+1794505794 pokazat_dvizhki(-): vidno=false
+1794505794 pokazat_dvizhki(-): готово
+1794505794 pokazat_dvizhki(-): vidno=true
+1794505794 pokazat_dvizhki(-): готово
+1794505794 svmwdued1n: запуск ок, окно 16777216
+1794505865 svmwdued1n: запуск ок, окно 16777216

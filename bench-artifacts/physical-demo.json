@@ -1,0 +1,54 @@
+[
+  {
+    "clicked": "document.querySelector(\".vkladka\")",
+    "button": 3
+  },
+  {
+    "clicked": "Array.from(document.querySelectorAll(\".stroka-menyu\")).find(x=>x.textContent.trim()===\"Настройки\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".dialog input\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".dialog .glavnaya\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".vkladka .krest\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".knopki button\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".vkladka .krest\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".knopki .glavnaya\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".niz button\")",
+    "button": 1
+  },
+  {
+    "clicked": "Array.from(document.querySelectorAll(\".knopki button\")).find(x=>x.textContent.trim()===\"Отмена\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".niz button:nth-child(2)\")",
+    "button": 1
+  },
+  {
+    "clicked": "document.querySelector(\".stroka-menyu\")",
+    "button": 1
+  },
+  {
+    "success": true,
+    "overlay_remaining": false
+  }
+]

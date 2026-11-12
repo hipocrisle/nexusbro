@@ -1,0 +1,17 @@
+xwininfo: Window id: 0x50d (the root window) (has no name)
+
+  Root window id: 0x50d (the root window) (has no name)
+  Parent window id: 0x0 (none)
+     7 children:
+     0x800004 (has no name): ()  1x1+0+0  +0+0
+     0xc00001 "nexusbro": ("nexusbro" "Nexusbro")  10x10+10+10  +10+10
+     0x800000 "Chromium clipboard": ()  10x10+-100+-100  +-100+-100
+     0x200003 "NexusBro": ("nexusbro" "Nexusbro")  1100x700+0+0  +0+0
+        2 children:
+        0x1000000 (has no name): ()  916x663+184+37  +184+37
+           1 child:
+           0x800002 (has no name): ()  916x663+0+0  +184+37
+        0x200004 (has no name): ()  1x1+-1+-1  +-1+-1
+     0x600001 "WebKitWebProcess": ("WebKitWebProcess" "WebKitWebProcess")  10x10+10+10  +10+10
+     0x200009 (has no name): ()  1x1+-1+-1  +-1+-1
+     0x200001 "nexusbro": ("nexusbro" "Nexusbro")  10x10+10+10  +10+10
