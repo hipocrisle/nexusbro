@@ -362,6 +362,19 @@ pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
     };
     use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
 
+    // ⛔ Исключаем ЦЕЛЫЕ ДЕРЕВЬЯ живых движков: каждый процесс Chromium
+    // (браузер, рендеры, GPU, сеть) называется nexusbro-engine.exe. Старый
+    // вариант исключал только pid браузера — и резал ЖИВОЙ движок по
+    // кускам: в журнале соседней вкладки «GPU process exited», «Network
+    // service crashed», программа висла (12.11.2026, диагностика user'а:
+    // «подметание: убито сирот-движков 6» — все шесть были процессами
+    // живой соседней вкладки).
+    let zashita: std::collections::HashSet<u32> = krome
+        .iter()
+        .flat_map(|&k| crate::okna::sistema::derevo_processov(k))
+        .chain(std::iter::once(std::process::id()))
+        .collect();
+
     unsafe {
         let Ok(snimok) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
             return;
@@ -372,8 +385,9 @@ pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
         if Process32FirstW(snimok, &mut e).is_ok() {
             loop {
                 let imya = String::from_utf16_lossy(&e.szExeFile);
-                if imya.trim_end_matches('\0') == "nexusbro-engine.exe" && !krome.contains(&e.th32ProcessID) {
-                    zhertvy.push(e.th32ProcessID);
+                let pid = e.th32ProcessID;
+                if imya.trim_end_matches('\0') == "nexusbro-engine.exe" && !zashita.contains(&pid) {
+                    zhertvy.push(pid);
                 }
                 if Process32NextW(snimok, &mut e).is_err() {
                     break;
@@ -383,9 +397,6 @@ pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
         let _ = CloseHandle(snimok);
         let mut ubito = 0;
         for pid in zhertvy {
-            if pid == std::process::id() {
-                continue;
-            }
             if let Ok(h) = OpenProcess(PROCESS_TERMINATE, false, pid) {
                 let _ = TerminateProcess(h, 1);
                 let _ = CloseHandle(h);

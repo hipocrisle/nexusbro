@@ -171,6 +171,12 @@ pub mod sistema {
     pub fn pid_okna(_c: u32) -> Option<u32> {
         None
     }
+    pub fn okno_zhivo(_c: u32) -> bool {
+        true
+    }
+    pub fn pid_zhiv(pid: u32) -> bool {
+        std::path::Path::new("/proc").join(pid.to_string()).exists()
+    }
     pub fn ubit_po_pid(_p: u32) {}
     pub fn spryatat_chuzhie(_korni: &[u32]) {}
 }
@@ -187,7 +193,7 @@ pub mod sistema {
     };
     use windows::Win32::UI::WindowsAndMessaging::*;
 
-    fn derevo_processov(koren: u32) -> Vec<u32> {
+    pub fn derevo_processov(koren: u32) -> Vec<u32> {
         let mut ids = vec![koren];
         unsafe {
             let Ok(snimok) = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) else {
@@ -409,6 +415,29 @@ pub mod sistema {
         }
     }
 
+    /// Окно ещё на месте (владелец не уничтожил его).
+    pub fn okno_zhivo(chuzhoe: u32) -> bool {
+        unsafe { IsWindow(hwnd(chuzhoe)).as_bool() }
+    }
+
+    /// Жив ли процесс. Движок на Windows перезапускает себя: наш
+    /// дочерний процесс мёртв, а браузер живёт своим pid — живость
+    /// проверяем по нему (12.11.2026).
+    pub fn pid_zhiv(pid: u32) -> bool {
+        use windows::Win32::System::Threading::{
+            GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+        unsafe {
+            let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                return false;
+            };
+            let mut kod = 0u32;
+            let ok = GetExitCodeProcess(h, &mut kod).is_ok();
+            let _ = CloseHandle(h);
+            ok && kod == 259 // STILL_ACTIVE
+        }
+    }
+
     /// Добить процесс по pid (запасной движок, ушедший из job object).
     pub fn ubit_po_pid(pid: u32) {
         use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
@@ -475,6 +504,12 @@ pub mod sistema {
     }
     pub fn pid_okna(_c: u32) -> Option<u32> {
         None
+    }
+    pub fn okno_zhivo(_c: u32) -> bool {
+        false
+    }
+    pub fn pid_zhiv(_p: u32) -> bool {
+        false
     }
     pub fn ubit_po_pid(_p: u32) {}
     pub fn spryatat_chuzhie(_k: &[u32]) {}

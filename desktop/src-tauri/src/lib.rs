@@ -197,7 +197,7 @@ fn spisok(s: State<Sostoyanie>) -> Vec<Vidno> {
         .values()
         .map(|x| Vidno {
             nastrojki: x.nastrojki.clone(),
-            zapushchena: x.proc.is_some(),
+            zapushchena: x.proc.is_some() || x.zapas_pid.is_some(),
         })
         .collect();
     r.sort_by(|a, b| a.nastrojki.id.cmp(&b.nastrojki.id));
@@ -239,7 +239,9 @@ fn pokazat_dvizhki(s: State<Sostoyanie>, vidno: bool) -> Otvet {
     if !vidno {
         let pids: Vec<u32> = {
             let v = s.vkladki.lock().unwrap();
-            v.values().filter_map(|vk| vk.proc.as_ref().map(|p| p.id())).collect()
+            v.values()
+                .filter_map(|vk| vk.zapas_pid.or(vk.proc.as_ref().map(|p| p.id())))
+                .collect()
         };
         sistema::spryatat_chuzhie(&pids);
     }
@@ -343,7 +345,9 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     {
         let nashi: Vec<u32> = {
             let v = s.vkladki.lock().unwrap();
-            v.values().filter_map(|vk| vk.proc.as_ref().map(|p| p.id())).collect()
+            v.values()
+                .filter_map(|vk| vk.zapas_pid.or(vk.proc.as_ref().map(|p| p.id())))
+                .collect()
         };
         brauzer::ubit_chuzhie_dvizhki(&nashi);
     }
@@ -433,6 +437,12 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     if matches!(ditya.try_wait(), Ok(Some(_))) {
         zapisat_v_zhurnal(format!("{id}: дочерний процесс умер, окно живо — перезапуск движка, запасной pid {:?}", zapas));
     }
+    // ⛔ Дочерний мог уже выйти (Chromium на Windows перезапускает себя):
+    // тогда вкладка живёт по запасному pid — дальше смотрим по окну.
+    let rebenok_zhiv = matches!(ditya.try_wait(), Ok(None));
+    if !rebenok_zhiv {
+        zapisat_v_zhurnal(format!("{id}: дочерний вышел сразу — движок живёт своим pid"));
+    }
 
     let nashe = match app.get_webview_window("main").and_then(|w| nash_descriptor(&w)) {
         Some(h) => h,
@@ -460,7 +470,10 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     }
 
     if let Some(v) = s.vkladki.lock().unwrap().get_mut(id) {
-        v.proc = Some(ditya);
+        // ⛔ Дочерний мог уже выйти (Chromium перезапускает себя): трупа
+        // не держим в поле, по которому решаем «работает ли вкладка», —
+        // живость дальше определяем по окну и запасному pid.
+        v.proc = if rebenok_zhiv { Some(ditya) } else { None };
         v.okno = Some(okno);
         v.zapas_pid = zapas;
         v.nash_proxy = Some(nash);
@@ -485,26 +498,42 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
 fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
     let zapushchena = match s.vkladki.lock().unwrap().get_mut(&id) {
         Some(vk) => {
-            // ⛔ Движок мог умереть (закрыли все вкладки внутри и т.п.):
-            // не ждать сторожа, а сразу считать вкладку спящей.
-            let umer = matches!(
+            // ⛔ Дочерний процесс — «пусковая ракета»: Chromium на Windows
+            // перезапускает себя и стартовый процесс выходит. Смерть
+            // дочернего ≠ смерть движка — движок жив, пока живо ЕГО окно
+            // и его реальный pid. Хоронили живой движок и перезапускали
+            // его — а подметание при перезапуске резало соседнюю вкладку
+            // (12.11.2026, диагностика user'а: «мёртвый движок при
+            // переключении» через 2 с после успешного запуска).
+            let rebenok_zhiv = matches!(
                 vk.proc.as_mut().map(|p| p.try_wait()),
-                Some(Ok(Some(_)))
+                Some(Ok(None))
             );
-            if umer {
-                zapisat_v_zhurnal(format!("{id}: мёртвый движок при переключении, поднимаю заново"));
-                vk.proc = None;
-                vk.okno = None;
-                if let Some(p) = vk.nash_proxy.take() {
-                    p.ostanovit();
-                }
-                if let Some(mut t) = vk.tunnel.take() {
-                    let _ = t.kill();
-                    let _ = t.wait();
-                }
-                false
+            if rebenok_zhiv {
+                true
             } else {
-                vk.proc.is_some()
+                if let Some(mut p) = vk.proc.take() {
+                    let _ = p.try_wait(); // прибрать мёртвого ребёнка
+                }
+                let okno_zhivo = vk.okno.map(sistema::okno_zhivo).unwrap_or(false);
+                let dvizhok_zhiv = vk.zapas_pid.map(sistema::pid_zhiv).unwrap_or(false);
+                if okno_zhivo && dvizhok_zhiv {
+                    true
+                } else {
+                    zapisat_v_zhurnal(format!("{id}: мёртвый движок при переключении, поднимаю заново"));
+                    if let Some(zp) = vk.zapas_pid.take() {
+                        sistema::ubit_po_pid(zp);
+                    }
+                    vk.okno = None;
+                    if let Some(p) = vk.nash_proxy.take() {
+                        p.ostanovit();
+                    }
+                    if let Some(mut t) = vk.tunnel.take() {
+                        let _ = t.kill();
+                        let _ = t.wait();
+                    }
+                    false
+                }
             }
         }
         None => return net("такой супер-вкладки нет"),
@@ -566,35 +595,62 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
 /// ввода — после закрытия вкладки программа перестаёт реагировать,
 /// а окно движка остаётся висеть (10.11.2026, поймал user).
 fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
-    let (proc, okno, zapas) = {
+    let (mut proc, okno, zapas) = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(id) {
             Some(vk) => (vk.proc.take(), vk.okno.take(), vk.zapas_pid.take()),
             None => return,
         }
     };
-    // ⛔ Движок, перезапустивший себя (новый pid вне job object),
-    // дочерним процессом не убить — добиваем по запасному pid.
-    if let Some(pz) = zapas {
-        if proc.as_ref().map(|p| p.id()) != Some(pz) {
-            sistema::ubit_po_pid(pz);
-        }
-    }
-    if let Some(mut p) = proc {
+    let pid_rebenka = proc.as_ref().map(|p| p.id());
+    let rebenok_zhiv = proc
+        .as_mut()
+        .map(|p| matches!(p.try_wait(), Ok(None)))
+        .unwrap_or(false);
+    if rebenok_zhiv {
+        // Обычный путь: открепление и чистая остановка — на нашем
+        // UI-потоке (убийство прикреплённого AttachThreadInput процесса
+        // с чужого потока вешает нашу очередь ввода).
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let otpravleno = app.run_on_main_thread(move || {
             if let Some(o) = okno {
                 sistema::otsoedinit_vvod(o);
             }
-            brauzer::ostanovit_dvizhka(&mut p, okno);
+            if let Some(mut p) = proc {
+                brauzer::ostanovit_dvizhka(&mut p, okno);
+            }
             let _ = tx.send(());
         });
         if otpravleno.is_ok() {
             // Не ждём дольше 10 с: задание всё равно добьёт дерево.
             let _ = rx.recv_timeout(std::time::Duration::from_secs(10));
         }
-        // is_err = главный поток уже остановлен (завершение программы):
-        // процесс вот-вот закроется, задание само добьёт дерево движков.
+        // Движок мог перезапуститься с другим pid — дочерний его не добьёт.
+        if let Some(zp) = zapas {
+            if pid_rebenka != Some(zp) {
+                sistema::ubit_po_pid(zp);
+            }
+        }
+    } else {
+        // ⛔ Дочернего нет или мёртв: движок живёт по запасному pid
+        // (Chromium перезапустил себя). Закрываем ВЕЖЛИВО через окно —
+        // убийством сессия не сбросится, а она должна.
+        if let Some(zp) = zapas {
+            if let Some(o) = okno {
+                let _ = app.run_on_main_thread(move || {
+                    sistema::otsoedinit_vvod(o);
+                    sistema::zakryt_vezhlivo(o);
+                });
+                let srok = std::time::Instant::now();
+                while sistema::pid_zhiv(zp) && srok.elapsed().as_secs() < 5 {
+                    std::thread::sleep(std::time::Duration::from_millis(150));
+                }
+            }
+            sistema::ubit_po_pid(zp);
+        }
+        if let Some(mut p) = proc {
+            let _ = p.try_wait(); // прибрать мёртвого ребёнка
+        }
     }
     let (proxy, tunnel) = {
         let mut v = s.vkladki.lock().unwrap();
@@ -767,9 +823,11 @@ fn diagnostika(app: tauri::AppHandle, s: State<Sostoyanie>) -> String {
     {
         let v = s.vkladki.lock().unwrap();
         for (id, vk) in v.iter() {
-            let proc_s = match &vk.proc {
-                Some(p) => format!("pid {}", p.id()),
-                None => "нет".into(),
+            let proc_s = match (&vk.proc, vk.zapas_pid) {
+                (Some(p), Some(z)) if p.id() != z => format!("pid {} (реальный {})", p.id(), z),
+                (Some(p), _) => format!("pid {}", p.id()),
+                (None, Some(z)) => format!("pid {} (движок перезапущен)", z),
+                (None, None) => "нет".into(),
             };
             let okno_s = match vk.okno {
                 Some(o) => {
@@ -920,11 +978,15 @@ pub fn run() {
                         let s: tauri::State<Sostoyanie> = h.state();
                         let Ok(v) = s.vkladki.try_lock() else { continue };
                         v.iter()
-                            .filter_map(|(id, vk)| match (vk.proc.as_ref(), vk.okno) {
-                                (Some(p), Some(o)) => {
-                                    Some((id.clone(), vk.zapas_pid.unwrap_or_else(|| p.id()), o))
-                                }
-                                _ => None,
+                            .filter_map(|(id, vk)| {
+                                // Движок живёт и по дочернему pid, и по
+                                // запасному (перезапустивший себя Chromium):
+                                // сторож смотрит оба варианта.
+                                let real = vk
+                                    .zapas_pid
+                                    .or(vk.proc.as_ref().map(|p| p.id()))?;
+                                let o = vk.okno?;
+                                Some((id.clone(), real, o))
                             })
                             .collect()
                     };
@@ -1068,11 +1130,27 @@ pub fn run() {
                     let s: tauri::State<Sostoyanie> = app.state();
                     let v = s.vkladki.lock().unwrap();
                     v.values()
-                        .filter_map(|vk| vk.proc.as_ref().map(|p| (p.id(), vk.okno)))
+                        .filter_map(|vk| {
+                            let real = vk
+                                .zapas_pid
+                                .or(vk.proc.as_ref().map(|p| p.id()))?;
+                            Some((real, vk.okno))
+                        })
                         .collect()
                 };
-                for (pid, okno) in spisok {
-                    brauzer::poprosit_o_chem_vyhode(pid, okno);
+                for (pid, okno) in &spisok {
+                    brauzer::poprosit_o_chem_vyhode(*pid, *okno);
+                }
+                // ⛔ Дать движкам время сбросить сессию: как только наш
+                // процесс выйдет, задание мгновенно добьёт дерево — не
+                // успевший записать сессию Chromium = крах = «восстановить?»
+                // вместо вкладок (12.11.2026, жалоба «перезапуск ничего
+                // не возвращает»).
+                let srok = std::time::Instant::now();
+                while spisok.iter().any(|(pid, _)| sistema::pid_zhiv(*pid))
+                    && srok.elapsed().as_secs() < 4
+                {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
                 }
             }
         });
