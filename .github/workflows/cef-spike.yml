@@ -34,6 +34,13 @@ jobs:
           curl -fSL "https://cef-builds.spotifycdn.com/${CEF_BASE}_linux64_minimal.tar.bz2" -o /tmp/cef.tar.bz2
           mkdir -p "$HOME/.local/share/cef"
           tar -xjf /tmp/cef.tar.bz2 -C "$HOME/.local/share/cef" --strip-components=1
+          # В архиве файлы вложены в Release/ (бинарники) и Resources/
+          # (pak/locales) — выравниваем в корень, как делает export-cef-dir.
+          mv "$HOME/.local/share/cef/Release/"* "$HOME/.local/share/cef/" 2>/dev/null || true
+          mv "$HOME/.local/share/cef/Resources/"* "$HOME/.local/share/cef/" 2>/dev/null || true
+          rmdir "$HOME/.local/share/cef/Release" "$HOME/.local/share/cef/Resources" 2>/dev/null || true
+          ls "$HOME/.local/share/cef/" | head -6
+          test -f "$HOME/.local/share/cef/libcef.so"
       - name: Сборка
         run: |
           cd cef-spike
@@ -66,6 +73,13 @@ jobs:
           if ($hash -ne "15d29eea209d857c22dc163706080295aea69b5c") { throw "SHA1 CEF не сошёлся: $hash" }
           New-Item -ItemType Directory -Force "$env:USERPROFILE\.local\share\cef" | Out-Null
           tar -xjf "$env:TEMP\cef.tar.bz2" -C "$env:USERPROFILE\.local\share\cef" --strip-components=1
+          # В архиве файлы вложены в Release/ и Resources/ — выравниваем в корень.
+          $cef = "$env:USERPROFILE\.local\share\cef"
+          if (Test-Path "$cef\Release") { Move-Item "$cef\Release\*" $cef -Force }
+          if (Test-Path "$cef\Resources") { Move-Item "$cef\Resources\*" $cef -Force }
+          Remove-Item "$cef\Release","$cef\Resources" -Recurse -Force -ErrorAction SilentlyContinue
+          Get-ChildItem $cef | Select-Object -First 6 -ExpandProperty Name
+          if (-not (Test-Path "$cef\libcef.dll")) { throw "libcef.dll не найден после распаковки" }
       - name: Сборка
         shell: pwsh
         run: |
