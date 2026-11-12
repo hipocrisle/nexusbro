@@ -1,0 +1,11 @@
+Команда: Xvfb :91 -screen 0 1280x900x24 -nolisten tcp
+Код выхода: 1
+_XSERVTransSocketCreateListener: failed to bind listener
+_XSERVTransSocketUNIXCreateListener: ...SocketCreateListener() failed
+_XSERVTransMakeAllCOTSServerListeners: failed to create listener for local
+_XSERVTransSocketCreateListener: failed to bind listener
+_XSERVTransSocketUNIXCreateListener: ...SocketCreateListener() failed
+_XSERVTransMakeAllCOTSServerListeners: failed to create listener for unix
+(EE)
+Fatal server error:
+(EE) Cannot establish any listening sockets - Make sure an X server isn't already running(EE)

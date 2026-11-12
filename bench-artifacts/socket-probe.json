@@ -1,0 +1,12 @@
+[
+  {
+    "probe": "unix",
+    "ok": false,
+    "error": "[Errno 1] Operation not permitted"
+  },
+  {
+    "probe": "tcp",
+    "ok": false,
+    "error": "[Errno 1] Operation not permitted"
+  }
+]

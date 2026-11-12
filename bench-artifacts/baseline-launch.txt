@@ -1,0 +1,6 @@
+Попытка запуска исходного исполняемого файла из локального кэша сборки; повторная сборка этой ветки ещё выполнялась.
+Команда: DISPLAY=:91 CEF_PATH=<cef> LD_LIBRARY_PATH=<cef> XDG_DATA_HOME=<isolated-runtime> NEXUSBRO_PROBA=2 ./nexusbro
+
+thread 'main' (11) panicked at <cargo-registry>/tao-0.37.2/src/platform_impl/linux/event_loop.rs:219:53:
+Failed to initialize gtk backend!: BoolError { message: "Failed to initialize GTK", filename: "<cargo-registry>/gtk-0.18.2/src/rt.rs", function: "gtk::rt::init", line: 141 }
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
