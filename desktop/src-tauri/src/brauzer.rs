@@ -78,6 +78,10 @@ pub fn papka_profilej() -> PathBuf {
 }
 
 enum Zakaz {
+    Cef {
+        komanda: Command,
+        otvet: SyncSender<anyhow::Result<Child>>,
+    },
     Dvizhok {
         id: String,
         proxy: Option<String>,
@@ -110,6 +114,15 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .spawn(move || {
                 while let Ok(z) = rx.recv() {
                     match z {
+                        Zakaz::Cef { mut komanda, otvet } => {
+                            let itog = komanda.spawn().map_err(anyhow::Error::from);
+                            if let Err(e) = otvet.send(itog) {
+                                if let Ok(mut ditya) = e.0 {
+                                    let _ = ditya.kill();
+                                    let _ = ditya.wait();
+                                }
+                            }
+                        }
                         Zakaz::Dvizhok { id, proxy, adres, vosstanavlivat, otvet } => {
                             let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref(), vosstanavlivat));
                         }
@@ -122,6 +135,12 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .expect("не завёлся поток запуска движков");
         tx
     })
+}
+
+pub fn zapustit_cef(komanda: Command) -> anyhow::Result<Child> {
+    let (otvet, zhdem) = sync_channel(1);
+    zapuskatel().send(Zakaz::Cef { komanda, otvet })?;
+    zhdem.recv_timeout(std::time::Duration::from_secs(25))?
 }
 
 /// Запустить движок для одной супер-вкладки. `adres` — только для режима

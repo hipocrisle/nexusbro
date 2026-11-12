@@ -114,6 +114,7 @@ struct Vkladka {
     /// Движок спавнится, хэндл окна ещё не получен (фоновый поток ждёт
     /// NB-OKNO). Пока true — повторный запуск не начинать.
     zapusk_idet: bool,
+    zapusk_id: u64,
     okno: Option<u32>,
     /// Реальный pid браузера, когда Chromium перезапустил себя из-под
     /// нашего мёртвого дочернего процесса (10.11.2026). Убиваем по нему.
@@ -126,6 +127,7 @@ struct Sostoyanie {
     /// Где на экране показывать движок — это место нам сообщает лицевая часть.
     mesto: Mutex<Option<Mesto>>,
     aktivnaya: Mutex<Option<String>>,
+    dvizhki_skryty: std::sync::atomic::AtomicBool,
 }
 
 /// Выставляется при завершении программы: фоновые потоки (сторож окон)
@@ -204,12 +206,9 @@ fn zadat_mesto(s: State<Sostoyanie>, x: i32, y: i32, w: u32, h: u32) -> Otvet {
     let m = Mesto { x, y, w, h };
     *s.mesto.lock().unwrap() = Some(m);
     let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-    if let Some(id) = aktivnaya {
-        if let Some(v) = s.vkladki.lock().unwrap().get(&id) {
-            if let Some(o) = v.okno {
-                let _ = sistema::peremestit(o, m);
-            }
-        }
+    let okno = aktivnaya.and_then(|id| s.vkladki.lock().unwrap().get(&id).and_then(|v| v.okno));
+    if let Some(o) = okno {
+        let _ = sistema::peremestit(o, m);
     }
     da()
 }
@@ -221,7 +220,7 @@ fn spisok(s: State<Sostoyanie>) -> Vec<Vidno> {
         .values()
         .map(|x| Vidno {
             nastrojki: x.nastrojki.clone(),
-            zapushchena: x.proc.is_some() || x.zapas_pid.is_some(),
+            zapushchena: !x.zapusk_idet && (x.proc.is_some() || x.zapas_pid.is_some()),
         })
         .collect();
     r.sort_by(|a, b| a.nastrojki.id.cmp(&b.nastrojki.id));
@@ -274,6 +273,7 @@ fn dvizhok_est() -> bool {
 #[tauri::command]
 async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet, String> {
     v_zhurnal_granica("pokazat_dvizhki", "-", &format!("vidno={vidno}"));
+    s.dvizhki_skryty.store(!vidno, std::sync::atomic::Ordering::SeqCst);
     if !vidno {
         let pids: Vec<u32> = {
             let v = s.vkladki.lock().unwrap();
@@ -284,14 +284,11 @@ async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet,
         sistema::spryatat_chuzhie(&pids);
     }
     let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-    let v = s.vkladki.lock().unwrap();
-    for (k, vk) in v.iter() {
-        if let Some(o) = vk.okno {
-            let pokazat = vidno && Some(k) == aktivnaya.as_ref();
-            let _ = sistema::pokazat(o, pokazat);
-        }
+    let okna: Vec<_> = s.vkladki.lock().unwrap().iter()
+        .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o))).collect();
+    for (id, o) in okna {
+        let _ = sistema::pokazat(o, vidno && Some(&id) == aktivnaya.as_ref());
     }
-    drop(v);
     v_zhurnal_granica("pokazat_dvizhki", "-", "готово");
     Ok(da())
 }
@@ -313,7 +310,7 @@ async fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0 },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -352,10 +349,35 @@ fn vstroit_vse_okna(
 
 /// Запустить движок для уже записанной вкладки.
 async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: &str) -> Otvet {
-    let nastrojki = match s.vkladki.lock().unwrap().get(id) {
-        Some(v) => v.nastrojki.clone(),
-        None => return net("такой супер-вкладки нет"),
+    static SLEDUYUSHCHIJ_ZAPUSK: std::sync::atomic::AtomicU64 =
+        std::sync::atomic::AtomicU64::new(1);
+    let (nastrojki, zapusk_id) = {
+        let mut v = s.vkladki.lock().unwrap();
+        let Some(vk) = v.get_mut(id) else { return net("такой супер-вкладки нет") };
+        if vk.zapusk_idet || vk.proc.is_some() {
+            drop(v);
+            pereklyuchit_vnutri(s, id);
+            return da();
+        }
+        vk.zapusk_idet = true;
+        vk.zapusk_id = SLEDUYUSHCHIJ_ZAPUSK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        (vk.nastrojki.clone(), vk.zapusk_id)
     };
+    pereklyuchit_vnutri(s, id);
+    let otvet = podgotovit_dvizhok(app, s, id, nastrojki, zapusk_id).await;
+    if !otvet.ok {
+        let mut v = s.vkladki.lock().unwrap();
+        if let Some(vk) = v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id) {
+            vk.zapusk_idet = false;
+        }
+    }
+    otvet
+}
+
+async fn podgotovit_dvizhok(
+    app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: &str,
+    nastrojki: Nastrojki, zapusk_id: u64,
+) -> Otvet {
     // ⛔ Движок всегда ходит через НАШ прокси, даже при прямом выходе:
     // иначе в прямом режиме не будет резки рекламы.
     // Выход бывает трёх видов: подписка или ссылка на узел (поднимаем
@@ -438,58 +460,50 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
         }
     };
 
-    // ⛔ Хэндл окна дописывает ФОНОВЫЙ поток: команды Tauri крутятся на
-    // главном потоке, а дочка при создании окна ждёт родительское — если
-    // ждать здесь, оба повисают навсегда (намертво зависало при создании
-    // первой вкладки, 12.11.2026). Ошибку шлём событием в интерфейс.
+    let stdout = ditya.stdout.take().unwrap();
     {
         let mut v = s.vkladki.lock().unwrap();
-        if let Some(vk) = v.get_mut(id) {
-            vk.zapusk_idet = true;
-            vk.nash_proxy = Some(nash);
-            vk.tunnel = tunnel;
+        match v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet) {
+            Some(vk) => {
+                vk.proc = Some(ditya);
+                vk.nash_proxy = Some(nash);
+                vk.tunnel = tunnel;
+            }
+            None => {
+                drop(v);
+                ostanovit_resursy(Some(ditya), Some(nash), tunnel);
+                return da();
+            }
         }
     }
     let h = app.clone();
     let id_fon = id.to_string();
     std::thread::spawn(move || {
-        match cef_dvizhok::dozhdatsya_okna(ditya, 25) {
-            Some((ditya, okno)) => {
-                let s: State<Sostoyanie> = h.state();
-                if let Some(vk) = s.vkladki.lock().unwrap().get_mut(&id_fon) {
-                    vk.proc = Some(ditya);
-                    vk.okno = Some(okno);
-                    vk.zapusk_idet = false;
-                }
+        let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25);
+        let s: State<Sostoyanie> = h.state();
+        let mut v = s.vkladki.lock().unwrap();
+        let Some(vk) = v.get_mut(&id_fon)
+            .filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet)
+        else { return };
+        vk.zapusk_idet = false;
+        if let Some(okno) = okno {
+            vk.okno = Some(okno);
+            drop(v);
+            let aktivnaya = s.aktivnaya.lock().unwrap().clone();
+            if aktivnaya.as_deref() == Some(&id_fon) {
                 pereklyuchit_vnutri(&s, &id_fon);
-                zapisat_v_zhurnal(format!("{id_fon}: запуск ок, окно {okno}"));
-                let _ = h.emit("vkladki-izmenilis", id_fon);
+            } else {
+                let _ = sistema::pokazat(okno, false);
             }
-            None => {
-                // Дочка молчит/умерла: убираем прокси-туннель и сообщаем.
-                let s: State<Sostoyanie> = h.state();
-                let (proxy, tunnel) = {
-                    let mut v = s.vkladki.lock().unwrap();
-                    match v.get_mut(&id_fon) {
-                        Some(vk) => {
-                            vk.zapusk_idet = false;
-                            (vk.nash_proxy.take(), vk.tunnel.take())
-                        }
-                        None => (None, None),
-                    }
-                };
-                if let Some(p) = proxy {
-                    p.ostanovit();
-                }
-                if let Some(mut t) = tunnel {
-                    let _ = t.kill();
-                    let _ = t.wait();
-                }
-                zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
-                let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с. Журнал: %LOCALAPPDATA%/NexusBro/profili/{id_fon}/cef.log"));
-                let _ = h.emit("vkladki-izmenilis", id_fon);
-            }
+            zapisat_v_zhurnal(format!("{id_fon}: запуск ок, окно {okno}"));
+        } else {
+            let resursy = (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take());
+            drop(v);
+            ostanovit_resursy(resursy.0, resursy.1, resursy.2);
+            zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
+            let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
         }
+        let _ = h.emit("vkladki-izmenilis", "");
     });
     da()
 }
@@ -582,51 +596,33 @@ fn zagruzit_aktivnuyu() -> Option<String> {
 }
 
 fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
-    let m = s.mesto.lock().unwrap().clone();
-    let v = s.vkladki.lock().unwrap();
-    for (k, vk) in v.iter() {
-        if let Some(o) = vk.okno {
-            let nuzhna = k == id;
-            let _ = sistema::pokazat(o, nuzhna);
-            if nuzhna {
-                if let Some(mm) = m {
-                    let _ = sistema::peremestit(o, mm);
-                }
+    let m = *s.mesto.lock().unwrap();
+    let okna: Vec<_> = {
+        let v = s.vkladki.lock().unwrap();
+        if !v.contains_key(id) { return }
+        v.iter().filter_map(|(k, vk)| vk.okno.map(|o| (k.clone(), o))).collect()
+    };
+    *s.aktivnaya.lock().unwrap() = Some(id.to_string());
+    let skryty = s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst);
+    for (k, o) in okna {
+        let nuzhna = k == id && !skryty;
+        let _ = sistema::pokazat(o, nuzhna);
+        if nuzhna {
+            if let Some(mm) = m {
+                let _ = sistema::peremestit(o, mm);
             }
         }
     }
-    *s.aktivnaya.lock().unwrap() = Some(id.to_string());
-    // Помним, на какой вкладке закрыли программу, — при следующем
-    // запуске откроется именно она (10.11.2026, задал user).
     sohranit_aktivnuyu(id);
 }
 
-/// Глушить экземпляр вкладки. CEF-процесс — наш дочерний: убиваем
-/// напрямую. AttachThreadInput и вежливые WM_CLOSE ушли вместе со
-/// старой схемой; сессии обычных вкладок переедут в наш JSON (этап 3).
-fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
-    let _ = app;
-    let (mut proc, _okno, _zapas) = {
-        let mut v = s.vkladki.lock().unwrap();
-        match v.get_mut(id) {
-            Some(vk) => {
-                vk.zapusk_idet = false;
-                (vk.proc.take(), vk.okno.take(), vk.zapas_pid.take())
-            }
-            None => return,
-        }
-    };
+fn ostanovit_resursy(
+    proc: Option<Child>, proxy: Option<proxy::Rabotayushchij>, tunnel: Option<Child>,
+) {
     if let Some(mut p) = proc {
         let _ = p.kill();
         let _ = p.wait();
     }
-    let (proxy, tunnel) = {
-        let mut v = s.vkladki.lock().unwrap();
-        match v.get_mut(id) {
-            Some(vk) => (vk.nash_proxy.take(), vk.tunnel.take()),
-            None => (None, None),
-        }
-    };
     if let Some(p) = proxy {
         p.ostanovit();
     }
@@ -636,17 +632,32 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
     }
 }
 
+async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
+    let resursy = {
+        let mut v = s.vkladki.lock().unwrap();
+        let Some(vk) = v.get_mut(id) else { return };
+        vk.zapusk_idet = false;
+        vk.okno = None;
+        vk.zapas_pid = None;
+        (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take())
+    };
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        ostanovit_resursy(resursy.0, resursy.1, resursy.2);
+    }).await;
+}
+
 /// Правка настроек супер-вкладки после создания. Работающую перезапускаем
 /// с новыми настройками (прокси и резка рекламы задаются на запуск),
 /// остановленную просто перезаписываем.
 #[tauri::command]
 async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nastrojki) -> Result<Otvet, String> {
+    v_zhurnal_granica("izmenit", &nastrojki.id, "вход");
     let rabotaet = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(&nastrojki.id) {
             Some(vk) => {
                 vk.nastrojki = nastrojki.clone();
-                vk.proc.is_some()
+                vk.proc.is_some() || vk.zapusk_idet
             }
             None => return Ok(net("такой супер-вкладки нет")),
         }
@@ -657,7 +668,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
         sohranit_spisok(&vse);
     }
     if rabotaet {
-        ostanovit_vnutri(&app, &s, &nastrojki.id);
+        ostanovit_vnutri(&s, &nastrojki.id).await;
         return Ok(zapustit_vnutri(&app, &s, &nastrojki.id).await);
     }
     let _ = app.emit("vkladki-izmenilis", nastrojki.id);
@@ -677,8 +688,10 @@ fn nuzhno_sohranenie(id: String) -> bool {
 fn steret_profil(id: &str) {
     let put = brauzer::papka_profilej().join(id);
     for _ in 0..5 {
-        if std::fs::remove_dir_all(&put).is_ok() {
-            return;
+        match std::fs::remove_dir_all(&put) {
+            Ok(()) => return,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(_) => {}
         }
         std::thread::sleep(std::time::Duration::from_millis(400));
     }
@@ -690,17 +703,18 @@ fn steret_profil(id: &str) {
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
-    // Убираем из списка ПЕРВЫМ и отпускаем мьютекс — остановка движка
-    // сама берёт этот мьютекс, держать его тут = тупик.
     let udalena = {
         let mut v = s.vkladki.lock().unwrap();
-        v.remove(&id).map(|vk| vk.nastrojki)
+        v.remove(&id)
     };
-    let Some(nastrojki) = udalena else {
+    let Some(vk) = udalena else {
         return Ok(net("такой супер-вкладки нет"));
     };
     v_zhurnal_granica("zakryt", &id, "останавливаю движок");
-    ostanovit_vnutri(&app, &s, &id);
+    let nastrojki = vk.nastrojki;
+    let _ = tauri::async_runtime::spawn_blocking(move || {
+        ostanovit_resursy(vk.proc, vk.nash_proxy, vk.tunnel);
+    }).await;
     v_zhurnal_granica("zakryt", &id, "движок остановлен");
     {
         let v = s.vkladki.lock().unwrap();
@@ -713,9 +727,23 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
         sohr.push(nastrojki);
         sohranit_sohranennye(&sohr);
     } else {
-        steret_profil(&id);
+        let id_profilya = id.clone();
+        let _ = tauri::async_runtime::spawn_blocking(move || steret_profil(&id_profilya)).await;
     }
-    let _ = app.emit("vkladki-izmenilis", id);
+    let nado_pereklyuchit = {
+        let mut aktivnaya = s.aktivnaya.lock().unwrap();
+        if aktivnaya.as_deref() == Some(&id) {
+            *aktivnaya = None;
+            true
+        } else { false }
+    };
+    let sleduyushchaya = if nado_pereklyuchit {
+        s.vkladki.lock().unwrap().keys().min().cloned()
+    } else { None };
+    if let Some(id) = sleduyushchaya {
+        let _ = zapustit_vnutri(&app, &s, &id).await;
+    }
+    let _ = app.emit("vkladki-izmenilis", "");
     Ok(da())
 }
 
@@ -745,7 +773,7 @@ async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String
         if v.contains_key(&id) {
             return Ok(net("такая супер-вкладка уже открыта"));
         }
-        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false });
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0 });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
@@ -755,7 +783,8 @@ async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String
 /// Выбросить сохранённую супер-вкладку насовсем: настройки и профиль
 /// со всеми входами. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
-fn udalit_sohranennuyu(id: String) -> Otvet {
+async fn udalit_sohranennuyu(id: String) -> Result<Otvet, String> {
+    tauri::async_runtime::spawn_blocking(move || {
     let mut sohr = zagruzit_sohranennye();
     if sohr.iter().any(|n| n.id == id) {
         sohr.retain(|n| n.id != id);
@@ -765,6 +794,7 @@ fn udalit_sohranennuyu(id: String) -> Otvet {
     } else {
         net("такой сохранённой вкладки нет")
     }
+    }).await.map_err(|e| e.to_string())
 }
 
 /// Перезагрузить движок вкладки (контекстное меню вкладки).
@@ -773,7 +803,7 @@ async fn perezagruzit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
     if !s.vkladki.lock().unwrap().contains_key(&id) {
         return Ok(net("такой супер-вкладки нет"));
     }
-    ostanovit_vnutri(&app, &s, &id);
+    ostanovit_vnutri(&s, &id).await;
     Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
@@ -887,6 +917,7 @@ fn nash_descriptor(w: &tauri::WebviewWindow) -> Option<u64> {
 /// больше не развернёшь»).
 fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
     let s: tauri::State<Sostoyanie> = app.state();
+    if s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst) { return }
     let naideno = {
         let aktivnaya = s.aktivnaya.lock().unwrap().clone();
         let vkladki = s.vkladki.lock().unwrap();
@@ -927,7 +958,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0 });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,

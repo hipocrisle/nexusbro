@@ -401,7 +401,7 @@ pub mod sistema {
                 m.y,
                 m.w as i32,
                 m.h as i32,
-                SWP_NOZORDER | SWP_NOACTIVATE,
+                SWP_NOZORDER | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS,
             )?;
         }
         Ok(())
@@ -409,7 +409,7 @@ pub mod sistema {
 
     pub fn pokazat(chuzhoe: u32, vidno: bool) -> Result<()> {
         unsafe {
-            let _ = ShowWindow(hwnd(chuzhoe), if vidno { SW_SHOW } else { SW_HIDE });
+            let _ = ShowWindowAsync(hwnd(chuzhoe), if vidno { SW_SHOW } else { SW_HIDE });
         }
         Ok(())
     }

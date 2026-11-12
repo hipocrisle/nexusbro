@@ -130,8 +130,6 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         return 1;
     }
 
-    #[cfg(target_os = "linux")]
-    let roditel_handle: sys::cef_window_handle_t = roditel;
     #[cfg(target_os = "windows")]
     let roditel_handle: sys::cef_window_handle_t =
         sys::HWND(roditel as usize as *mut sys::HWND__);
@@ -139,15 +137,20 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     let roditel_handle: sys::cef_window_handle_t =
         roditel as usize as sys::cef_window_handle_t;
 
+    #[cfg(target_os = "linux")]
+    let (svyaz, konteyner) = match sozdat_konteyner(roditel, x, y, w, h) {
+        Ok(k) => k,
+        Err(e) => {
+            eprintln!("cef: контейнер окна: {e}");
+            return 1;
+        }
+    };
+    #[cfg(target_os = "linux")]
+    let (roditel_handle, x, y) = (konteyner as sys::cef_window_handle_t, 0, 0);
     eprintln!("cef: окно движка…");
     let info = WindowInfo::default().set_as_child(
         roditel_handle,
-        &Rect {
-            x,
-            y,
-            width: w,
-            height: h,
-        },
+        &Rect { x, y, width: w, height: h },
     );
     let mut klient = DvizhokClient::new();
     let url_cef = CefString::from(url.as_str());
@@ -184,14 +187,51 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         })
         .unwrap_or(0);
     // Родитель ждёт эту строку, чтобы знать хэндл окна.
-    println!("NB-OKNO {okno}");
+    #[cfg(target_os = "linux")]
+    let okno_obolochki = konteyner;
+    #[cfg(not(target_os = "linux"))]
+    let okno_obolochki = okno;
+    println!("NB-OKNO {okno_obolochki}");
     let _ = std::io::stdout().flush();
 
     // Внешняя петля сообщений: движок живёт, пока родитель не убьёт процесс.
     loop {
+        #[cfg(target_os = "linux")]
+        {
+            use x11rb::connection::Connection;
+            use x11rb::protocol::{Event, xproto::*};
+            while let Ok(Some(sobytie)) = svyaz.poll_for_event() {
+                if let Event::ConfigureNotify(r) = sobytie {
+                    if r.window == konteyner {
+                        let _ = svyaz.configure_window(okno, &ConfigureWindowAux::new()
+                            .width(r.width as u32).height(r.height as u32));
+                        let _ = svyaz.flush();
+                    }
+                }
+            }
+        }
         do_message_loop_work();
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
+}
+
+#[cfg(target_os = "linux")]
+fn sozdat_konteyner(
+    roditel: u64, x: i32, y: i32, w: i32, h: i32,
+) -> anyhow::Result<(x11rb::rust_connection::RustConnection, u32)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    let (svyaz, ekran) = x11rb::connect(None)?;
+    let ekran = &svyaz.setup().roots[ekran];
+    let okno = svyaz.generate_id()?;
+    // CEF наследует colormap родителя, но выбирает root visual; у GTK visual может отличаться.
+    svyaz.create_window(ekran.root_depth, okno, roditel as u32,
+        x as i16, y as i16, w as u16, h as u16, 0,
+        WindowClass::INPUT_OUTPUT, ekran.root_visual,
+        &CreateWindowAux::new().colormap(ekran.default_colormap)
+            .event_mask(EventMask::STRUCTURE_NOTIFY))?.check()?;
+    svyaz.flush()?;
+    Ok((svyaz, okno))
 }
 
 /// Запустить процесс супер-вкладки. Прокси движку — командной строкой
@@ -231,9 +271,15 @@ pub fn zapustit_cep(
             Ok(())
         });
     }
-    let ditya = cmd.spawn()?;
+    let ditya = crate::brauzer::zapustit_cef(cmd)?;
     #[cfg(target_os = "windows")]
-    crate::brauzer::privyazat_k_zadanie_pub(&ditya)?;
+    let mut ditya = ditya;
+    #[cfg(target_os = "windows")]
+    if let Err(e) = crate::brauzer::privyazat_k_zadanie_pub(&ditya) {
+        let _ = ditya.kill();
+        let _ = ditya.wait();
+        return Err(e);
+    }
     Ok(ditya)
 }
 
@@ -245,10 +291,9 @@ pub fn zapustit_cep(
 /// дочка при создании окна ждёт ответа родительского — взаимный
 /// дедлок иначе неизбежен.
 pub fn dozhdatsya_okna(
-    mut ditya: std::process::Child,
+    stdout: std::process::ChildStdout,
     sek: u64,
-) -> Option<(std::process::Child, u32)> {
-    let stdout = ditya.stdout.take()?;
+) -> Option<u32> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
     std::thread::spawn(move || {
         let chitat = std::io::BufReader::new(stdout);
@@ -266,11 +311,7 @@ pub fn dozhdatsya_okna(
         let _ = tx.send(None);
     });
     match rx.recv_timeout(std::time::Duration::from_secs(sek)) {
-        Ok(Some(h)) => Some((ditya, h)),
-        _ => {
-            let _ = ditya.kill();
-            let _ = ditya.wait();
-            None
-        }
+        Ok(okno) => okno,
+        Err(_) => None,
     }
 }

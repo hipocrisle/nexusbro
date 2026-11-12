@@ -67,9 +67,9 @@ export default function App() {
     const otpiskaOshibki = listen<string>("oshibka-dvizhka", (e) => {
       setOshibka(e.payload);
     });
-    const otpiska = listen<string>("vkladki-izmenilis", async (e) => {
+    const otpiska = listen<string>("vkladki-izmenilis", async () => {
       setVkladki(await invoke<Vidno[]>("spisok"));
-      if (e.payload) setAktivnaya(e.payload);
+      setAktivnaya(await invoke<string | null>("aktivnaya"));
       soobshchitMesto();
     });
     // Счётчик резки — редко, раз в три секунды: чаще незачем.
@@ -197,13 +197,16 @@ export default function App() {
     await invoke<Otvet>("zakryt", { id, sohranit });
     const spisok = await invoke<Vidno[]>("spisok");
     setVkladki(spisok);
-    if (aktivnaya === id) setAktivnaya(spisok[0]?.id ?? null);
+    setAktivnaya(await invoke<string | null>("aktivnaya"));
   }
 
   // Трёхкнопочный вопрос «сохранить?» — window.confirm умеет только два.
   function voprosSohraneniya(nazvanie: string): Promise<boolean | null> {
     return new Promise((razreshit) => {
-      setVopros({ nazvanie, razreshit });
+      setVopros({ nazvanie, razreshit: (otvet) => {
+        setVopros(null);
+        razreshit(otvet);
+      } });
     });
   }
 
@@ -431,7 +434,7 @@ export default function App() {
                 setMenyu(null);
                 await invoke<Otvet>("zakryt", { id: v.id, sohranit: true });
                 setVkladki(await invoke<Vidno[]>("spisok"));
-                if (aktivnaya === v.id) setAktivnaya(null);
+                setAktivnaya(await invoke<string | null>("aktivnaya"));
               }}
             >
               Сохранить и закрыть
