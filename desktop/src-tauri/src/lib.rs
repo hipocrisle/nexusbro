@@ -274,16 +274,16 @@ async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet,
 }
 
 #[tauri::command]
-fn otkryt(
+async fn otkryt(
     app: tauri::AppHandle,
-    s: State<Sostoyanie>,
+    s: State<'_, Sostoyanie>,
     nastrojki: Nastrojki,
-) -> Otvet {
+) -> Result<Otvet, String> {
     let id = nastrojki.id.clone();
     {
         let mut v = s.vkladki.lock().unwrap();
         if v.contains_key(&id) {
-            return net("такая супер-вкладка уже есть");
+            return Ok(net("такая супер-вкладка уже есть"));
         }
         // Запоминаем СРАЗУ: если движок не запустится, вкладка всё равно
         // останется в списке, и человек сможет поправить настройки.
@@ -294,7 +294,7 @@ fn otkryt(
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
-    zapustit_vnutri(&app, &s, &id)
+    Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
 /// Встроить ВСЕ чужие видимые окна движка вкладки, вернуть крупнейшее.
@@ -327,7 +327,7 @@ fn vstroit_vse_okna(
 }
 
 /// Запустить движок для уже записанной вкладки.
-fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> Otvet {
+async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: &str) -> Otvet {
     let nastrojki = match s.vkladki.lock().unwrap().get(id) {
         Some(v) => v.nastrojki.clone(),
         None => return net("такой супер-вкладки нет"),
@@ -340,7 +340,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
     let vyhod = if vpn::eto_podpiska(&nastrojki.proxy) {
         let papka = brauzer::papka_profilej().join(id);
         let zapis = nastrojki.proxy.trim().to_string();
-        let itog = tauri::async_runtime::block_on(async {
+        let itog = async {
             // ссылка подписки — скачиваем и берём первый узел
             let ssylka = if zapis.starts_with("http") {
                 let uzly = vpn::skachat_podpisku(&zapis).await?;
@@ -349,7 +349,8 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
                 zapis.clone()
             };
             vpn::podnyat_tunnel(&papka, &ssylka).await
-        });
+        }
+        .await;
         match itog {
             Ok((d, port)) => {
                 tunnel = Some(d);
@@ -366,10 +367,11 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
             Err(e) => return net(format!("выход записан непонятно: {}", e)),
         }
     };
-    let nash = tauri::async_runtime::block_on(proxy::podnyat(proxy::Nastrojka {
+    let nash = proxy::podnyat(proxy::Nastrojka {
         vyhod,
         rezat_reklamu: nastrojki.rezat_reklamu,
-    }));
+    })
+    .await;
     let nash = match nash {
         Ok(p) => p,
         Err(e) => return net(format!("свой прокси не поднялся: {}", e)),
@@ -469,7 +471,7 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
 }
 
 #[tauri::command]
-fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
+async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
     let zapushchena = match s.vkladki.lock().unwrap().get_mut(&id) {
         Some(vk) => {
             // ⛔ Дочерний процесс — «пусковая ракета»: Chromium на Windows
@@ -522,19 +524,19 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
             }
             }
         }
-        None => return net("такой супер-вкладки нет"),
+        None => return Ok(net("такой супер-вкладки нет")),
     };
     // Вкладку поднимаем в тот момент, когда на неё нажали, а не при запуске
     // программы — иначе десять вкладок сразу съедят всю память.
     if !zapushchena {
-        return zapustit_vnutri(&app, &s, &id);
+        return Ok(zapustit_vnutri(&app, &s, &id).await);
     }
     pereklyuchit_vnutri(&s, &id);
     // Клавиатуру — показанному движку (очереди уже прикреплены).
     if let Some(o) = s.vkladki.lock().unwrap().get(&id).and_then(|v| v.okno) {
         let _ = app.run_on_main_thread(move || sistema::fokus_dvizhku(o));
     }
-    da()
+    Ok(da())
 }
 
 fn sohranit_aktivnuyu(id: &str) {
@@ -614,7 +616,7 @@ fn ostanovit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) {
 /// с новыми настройками (прокси и резка рекламы задаются на запуск),
 /// остановленную просто перезаписываем.
 #[tauri::command]
-fn izmenit(app: tauri::AppHandle, s: State<Sostoyanie>, nastrojki: Nastrojki) -> Otvet {
+async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nastrojki) -> Result<Otvet, String> {
     let rabotaet = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(&nastrojki.id) {
@@ -622,7 +624,7 @@ fn izmenit(app: tauri::AppHandle, s: State<Sostoyanie>, nastrojki: Nastrojki) ->
                 vk.nastrojki = nastrojki.clone();
                 vk.proc.is_some()
             }
-            None => return net("такой супер-вкладки нет"),
+            None => return Ok(net("такой супер-вкладки нет")),
         }
     };
     {
@@ -632,10 +634,10 @@ fn izmenit(app: tauri::AppHandle, s: State<Sostoyanie>, nastrojki: Nastrojki) ->
     }
     if rabotaet {
         ostanovit_vnutri(&app, &s, &nastrojki.id);
-        return zapustit_vnutri(&app, &s, &nastrojki.id);
+        return Ok(zapustit_vnutri(&app, &s, &nastrojki.id).await);
     }
     let _ = app.emit("vkladki-izmenilis", nastrojki.id);
-    da()
+    Ok(da())
 }
 
 /// Есть ли в профиле что-то стоящее сохранять: куки, история. Свежая
@@ -663,7 +665,7 @@ fn steret_profil(id: &str) {
 /// в список сохранённых (открыть заново через меню у «+»); false: профиль
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
-fn zakryt(app: tauri::AppHandle, s: State<Sostoyanie>, id: String, sohranit: bool) -> Otvet {
+async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
     // Убираем из списка ПЕРВЫМ и отпускаем мьютекс — остановка движка
     // сама берёт этот мьютекс, держать его тут = тупик.
     let udalena = {
@@ -671,7 +673,7 @@ fn zakryt(app: tauri::AppHandle, s: State<Sostoyanie>, id: String, sohranit: boo
         v.remove(&id).map(|vk| vk.nastrojki)
     };
     let Some(nastrojki) = udalena else {
-        return net("такой супер-вкладки нет");
+        return Ok(net("такой супер-вкладки нет"));
     };
     ostanovit_vnutri(&app, &s, &id);
     {
@@ -688,7 +690,7 @@ fn zakryt(app: tauri::AppHandle, s: State<Sostoyanie>, id: String, sohranit: boo
         steret_profil(&id);
     }
     let _ = app.emit("vkladki-izmenilis", id);
-    da()
+    Ok(da())
 }
 
 /// Сохранённые супер-вкладки — для меню у кнопки «+».
@@ -702,12 +704,12 @@ fn sohranennye() -> Vec<Nastrojki> {
 /// Открыть сохранённую супер-вкладку заново: из списка сохранённых —
 /// в полосу, движок поднимается.
 #[tauri::command]
-fn vosstanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
+async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
     let nastrojki = {
         let mut sohr = zagruzit_sohranennye();
         let n = match sohr.iter().position(|n| n.id == id) {
             Some(i) => sohr.remove(i),
-            None => return net("такой сохранённой вкладки нет"),
+            None => return Ok(net("такой сохранённой вкладки нет")),
         };
         sohranit_sohranennye(&sohr);
         n
@@ -715,13 +717,13 @@ fn vosstanovit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet
     {
         let mut v = s.vkladki.lock().unwrap();
         if v.contains_key(&id) {
-            return net("такая супер-вкладка уже открыта");
+            return Ok(net("такая супер-вкладка уже открыта"));
         }
         v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
-    zapustit_vnutri(&app, &s, &id)
+    Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
 /// Выбросить сохранённую супер-вкладку насовсем: настройки и профиль
@@ -741,12 +743,12 @@ fn udalit_sohranennuyu(id: String) -> Otvet {
 
 /// Перезагрузить движок вкладки (контекстное меню вкладки).
 #[tauri::command]
-fn perezagruzit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otvet {
+async fn perezagruzit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
     if !s.vkladki.lock().unwrap().contains_key(&id) {
-        return net("такой супер-вкладки нет");
+        return Ok(net("такой супер-вкладки нет"));
     }
     ostanovit_vnutri(&app, &s, &id);
-    zapustit_vnutri(&app, &s, &id)
+    Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
 /// Диагностика по живому: состояние вкладок, окна, журнал сторожа,
@@ -908,7 +910,8 @@ pub fn run() {
                         rezat_reklamu: true,
                         pustaya: true,
                     };
-                    let o = otkryt(h.clone(), s, n);
+                    let o = tauri::async_runtime::block_on(otkryt(h.clone(), s, n))
+                        .unwrap_or_else(|e| net(e));
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
                 });
             }
@@ -1092,7 +1095,7 @@ pub fn run() {
                         return;
                     }
                     let s: tauri::State<Sostoyanie> = h.state();
-                    let _ = zapustit_vnutri(&h, &s, &id);
+                    let _ = tauri::async_runtime::block_on(zapustit_vnutri(&h, &s, &id));
                     let _ = h.emit("vkladki-izmenilis", id);
                 });
             }
