@@ -280,6 +280,35 @@ fn otkryt(
     zapustit_vnutri(&app, &s, &id)
 }
 
+/// Встроить ВСЕ чужие видимые окна движка вкладки, вернуть крупнейшее.
+/// ⛔ Сессия движка бывает многооконной (восстановление сессии, попапы):
+/// каждое не встроенное окно висят поверх нас с рамкой и кнопками —
+/// жалобы «окно хрома двигается, можно закрыть, закрывает меню»
+/// (12.11.2026). Встраиваем все; крупнейшее считаем главным.
+fn vstroit_vse_okna(
+    app: &tauri::AppHandle,
+    s: &State<Sostoyanie>,
+    id: &str,
+    koren_pid: u32,
+) -> Option<u32> {
+    let nashe = app.get_webview_window("main").and_then(|w| nash_descriptor(&w))?;
+    let m = s.mesto.lock().unwrap().unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
+    let okna = sistema::vse_okna(&[koren_pid]);
+    let mut glavnoe = None;
+    for o in &okna {
+        if !sistema::nash_li(*o, nashe) {
+            zapisat_v_zhurnal(format!("{id}: встраиваю ещё одно окно движка {o}"));
+            if let Err(e) = sistema::vstroit(*o, nashe, m) {
+                zapisat_v_zhurnal(format!("{id}: встроить окно {o} не вышло: {e}"));
+            }
+        }
+        if glavnoe.is_none() {
+            glavnoe = Some(*o);
+        }
+    }
+    glavnoe
+}
+
 /// Запустить движок для уже записанной вкладки.
 fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> Otvet {
     let nastrojki = match s.vkladki.lock().unwrap().get(id) {
@@ -468,6 +497,10 @@ fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<Sostoyanie>, id: &str) -> O
         }
         return net(format!("встроить не вышло: {}", e));
     }
+    // ⛔ Сессия могла восстановиться в НЕСКОЛЬКИХ окнах: встраиваем все
+    // чужие окна этого движка, иначе лишние висят поверх с рамкой.
+    let koren = zapas.unwrap_or_else(|| ditya.id());
+    let okno = vstroit_vse_okna(app, s, id, koren).unwrap_or(okno);
 
     if let Some(v) = s.vkladki.lock().unwrap().get_mut(id) {
         // ⛔ Дочерний мог уже выйти (Chromium перезапускает себя): трупа
@@ -512,6 +545,10 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
             if rebenok_zhiv {
                 true
             } else {
+                // Вкладка могла вообще не запускаться (спит с открытия
+                // программы) — тогда «мёртвого движка» в журнале не пишем.
+                let bilo_chto_to =
+                    vk.proc.is_some() || vk.okno.is_some() || vk.zapas_pid.is_some();
                 if let Some(mut p) = vk.proc.take() {
                     let _ = p.try_wait(); // прибрать мёртвого ребёнка
                 }
@@ -520,7 +557,9 @@ fn pereklyuchit(app: tauri::AppHandle, s: State<Sostoyanie>, id: String) -> Otve
                 if okno_zhivo && dvizhok_zhiv {
                     true
                 } else {
-                    zapisat_v_zhurnal(format!("{id}: мёртвый движок при переключении, поднимаю заново"));
+                    if bilo_chto_to {
+                        zapisat_v_zhurnal(format!("{id}: мёртвый движок при переключении, поднимаю заново"));
+                    }
                     if let Some(zp) = vk.zapas_pid.take() {
                         sistema::ubit_po_pid(zp);
                     }
@@ -1016,12 +1055,20 @@ pub fn run() {
                                     sistema::prisoedinit_vvod(novoe);
                                     sistema::fokus_dvizhku(novoe);
                                 });
-                                let _ = h.emit("vkladki-izmenilis", id);
+                                let _ = h.emit("vkladki-izmenilis", id.clone());
                             }
                             Ok(_) => {}
                             Err(_) => {
-                                if !sistema::nash_li(staroe, nashe) {
-                                    // Движка нет — вкладка снова спит.
+                                // ⛔ Спим ТОЛЬКО при мёртвом процессе: окно
+                                // могло пересоздаться или пропасть на
+                                // секунду (свип ниже его найдёт и встроит).
+                                // Иначе хоронили живой движок — а его окно
+                                // дальше жило своей жизнью поверх (12.11.2026:
+                                // «движок перезапущен, окно нет», движок
+                                // при этом писал в engine.log).
+                                if !sistema::nash_li(staroe, nashe)
+                                    && !sistema::pid_zhiv(pid)
+                                {
                                     zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
                                     let s: tauri::State<Sostoyanie> = h.state();
                                     if let Ok(mut v) = s.vkladki.try_lock() {
@@ -1037,7 +1084,21 @@ pub fn run() {
                                             }
                                         }
                                     }
-                                    let _ = h.emit("vkladki-izmenilis", id);
+                                    let _ = h.emit("vkladki-izmenilis", id.clone());
+                                }
+                            }
+                        }
+                        // Плюс подметаем чужие окна этого движка: сессия
+                        // с несколькими окнами, попапы, пересозданное окно.
+                        // Если известное окно погибло — крупнейшее чужое
+                        // становится главным.
+                        let s2: tauri::State<Sostoyanie> = h.state();
+                        if let Some(glavnoe) = vstroit_vse_okna(&h, &s2, &id, pid) {
+                            if !sistema::nash_li(staroe, nashe) {
+                                if let Ok(mut v) = s2.vkladki.try_lock() {
+                                    if let Some(vk) = v.get_mut(&id) {
+                                        vk.okno = Some(glavnoe);
+                                    }
                                 }
                             }
                         }

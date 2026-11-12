@@ -81,6 +81,27 @@ pub mod sistema {
         Ok(())
     }
 
+    /// Все видимые окна (>200×200) процессов, крупнейшее первым
+    /// (см. vse_okna для Windows — сессия движка бывает многооконной).
+    pub fn vse_okna(korni: &[u32]) -> Vec<u32> {
+        let Ok((conn, screen)) = svyaz() else { return Vec::new() };
+        let atom_pid = match conn.intern_atom(false, b"_NET_WM_PID") {
+            Ok(c) => match c.reply() {
+                Ok(r) => r.atom,
+                Err(_) => return Vec::new(),
+            },
+            Err(_) => return Vec::new(),
+        };
+        let koren = conn.setup().roots[screen].root;
+        let mut kandidaty: Vec<(u32, i64)> = Vec::new();
+        for &pid in korni {
+            let _ = sobrat(&conn, koren, atom_pid, pid, &mut kandidaty);
+        }
+        kandidaty.retain(|&(_, a)| a > 200 * 200);
+        kandidaty.sort_by_key(|&(_, a)| std::cmp::Reverse(a));
+        kandidaty.into_iter().map(|(o, _)| o).collect()
+    }
+
     pub fn vstroit(chuzhoe: u32, nashe: u64, m: Mesto) -> Result<()> {
         // ⛔ Запросы к X11 уходят БЕЗ подтверждения: reparent может не
         // состояться, а код решит, что всё хорошо. Поймали 06.11.2026 —
@@ -271,6 +292,45 @@ pub mod sistema {
             }
             std::thread::sleep(std::time::Duration::from_millis(250));
         }
+    }
+
+    /// Все видимые окна (>200×200) всех деревьев, крупнейшее первым.
+    /// ⛔ Сессия движка бывает многооконной (восстановление сессии,
+    /// попапы): встраивать надо КАЖДОЕ чужое окно, иначе лишние висят
+    /// поверх нашего интерфейса с рамкой и кнопками — «окно хрома
+    /// двигается, можно закрыть, закрывает меню» (12.11.2026, user).
+    pub fn vse_okna(korni: &[u32]) -> Vec<u32> {
+        let vse: std::collections::HashSet<u32> =
+            korni.iter().flat_map(|&k| derevo_processov(k)).collect();
+        struct P {
+            pids: std::collections::HashSet<u32>,
+            okna: Vec<(u32, i64)>,
+        }
+        unsafe extern "system" fn proverit(hwnd: HWND, lparam: LPARAM) -> BOOL {
+            let p = &mut *(lparam.0 as *mut P);
+            let mut pid = 0u32;
+            GetWindowThreadProcessId(hwnd, Some(&mut pid));
+            if p.pids.contains(&pid)
+                && IsWindowVisible(hwnd).as_bool()
+                && !IsIconic(hwnd).as_bool()
+            {
+                let mut r = RECT::default();
+                if GetWindowRect(hwnd, &mut r).is_ok()
+                    && (r.right - r.left) > 200
+                    && (r.bottom - r.top) > 200
+                {
+                    let ploshad = (r.right - r.left) as i64 * (r.bottom - r.top) as i64;
+                    p.okna.push((hwnd.0 as usize as u32, ploshad));
+                }
+            }
+            BOOL(1)
+        }
+        let mut p = P { pids: vse, okna: Vec::new() };
+        unsafe {
+            let _ = EnumWindows(Some(proverit), LPARAM(&mut p as *mut _ as isize));
+        }
+        p.okna.sort_by_key(|&(_, a)| std::cmp::Reverse(a));
+        p.okna.into_iter().map(|(o, _)| o).collect()
     }
 
     fn hwnd(v: u32) -> HWND {
@@ -513,6 +573,9 @@ pub mod sistema {
     }
     pub fn ubit_po_pid(_p: u32) {}
     pub fn spryatat_chuzhie(_k: &[u32]) {}
+    pub fn vse_okna(_korni: &[u32]) -> Vec<u32> {
+        Vec::new()
+    }
     pub fn prisoedinit_vvod(_c: u32) {}
     pub fn otsoedinit_vvod(_c: u32) {}
     pub fn fokus_dvizhku(_c: u32) {}
