@@ -83,7 +83,8 @@ wrap_browser_process_handler! {
             #[cfg(target_os = "linux")]
             let roditel_handle: cef::sys::cef_window_handle_t = roditel;
             #[cfg(target_os = "windows")]
-            let roditel_handle: cef::sys::cef_window_handle_t = roditel as usize as *mut core::ffi::c_void;
+            let roditel_handle: cef::sys::cef_window_handle_t =
+                cef::sys::HWND(roditel as usize as *mut cef::sys::HWND__);
             #[cfg(not(any(target_os = "linux", target_os = "windows")))]
             let roditel_handle: cef::sys::cef_window_handle_t = roditel as usize as cef::sys::cef_window_handle_t;
             let info = WindowInfo::default().set_as_child(
