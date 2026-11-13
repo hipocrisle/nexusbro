@@ -40,6 +40,7 @@ app = None
 ws = None
 seq = 0
 results = []
+opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
 
 def js(expression):
     global seq
@@ -93,10 +94,10 @@ try:
     while time.monotonic() < deadline:
         assert app.poll() is None, f'Application exited {app.returncode}'
         try:
-            targets = json.load(urllib.request.urlopen(f'http://127.0.0.1:{args.port}/json/list', timeout=1))
+            targets = json.load(opener.open(f'http://127.0.0.1:{args.port}/json/list', timeout=2))
             (run/'cdp-targets.json').write_text(json.dumps(targets, indent=2), encoding='utf-8')
             target = next(t for t in targets if t['type'] == 'page' and 'webSocketDebuggerUrl' in t and ('tauri' in t.get('url', '') or t.get('title') == 'NexusBro'))
-            ws = websocket.create_connection(target['webSocketDebuggerUrl'], timeout=15)
+            ws = websocket.create_connection(target['webSocketDebuggerUrl'], timeout=15, http_no_proxy=['127.0.0.1', 'localhost'], suppress_origin=True)
             if js('!!window.__TAURI_INTERNALS__'): break
             ws.close(); ws = None
         except (OSError, StopIteration, websocket.WebSocketException) as error:
@@ -137,6 +138,10 @@ try:
     page_pixel('after-sidebar-collapse')
     results.append({'success': True})
 finally:
+    try:
+        status = subprocess.run(['powershell', '-NoProfile', '-Command', 'Get-CimInstance Win32_Process | Where-Object { $_.Name -match "nexusbro|msedgewebview2" } | Select-Object ProcessId,ParentProcessId,Name,CommandLine | Format-List; netstat -ano | Select-String "'+str(args.port)+'"'], capture_output=True, text=True, timeout=15)
+        (run/'processes.txt').write_text(status.stdout+status.stderr, encoding='utf-8')
+    except Exception as error: results.append({'process_info_error': str(error)})
     try: ImageGrab.grab().save(run/'final-screen.png')
     except Exception as error: results.append({'capture_error': str(error)})
     if ws:
