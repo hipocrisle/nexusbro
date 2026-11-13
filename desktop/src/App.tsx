@@ -1,23 +1,29 @@
 import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { getVersion } from "@tauri-apps/api/app";
+import Icon from "./Icons";
 import { listen } from "@tauri-apps/api/event";
-import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu } from "./Nastrojki";
+import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu, shrifty, Vyhod } from "./Nastrojki";
 import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";
 
 type Nastrojki = {
   id: string;
   nazvanie: string;
+  poryadok?: number;
   proxy: string;
   proxy_uzel?: string;
   adres: string;
   rezat_reklamu: boolean;
   pustaya: boolean;
 };
-type Vidno = Nastrojki & { zapushchena: boolean };
+type Vidno = Nastrojki & { zapushchena: boolean; sohranena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
 
 export default function App() {
+  const [versiya, setVersiya] = useState("");
+  const [dragSuper, setDragSuper] = useState<string | null>(null);
+  const [zashchita, setZashchita] = useState<{ vklyuchena: boolean; zarezano: number; propushcheno: number; zapisi: { domen: string; pravilo: string; metod: string; vremya_ms: number }[] } | null>(null);
   const [nastrojki, setNastrojki] = useState<NastrojkiApp>(poUmolchaniyu);
   const nastrojkiRef = useRef(nastrojki);
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
@@ -42,12 +48,18 @@ export default function App() {
     setNastrojki(n);
   }
   useEffect(() => {
+    void getVersion().then(setVersiya).catch(() => {});
     void invoke<NastrojkiApp>("nastrojki_poluchit").then((n) => {
       panel(n);
       if (n.avtoobnovleniya) void proverit_obnovlenie();
     }).catch((e) => setOshibka(String(e)));
   }, []);
-  useEffect(() => { document.documentElement.dataset.tema = nastrojki.tema; }, [nastrojki.tema]);
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.tema = nastrojki.tema; root.dataset.plotnost = nastrojki.plotnost;
+    root.style.setProperty("--font-ui", shrifty[nastrojki.shrift] || shrifty.system);
+    root.style.setProperty("--font-size-ui", nastrojki.razmer_shrifta + "px");
+  }, [nastrojki.tema, nastrojki.plotnost, nastrojki.shrift, nastrojki.razmer_shrifta]);
   const [vkladki, setVkladki] = useState<Vidno[]>([]);
   const [aktivnaya, setAktivnaya] = useState<string | null>(null);
   const aktivnayaRef = useRef<string | null>(null);
@@ -224,8 +236,8 @@ export default function App() {
     e?.stopPropagation();
     // Вкладка с данными (входы, история) спрашивает: сохранить или нет.
     // Свежая закрывается сразу, без вопросов.
-    let sohranit = false;
-    if (await invoke<boolean>("nuzhno_sohranenie", { id })) {
+    let sohranit = !!vkladki.find((v) => v.id === id)?.sohranena;
+    if (!sohranit && await invoke<boolean>("nuzhno_sohranenie", { id })) {
       // Вопрос рисуется в нашем окне, а поверх лежит чужое окно движка —
       // иначе диалог не видно (10.11.2026, поймал user).
       await invoke("pokazat_dvizhki", { vidno: false });
@@ -272,7 +284,7 @@ export default function App() {
 
   async function udalitSohranennuyu(id: string, nazvanie: string, e: React.MouseEvent) {
     e.stopPropagation();
-    if (!window.confirm(`Выбросить сохранённую вкладку «${nazvanie}» насовсем?\n\nПрофиль со всеми входами будет стёрт.`)) {
+    if (!window.confirm(`Удалить «${nazvanie}» из сохранённых?\n\nУ закрытой супер-вкладки профиль со входами будет стёрт. Открытая продолжит работать.`)) {
       return;
     }
     await invoke<Otvet>("udalit_sohranennuyu", { id });
@@ -283,18 +295,36 @@ export default function App() {
     aktivnayaRef.current = aktivnaya;
   }, [aktivnaya]);
 
+  async function otkrytZashchitu() {
+    if (!aktivnaya) return;
+    await invoke("pokazat_dvizhki", { vidno: false });
+    try { setZashchita(await invoke("zhurnal_rezki", { id: aktivnaya })); }
+    catch (e) { setOshibka(String(e)); await invoke("pokazat_dvizhki", { vidno: true }); }
+  }
+  async function perenestiSuper(pered: string | null, e: React.DragEvent) {
+    e.preventDefault(); e.stopPropagation(); setDragSuper(null);
+    const id = e.dataTransfer.getData("application/nexusbro-super");
+    try { if (id && id !== pered) { await invoke("peremestit_super", { id, pered }); setVkladki(await invoke<Vidno[]>("spisok")); } }
+    catch (err) { setOshibka(String(err)); }
+    finally { await invoke("pokazat_dvizhki", { vidno: true }); }
+  }
   return (
     <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={() => { void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => e.preventDefault()}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
           горизонтальная полоса съедала высоту широкоформатников. */}
       <div className="reika">
-        <div className="zagolovok"><span>NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
+        <div className="zagolovok"><span className="brand"><Icon name="globe" size={23} />NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
           onClick={() => { void sohranitNastrojki({ ...nastrojkiRef.current, panel_svernuta: !nastrojkiRef.current.panel_svernuta }).catch((e) => setOshibka(String(e))); }}>{nastrojki.panel_svernuta ? "»" : "«"}</button></div>
-        <div className="spisok">
+        <div className="spisok" onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) e.preventDefault(); }} onDrop={(e) => void perenestiSuper(null, e)}>
           {vkladki.map((v) => (
             <button
               key={v.id}
-              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "")}
+              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "") + (dragSuper === v.id ? " drop-before" : "")}
+              draggable
+              onDragStart={(e) => { e.dataTransfer.setData("application/nexusbro-super", v.id); e.dataTransfer.effectAllowed = "move"; void invoke("pokazat_dvizhki", { vidno: false }); }}
+              onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) { e.preventDefault(); e.stopPropagation(); setDragSuper(v.id); } }}
+              onDrop={(e) => void perenestiSuper(v.id, e)}
+              onDragEnd={() => { setDragSuper(null); void invoke("pokazat_dvizhki", { vidno: true }); }}
               onClick={() => pereklyuchit(v.id)}
               onContextMenu={async (e) => {
                 e.preventDefault();
@@ -309,7 +339,7 @@ export default function App() {
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
-              <span className="imya">{v.nazvanie}</span><span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
+              <span className="imya">{v.nazvanie}</span>{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
@@ -325,7 +355,7 @@ export default function App() {
           onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }} />}
         <div className="niz">
           <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
-            +
+            <Icon name="plus" />
           </button>
           <button
             className="plyus"
@@ -340,7 +370,7 @@ export default function App() {
               }
             }}
           >
-            ▾
+            <Icon name="archive" />
           </button>
           <button
             className="plyus"
@@ -360,7 +390,7 @@ export default function App() {
               if (obnovlenie === "Проверяю…") setObnovlenie("");
             }}
           >
-            ⟳
+            <Icon name="reload" />
           </button>
           <button
             className="plyus"
@@ -371,12 +401,13 @@ export default function App() {
               setDiagnostika(tekst);
             }}
           >
-            🛠
+            <Icon name="code" />
           </button>
           <button className="plyus" title="Настройки NexusBro" onClick={async () => {
             await invoke("pokazat_dvizhki", { vidno: false }); setNastroykiOtkryty(true);
-          }}>⚙</button>
+          }}><Icon name="settings" /></button>
         </div>
+        <div className="versiya-app" title={"NexusBro " + (versiya || "…")}>v{versiya || "…"}</div>
       </div>
 
       <div className="kolonka">
@@ -384,11 +415,7 @@ export default function App() {
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
         <ObychnyeVkladki novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
-          {zarezano > 0 && (
-            <span className="schet" title="Зарезано рекламы в этой вкладке">
-              ⛔ {zarezano}
-            </span>
-          )}
+          {aktivnaya && <button className="schet protection-button" title="Какие соединения заблокированы" aria-label="Защита страницы" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={16} /><span>Защита</span><b>{zarezano}</b></button>}
         </ObychnyeVkladki>
         {progress && (
           <div className="polosa-progress">
@@ -445,6 +472,7 @@ export default function App() {
           pravka={pravka}
           onOtmena={() => zakrytDialog()}
           onOk={pravka ? pravit : dobavit}
+          vyhody={nastrojki.vyhody}
         />
       )}
       {menuSohranennyh !== null && (
@@ -491,6 +519,12 @@ export default function App() {
             >
               Настройки
             </div>
+            <div className="stroka-menyu" onClick={async () => {
+              const id = menyu.vkladka.id; setMenyu(null);
+              try { await invoke("sohranit_vkladku", { id }); setVkladki(await invoke<Vidno[]>("spisok")); }
+              catch (e) { setOshibka(String(e)); }
+              finally { await invoke("pokazat_dvizhki", { vidno: true }); }
+            }}>Сохранить</div>
             <div
               className="stroka-menyu"
               onClick={async () => {
@@ -558,6 +592,16 @@ export default function App() {
           </div>
         </div>
       )}
+      {zashchita && <div className="zatemnenie" onClick={() => { setZashchita(null); void invoke("pokazat_dvizhki", { vidno: true }); }}>
+        <section className="dialog protection-dialog" role="dialog" aria-label="Защита страницы" onClick={(e) => e.stopPropagation()}>
+          <header className="settings-header"><div><span className="eyebrow">ЗАЩИТА СУПЕР-ВКЛАДКИ</span><h2>{zashchita.vklyuchena ? "Нежелательные соединения заблокированы" : "Блокировка выключена"}</h2></div><Icon name="shield" size={30} /></header>
+          <div className="protection-stats"><div><strong>{zashchita.zarezano}</strong><small>заблокировано</small></div><div><strong>{zashchita.propushcheno}</strong><small>разрешено</small></div></div>
+          <p className="muted">Домены рекламы и отслеживания, совпавшие с правилами блокировки. Содержимое HTTPS не читается.</p>
+          <div className="block-list">{zashchita.zapisi.length ? zashchita.zapisi.map((r, i) => <div className="block-entry" key={i}><Icon name="shield" size={15} /><div><strong>{r.domen}</strong><small>Правило: {r.pravilo} · {r.metod === "CONNECT" ? "HTTPS" : "HTTP"}</small></div><time>{new Date(r.vremya_ms).toLocaleTimeString()}</time></div>) : <p className="settings-tip">В этом запуске заблокированных соединений ещё нет.</p>}</div>
+          <small className="muted">Последние 200 событий текущего запуска. Журнал не сохраняется на диск.</small>
+          <div className="knopki"><button onClick={() => { setZashchita(null); void invoke("pokazat_dvizhki", { vidno: true }); }}>Закрыть</button></div>
+        </section>
+      </div>}
       {diagnostika !== null && (
         <div className="zatemnenie">
           <div className="dialog diagnostika-okno" onClick={(e) => e.stopPropagation()}>
@@ -591,6 +635,7 @@ export default function App() {
 function Dialog(props: {
   zanyat: boolean;
   pravka: Nastrojki | null;
+  vyhody: Vyhod[];
   onOtmena: () => void;
   onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string) => void;
 }) {
@@ -631,6 +676,9 @@ function Dialog(props: {
             placeholder="Работа"
           />
         </label>
+        {props.vyhody.length > 0 && <label>Сохранённое подключение<select aria-label="Сохранённое подключение" value={props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
+          if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(""); setUzly([]); setZagruzka(false); }
+        }}><option value="manual">Ввести вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</select></label>}
         <label>
           Выход в сеть
           <input

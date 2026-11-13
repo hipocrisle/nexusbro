@@ -13,7 +13,8 @@
 
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
@@ -67,10 +68,29 @@ pub struct Nastrojka {
     pub rezat_reklamu: bool,
 }
 
+#[derive(Clone, serde::Serialize)]
+pub struct Blokirovka { pub domen: String, pub pravilo: String, pub metod: String, pub vremya_ms: u64 }
+#[derive(serde::Serialize)]
+pub struct ZhurnalRezki { pub vklyuchena: bool, pub zarezano: u64, pub propushcheno: u64, pub zapisi: Vec<Blokirovka> }
 #[derive(Default)]
 pub struct Schet {
     pub propushcheno: AtomicU64,
     pub zarezano: AtomicU64,
+    pub zhurnal: Mutex<VecDeque<Blokirovka>>,
+}
+impl Schet {
+    pub fn snimok(&self, vklyuchena: bool) -> ZhurnalRezki {
+        ZhurnalRezki { vklyuchena, zarezano: self.zarezano.load(Ordering::Relaxed), propushcheno: self.propushcheno.load(Ordering::Relaxed),
+            zapisi: self.zhurnal.lock().map(|v| v.iter().cloned().collect()).unwrap_or_default() }
+    }
+    fn blok(&self, host: &str, pravilo: &str, metod: &str) {
+        self.zarezano.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut v) = self.zhurnal.lock() {
+            v.push_front(Blokirovka { domen: host.trim_end_matches('.').to_ascii_lowercase(), pravilo: pravilo.into(), metod: metod.into(),
+                vremya_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 });
+            v.truncate(200);
+        }
+    }
 }
 
 pub struct Rabotayushchij {
@@ -114,15 +134,12 @@ pub async fn podnyat(n: Nastrojka) -> anyhow::Result<Rabotayushchij> {
     Ok(Rabotayushchij { port, schet, ostanovit: tx })
 }
 
-fn reklama(host: &str) -> bool {
+fn pravilo_reklamy(host: &str) -> Option<&'static str> {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
-    SPISOK.iter().any(|p| {
-        let p = *p;
-        // ⛔ Совпадение по ХВОСТУ, а не по вхождению: иначе `notads.ru`
-        // поймается правилом `ads.ru` и сайт сломается на ровном месте.
-        h == p || h.ends_with(&format!(".{}", p))
-    })
+    SPISOK.iter().copied().find(|p| h == *p || h.ends_with(&format!(".{p}")))
 }
+#[cfg(test)]
+fn reklama(host: &str) -> bool { pravilo_reklamy(host).is_some() }
 
 async fn obsluzhit(mut klient: TcpStream, n: Nastrojka, s: Arc<Schet>) -> anyhow::Result<()> {
     let mut bufer = vec![0u8; 8192];
@@ -158,8 +175,8 @@ async fn obsluzhit(mut klient: TcpStream, n: Nastrojka, s: Arc<Schet>) -> anyhow
         return Ok(());
     }
 
-    if n.rezat_reklamu && reklama(&host) {
-        s.zarezano.fetch_add(1, Ordering::Relaxed);
+    if let Some(pravilo) = pravilo_reklamy(&host).filter(|_| n.rezat_reklamu) {
+        s.blok(&host, pravilo, metod);
         // Отвечаем коротко и вежливо: страница не ждёт впустую.
         let _ = klient
             .write_all(b"HTTP/1.1 403 Blocked\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -406,5 +423,20 @@ mod proverki {
             .unwrap();
         let otvet = sprosit(r.port, "doubleclick.net:443").await;
         assert!(!otvet.contains("403"), "резка выключена, а узел зарезан");
+    }
+}
+
+#[cfg(test)]
+mod journal_tests {
+    use super::*;
+    #[test]
+    fn zhurnal_ogranichen_i_soderzhit_pravilo() {
+        let s=Schet::default();
+        for _ in 0..205 { s.blok("AD.DoubleClick.NET.","doubleclick.net","CONNECT"); }
+        let n=s.snimok(true); assert_eq!(n.zarezano,205); assert_eq!(n.zapisi.len(),200);
+        assert_eq!(n.zapisi[0].domen,"ad.doubleclick.net"); assert_eq!(n.zapisi[0].pravilo,"doubleclick.net");
+        assert!(n.zapisi[0].vremya_ms>0);
+        assert_eq!(pravilo_reklamy("ad.doubleclick.net"),Some("doubleclick.net"));
+        assert_eq!(pravilo_reklamy("notdoubleclick.net"),None);
     }
 }

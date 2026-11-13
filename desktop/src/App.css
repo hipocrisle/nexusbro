@@ -214,3 +214,124 @@ body {
 }
 .vypadajka, .stroka-menyu:hover, .vkladka:hover, .schet { background: var(--fon2); }
 .vkladka:hover, .stroka-menyu:hover { box-shadow: inset 0 0 0 1px var(--kraj); }
+
+/* Общие поверхности и контраст вкладок. Все цвета зависят от темы. */
+:root { color-scheme: dark; --fon:#131a26; --fon2:#0c111b; --fon3:#202b3c; --kraj:#344258; --tekst:#edf3fc; --tiho:#a1b0c6; --akcent:#73b1ff; --tab:#202b3c; --tab-active:#344966; --font-ui:system-ui,"Segoe UI",sans-serif; --font-size-ui:14px; }
+:root[data-tema="grafit"] { --fon:#202225; --fon2:#151719; --fon3:#303438; --kraj:#4b525a; --tekst:#f1f3f5; --tiho:#b1bac4; --akcent:#b6c9e2; --tab:#303438; --tab-active:#4b5562; }
+:root[data-tema="nexus"] { --fon:#14251f; --fon2:#0c1713; --fon3:#233d33; --kraj:#365749; --tekst:#e9fff4; --tiho:#a2bfb0; --akcent:#6ee7b1; --tab:#233d33; --tab-active:#355c4b; }
+:root[data-tema="okean"] { --fon:#102936; --fon2:#0b1b26; --fon3:#1e3f50; --kraj:#386277; --tekst:#e5f7ff; --tiho:#a5c3d2; --akcent:#7cd8f5; --tab:#1e3f50; --tab-active:#31617a; }
+:root[data-tema="sliva"] { --fon:#271e32; --fon2:#19131f; --fon3:#392d49; --kraj:#5c476d; --tekst:#f8ecff; --tiho:#c0aacd; --akcent:#d6abff; --tab:#392d49; --tab-active:#614b79; }
+:root[data-tema="pesok"] { color-scheme:light; --fon:#fffcf6; --fon2:#eee5d6; --fon3:#f5eedf; --kraj:#bdb09a; --tekst:#352d22; --tiho:#6d604e; --akcent:#83551e; --tab:#e3d7c2; --tab-active:#fffcf6; }
+:root[data-tema="svetlaya"] { color-scheme:light; --fon:#fff; --fon2:#e6ecf5; --fon3:#f1f5fb; --kraj:#b3c1d5; --tekst:#17253a; --tiho:#53657e; --akcent:#225fba; --tab:#d4dfed; --tab-active:#fff; }
+@media(prefers-color-scheme:light) { :root[data-tema="sistemnaya"] { color-scheme:light; --fon:#fff; --fon2:#e6ecf5; --fon3:#f1f5fb; --kraj:#b3c1d5; --tekst:#17253a; --tiho:#53657e; --akcent:#225fba; --tab:#d4dfed; --tab-active:#fff; } }
+body { font-family:var(--font-ui); font-size:var(--font-size-ui); }
+button,input,select { font:inherit; }
+button { transition:background .12s,border-color .12s; }
+button:focus-visible,[draggable]:focus-visible { outline:2px solid var(--akcent); outline-offset:2px; }
+svg { flex-shrink:0; vertical-align:middle; }
+.zagolovok { min-height:54px; color:var(--tekst); text-transform:none; letter-spacing:-.3px; }
+.brand { display:flex; align-items:center; gap:8px; font-weight:700; }
+.brand svg { color:var(--akcent); }
+.vkladka { min-height:42px; border-radius:10px; margin-bottom:3px; }
+.vkladka.aktivna { background:var(--fon3); border-color:var(--kraj); }
+.vkladka:hover,.stroka-menyu:hover { background:var(--fon3); }
+.niz { gap:4px; padding:10px 6px 2px; border-top:0; }
+.plyus { display:flex; align-items:center; justify-content:center; min-height:32px; border:1px solid transparent; }
+.plyus:hover { background:var(--fon3); }
+.versiya-app { flex-shrink:0; padding:5px 10px 10px; font-size:11px; color:var(--tiho); text-align:center; font-variant-numeric:tabular-nums; }
+.panel-svernuta .brand,.panel-svernuta .saved-mark { display:none; }
+.panel-svernuta .versiya-app { padding:5px 0; font-size:9px; }
+.saved-mark { color:var(--tiho); }
+.polosa { padding:7px 8px 0; min-height:46px; gap:10px; background:var(--fon2); }
+.obychnye { gap:5px; padding-bottom:6px; }
+.obychnaya { height:34px; padding:5px 9px; min-width:130px; max-width:230px; flex:1 1 180px; gap:8px; border-radius:9px; background:var(--tab); border-color:transparent; color:var(--tiho); }
+.obychnaya:hover { border-color:var(--kraj); color:var(--tekst); }
+.obychnaya.vybrana { background:var(--tab-active); color:var(--tekst); border-color:var(--kraj); box-shadow:inset 0 -2px 0 var(--akcent); }
+.obychnaya-imya { flex:1; max-width:none; font-size:.9em; }
+.obychnaya.zakreplena { flex:0 0 44px; min-width:44px; max-width:44px; justify-content:center; }
+.obychnaya button { display:flex; align-items:center; justify-content:center; height:22px; width:22px; padding:2px; border-radius:5px; }
+.obychnaya button:hover { background:var(--fon2); color:var(--tekst); }
+.favicon { width:16px; height:16px; object-fit:contain; flex-shrink:0; }
+.tab-icon { display:flex; width:16px; height:16px; align-items:center; justify-content:center; }
+.tab-spinner { width:13px; height:13px; border:2px solid var(--tiho); border-top-color:transparent; border-radius:50%; animation:spin .8s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.drag-over { box-shadow:inset 3px 0 0 var(--akcent) !important; }
+.novaya-obychnaya { height:32px; width:30px; border-radius:8px; }
+.novaya-obychnaya:hover { background:var(--fon3); }
+.navigaciya { min-height:46px; padding:5px 12px 8px; background:var(--fon2); gap:7px; }
+.navigaciya button { display:flex; align-items:center; justify-content:center; width:30px; height:30px; border-radius:8px; }
+.navigaciya button:hover:not(:disabled) { background:var(--fon3); }
+.navigaciya input { padding:6px 13px; border-radius:10px; background:var(--fon); }
+.schet { background:var(--fon3); }
+button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px solid var(--kraj); color:var(--tekst); cursor:pointer; margin-left:auto; padding:5px 9px; font:inherit; font-size:12px; }
+.zashchita-knopka strong { color:var(--akcent); }
+.vypadajka { background:var(--fon); box-shadow:0 12px 40px #0005; padding:7px; }
+.zatemnenie { background:#03081099; backdrop-filter:blur(6px); }
+.dialog { border-radius:18px; padding:24px; box-shadow:0 24px 90px #0006; background:var(--fon); gap:18px; }
+.dialog h2 { font-size:21px; letter-spacing:-.5px; }
+.dialog input,.dialog select { background:var(--fon2); padding:10px 12px; }
+.dialog label code,.diagnostika-okno pre,.progress-liniya { background:var(--fon2); color:var(--tekst); }
+.knopki button { border-radius:9px; padding:9px 18px; }
+.knopki .glavnaya { color:var(--fon2); font-weight:600; }
+.dialog label { font-size:.92em; }
+.nastrojki-okno { width:min(940px,96vw); height:min(720px,92vh); max-height:92vh; padding:0; gap:0; overflow:hidden; }
+.settings-header { display:flex; align-items:center; justify-content:space-between; padding:24px 28px 20px; gap:16px; border-bottom:1px solid var(--kraj); }
+.eyebrow { display:block; color:var(--akcent); letter-spacing:1.2px; font-size:10px; font-weight:600; margin-bottom:5px; }
+.icon-button { display:flex; align-items:center; justify-content:center; width:32px; height:32px; border:0; border-radius:8px; background:transparent; color:var(--tiho); cursor:pointer; flex-shrink:0; }
+.icon-button:hover { background:var(--fon3); color:var(--tekst); }
+.settings-layout { display:flex; flex:1; min-height:0; }
+.settings-nav { flex:0 0 210px; padding:18px 12px; display:flex; flex-direction:column; gap:5px; border-right:1px solid var(--kraj); background:var(--fon2); }
+.settings-nav button { display:flex; align-items:center; gap:10px; border:0; border-radius:9px; padding:11px 12px; background:transparent; color:var(--tiho); text-align:left; cursor:pointer; font-size:13px; }
+.settings-nav button:hover,.settings-nav button.selected { background:var(--fon3); color:var(--tekst); }
+.settings-nav button.selected { color:var(--akcent); }
+.settings-version { margin-top:auto; padding:14px 12px 0; color:var(--tiho); font-size:11px; }
+.settings-content { padding:24px 28px; flex:1; min-width:0; overflow:auto; display:flex; flex-direction:column; gap:18px; }
+.settings-content h3 { font-size:18px; letter-spacing:-.3px; margin:0; }
+.settings-content p { margin:0; line-height:1.6; }
+.muted { color:var(--tiho); font-size:13px; }
+.settings-footer { padding:16px 28px; border-top:1px solid var(--kraj); }
+.settings-pair { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.theme-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.theme-option { position:relative; display:flex; flex-direction:column; align-items:flex-start; gap:9px; padding:10px; background:var(--fon2); color:var(--tekst); border:1px solid var(--kraj); border-radius:10px; cursor:pointer; font-size:11px; }
+.theme-option.selected { border-color:var(--akcent); box-shadow:0 0 0 1px var(--akcent); }
+.theme-option svg { position:absolute; top:12px; right:8px; color:var(--tekst); background:var(--fon); border-radius:50%; }
+.theme-swatch { display:block; height:28px; width:100%; border-radius:5px; }
+.font-preview,.info-card { background:var(--fon2); border:1px solid var(--kraj); border-radius:12px; padding:16px; }
+.font-preview small { display:block; font-size:12px; margin-top:8px; color:var(--tiho); }
+.settings-tip { padding:12px 14px; border-left:2px solid var(--akcent); background:var(--fon2); color:var(--tiho); font-size:12px; border-radius:0 8px 8px 0; }
+.shortcut-list { display:flex; flex-direction:column; gap:8px; }
+.shortcut-list span { display:flex; align-items:center; justify-content:space-between; gap:12px; font-size:12px; color:var(--tiho); }
+.shortcut-list kbd { padding:3px 7px; background:var(--fon2); border:1px solid var(--kraj); border-radius:5px; color:var(--tekst); }
+.connection-item,.block-entry { display:flex; align-items:center; gap:12px; padding:12px 0; border-bottom:1px solid var(--kraj); }
+.connection-item>div,.block-entry>div { display:flex; flex-direction:column; gap:3px; flex:1; min-width:0; }
+.connection-item small,.block-entry small,.block-entry time { font-size:11px; color:var(--tiho); }
+.connection-item strong,.block-entry strong { overflow-wrap:anywhere; font-size:13px; }
+.connection-actions { display:flex; gap:8px; }
+.connection-actions button { padding:8px 12px; border:1px solid var(--kraj); background:var(--fon2); color:var(--tekst); border-radius:8px; cursor:pointer; }
+.connection-actions button:disabled { opacity:.45; }
+.info-card { display:flex; align-items:flex-start; gap:14px; }
+.info-card svg { color:var(--akcent); }
+.info-card p { margin-top:6px; font-size:12px; color:var(--tiho); }
+.about-brand { display:flex; flex-direction:column; align-items:center; gap:12px; padding:14px; }
+.about-brand>svg { color:var(--akcent); }
+.version-chip { padding:5px 12px; background:var(--fon3); border-radius:20px; font-size:12px; }
+.protection-dialog { width:min(650px,94vw); }
+.protection-dialog .settings-header { padding:0 0 16px; }
+.protection-stats { display:flex; gap:12px; }
+.protection-stats>div { flex:1; background:var(--fon2); padding:14px; border-radius:10px; }
+.protection-stats strong { display:block; font-size:24px; color:var(--akcent); }
+.protection-stats small { color:var(--tiho); }
+.block-list { max-height:36vh; overflow:auto; }
+.block-entry>svg { color:var(--akcent); }
+:root[data-plotnost="kompaktno"] .obychnaya { height:28px; }
+:root[data-plotnost="kompaktno"] .polosa { min-height:38px; }
+:root[data-plotnost="kompaktno"] .navigaciya { min-height:38px; }
+:root[data-plotnost="kompaktno"] .vkladka { min-height:34px; padding:5px 8px; }
+@media(max-width:700px) { .settings-nav { flex-basis:150px; padding:12px 6px; } .settings-nav button { padding:9px 6px; font-size:11px; gap:6px; } .settings-content { padding:18px; } .theme-grid { grid-template-columns:repeat(2,1fr); } .zashchita-knopka span { display:none; } }
+.favicon { display:flex; align-items:center; justify-content:center; }
+.favicon img { width:16px; height:16px; object-fit:contain; }
+.spinner { width:13px; height:13px; border:2px solid var(--tiho); border-top-color:transparent; border-radius:50%; animation:spin .8s linear infinite; }
+.drop-before { box-shadow:inset 3px 0 0 var(--akcent) !important; }
+.protection-button { display:flex; align-items:center; gap:6px; border:1px solid var(--kraj); color:var(--tekst); cursor:pointer; padding:5px 9px; font:inherit; font-size:12px; }
+.protection-button b { color:var(--akcent); }
+@media(max-width:700px) { .protection-button span { display:none; } }

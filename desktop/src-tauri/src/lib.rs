@@ -8,6 +8,7 @@ mod brauzer;
 mod sessiya;
 mod nastrojki;
 mod cef_vkladki;
+mod cef_interfeys;
 pub mod cef_dvizhok;
 mod okna;
 mod proxy;
@@ -15,6 +16,7 @@ mod vpn;
 #[cfg(target_os = "windows")]
 mod win32_oblast;
 mod spisok_reklamy;
+mod supervkladki;
 
 use okna::{sistema, Mesto};
 use serde::{Deserialize, Serialize};
@@ -29,12 +31,15 @@ pub struct Vidno {
     #[serde(flatten)]
     pub nastrojki: Nastrojki,
     pub zapushchena: bool,
+    pub sohranena: bool,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Nastrojki {
     pub id: String,
     pub nazvanie: String,
+    #[serde(default)]
+    pub poryadok: i64,
     /// Пусто = прямое соединение. Иначе вид `socks5://127.0.0.1:1080`.
     #[serde(default)]
     pub proxy: String,
@@ -99,14 +104,13 @@ fn sohranit_spisok(v: &[Nastrojki]) {
     }
 }
 
-fn sohranit_sohranennye(v: &[Nastrojki]) {
+fn sohranit_sohranennye(v: &[Nastrojki]) -> Result<(), String> {
     let f = fajl_sohranennyh();
-    if let Some(d) = f.parent() {
-        let _ = std::fs::create_dir_all(d);
-    }
-    if let Ok(s) = serde_json::to_string_pretty(v) {
-        let _ = std::fs::write(f, s);
-    }
+    let d = f.parent().ok_or_else(|| "Нет каталога профилей".to_string())?;
+    std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
+    let tmp = f.with_extension("tmp");
+    std::fs::write(&tmp, serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::rename(tmp, f).map_err(|e| e.to_string())
 }
 
 struct Vkladka {
@@ -226,20 +230,16 @@ async fn zadat_mesto(s: State<'_, Sostoyanie>, x: i32, y: i32, w: u32, h: u32) -
 }
 
 #[tauri::command]
-fn spisok(s: State<Sostoyanie>) -> Vec<Vidno> {
-    let v = s.vkladki.lock().unwrap();
-    let mut r: Vec<Vidno> = v
-        .values()
-        .map(|x| Vidno {
-            nastrojki: x.nastrojki.clone(),
-            zapushchena: !x.zapusk_idet && (x.proc.is_some() || x.zapas_pid.is_some()),
-        })
-        .collect();
-    r.sort_by(|a, b| a.nastrojki.id.cmp(&b.nastrojki.id));
-    r
+async fn spisok(s: State<'_, Sostoyanie>) -> Result<Vec<Vidno>, String> {
+    let mut r: Vec<Vidno> = s.vkladki.lock().map_err(|e| e.to_string())?.values().map(|v| Vidno {
+        nastrojki: v.nastrojki.clone(), zapushchena: !v.zapusk_idet && (v.proc.is_some() || v.zapas_pid.is_some()), sohranena: false,
+    }).collect();
+    let saved = tauri::async_runtime::spawn_blocking(zagruzit_sohranennye).await.map_err(|e| e.to_string())?;
+    for v in &mut r { v.sohranena = saved.iter().any(|n| n.id == v.nastrojki.id); }
+    r.sort_by(|a, b| (a.nastrojki.poryadok, &a.nastrojki.id).cmp(&(b.nastrojki.poryadok, &b.nastrojki.id)));
+    Ok(r)
 }
 
-/// Сколько реклам зарезано в этой вкладке — чтобы человек видел пользу.
 #[tauri::command]
 fn schet_rezki(s: State<Sostoyanie>, id: String) -> (u64, u64) {
     use std::sync::atomic::Ordering;
@@ -249,6 +249,16 @@ fn schet_rezki(s: State<Sostoyanie>, id: String) -> (u64, u64) {
             p.schet.propushcheno.load(Ordering::Relaxed),
         ),
         None => (0, 0),
+    }
+}
+
+#[tauri::command]
+fn zhurnal_rezki(s: State<Sostoyanie>, id: String) -> proxy::ZhurnalRezki {
+    let data = s.vkladki.lock().unwrap().get(&id).map(|v| (v.nastrojki.rezat_reklamu, v.nash_proxy.as_ref().map(|p| p.schet.clone())));
+    match data {
+        Some((on, Some(s))) => s.snimok(on),
+        Some((on, None)) => proxy::ZhurnalRezki { vklyuchena: on, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
+        None => proxy::ZhurnalRezki { vklyuchena: false, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
     }
 }
 
@@ -287,15 +297,6 @@ async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet,
     v_zhurnal_granica("pokazat_dvizhki", "-", &format!("vidno={vidno}"));
     let _okna = s.izmenenie_okon.lock().unwrap();
     s.dvizhki_skryty.store(!vidno, std::sync::atomic::Ordering::SeqCst);
-    if !vidno {
-        let pids: Vec<u32> = {
-            let v = s.vkladki.lock().unwrap();
-            v.values()
-                .filter_map(|vk| vk.zapas_pid.or(vk.proc.as_ref().map(|p| p.id())))
-                .collect()
-        };
-        sistema::spryatat_chuzhie(&pids);
-    }
     primenit_vidimost(&s);
     v_zhurnal_granica("pokazat_dvizhki", "-", "готово");
     Ok(da())
@@ -305,7 +306,7 @@ async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet,
 async fn otkryt(
     app: tauri::AppHandle,
     s: State<'_, Sostoyanie>,
-    nastrojki: Nastrojki,
+    mut nastrojki: Nastrojki,
 ) -> Result<Otvet, String> {
     let id = nastrojki.id.clone();
     v_zhurnal_granica("otkryt", &id, "вход");
@@ -314,6 +315,7 @@ async fn otkryt(
         if v.contains_key(&id) {
             return Ok(net("такая супер-вкладка уже есть"));
         }
+        nastrojki.poryadok = v.values().map(|v| v.nastrojki.poryadok).max().unwrap_or(-1).saturating_add(1);
         // Запоминаем СРАЗУ: если движок не запустится, вкладка всё равно
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
@@ -491,6 +493,7 @@ async fn podgotovit_dvizhok(
     std::thread::spawn(move || {
         let h_sessii = h.clone();
         let id_sessii = id_fon.clone();
+        let h_adresa = h.clone(); let id_adresa = id_fon.clone();
         let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25, move |sessiya| {
             let _zapis = sessiya::ZAPIS.lock().unwrap();
             let s: State<Sostoyanie> = h_sessii.state();
@@ -503,7 +506,7 @@ async fn podgotovit_dvizhok(
                 zapisat_v_zhurnal(format!("{id_sessii}: сессия не записана: {e}"));
             }
             let _ = h_sessii.emit("obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
-        });
+        }, move || { let _ = h_adresa.emit("adres-vvesti", &id_adresa); });
         let s: State<Sostoyanie> = h.state();
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(&id_fon)
@@ -712,6 +715,10 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
+    let archive = nastrojki.clone();
+    tauri::async_runtime::spawn_blocking(move || supervkladki::obnovit_sohranennye(|list| {
+        if let Some(n) = list.iter_mut().find(|n| n.id == archive.id) { *n = archive; }
+    })).await.map_err(|e| e.to_string())??;
     if rabotaet {
         ostanovit_vnutri(&s, &nastrojki.id).await;
         return Ok(zapustit_vnutri(&app, &s, &nastrojki.id).await);
@@ -767,12 +774,12 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
-    if sohranit {
-        let mut sohr = zagruzit_sohranennye();
-        sohr.retain(|n| n.id != id);
-        sohr.push(nastrojki);
-        sohranit_sohranennye(&sohr);
-    } else {
+    let id_biblioteki = id.clone();
+    tauri::async_runtime::spawn_blocking(move || supervkladki::obnovit_sohranennye(|list| {
+        list.retain(|n| n.id != id_biblioteki);
+        if sohranit { list.push(nastrojki); }
+    })).await.map_err(|e| e.to_string())??;
+    if !sohranit {
         let id_profilya = id.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || steret_profil(&id_profilya)).await;
     }
@@ -784,7 +791,7 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
         } else { false }
     };
     let sleduyushchaya = if nado_pereklyuchit {
-        s.vkladki.lock().unwrap().keys().min().cloned()
+        s.vkladki.lock().unwrap().values().min_by_key(|v| (v.nastrojki.poryadok, &v.nastrojki.id)).map(|v| v.nastrojki.id.clone())
     } else { None };
     if let Some(id) = sleduyushchaya {
         let _ = zapustit_vnutri(&app, &s, &id).await;
@@ -805,15 +812,12 @@ fn sohranennye() -> Vec<Nastrojki> {
 /// в полосу, движок поднимается.
 #[tauri::command]
 async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
-    let nastrojki = {
-        let mut sohr = zagruzit_sohranennye();
-        let n = match sohr.iter().position(|n| n.id == id) {
-            Some(i) => sohr.remove(i),
-            None => return Ok(net("такой сохранённой вкладки нет")),
-        };
-        sohranit_sohranennye(&sohr);
-        n
-    };
+    if s.vkladki.lock().unwrap().contains_key(&id) {
+        return Ok(zapustit_vnutri(&app, &s, &id).await);
+    }
+    let saved_id = id.clone();
+    let nastrojki = tauri::async_runtime::spawn_blocking(move || zagruzit_sohranennye().into_iter().find(|n| n.id == saved_id))
+        .await.map_err(|e| e.to_string())?.ok_or_else(|| "Такой сохранённой вкладки нет".to_string())?;
     {
         let mut v = s.vkladki.lock().unwrap();
         if v.contains_key(&id) {
@@ -829,18 +833,15 @@ async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String
 /// Выбросить сохранённую супер-вкладку насовсем: настройки и профиль
 /// со всеми входами. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
-async fn udalit_sohranennuyu(id: String) -> Result<Otvet, String> {
+async fn udalit_sohranennuyu(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+    let otkryta = s.vkladki.lock().map_err(|e| e.to_string())?.contains_key(&id);
     tauri::async_runtime::spawn_blocking(move || {
-    let mut sohr = zagruzit_sohranennye();
-    if sohr.iter().any(|n| n.id == id) {
-        sohr.retain(|n| n.id != id);
-        sohranit_sohranennye(&sohr);
-        steret_profil(&id);
-        da()
-    } else {
-        net("такой сохранённой вкладки нет")
-    }
-    }).await.map_err(|e| e.to_string())
+        supervkladki::obnovit_sohranennye(|list| list.retain(|n| n.id != id))?;
+        // Открытую вкладку удаляем из библиотеки, её живой профиль не трогаем.
+        if !otkryta { steret_profil(&id); }
+        Ok::<_,String>(())
+    }).await.map_err(|e| e.to_string())??;
+    let _ = app.emit("vkladki-izmenilis", ""); Ok(da())
 }
 
 /// Перезагрузить движок вкладки (контекстное меню вкладки).
@@ -1062,7 +1063,7 @@ pub fn run() {
                     let s: tauri::State<Sostoyanie> = h.state();
                     let n = Nastrojki {
                         id: "proba".into(),
-                        nazvanie: "Проба".into(),
+                        nazvanie: "Проба".into(), poryadok: 0,
                         proxy: String::new(),
                         proxy_uzel: String::new(),
                         adres: "about:blank".into(),
@@ -1080,7 +1081,7 @@ pub fn run() {
                         shag("создаю вторую…");
                         let n2 = Nastrojki {
                             id: "proba2".into(),
-                            nazvanie: "Проба2".into(),
+                            nazvanie: "Проба2".into(), poryadok: 1,
                             proxy: String::new(),
                             proxy_uzel: String::new(),
                             adres: "about:blank".into(),
@@ -1147,8 +1148,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski,
-            fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod,
+            supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
+            fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
         ])

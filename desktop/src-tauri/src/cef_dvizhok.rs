@@ -238,6 +238,7 @@ pub fn dozhdatsya_okna(
     stdout: std::process::ChildStdout,
     sek: u64,
     sessiya: impl Fn(crate::sessiya::Sessiya) + Send + 'static,
+    adresnyi_vvod: impl Fn() + Send + 'static,
 ) -> Option<u32> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
     std::thread::spawn(move || {
@@ -245,7 +246,8 @@ pub fn dozhdatsya_okna(
         for stroka in chitat.lines() {
             match stroka {
                 Ok(s) => {
-                    if let Some(h) = s.strip_prefix("NB-OKNO ") {
+                    if s == "NB-ADRES" { adresnyi_vvod(); }
+                    else if let Some(h) = s.strip_prefix("NB-OKNO ") {
                         let _ = tx.send(h.trim().parse().ok());
                     } else if let Some(json) = s.strip_prefix("NB-VKLADKI ") {
                         if let Ok(s) = serde_json::from_str(json) {

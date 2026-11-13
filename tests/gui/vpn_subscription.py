@@ -18,6 +18,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--display', default=':94')
 parser.add_argument('--port', type=int, default=9223)
 parser.add_argument('--out', default='.dev-check/vpn-subscription.json')
+parser.add_argument('--format', choices=['links','xray'], default='links')
 args = parser.parse_args()
 root = pathlib.Path.cwd()
 run = root / '.dev-check' / f'vpn-{time.time_ns()}'
@@ -29,12 +30,20 @@ with socket.socket() as sock:
 first = f'vless://{uuid}@127.0.0.1:1?security=none&type=tcp#Unavailable'
 chosen = f'vless://{uuid}@127.0.0.1:{vless_port}?security=none&type=tcp#Local'
 
+def full_config(port, name):
+    return {'remarks':name, 'inbounds':[{'listen':'0.0.0.0','port':9999,'protocol':'http'}],
+        'outbounds':[{'tag':'proxy', 'protocol':'vless', 'settings':{'vnext':[{'address':'127.0.0.1','port':port,'users':[{'id':uuid,'encryption':'none'}]}]}, 'streamSettings':{'network':'tcp','security':'none'}}, {'tag':'block','protocol':'blackhole'}],
+        'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test'],'outboundTag':'proxy'}]}}
+if args.format == 'xray':
+    first = json.dumps(full_config(1,'Unavailable'),sort_keys=True,separators=(',',':'))
+    chosen = json.dumps(full_config(vless_port,'Local'),sort_keys=True,separators=(',',':'))
+
 class Fixture(http.server.BaseHTTPRequestHandler):
     removed = False
     hits = 0
     def do_GET(self):
         if self.path == '/sub':
-            body = (first + ('\n' + chosen if not type(self).removed else '')).encode()
+            body = ((first + ('\n' + chosen if not type(self).removed else '')) if args.format == 'links' else '[' + first + (',' + chosen if not type(self).removed else '') + ']').encode()
         elif self.path == '/fail':
             self.send_error(503)
             return
@@ -122,6 +131,11 @@ try:
     profile = run/'data/NexusBro/profili'/id
     actual = json.loads((profile/'xray.json').read_text())
     assert actual['outbounds'][0]['settings']['vnext'][0]['port'] == vless_port
+    if args.format == 'xray':
+        expected = json.loads(chosen)
+        assert actual['outbounds'] == expected['outbounds'] and actual['routing'] == expected['routing']
+        assert len(actual['inbounds']) == 1 and actual['inbounds'][0]['listen'] == '127.0.0.1'
+        result['full_xray_graph_preserved_local_inbound_only'] = True
     assert Fixture.hits > 0
     assert 'tcp:vpn-fixture.test:80' in (run/'xray.log').read_text()
     result['physical_selection_and_real_cef_vless_page'] = True

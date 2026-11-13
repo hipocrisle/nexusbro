@@ -16,6 +16,8 @@ pub struct Obychnaya {
     #[serde(default)]
     pub nazad: bool,
     #[serde(default)]
+    pub ikonka: Option<String>,
+    #[serde(default)]
     pub vpered: bool,
 }
 
@@ -38,6 +40,12 @@ pub enum Komanda {
     Nazad { id: u64 },
     Vpered { id: u64 },
     Obnovit { id: u64 },
+    Instrumenty { id: u64 },
+    Issledovat { id: u64, x: i32, y: i32 },
+    Iskhodnik { id: u64 },
+    Peremestit { id: u64, pered: Option<u64> },
+    Sleduyushchaya { nazad: bool },
+    Masshtab { procent: u32 },
 }
 
 impl Sessiya {
@@ -61,10 +69,20 @@ impl Sessiya {
             zakreplena: false,
             zagruzka: false,
             nazad: false,
+            ikonka: None,
             vpered: false,
         });
         self.aktivnaya = id;
         id
+    }
+
+    pub fn peremestit(&mut self, id: u64, pered: Option<u64>) {
+        if pered == Some(id) { return }
+        let Some(from) = self.vkladki.iter().position(|v| v.id == id) else { return };
+        let v = self.vkladki.remove(from);
+        let to = pered.and_then(|n| self.vkladki.iter().position(|v| v.id == n)).unwrap_or(self.vkladki.len());
+        self.vkladki.insert(to, v);
+        self.vkladki.sort_by_key(|v| !v.zakreplena);
     }
 
     pub fn zagruzit(profil: &Path) -> Self {
@@ -172,5 +190,20 @@ mod tests {
             std::fs::read_to_string(p.0.join("obychnye.povrezhdena.json")).unwrap(),
             json
         );
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+    #[test]
+    fn perenos_sohranyaet_aktivnuyu_i_gruppu_zakreplennyh() {
+        let mut s = Sessiya::novaya("https://a.test");
+        let a=s.aktivnaya; let b=s.dobavit("https://b.test"); let c=s.dobavit("https://c.test");
+        s.vkladki.iter_mut().find(|v|v.id==a).unwrap().zakreplena=true;
+        s.peremestit(c,Some(a));
+        assert_eq!(s.vkladki[0].id,a); assert_eq!(s.vkladki[1].id,c); assert_eq!(s.aktivnaya,c);
+        s.peremestit(a,None); assert_eq!(s.vkladki[0].id,a);
+        s.peremestit(b,Some(c)); assert_eq!(s.vkladki[1].id,b);
     }
 }

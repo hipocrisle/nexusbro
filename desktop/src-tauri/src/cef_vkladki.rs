@@ -5,12 +5,14 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-enum Sobytie {
+pub(crate) enum Sobytie {
     Komanda(Komanda),
     Zagolovok(u64, String),
     Adres(u64, String),
     Zagruzka(u64, bool, bool, bool),
     Zakryta(u64),
+    Ikonka(u64, String, String),
+    AdresnyiVvod,
     #[cfg(target_os = "windows")]
     ZakrytOkno(u64),
 }
@@ -18,6 +20,9 @@ enum Sobytie {
 wrap_display_handler! {
     struct VidStranicy { id: u64, tx: Sender<Sobytie> }
     impl DisplayHandler {
+        fn on_favicon_urlchange(&self, browser: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
+            crate::cef_interfeys::ikonka(self.id, self.tx.clone(), browser, icon_urls);
+        }
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if let Some(t) = title { let _ = self.tx.send(Sobytie::Zagolovok(self.id, t.to_string())); }
         }
@@ -100,6 +105,8 @@ wrap_request_handler! {
 wrap_client! {
     struct KlientVkladki { id: u64, tx: Sender<Sobytie> }
     impl Client {
+        fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(crate::cef_interfeys::klaviatura(self.id, self.tx.clone())) }
+        fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(crate::cef_interfeys::menyu(self.id, self.tx.clone())) }
         fn focus_handler(&self) -> Option<FocusHandler> { Some(FokusStranicy::new()) }
         fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id)) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(VidStranicy::new(self.id, self.tx.clone())) }
@@ -236,7 +243,7 @@ fn sozdat_brauzer(
             height: h as i32,
         },
     );
-    browser_host_create_browser_sync(
+    let b = browser_host_create_browser_sync(
         Some(&info),
         Some(&mut KlientVkladki::new(id, tx.clone())),
         Some(&CefString::from(adres)),
@@ -244,7 +251,11 @@ fn sozdat_brauzer(
         None,
         None,
     )
-    .ok_or_else(|| anyhow::anyhow!("не создалась обычная вкладка"))
+    .ok_or_else(|| anyhow::anyhow!("не создалась обычная вкладка"))?;
+    if let Some(h) = b.host() {
+        h.set_zoom_level((crate::nastrojki::zagruzit().masshtab_stranic as f64 / 100.0).ln() / 1.2_f64.ln());
+    }
+    Ok(b)
 }
 
 fn pokazat(s: &Sessiya, b: &HashMap<u64, Browser>) {
@@ -439,6 +450,37 @@ impl Rabota {
                         b.go_forward();
                     }
                 }
+                Sobytie::Komanda(Komanda::Instrumenty { id }) => {
+                    if let Some(b) = brauzery.get(&id) { crate::cef_interfeys::instrumenty(b, None, true); }
+                }
+                Sobytie::Komanda(Komanda::Issledovat { id, x, y }) => {
+                    if let Some(b) = brauzery.get(&id) { crate::cef_interfeys::instrumenty(b, Some(Point { x, y }), false); }
+                }
+                Sobytie::Komanda(Komanda::Iskhodnik { id }) => {
+                    if let Some(v) = s.vkladki.iter().find(|v| v.id == id) {
+                        let adres = format!("view-source:{}", v.adres.strip_prefix("view-source:").unwrap_or(&v.adres));
+                        let mut next = s.clone(); let n = next.dobavit(&adres);
+                        match sozdat_brauzer(k, n, &adres, tx) {
+                            Ok(b) => { brauzery.insert(n, b); *s = next; fokus = true; }
+                            Err(e) => eprintln!("cef: исходный код: {e}"),
+                        }
+                    }
+                }
+                Sobytie::Komanda(Komanda::Peremestit { id, pered }) => s.peremestit(id, pered),
+                Sobytie::Komanda(Komanda::Sleduyushchaya { nazad }) => {
+                    if let Some(i) = s.vkladki.iter().position(|v| v.id == s.aktivnaya) {
+                        let n = s.vkladki.len();
+                        s.aktivnaya = s.vkladki[(i + if nazad { n - 1 } else { 1 }) % n].id; fokus = true;
+                    }
+                }
+                Sobytie::Komanda(Komanda::Masshtab { procent }) => {
+                    let level = (procent.clamp(50, 200) as f64 / 100.0).ln() / 1.2_f64.ln();
+                    for b in brauzery.values() { if let Some(h) = b.host() { h.set_zoom_level(level); } }
+                }
+                Sobytie::AdresnyiVvod => { println!("NB-ADRES"); std::io::stdout().flush()?; }
+                Sobytie::Ikonka(id, stranica, ikonka) => {
+                    if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id && v.adres == stranica) { v.ikonka = Some(ikonka); }
+                }
                 Sobytie::Komanda(Komanda::Obnovit { id }) => {
                     if let Some(b) = brauzery.get(&id) {
                         b.reload();
@@ -451,6 +493,7 @@ impl Rabota {
                 }
                 Sobytie::Adres(id, u) => {
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
+                        if v.adres != u { v.ikonka = None; }
                         v.adres = u;
                     }
                 }

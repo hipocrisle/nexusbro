@@ -19,7 +19,8 @@ pub struct Uzel {
 /// Похоже ли это на ссылку узла или подписки.
 pub fn eto_podpiska(s: &str) -> bool {
     let s = s.trim().to_ascii_lowercase();
-    s.starts_with("vless://")
+    s.starts_with('{')
+        || s.starts_with("vless://")
         || s.starts_with("vmess://")
         || s.starts_with("trojan://")
         || s.starts_with("ss://")
@@ -37,24 +38,29 @@ pub fn eto_podpiska(s: &str) -> bool {
 /// тот же список в base64 и JSON-массив (так отдаёт Happ).
 pub fn razobrat_podpisku(telo: &str) -> Vec<Uzel> {
     let telo = telo.trim();
-    // JSON-массив
-    if telo.starts_with('[') {
-        if let Ok(Value::Array(a)) = serde_json::from_str::<Value>(telo) {
+    // Happ/Xray JSON: полный конфиг (в том числе маршруты и авто-выбор),
+    // либо массив таких конфигов; старые JSON-ссылки тоже поддерживаются.
+    if telo.starts_with('[') || telo.starts_with('{') {
+        if let Ok(v) = serde_json::from_str::<Value>(telo) {
+            let values = v.as_array().cloned().unwrap_or_else(|| vec![v]);
             let mut r = Vec::new();
-            for e in a {
-                // Happ кладёт имя в remarks, ссылку в разные поля
-                let imya = e.get("remarks").and_then(|v| v.as_str()).unwrap_or("узел");
-                for klyuch in ["link", "url", "uri", "config"] {
-                    if let Some(s) = e.get(klyuch).and_then(|v| v.as_str()) {
-                        r.push(Uzel { imya: imya.to_string(), ssylka: s.to_string() });
+            for e in values {
+                let imya = e.get("remarks").or_else(|| e.get("name")).and_then(Value::as_str).unwrap_or("узел");
+                let config = e.get("config").filter(|v| v.is_object()).unwrap_or(&e);
+                if config.get("outbounds").and_then(Value::as_array).is_some_and(|v| !v.is_empty()) {
+                    if let Ok(ssylka) = serde_json::to_string(config) { r.push(Uzel { imya: imya.into(), ssylka }); }
+                    continue;
+                }
+                for key in ["link", "url", "uri", "config"] {
+                    if let Some(s) = e.get(key).and_then(Value::as_str) {
+                        if !s.trim().is_empty() { r.push(Uzel { imya: imya.into(), ssylka: s.into() }); }
                         break;
                     }
                 }
             }
-            if !r.is_empty() {
-                return r;
-            }
+            return r;
         }
+        return Vec::new();
     }
     // base64 — раскрываем и разбираем как список
     let raskrytoe = raskryt_base64(telo);
@@ -103,7 +109,7 @@ fn raskodirovat(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
+            if let Some(v) = std::str::from_utf8(&b[i + 1..i + 3]).ok().and_then(|x| u8::from_str_radix(x, 16).ok()) {
                 r.push(v);
                 i += 3;
                 continue;
@@ -117,6 +123,21 @@ fn raskodirovat(s: &str) -> String {
 
 /// Собрать настройку xray: местный SOCKS5 → заданный узел.
 pub fn nastrojka_xray(ssylka: &str, port_socks: u16) -> anyhow::Result<String> {
+    let vhod = json!({
+        "listen": "127.0.0.1", "port": port_socks, "protocol": "socks",
+        "settings": {"udp": false, "auth": "noauth"}
+    });
+    if ssylka.trim_start().starts_with('{') {
+        let config: Value = serde_json::from_str(ssylka)?;
+        anyhow::ensure!(config.get("outbounds").and_then(Value::as_array).is_some_and(|a| !a.is_empty()), "в Xray-конфигурации нет выходов");
+        // Сохраняем граф выходов/балансировщиков. Собственные inbound/API/log
+        // подписки не импортируем: они не должны открывать порты на устройстве.
+        let mut n = json!({"log":{"loglevel":"warning"}, "inbounds":[vhod]});
+        for key in ["outbounds", "routing", "dns", "observatory", "burstObservatory", "policy", "transport", "fakedns"] {
+            if let Some(v) = config.get(key) { n[key] = v.clone(); }
+        }
+        return Ok(serde_json::to_string_pretty(&n)?);
+    }
     let vyhod = vyhod_iz_ssylki(ssylka)?;
     let nastrojka = json!({
         "log": { "loglevel": "warning" },
@@ -236,7 +257,7 @@ pub async fn uzly_podpiski(url: String) -> Result<Vec<Uzel>, String> {
 
 /// Скачать подписку.
 pub async fn skachat_podpisku(url: &str) -> anyhow::Result<Vec<Uzel>> {
-    let otvet = reqwest::Client::builder()
+    let mut otvet = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(25))
         .user_agent("NexusBro")
         .build()?
@@ -244,7 +265,12 @@ pub async fn skachat_podpisku(url: &str) -> anyhow::Result<Vec<Uzel>> {
         .send()
         .await?;
     anyhow::ensure!(otvet.status().is_success(), "подписка ответила {}", otvet.status());
-    let telo = otvet.text().await?;
+    let mut data = Vec::new();
+    while let Some(chunk) = otvet.chunk().await? {
+        anyhow::ensure!(data.len() + chunk.len() <= 8 * 1024 * 1024, "подписка превышает 8 МБ");
+        data.extend_from_slice(&chunk);
+    }
+    let telo = String::from_utf8(data)?;
     let uzly = razobrat_podpisku(&telo);
     anyhow::ensure!(!uzly.is_empty(), "в подписке не нашлось ни одного узла");
     Ok(uzly)
@@ -347,7 +373,7 @@ pub async fn podnyat_tunnel(
     let fajl = papka.join("xray.json");
     std::fs::write(&fajl, nastrojka)?;
 
-    let ditya = crate::brauzer::zapustit_sputnik(
+    let mut ditya = crate::brauzer::zapustit_sputnik(
         &xray,
         &["run".into(), "-c".into(), fajl.display().to_string()],
     )?;
@@ -356,11 +382,13 @@ pub async fn podnyat_tunnel(
     // первым, утыкается в закрытую дверь и показывает ошибку сети.
     let srok = std::time::Instant::now();
     while srok.elapsed().as_secs() < 12 {
+        if let Some(exit) = ditya.try_wait()? { anyhow::bail!("Xray завершился при запуске ({exit}); проверь параметры узла"); }
         if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
             return Ok((ditya, port));
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
+    let _ = ditya.kill(); let _ = ditya.wait();
     Err(anyhow::anyhow!("туннель не поднялся за 12 секунд"))
 }
 
@@ -391,4 +419,49 @@ mod proverka_tunnelya {
         let _ = ditya.wait();
         let _ = std::fs::remove_dir_all(&papka);
     }
+}
+
+#[tauri::command]
+pub async fn proverit_vyhod(adres: String) -> Result<String, String> {
+    let s = adres.trim();
+    if s.starts_with("http") && eto_podpiska(s) {
+        return skachat_podpisku(s).await.map(|u| format!("Подписка загружена: {} узлов", u.len()))
+            .map_err(|_| "Не удалось загрузить подписку. Проверь адрес и доступность сервера.".into());
+    }
+    if eto_podpiska(s) {
+        return nastrojka_xray(s, 1080).map(|_| "Конфигурация распознана. Соединение будет установлено при открытии супер-вкладки.".into())
+            .map_err(|_| "Некорректная конфигурация узла.".into());
+    }
+    let v = crate::proxy::razobrat_vyhod(s).map_err(|_| "Некорректный адрес прокси".to_string())?;
+    let host = match v { crate::proxy::Vyhod::Socks5 { adres, .. } | crate::proxy::Vyhod::Veb { adres, .. } => adres,
+        crate::proxy::Vyhod::Pryamo => return Ok("Прямое соединение".into()) };
+    tokio::time::timeout(std::time::Duration::from_secs(5), tokio::net::TcpStream::connect(&host)).await
+        .map_err(|_| "Прокси не ответил за 5 секунд".to_string())?.map_err(|_| "Не удалось подключиться к порту прокси".to_string())?;
+    Ok("TCP-порт отвечает. Авторизация и выход в интернет этой проверкой не проверяются.".into())
+}
+
+#[cfg(test)]
+mod happ_tests {
+    use super::*;
+    #[test]
+    fn polnyj_json_sohranyaet_graf_avtovybora_bez_chuzhih_listenerov() {
+        let config = json!({"remarks":"Auto", "inbounds":[{"listen":"0.0.0.0","port":9999}],
+            "api":{"tag":"api"},"log":{"access":"private.log"},
+            "outbounds":[{"tag":"proxy-a","protocol":"freedom"},{"tag":"proxy-b","protocol":"blackhole"}],
+            "routing":{"balancers":[{"tag":"auto","selector":["proxy-"],"strategy":{"type":"leastPing"}}],
+                "rules":[{"type":"field","network":"tcp,udp","balancerTag":"auto"}]},
+            "burstObservatory":{"subjectSelector":["proxy-"],"pingConfig":{"destination":"https://example.test"}},
+            "dns":{"servers":["localhost"]}});
+        let uzly = razobrat_podpisku(&json!([config.clone(), {"remarks":"Fixed", "config":config.clone()}]).to_string());
+        assert_eq!(uzly.len(),2); assert_eq!(uzly[0].imya,"Auto");
+        let n: Value = serde_json::from_str(&nastrojka_xray(&uzly[0].ssylka,12345).unwrap()).unwrap();
+        for key in ["outbounds","routing","burstObservatory","dns"] { assert_eq!(n[key],config[key]); }
+        assert_eq!(n["inbounds"].as_array().unwrap().len(),1);
+        assert_eq!(n["inbounds"][0]["listen"],"127.0.0.1");
+        assert_eq!(n["inbounds"][0]["port"],12345);
+        assert!(n.get("api").is_none()); assert!(n["log"].get("access").is_none());
+        assert!(nastrojka_xray("{\"outbounds\":[]}",12345).is_err());
+    }
+    #[test]
+    fn unicode_percent_ne_obrushivaet_parser() { assert_eq!(raskodirovat("%я#Тест"),"%я#Тест"); }
 }

@@ -111,11 +111,10 @@ try:
     # Open a real shell dialog over the native engine and cancel with keyboard.
     pt = origin(); client = wintypes.RECT()
     assert u.GetClientRect(hwnd, ctypes.byref(client))
-    gui.click(pt.x+22, pt.y+client.bottom-23)
+    gui.click(pt.x+22, pt.y+client.bottom-46)
     time.sleep(.5)
     ImageGrab.grab().save(run/'dialog.png')
-    gui.press('tab', presses=5, interval=.1)
-    gui.press('enter')
+    gui.click(pt.x+15,pt.y+90)
     pixels('after-dialog')
     assert u.SetWindowPos(hwnd, None,20,20,max(900,width-120),max(560,height-100),0x0040)
     time.sleep(.5)
@@ -125,6 +124,39 @@ try:
     time.sleep(.5)
     assert rect(container).left < r.left, 'Sidebar collapse did not reach native CEF'
     pixels('after-sidebar-collapse')
+    # All close gestures reach the same CEF lifecycle, including the last tab.
+    def session():
+        return json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
+    def wait_tabs(n):
+        deadline=time.monotonic()+12
+        while time.monotonic()<deadline:
+            assert app.poll() is None, 'Closing a tab exited NexusBro'
+            current=session()
+            if len(current['vkladki'])==n: return current
+            time.sleep(.1)
+        raise AssertionError(current)
+    def new_tab():
+        gui.hotkey('ctrl','t'); wait_tabs(2); time.sleep(.3)
+    r=rect(container)
+    new_tab()
+    gui.click(r.left+95,r.top-70,button='middle')
+    wait_tabs(1)
+    results.append({'middle_close_keeps_application':True})
+    new_tab()
+    gui.click(r.left+269,r.top-70)
+    wait_tabs(1)
+    results.append({'cross_close_keeps_application':True})
+    # Closing the final ordinary tab creates a fresh blank tab.
+    before=session()['vkladki'][0]['id']
+    gui.hotkey('ctrl','w')
+    deadline=time.monotonic()+12
+    while time.monotonic()<deadline:
+        assert app.poll() is None
+        current=session()
+        if len(current['vkladki'])==1 and current['vkladki'][0]['id']!=before: break
+        time.sleep(.1)
+    assert current['vkladki'][0]['id']!=before and current['vkladki'][0]['adres']=='about:blank', current
+    results.append({'last_close_recreates_blank_keeps_application':True})
     results.append({'success': True})
 finally:
     ImageGrab.grab().save(run/'final-screen.png')

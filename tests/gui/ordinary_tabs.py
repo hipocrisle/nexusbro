@@ -28,12 +28,17 @@ class Fixture(http.server.BaseHTTPRequestHandler):
     reloads=0
     def do_GET(self):
         path=urllib.parse.urlparse(self.path).path
+        if path == '/favicon.ico':
+            import io
+            from PIL import Image
+            data=io.BytesIO(); Image.new('RGBA',(16,16),(90,170,240,255)).save(data,format='PNG'); body=data.getvalue()
+            self.send_response(200); self.send_header('Content-Type','image/png'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body); return
         title={'/one':'One','/two':'Two','/popup':'Popup','/set':'CookieSet'}.get(path,'Unknown')
         if path=='/reload':
             type(self).reloads+=1
             title=f'Reload{type(self).reloads}'
         if path=='/read':title='Cookie-A' if 'owner=A' in self.headers.get('Cookie','') else 'Cookie-none'
-        html=f'''<!doctype html><title>{title}</title><body style="background:#185541;color:white;font:20px sans-serif">
+        html=f'''<!doctype html><link rel="icon" href="/favicon.ico"><title>{title}</title><body style="background:#185541;color:white;font:20px sans-serif">
         <h1>{title}</h1><input style="position:absolute;left:20px;top:170px;width:200px;height:30px" oninput="document.title=\'Typed:\'+this.value"><a style="position:absolute;left:20px;top:90px;padding:12px;background:white" target="_blank" href="/popup">Popup</a></body>'''.encode()
         self.send_response(200)
         self.send_header('Content-Type','text/html; charset=utf-8')
@@ -133,6 +138,12 @@ def wait_native(id,count,width=1280,height=820):
         except (AssertionError,subprocess.CalledProcessError) as e:error=e;time.sleep(.05)
     raise AssertionError(str(error))
 
+def tabmenu(tab,text):
+    client.click(f'.obychnaya[data-id="{tab}"]',3)
+    client.wait('!!document.querySelector(".menu-obychnyh")')
+    client.text_button(text)
+    client.wait('!document.querySelector(".menu-obychnyh")')
+
 try:
     start()
     a=supertab('Work A')
@@ -147,11 +158,11 @@ try:
     wait_sess(a,lambda s:len(s['vkladki'])==2)
     navigate(a,'/read','Cookie-A')
     s=navigate(a,'/two','Two');two=s['aktivnaya']
-    client.click('.obychnaya[aria-selected="true"] .zakrepit')
+    tabmenu(two,'Закрепить')
     wait_sess(a,lambda s:s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena'])
-    client.click('.obychnaya[aria-selected="true"] .zakrepit')
+    tabmenu(two,'Открепить')
     wait_sess(a,lambda s:not next(v for v in s['vkladki'] if v['id']==two)['zakreplena'])
-    subprocess.run(['xdotool','key','Return'],env=env,check=True)
+    tabmenu(two,'Закрепить')
     wait_sess(a,lambda s:s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena'])
     client.click(f'.obychnaya[data-id="{one}"] .obychnaya-imya')
     wait_sess(a,lambda s:s['aktivnaya']==one)
@@ -177,7 +188,7 @@ try:
     wait_sess(a,lambda s:len(s['vkladki'])==2)
     client.click(f'.obychnaya[data-id="{one}"] .obychnaya-imya')
     wait_sess(a,lambda s:s['aktivnaya']==one)
-    results.append({'ordinary_create_navigate_popup_back_forward_pin_close':True,'cef_processes_for_three_browsers':1,'shared_cookie_in_supertab':True,'keyboard_in_cef_and_address_bar':True,'reload_and_unpin':True,'pin_button_keyboard':True,'native_children':3,'one_native_visible':True,'resize_all_browsers':True})
+    results.append({'ordinary_create_navigate_popup_back_forward_pin_close':True,'cef_processes_for_three_browsers':1,'shared_cookie_in_supertab':True,'keyboard_in_cef_and_address_bar':True,'reload_and_unpin':True,'pin_only_in_context_menu':True,'native_children':3,'one_native_visible':True,'resize_all_browsers':True})
     # Новая пустая вкладка: реальный ввод БЕЗ Ctrl+A должен заменить about:blank.
     client.click('.novaya-obychnaya')
     s=wait_sess(a,lambda s:len(s['vkladki'])==3 and active(s)['adres']=='about:blank')
@@ -186,11 +197,6 @@ try:
     subprocess.run(['xdotool','type','--clearmodifiers','--delay','8','--',base+'/one'],env=env,check=True)
     subprocess.run(['xdotool','key','Return'],env=env,check=True)
     wait_sess(a,lambda s:active(s)['zagolovok']=='One')
-    def tabmenu(tab,text):
-        client.click(f'.obychnaya[data-id="{tab}"]',3)
-        client.wait('!!document.querySelector(".menu-obychnyh")')
-        client.text_button(text)
-        client.wait('!document.querySelector(".menu-obychnyh")')
     tabmenu(blank,'Закрыть вкладку')
     wait_sess(a,lambda s:len(s['vkladki'])==2)
     tabmenu(one,'Дублировать')
@@ -232,13 +238,14 @@ try:
     # Настройки сохраняются на диске и управляют новой вкладкой.
     client.click('button[title="Настройки NexusBro"]')
     client.wait('!!document.querySelector(".nastrojki-okno")')
-    client.click('.nastrojki-okno select')
-    subprocess.run(['xdotool','key','Home','Down','Return'],env=env,check=True)
+    client.text_button('Светлая')
+    client.text_button('Вкладки и поиск')
     client.fill('.nastrojki-okno input:not([type])','javascript:alert(1)')
     client.text_button('Сохранить')
     client.wait('!!document.querySelector(".nastrojki-okno [role=alert]")')
     assert json.loads((run/'data/NexusBro/nastrojki.json').read_text())['novaya_stranica']=='about:blank'
     client.fill('.nastrojki-okno input:not([type])',base+'/one')
+    client.text_button('Обновления и версия')
     client.click('.nastrojki-okno input[type=checkbox]')
     client.text_button('Сохранить')
     client.wait('!document.querySelector(".nastrojki-okno") && document.documentElement.dataset.tema==="svetlaya"')
@@ -302,6 +309,41 @@ try:
     results.append({'settings_and_sidebar_survive_restart':True})
     assert len(sess(b)['vkladki'])==1
     results.append({'app_restart_restores_urls_order_pin_active':True,'only_active_supertab_autostarts':True})
+    # New browser behavior: native keyboard, CEF-loaded favicon, save without close, physical drag.
+    client.wait('document.querySelector(".versiya-app").textContent.startsWith("v0.2.")')
+    client.wait('!!document.querySelector(".obychnaya img")')
+    assert not client.js('!!document.querySelector(".zakrepit")')
+    p=client.js('(()=>{let r=document.querySelector(".pole").getBoundingClientRect();return [r.x+60,r.y+40]})()')
+    client.mouse(*map(int,p)); subprocess.run(['xdotool','key','ctrl+u'],env=env,check=True)
+    source=wait_sess(a,lambda s:active(s)['adres'].startswith('view-source:') and not active(s)['zagruzka'])
+    assert len(source['vkladki'])==3,source
+    subprocess.run(['xdotool','key','ctrl+w'],env=env,check=True)
+    wait_sess(a,lambda s:len(s['vkladki'])==2)
+    # F12 while the native page owns keyboard focus.
+    client.mouse(*map(int,p)); subprocess.run(['xdotool','key','F12'],env=env,check=True)
+    time.sleep(1)
+    titles=subprocess.check_output(['xdotool','search','--onlyvisible','--name','DevTools|инструменты|Developer'],env=env,text=True)
+    assert titles.strip(),titles
+    client.command('obychnaya_komanda',id=a,komanda={'deystvie':'instrumenty','id':one})
+    client.click('.vkladka',3);client.text_button('Сохранить')
+    client.wait('!document.querySelector(".vypadajka")')
+    assert len(client.command('spisok'))==2 and len(engines())==1
+    assert any(v['id']==a for v in client.command('sohranennye'))
+    # Reorder two unpinned ordinary tabs using a real HTML drag gesture.
+    client.click('.novaya-obychnaya'); new=wait_sess(a,lambda s:len(s['vkladki'])==3)['aktivnaya']
+    def drag(source,target):
+        points=client.js('['+','.join('(()=>{let r=document.querySelector('+json.dumps(q)+').getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()' for q in [source,target])+']')
+        (x,y),(tx,ty)=points
+        cmd=['xdotool','mousemove',str(x),str(y),'mousedown','1']
+        for i in range(1,11):cmd+=['mousemove',str(round(x+(tx-x)*i/10)),str(round(y+(ty-y)*i/10)),'sleep','0.06']
+        subprocess.run(cmd+['mouseup','1'],env=env,check=True)
+    drag(f'.obychnaya[data-id="{new}"]',f'.obychnaya[data-id="{one}"]')
+    wait_sess(a,lambda s:[v['id'] for v in s['vkladki']]==[two,new,one])
+    drag('.vkladka:nth-child(2)','.vkladka:first-child')
+    client.wait('document.querySelector(".vkladka .imya").textContent==="Work B"')
+    assert client.command('spisok')[0]['id']==b
+    results.append({'visible_version':True,'cef_favicon_png':True,'native_ctrl_u_source_tab':True,'native_f12_devtools':True,'save_without_close':True,'physical_drag_ordinary_and_super':True})
+
     stop();assert not engines()
     results.append({'success':True,'live_engines_after_exit':0})
 finally:

@@ -2318,6 +2318,7 @@ name = "nexusbro"
 version = "0.2.7"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "cef",
  "dirs 5.0.1",
  "gdkx11",
