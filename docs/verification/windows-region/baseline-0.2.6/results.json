@@ -1,0 +1,27 @@
+[
+  {
+    "stage": "initial",
+    "rgb": [
+      [
+        17,
+        19,
+        26
+      ],
+      [
+        17,
+        19,
+        26
+      ],
+      [
+        17,
+        19,
+        26
+      ]
+    ],
+    "success": false
+  },
+  {
+    "baseline_black_reproduced": true,
+    "loaded_title": "RenderFixture"
+  }
+]
