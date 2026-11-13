@@ -1,0 +1,9 @@
+{
+  "full_xray_graph_preserved_local_inbound_only": true,
+  "physical_selection_and_real_cef_vless_page": true,
+  "selection_persisted_across_restart": true,
+  "edit_dialog_preserves_selection_after_refresh": true,
+  "removed_node_fails_without_fallback_or_process_leak": true,
+  "subscription_error_and_cancel": true,
+  "success": true
+}

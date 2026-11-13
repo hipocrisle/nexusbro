@@ -1,0 +1,126 @@
+[
+  {
+    "stage": "initial",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-dialog",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-resize",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-sidebar-collapse",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "middle_close_keeps_application": true
+  },
+  {
+    "cross_close_keeps_application": true
+  },
+  {
+    "context_menu_close_keeps_application": true
+  },
+  {
+    "last_close_recreates_blank_keeps_application": true
+  },
+  {
+    "stage": "before-source",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "source_opens_in_browser_tab": true
+  },
+  {
+    "native_f12_visible_devtools": true
+  },
+  {
+    "physical_ordinary_drag_reorders": true
+  },
+  {
+    "success": true
+  }
+]
