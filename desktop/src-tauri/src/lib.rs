@@ -12,6 +12,8 @@ pub mod cef_dvizhok;
 mod okna;
 mod proxy;
 mod vpn;
+#[cfg(target_os = "windows")]
+mod win32_oblast;
 mod spisok_reklamy;
 
 use okna::{sistema, Mesto};
@@ -131,6 +133,10 @@ struct Vkladka {
 
 #[derive(Default)]
 struct Sostoyanie {
+    #[cfg(target_os = "windows")]
+    obolochka: std::sync::OnceLock<tauri::WebviewWindow>,
+    #[cfg(target_os = "windows")]
+    oblast_pokolenie: std::sync::Arc<std::sync::atomic::AtomicU64>,
     vkladki: Mutex<HashMap<String, Vkladka>>,
     /// Где на экране показывать движок — это место нам сообщает лицевая часть.
     mesto: Mutex<Option<Mesto>>,
@@ -614,12 +620,31 @@ fn zagruzit_aktivnuyu() -> Option<String> {
         .and_then(|s| serde_json::from_str(&s).ok())
 }
 
+#[cfg(target_os = "windows")]
+fn obnovit_oblast_obolochki(s: &State<Sostoyanie>, oblast: Option<Mesto>) {
+    let Some(w) = s.obolochka.get() else { return };
+    let pokolenie = s.oblast_pokolenie.clone();
+    let nomer = pokolenie.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let ui = w.clone();
+    let _ = w.run_on_main_thread(move || {
+        // UI не ждёт mutex работника. Старые show/resize не могут затереть hide.
+        if pokolenie.load(std::sync::atomic::Ordering::SeqCst) != nomer { return }
+        if let Ok(hwnd) = ui.hwnd() {
+            if let Err(e) = win32_oblast::primenit(windows::Win32::Foundation::HWND(hwnd.0), oblast) {
+                zapisat_v_zhurnal(format!("область WebView2: {e}"));
+            }
+        }
+    });
+}
+
 fn primenit_vidimost(s: &State<Sostoyanie>) {
     let m = *s.mesto.lock().unwrap();
     let aktivnaya = s.aktivnaya.lock().unwrap().clone();
     let skryty = s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst);
     let okna: Vec<_> = s.vkladki.lock().unwrap().iter()
         .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o))).collect();
+    #[cfg(target_os = "windows")]
+    let vyrez = !skryty && okna.iter().any(|(id, _)| Some(id) == aktivnaya.as_ref());
     for (id, o) in okna {
         let vidno = !skryty && Some(&id) == aktivnaya.as_ref();
         let _ = sistema::pokazat(o, vidno);
@@ -627,6 +652,8 @@ fn primenit_vidimost(s: &State<Sostoyanie>) {
             if let Some(m) = m { let _ = sistema::peremestit(o, m); }
         }
     }
+    #[cfg(target_os = "windows")]
+    obnovit_oblast_obolochki(s, if vyrez { m } else { None });
 }
 
 fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
@@ -877,7 +904,7 @@ async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<
         .and_then(|w| nash_descriptor(&w))
         .map(|h| h.to_string())
         .unwrap_or_else(|| "нет".into());
-    out.push_str(&format!("наше окно: {nashe}\n"));
+    out.push_str(&format!("наше окно: {nashe}\n    {}\n", okna::opisanie_okna(nashe.parse().unwrap_or(0))));
     out.push_str(&format!("активная: {:?}, место: {:?}, скрыты для диалога: {}\n",
         s.aktivnaya.lock().unwrap().clone(), *s.mesto.lock().unwrap(),
         s.dvizhki_skryty.load(std::sync::atomic::Ordering::Acquire)));
@@ -1005,6 +1032,11 @@ pub fn run() {
         // Размер, позиция и монитор окна запоминаются сами.
         .plugin(tauri_plugin_window_state::Builder::default().build())
         .setup(|app| {
+            #[cfg(target_os = "windows")]
+            if let Some(w) = app.get_webview_window("main") {
+                let s: State<Sostoyanie> = app.state();
+                let _ = s.obolochka.set(w);
+            }
             // Движки, оставшиеся от прошлого запуска, ломают новые:
             // Chromium пересылает команду старому процессу, а тот открывает
             // обычное окно поверх всего. Режем по уникальному имени exe.

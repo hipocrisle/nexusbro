@@ -616,16 +616,23 @@ pub fn opisanie_okna(okno: u32) -> String {
             let n = GetClassNameW(h, &mut class).max(0) as usize;
             let _ = GetWindowRect(h, &mut r);
             let _ = GetClientRect(h, &mut c);
-            format!("HWND={} class={} visible={} rect=({},{},{}x{}) client={}x{} style={:x}",
+            let mut pid = 0;
+            let tid = GetWindowThreadProcessId(h, Some(&mut pid));
+            let parent = GetParent(h).map(|p| p.0 as usize).unwrap_or(0);
+            let prev = GetWindow(h, GW_HWNDPREV).map(|p| p.0 as usize).unwrap_or(0);
+            let mut region = RECT::default();
+            let region_type = windows::Win32::Graphics::Gdi::GetWindowRgnBox(h, &mut region);
+            format!("HWND={} pid={pid} tid={tid} parent={parent} above={prev} class={} visible={} rect=({},{},{}x{}) client={}x{} style={:x} exstyle={:x} region={} ({},{},{},{})",
                 h.0 as usize, String::from_utf16_lossy(&class[..n]), IsWindowVisible(h).as_bool(),
                 r.left, r.top, r.right-r.left, r.bottom-r.top, c.right-c.left, c.bottom-c.top,
-                GetWindowLongPtrW(h, GWL_STYLE))
+                GetWindowLongPtrW(h, GWL_STYLE), GetWindowLongPtrW(h, GWL_EXSTYLE),
+                region_type.0, region.left, region.top, region.right, region.bottom)
         }
     }
     unsafe extern "system" fn potomok(h: HWND, param: LPARAM) -> BOOL {
         let out = &mut *(param.0 as *mut Vec<String>);
-        if out.len() < 20 { out.push(opisat(h)); }
-        BOOL::from(out.len() < 20)
+        if out.len() < 60 { out.push(opisat(h)); }
+        BOOL::from(out.len() < 60)
     }
     unsafe {
         let h = HWND(okno as usize as _);

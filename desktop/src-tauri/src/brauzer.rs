@@ -73,6 +73,10 @@ pub fn najti_dvizhok() -> Option<PathBuf> {
 
 /// Папка с профилями супер-вкладок.
 pub fn papka_profilej() -> PathBuf {
+    // Изоляция runtime-прогонов, в том числе на Windows (KnownFolder игнорирует XDG).
+    if let Some(test) = std::env::var_os("NEXUSBRO_TEST_DATA").filter(|s| !s.is_empty()) {
+        return PathBuf::from(test).join("profili");
+    }
     let baza = dirs::data_local_dir().unwrap_or_else(|| PathBuf::from("."));
     baza.join("NexusBro").join("profili")
 }

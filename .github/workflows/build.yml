@@ -165,6 +165,28 @@ jobs:
           rm -rf "src-tauri/target/${{ matrix.target }}/release/bundle"
           npm run tauri build -- --target ${{ matrix.target }}
 
+      - name: Проверить отрисовку Windows на экране
+        if: matrix.os == 'windows-latest'
+        timeout-minutes: 5
+        shell: pwsh
+        run: |
+          python -m pip install websocket-client Pillow
+          python tests/gui/windows_render.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro.exe --cef desktop/src-tauri/cef --out .dev-check/windows-render
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Сохранить Windows runtime диагностику
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-render-verification
+          path: |
+            .dev-check/windows-render/*.png
+            .dev-check/windows-render/*.txt
+            .dev-check/windows-render/*.json
+            .dev-check/windows-render/data/zhurnal.log
+            .dev-check/windows-render/data/profili/*/cef*.log
+          retention-days: 14
+
       - name: Проверить содержимое установщика Windows
         if: matrix.os == 'windows-latest'
         shell: bash

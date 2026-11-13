@@ -366,8 +366,8 @@ export default function App() {
             className="plyus"
             title="Диагностика"
             onClick={async () => {
-              await invoke("pokazat_dvizhki", { vidno: false });
               const tekst = await invoke<string>("diagnostika");
+              await invoke("pokazat_dvizhki", { vidno: false });
               setDiagnostika(tekst);
             }}
           >
