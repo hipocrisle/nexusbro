@@ -95,6 +95,16 @@ try:
     fixture = 'data:text/html,'+urllib.parse.quote('<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>')
     gui.write(fixture, interval=.003)
     gui.press('enter')
+    if a.baseline:
+        try:
+            pixels('initial')
+        except AssertionError:
+            session = json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
+            assert any(t['zagolovok']=='RenderFixture' and not t['zagruzka'] for t in session['vkladki']), session
+            assert results[-1]['rgb'] == [(17,19,26)]*3, results
+            results.append({'baseline_black_reproduced': True, 'loaded_title': 'RenderFixture'})
+            raise SystemExit(0)
+        raise AssertionError('Baseline renders: this run did not reproduce the original defect')
     pixels('initial')
     session = json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
     assert any(t['zagolovok']=='RenderFixture' for t in session['vkladki']), session
