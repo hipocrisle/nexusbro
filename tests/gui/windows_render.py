@@ -94,11 +94,13 @@ try:
         assert app.poll() is None, f'Application exited {app.returncode}'
         try:
             targets = json.load(urllib.request.urlopen(f'http://127.0.0.1:{args.port}/json/list', timeout=1))
-            target = next(t for t in targets if t['type'] == 'page' and 'webSocketDebuggerUrl' in t)
+            (run/'cdp-targets.json').write_text(json.dumps(targets, indent=2), encoding='utf-8')
+            target = next(t for t in targets if t['type'] == 'page' and 'webSocketDebuggerUrl' in t and ('tauri' in t.get('url', '') or t.get('title') == 'NexusBro'))
             ws = websocket.create_connection(target['webSocketDebuggerUrl'], timeout=15)
             if js('!!window.__TAURI_INTERNALS__'): break
             ws.close(); ws = None
-        except (OSError, StopIteration, websocket.WebSocketException): pass
+        except (OSError, StopIteration, websocket.WebSocketException) as error:
+            (run/'cdp-last-error.txt').write_text(str(error), encoding='utf-8')
         time.sleep(.2)
     assert ws, 'WebView2 CDP did not start'
     until('!!document.querySelector(".pole")')
@@ -135,6 +137,8 @@ try:
     page_pixel('after-sidebar-collapse')
     results.append({'success': True})
 finally:
+    try: ImageGrab.grab().save(run/'final-screen.png')
+    except Exception as error: results.append({'capture_error': str(error)})
     if ws:
         try: (run/'final-diagnostics.txt').write_text(command('diagnostika'), encoding='utf-8')
         except Exception as error: results.append({'diagnostics_error': str(error)})
