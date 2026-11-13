@@ -41,7 +41,8 @@ wrap_client! { struct InstrumentyClient; impl Client {} }
 pub fn instrumenty(b: &Browser, inspect: Option<Point>, toggle: bool) {
     let Some(h) = b.host() else { return };
     if toggle && h.has_dev_tools() != 0 { h.close_dev_tools(); return }
-    let info = WindowInfo { runtime_style: RuntimeStyle::ALLOY,
+    // DevTools с CEF 128 работают только в Chrome style, даже у Alloy-страницы.
+    let info = WindowInfo { runtime_style: RuntimeStyle::CHROME,
         window_name: CefString::from("NexusBro — инструменты разработчика"),
         bounds: Rect { x: 80, y: 80, width: 1000, height: 720 }, ..WindowInfo::default() };
     #[cfg(target_os = "windows")]
@@ -102,7 +103,8 @@ wrap_download_image_callback! {
     struct Ikonka { id: u64, stranica: String, tx: Sender<Sobytie> }
     impl DownloadImageCallback {
         fn on_download_image_finished(&self, _image_url: Option<&CefString>, _http_status_code: i32, image: Option<&mut Image>) {
-            let Some(png) = image.and_then(|i| i.as_png(1.0, 1, None, None)) else { return };
+            let (mut width, mut height) = (0, 0);
+            let Some(png) = image.and_then(|i| i.as_png(1.0, 1, Some(&mut width), Some(&mut height))) else { return };
             let size = png.size();
             if size == 0 || size > 128 * 1024 { return }
             let mut data = vec![0; size];
@@ -114,7 +116,9 @@ wrap_download_image_callback! {
 }
 pub fn ikonka(id: u64, tx: Sender<Sobytie>, browser: Option<&mut Browser>, urls: Option<&mut CefStringList>) {
     let (Some(b), Some(urls)) = (browser, urls) else { return };
-    let list = CefStringList::from(<*const sys::_cef_string_list_t>::from(&*urls));
+    // BorrowedMut сохраняет исходный opaque handle. From<*const> копирует
+    // opaque value и не поддерживает IntoIterator (возвращает пустой список).
+    let list = CefStringList::from(<*mut sys::_cef_string_list_t>::from(&mut *urls));
     let Some(url) = list.into_iter().next() else { return };
     let Some(h) = b.host() else { return };
     let stranica = b.main_frame().map(|f| CefString::from(&f.url()).to_string()).unwrap_or_default();

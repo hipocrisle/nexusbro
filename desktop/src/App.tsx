@@ -2,6 +2,7 @@ import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import Icon from "./Icons";
+import Blokirovki, { Zhurnal } from "./Blokirovki";
 import { listen } from "@tauri-apps/api/event";
 import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu, shrifty, Vyhod } from "./Nastrojki";
 import ObychnyeVkladki from "./ObychnyeVkladki";
@@ -23,7 +24,14 @@ type Otvet = { ok: boolean; soobshchenie: string };
 export default function App() {
   const [versiya, setVersiya] = useState("");
   const [dragSuper, setDragSuper] = useState<string | null>(null);
-  const [zashchita, setZashchita] = useState<{ vklyuchena: boolean; zarezano: number; propushcheno: number; zapisi: { domen: string; pravilo: string; metod: string; vremya_ms: number }[] } | null>(null);
+  const [zashchita, setZashchita] = useState<Zhurnal | null>(null);
+  const zhurnalOtkryt = zashchita !== null;
+  useEffect(() => {
+    if (!zhurnalOtkryt) return;
+    let active = true;
+    const timer = setInterval(() => { const id = aktivnayaRef.current; if (id) void invoke<Zhurnal>("zhurnal_rezki", { id }).then((j) => { if (active) setZashchita(j); }).catch(() => {}); }, 1000);
+    return () => { active = false; clearInterval(timer); };
+  }, [zhurnalOtkryt]);
   const [nastrojki, setNastrojki] = useState<NastrojkiApp>(poUmolchaniyu);
   const nastrojkiRef = useRef(nastrojki);
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
@@ -415,7 +423,7 @@ export default function App() {
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
         <ObychnyeVkladki novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
-          {aktivnaya && <button className="schet protection-button" title="Какие соединения заблокированы" aria-label="Защита страницы" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={16} /><span>Защита</span><b>{zarezano}</b></button>}
+          {aktivnaya && <button className="schet protection-button" title="Какие соединения заблокированы" aria-label="Защита супер-вкладки" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={16} /><span>Защита</span><b>{zarezano}</b></button>}
         </ObychnyeVkladki>
         {progress && (
           <div className="polosa-progress">
@@ -592,16 +600,7 @@ export default function App() {
           </div>
         </div>
       )}
-      {zashchita && <div className="zatemnenie" onClick={() => { setZashchita(null); void invoke("pokazat_dvizhki", { vidno: true }); }}>
-        <section className="dialog protection-dialog" role="dialog" aria-label="Защита страницы" onClick={(e) => e.stopPropagation()}>
-          <header className="settings-header"><div><span className="eyebrow">ЗАЩИТА СУПЕР-ВКЛАДКИ</span><h2>{zashchita.vklyuchena ? "Нежелательные соединения заблокированы" : "Блокировка выключена"}</h2></div><Icon name="shield" size={30} /></header>
-          <div className="protection-stats"><div><strong>{zashchita.zarezano}</strong><small>заблокировано</small></div><div><strong>{zashchita.propushcheno}</strong><small>разрешено</small></div></div>
-          <p className="muted">Домены рекламы и отслеживания, совпавшие с правилами блокировки. Содержимое HTTPS не читается.</p>
-          <div className="block-list">{zashchita.zapisi.length ? zashchita.zapisi.map((r, i) => <div className="block-entry" key={i}><Icon name="shield" size={15} /><div><strong>{r.domen}</strong><small>Правило: {r.pravilo} · {r.metod === "CONNECT" ? "HTTPS" : "HTTP"}</small></div><time>{new Date(r.vremya_ms).toLocaleTimeString()}</time></div>) : <p className="settings-tip">В этом запуске заблокированных соединений ещё нет.</p>}</div>
-          <small className="muted">Последние 200 событий текущего запуска. Журнал не сохраняется на диск.</small>
-          <div className="knopki"><button onClick={() => { setZashchita(null); void invoke("pokazat_dvizhki", { vidno: true }); }}>Закрыть</button></div>
-        </section>
-      </div>}
+      {zashchita && <Blokirovki journal={zashchita} name={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""} onClose={() => { setZashchita(null); void invoke("pokazat_dvizhki", { vidno: true }); }} />}
       {diagnostika !== null && (
         <div className="zatemnenie">
           <div className="dialog diagnostika-okno" onClick={(e) => e.stopPropagation()}>

@@ -368,6 +368,7 @@ impl Rabota {
         } = self;
         let mut izmeneno = false;
         let mut fokus = false;
+        let mut fokus_klaviatury = false;
         for sobytie in rx.try_iter().take(128) {
             match sobytie {
                 Sobytie::Komanda(Komanda::Novaya { adres }) => {
@@ -377,7 +378,7 @@ impl Rabota {
                         Ok(b) => {
                             brauzery.insert(id, b);
                             *s = novaya;
-                            fokus = true;
+                            fokus = true; fokus_klaviatury = true;
                         }
                         Err(e) => eprintln!("cef: {e}"),
                     }
@@ -385,10 +386,11 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Vybrat { id }) => {
                     if brauzery.contains_key(&id) {
                         s.aktivnaya = id;
-                        fokus = true;
+                        fokus = true; fokus_klaviatury = true;
                     }
                 }
                 Sobytie::Komanda(Komanda::Zakryt { id }) => {
+                    fokus_klaviatury |= s.aktivnaya == id;
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         h.close_browser(0);
                     }
@@ -420,6 +422,11 @@ impl Rabota {
                     }
                 }
                 Sobytie::Zakryta(id) => {
+                    if s.aktivnaya == id {
+                        if let Some(i) = s.vkladki.iter().position(|v| v.id == id) {
+                            if let Some(v) = s.vkladki.get(if i > 0 { i - 1 } else { i + 1 }) { s.aktivnaya = v.id; }
+                        }
+                    }
                     brauzery.remove(&id);
                     s.vkladki.retain(|v| v.id != id);
                     fokus = true;
@@ -436,6 +443,7 @@ impl Rabota {
                             f.load_url(Some(&CefString::from(adres.as_str())));
                         }
                         if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
+                            v.ikonka = None;
                             v.adres = adres;
                         }
                     }
@@ -461,7 +469,7 @@ impl Rabota {
                         let adres = format!("view-source:{}", v.adres.strip_prefix("view-source:").unwrap_or(&v.adres));
                         let mut next = s.clone(); let n = next.dobavit(&adres);
                         match sozdat_brauzer(k, n, &adres, tx) {
-                            Ok(b) => { brauzery.insert(n, b); *s = next; fokus = true; }
+                            Ok(b) => { brauzery.insert(n, b); *s = next; fokus = true; fokus_klaviatury = true; }
                             Err(e) => eprintln!("cef: исходный код: {e}"),
                         }
                     }
@@ -470,7 +478,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Sleduyushchaya { nazad }) => {
                     if let Some(i) = s.vkladki.iter().position(|v| v.id == s.aktivnaya) {
                         let n = s.vkladki.len();
-                        s.aktivnaya = s.vkladki[(i + if nazad { n - 1 } else { 1 }) % n].id; fokus = true;
+                        s.aktivnaya = s.vkladki[(i + if nazad { n - 1 } else { 1 }) % n].id; fokus = true; fokus_klaviatury = true;
                     }
                 }
                 Sobytie::Komanda(Komanda::Masshtab { procent }) => {
@@ -493,6 +501,12 @@ impl Rabota {
                 }
                 Sobytie::Adres(id, u) => {
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
+                        // CEF сообщает underlying URL даже для view-source. Режим
+                        // сохраняем для адресной строки и восстановления сессии;
+                        // явный Pereyti выше предварительно меняет v.adres.
+                        let u = if v.adres.starts_with("view-source:") && !u.starts_with("view-source:") {
+                            format!("view-source:{u}")
+                        } else { u };
                         if v.adres != u { v.ikonka = None; }
                         v.adres = u;
                     }
@@ -519,6 +533,9 @@ impl Rabota {
         }
         if fokus {
             pokazat(&s, &brauzery);
+        }
+        if fokus_klaviatury && s.vkladki.iter().any(|v| v.id == s.aktivnaya && v.adres != "about:blank") {
+            if let Some(h) = brauzery.get(&s.aktivnaya).and_then(|b| b.host()) { h.set_focus(1); }
         }
         let novyj = k.razmer();
         if novyj != *razmer {

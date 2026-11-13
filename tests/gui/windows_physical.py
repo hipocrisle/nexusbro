@@ -146,6 +146,13 @@ try:
     gui.click(r.left+269,r.top-70)
     wait_tabs(1)
     results.append({'cross_close_keeps_application':True})
+    new_tab()
+    gui.click(r.left+95,r.top-70,button='right')
+    time.sleep(.4)
+    gui.click(r.left+175,r.top+180)
+    wait_tabs(1)
+    results.append({'context_menu_close_keeps_application':True})
+
     # Closing the final ordinary tab creates a fresh blank tab.
     before=session()['vkladki'][0]['id']
     gui.hotkey('ctrl','w')
@@ -157,6 +164,49 @@ try:
         time.sleep(.1)
     assert current['vkladki'][0]['id']!=before and current['vkladki'][0]['adres']=='about:blank', current
     results.append({'last_close_recreates_blank_keeps_application':True})
+    # Native focus: Ctrl+L, Ctrl+U, then F12 must target the page.
+    gui.hotkey('ctrl','l');time.sleep(.3);gui.write(fixture,interval=.001);gui.press('enter');pixels('before-source')
+    r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','u');wait_tabs(2)
+    deadline=time.monotonic()+12
+    while time.monotonic()<deadline:
+        source=session()
+        if any(t['adres'].startswith('view-source:') and not t['zagruzka'] for t in source['vkladki']):break
+        time.sleep(.1)
+    assert any(t['adres'].startswith('view-source:') for t in source['vkladki']),source
+    ImageGrab.grab().save(run/'source-tab.png');gui.hotkey('ctrl','w');wait_tabs(1)
+    results.append({'source_opens_in_browser_tab':True})
+    gui.click(r.left+80,r.top+100);gui.press('f12')
+    u.GetWindowTextW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+    u.IsWindowVisible.argtypes=[wintypes.HWND]
+    def devtools_windows():
+        found=[]
+        @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        def enum(h,_):
+            text=ctypes.create_unicode_buffer(512);u.GetWindowTextW(h,text,512)
+            if u.IsWindowVisible(h) and any(s in text.value.lower() for s in ['devtools','developer','инструмент']):found.append(int(h))
+            return True
+        u.EnumWindows(enum,0);return found
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        tools=devtools_windows()
+        if tools:break
+        assert app.poll() is None;time.sleep(.1)
+    assert tools,'F12 did not open a visible DevTools window'
+    ImageGrab.grab().save(run/'devtools.png')
+    u.SetForegroundWindow(tools[0]);gui.hotkey('alt','f4');time.sleep(.5);u.SetForegroundWindow(hwnd)
+    results.append({'native_f12_visible_devtools':True})
+    # Physical HTML5 reorder in WebView2 (native drag handler must be disabled).
+    gui.hotkey('ctrl','t');wait_tabs(2);gui.hotkey('ctrl','t');current=wait_tabs(3);time.sleep(.3)
+    order=[t['id'] for t in current['vkladki']]
+    gui.moveTo(r.left+619,r.top-70);gui.mouseDown();gui.moveTo(r.left+159,r.top-70,duration=.7);gui.mouseUp()
+    deadline=time.monotonic()+12
+    while time.monotonic()<deadline:
+        current=session()
+        if [t['id'] for t in current['vkladki']]==[order[2],order[0],order[1]]:break
+        time.sleep(.1)
+    assert [t['id'] for t in current['vkladki']]==[order[2],order[0],order[1]],current
+    results.append({'physical_ordinary_drag_reorders':True})
+
     results.append({'success': True})
 finally:
     ImageGrab.grab().save(run/'final-screen.png')

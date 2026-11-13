@@ -71,20 +71,22 @@ pub struct Nastrojka {
 #[derive(Clone, serde::Serialize)]
 pub struct Blokirovka { pub domen: String, pub pravilo: String, pub metod: String, pub vremya_ms: u64 }
 #[derive(serde::Serialize)]
-pub struct ZhurnalRezki { pub vklyuchena: bool, pub zarezano: u64, pub propushcheno: u64, pub zapisi: Vec<Blokirovka> }
+pub struct ZhurnalRezki { pub vklyuchena: bool, pub zarezano: u64, pub propushcheno: u64, pub pravila_vsego: usize, pub summy: Vec<(String, u64)>, pub zapisi: Vec<Blokirovka> }
 #[derive(Default)]
 pub struct Schet {
     pub propushcheno: AtomicU64,
     pub zarezano: AtomicU64,
     pub zhurnal: Mutex<VecDeque<Blokirovka>>,
+    pub pravila: Mutex<std::collections::HashMap<String, u64>>,
 }
 impl Schet {
     pub fn snimok(&self, vklyuchena: bool) -> ZhurnalRezki {
-        ZhurnalRezki { vklyuchena, zarezano: self.zarezano.load(Ordering::Relaxed), propushcheno: self.propushcheno.load(Ordering::Relaxed),
+        ZhurnalRezki { vklyuchena, pravila_vsego: SPISOK.len(), summy: self.pravila.lock().map(|p| p.iter().map(|(k,v)| (k.clone(),*v)).collect()).unwrap_or_default(), zarezano: self.zarezano.load(Ordering::Relaxed), propushcheno: self.propushcheno.load(Ordering::Relaxed),
             zapisi: self.zhurnal.lock().map(|v| v.iter().cloned().collect()).unwrap_or_default() }
     }
     fn blok(&self, host: &str, pravilo: &str, metod: &str) {
         self.zarezano.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut totals) = self.pravila.lock() { *totals.entry(pravilo.into()).or_default() += 1; }
         if let Ok(mut v) = self.zhurnal.lock() {
             v.push_front(Blokirovka { domen: host.trim_end_matches('.').to_ascii_lowercase(), pravilo: pravilo.into(), metod: metod.into(),
                 vremya_ms: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis() as u64 });
@@ -434,6 +436,7 @@ mod journal_tests {
         let s=Schet::default();
         for _ in 0..205 { s.blok("AD.DoubleClick.NET.","doubleclick.net","CONNECT"); }
         let n=s.snimok(true); assert_eq!(n.zarezano,205); assert_eq!(n.zapisi.len(),200);
+        assert_eq!(n.summy,vec![("doubleclick.net".into(),205)]);
         assert_eq!(n.zapisi[0].domen,"ad.doubleclick.net"); assert_eq!(n.zapisi[0].pravilo,"doubleclick.net");
         assert!(n.zapisi[0].vremya_ms>0);
         assert_eq!(pravilo_reklamy("ad.doubleclick.net"),Some("doubleclick.net"));

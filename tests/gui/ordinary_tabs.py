@@ -160,8 +160,10 @@ try:
     s=navigate(a,'/two','Two');two=s['aktivnaya']
     tabmenu(two,'Закрепить')
     wait_sess(a,lambda s:s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena'])
+    client.wait('!!document.querySelector(\'.obychnaya[data-id="'+str(two)+'"].zakreplena\')')
     tabmenu(two,'Открепить')
     wait_sess(a,lambda s:not next(v for v in s['vkladki'] if v['id']==two)['zakreplena'])
+    client.wait('!document.querySelector(\'.obychnaya[data-id="'+str(two)+'"].zakreplena\')')
     tabmenu(two,'Закрепить')
     wait_sess(a,lambda s:s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena'])
     client.click(f'.obychnaya[data-id="{one}"] .obychnaya-imya')
@@ -318,7 +320,7 @@ try:
     source=wait_sess(a,lambda s:active(s)['adres'].startswith('view-source:') and not active(s)['zagruzka'])
     assert len(source['vkladki'])==3,source
     subprocess.run(['xdotool','key','ctrl+w'],env=env,check=True)
-    wait_sess(a,lambda s:len(s['vkladki'])==2)
+    wait_sess(a,lambda s:len(s['vkladki'])==2 and s['aktivnaya']==one)
     # F12 while the native page owns keyboard focus.
     client.mouse(*map(int,p)); subprocess.run(['xdotool','key','F12'],env=env,check=True)
     time.sleep(1)
@@ -332,6 +334,7 @@ try:
     # Reorder two unpinned ordinary tabs using a real HTML drag gesture.
     client.click('.novaya-obychnaya'); new=wait_sess(a,lambda s:len(s['vkladki'])==3)['aktivnaya']
     def drag(source,target):
+        client.wait('!!document.querySelector('+json.dumps(source)+') && !!document.querySelector('+json.dumps(target)+')')
         points=client.js('['+','.join('(()=>{let r=document.querySelector('+json.dumps(q)+').getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()' for q in [source,target])+']')
         (x,y),(tx,ty)=points
         cmd=['xdotool','mousemove',str(x),str(y),'mousedown','1']
@@ -343,6 +346,47 @@ try:
     client.wait('document.querySelector(".vkladka .imya").textContent==="Work B"')
     assert client.command('spisok')[0]['id']==b
     results.append({'visible_version':True,'cef_favicon_png':True,'native_ctrl_u_source_tab':True,'native_f12_devtools':True,'save_without_close':True,'physical_drag_ordinary_and_super':True})
+    # Domain blocking: real rejected request, visible rule, no URL path/query in journal.
+    client.command('pereklyuchit',id=a)
+    client.wait('document.querySelector(".aktivnaya-imya").textContent==="Work A"')
+    client.fill('.navigaciya input','http://doubleclick.net/private-canary?token=never-in-journal',enter=True)
+    for _ in range(100):
+        journal=client.command('zhurnal_rezki',id=a)
+        if journal['zarezano']: break
+        time.sleep(.05)
+    assert journal['zarezano'] and journal['zapisi'][0]['pravilo']=='doubleclick.net',journal
+    assert 'private-canary' not in json.dumps(journal) and 'never-in-journal' not in json.dumps(journal)
+    client.click('.protection-button');client.wait('!!document.querySelector(".service-entry")')
+    client.click('.service-entry summary')
+    assert 'Google Ads / DoubleClick' in client.js('document.querySelector(".protection-dialog").innerText')
+    client.text_button('События');client.click('.block-entry summary')
+    client.wait('!!document.querySelector(".block-entry[open] dl")')
+    assert 'doubleclick.net' in client.js('document.querySelector(".protection-dialog").innerText')
+    subprocess.run(['ffmpeg','-y','-f','x11grab','-video_size','1280x900','-i',args.display,'-frames:v','1',str(run/'protection-new.png')],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+    client.command('obychnaya_komanda',id=a,komanda={'deystvie':'pereyti','id':new,'adres':'http://mc.yandex.ru/private-canary'})
+    client.wait('Number(document.querySelector(".protection-stats strong").textContent)>=2')
+    client.text_button('По сервисам')
+    client.wait('document.querySelector(".protection-dialog").innerText.includes("Яндекс Метрика")')
+    client.fill('input[aria-label="Поиск в журнале защиты"]','Google')
+    client.wait('document.querySelectorAll(".service-entry").length===1')
+    client.text_button('Закрыть')
+    client.click('button[title="Настройки NexusBro"]');client.text_button('Слива')
+    client.click('select[aria-label="Шрифт интерфейса"]');subprocess.run(['xdotool','key','End','Return'],env=env,check=True)
+    client.click('select[aria-label="Плотность интерфейса"]');subprocess.run(['xdotool','key','End','Return'],env=env,check=True)
+    client.text_button('Сеть и VPN')
+    client.fill('.settings-content input:not([type])','Local fixture')
+    client.fill('.settings-content input[type=password]',base+'/subscription')
+    client.text_button('Добавить подключение');client.text_button('Сохранить')
+    client.wait('document.documentElement.dataset.tema==="sliva" && document.documentElement.dataset.plotnost==="kompaktno"')
+    settings=json.loads(config.read_text());assert settings['shrift']=='consolas' and settings['vyhody'][0]['nazvanie']=='Local fixture',settings
+    client.click('.niz button:first-child')
+    client.wait('!!document.querySelector(\'select[aria-label="Сохранённое подключение"]\')')
+    client.text_button('Отмена')
+    client.click('button[title="Настройки NexusBro"]')
+    subprocess.run(['ffmpeg','-y','-f','x11grab','-video_size','1280x900','-i',args.display,'-frames:v','1',str(run/'settings-new.png')],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+    client.text_button('Отмена')
+    results.append({'blocking_journal_real_request_rule_no_path_token':True,'themes_fonts_density_and_connection_presets':True})
+
 
     stop();assert not engines()
     results.append({'success':True,'live_engines_after_exit':0})

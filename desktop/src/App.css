@@ -335,3 +335,26 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .protection-button { display:flex; align-items:center; gap:6px; border:1px solid var(--kraj); color:var(--tekst); cursor:pointer; padding:5px 9px; font:inherit; font-size:12px; }
 .protection-button b { color:var(--akcent); }
 @media(max-width:700px) { .protection-button span { display:none; } }
+.protection-dialog { width:min(800px,95vw); max-height:94vh; gap:14px; }
+.protection-controls { display:flex; flex-wrap:wrap; gap:8px; }
+.protection-controls input { flex:1; min-width:140px; }
+.protection-controls select { max-width:200px; }
+.protection-views { display:flex; padding:3px; border:1px solid var(--kraj); border-radius:9px; background:var(--fon2); }
+.protection-views button { border:0; border-radius:6px; background:transparent; padding:6px 10px; color:var(--tiho); cursor:pointer; font-size:12px; }
+.protection-views button.selected { background:var(--fon3); color:var(--tekst); }
+.protection-dialog .block-list { max-height:38vh; flex-shrink:1; min-height:65px; }
+.service-entry,.protection-dialog .block-entry { display:block; padding:0; margin-bottom:8px; background:var(--fon2); border:1px solid var(--kraj); border-radius:11px; }
+.service-entry summary,.protection-dialog .block-entry summary { display:flex; align-items:center; gap:12px; padding:12px 14px; cursor:pointer; list-style:none; }
+.service-entry summary::-webkit-details-marker,.block-entry summary::-webkit-details-marker { display:none; }
+.service-entry summary>div,.block-entry summary>div { display:flex; flex:1; flex-direction:column; gap:3px; min-width:0; }
+.service-entry summary strong,.block-entry summary strong { color:var(--tekst); font-size:13px; }
+.service-entry summary small { color:var(--tiho); font-size:11px; }
+.service-entry summary>b { font-size:18px; font-variant-numeric:tabular-nums; color:var(--akcent); }
+.service-entry summary>svg,.block-entry summary>svg { color:var(--akcent); }
+.service-entry[open] summary,.block-entry[open] summary { border-bottom:1px solid var(--kraj); }
+.service-entry>p,.block-entry>p { margin:12px 14px; font-size:13px; }
+.service-entry>small { display:block; margin:0 14px 12px; color:var(--tiho); font-size:11px; }
+.rule-tags { display:flex; flex-wrap:wrap; gap:6px; margin:12px 14px; }
+.rule-tags code,.block-entry code { padding:3px 6px; border-radius:5px; background:var(--fon3); font-size:11px; }
+.block-entry dl { display:grid; grid-template-columns:100px 1fr; gap:8px 12px; margin:14px; font-size:12px; }
+.block-entry dt { color:var(--tiho); }.block-entry dd { margin:0; overflow-wrap:anywhere; }

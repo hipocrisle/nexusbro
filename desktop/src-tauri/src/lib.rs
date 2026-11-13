@@ -257,8 +257,8 @@ fn zhurnal_rezki(s: State<Sostoyanie>, id: String) -> proxy::ZhurnalRezki {
     let data = s.vkladki.lock().unwrap().get(&id).map(|v| (v.nastrojki.rezat_reklamu, v.nash_proxy.as_ref().map(|p| p.schet.clone())));
     match data {
         Some((on, Some(s))) => s.snimok(on),
-        Some((on, None)) => proxy::ZhurnalRezki { vklyuchena: on, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
-        None => proxy::ZhurnalRezki { vklyuchena: false, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
+        Some((on, None)) => proxy::ZhurnalRezki { pravila_vsego: crate::spisok_reklamy::SPISOK.len(), summy: Vec::new(), vklyuchena: on, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
+        None => proxy::ZhurnalRezki { pravila_vsego: crate::spisok_reklamy::SPISOK.len(), summy: Vec::new(), vklyuchena: false, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
     }
 }
 

@@ -51,7 +51,6 @@ pub const SPISOK: &[&str] = &[
     "bidswitch.net",
     // слежка соцсетей
     "connect.facebook.net",
-    "facebook.com/tr",
     "ads.twitter.com",
     "analytics.tiktok.com",
     "ads.tiktok.com",
