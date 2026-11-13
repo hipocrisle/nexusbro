@@ -16,8 +16,7 @@ pub fn eto_process_cefa() -> bool {
 }
 
 fn znachenie(perfix: &str) -> Option<String> {
-    std::env::args()
-        .find_map(|a| a.strip_prefix(perfix).map(|s| s.to_string()))
+    std::env::args().find_map(|a| a.strip_prefix(perfix).map(|s| s.to_string()))
 }
 
 /// Вход для процессов движка. Вызывается из main ДО Tauri.
@@ -51,7 +50,9 @@ wrap_app! {
             if let Some(ks) = komandnaya_stroka {
                 // ⛔ GPU-процесс падал в цикле на машине user'а (12.11.2026):
                 // программный рендер — медленнее, но стабилен везде.
-                ks.append_switch(Some(&CefString::from("disable-gpu")));
+                if !std::env::args().any(|a| a == "--nb-gpu") {
+                    ks.append_switch(Some(&CefString::from("disable-gpu")));
+                }
                 // Движок не должен стучаться за обновлениями к Google.
                 ks.append_switch(Some(&CefString::from("disable-component-update")));
                 // Движок — тёмный, как вся программа.
@@ -99,7 +100,21 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         });
     let mut nastrojki = Settings::default();
     nastrojki.no_sandbox = 1;
-    nastrojki.external_message_pump = 1;
+    #[cfg(target_os = "linux")]
+    {
+        nastrojki.external_message_pump = 1;
+    }
+    // Windows — CefRunMessageLoop, без external pump и без второй UI-нити.
+    #[cfg(target_os = "windows")]
+    {
+        nastrojki.external_message_pump = 0;
+    }
+    nastrojki.log_file = CefString::from(
+        std::path::Path::new(&profil)
+            .join("cef-engine.log")
+            .to_string_lossy()
+            .as_ref(),
+    );
     nastrojki.resources_dir_path = CefString::from(cef_dir.to_string_lossy().as_ref());
     nastrojki.locales_dir_path =
         CefString::from(cef_dir.join("locales").to_string_lossy().as_ref());
@@ -124,10 +139,27 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         return 1;
     }
 
-    match crate::cef_vkladki::rabotat(roditel, crate::okna::Mesto {x,y,w:w as u32,h:h as u32},
-        std::path::Path::new(&profil), url.as_deref()) {
+    eprintln!(
+        "cef: initialized, версия {}, native_loop={}",
+        env!("CARGO_PKG_VERSION"),
+        cfg!(target_os = "windows")
+    );
+    match crate::cef_vkladki::rabotat(
+        roditel,
+        crate::okna::Mesto {
+            x,
+            y,
+            w: w as u32,
+            h: h as u32,
+        },
+        std::path::Path::new(&profil),
+        url.as_deref(),
+    ) {
         Ok(()) => 0,
-        Err(e) => { eprintln!("cef: {e}"); 1 }
+        Err(e) => {
+            eprintln!("cef: {e}");
+            1
+        }
     }
 }
 
@@ -159,6 +191,9 @@ pub fn zapustit_cep(
         .stdout(stdout)
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
+    if crate::nastrojki::zagruzit().apparatnoe_uskorenie {
+        cmd.arg("--nb-gpu");
+    }
     if let Some(u) = url {
         cmd.arg(format!("--nb-url={u}"));
     }
@@ -213,7 +248,9 @@ pub fn dozhdatsya_okna(
                     if let Some(h) = s.strip_prefix("NB-OKNO ") {
                         let _ = tx.send(h.trim().parse().ok());
                     } else if let Some(json) = s.strip_prefix("NB-VKLADKI ") {
-                        if let Ok(s) = serde_json::from_str(json) { sessiya(s); }
+                        if let Ok(s) = serde_json::from_str(json) {
+                            sessiya(s);
+                        }
                     }
                 }
                 Err(_) => break,
@@ -227,12 +264,21 @@ pub fn dozhdatsya_okna(
     }
 }
 
-pub fn kanal_komand(mut stdin: std::process::ChildStdin) -> std::sync::mpsc::SyncSender<crate::sessiya::Komanda> {
-    let (tx,rx) = std::sync::mpsc::sync_channel::<crate::sessiya::Komanda>(32);
+pub fn kanal_komand(
+    mut stdin: std::process::ChildStdin,
+) -> std::sync::mpsc::SyncSender<crate::sessiya::Komanda> {
+    let (tx, rx) = std::sync::mpsc::sync_channel::<crate::sessiya::Komanda>(32);
     std::thread::spawn(move || {
         for k in rx {
-            let Ok(json) = serde_json::to_string(&k) else { continue };
-            if writeln!(stdin,"{json}").and_then(|_| stdin.flush()).is_err() { break }
+            let Ok(json) = serde_json::to_string(&k) else {
+                continue;
+            };
+            if writeln!(stdin, "{json}")
+                .and_then(|_| stdin.flush())
+                .is_err()
+            {
+                break;
+            }
         }
     });
     tx

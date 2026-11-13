@@ -6,6 +6,7 @@
 
 mod brauzer;
 mod sessiya;
+mod nastrojki;
 mod cef_vkladki;
 pub mod cef_dvizhok;
 mod okna;
@@ -867,13 +868,16 @@ async fn obychnaya_komanda(s: State<'_, Sostoyanie>, id: String, komanda: sessiy
 #[tauri::command]
 async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<String, String> {
     v_zhurnal_granica("diagnostika", "-", "вход");
-    let mut out = String::from("=== NexusBro диагностика ===\n");
+    let mut out = format!("=== NexusBro диагностика {} ({}) ===\n", env!("CARGO_PKG_VERSION"), std::env::consts::OS);
     let nashe = app
         .get_webview_window("main")
         .and_then(|w| nash_descriptor(&w))
         .map(|h| h.to_string())
         .unwrap_or_else(|| "нет".into());
     out.push_str(&format!("наше окно: {nashe}\n"));
+    out.push_str(&format!("активная: {:?}, место: {:?}, скрыты для диалога: {}\n",
+        s.aktivnaya.lock().unwrap().clone(), *s.mesto.lock().unwrap(),
+        s.dvizhki_skryty.load(std::sync::atomic::Ordering::Acquire)));
     out.push_str(&format!("впереди сейчас: {}\n", sistema::kto_v_peredne()));
     {
         let v = s.vkladki.lock().unwrap();
@@ -887,7 +891,7 @@ async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<
             let okno_s = match vk.okno {
                 Some(o) => {
                     let nash = sistema::nash_li(o, nashe.parse().unwrap_or(0));
-                    format!("{o} (наше: {nash})")
+                    format!("{o} (наше: {nash})\n    {}", okna::opisanie_okna(o))
                 }
                 None => "нет".into(),
             };
@@ -926,7 +930,18 @@ async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<
             }
         }
     }
-    out.push_str("\n--- engine.log (хвосты) ---\n");
+    out.push_str("\n--- cef-engine.log (актуальный журнал CEF) ---\n");
+    let ids: Vec<_> = s.vkladki.lock().unwrap().keys().cloned().collect();
+    for id in ids {
+        let log = brauzer::papka_profilej().join(&id).join("cef-engine.log");
+        if let Ok(text) = std::fs::read_to_string(log) {
+            out.push_str(&format!("[{id}]\n"));
+            for line in text.lines().rev().take(15).collect::<Vec<_>>().into_iter().rev() {
+                out.push_str(&format!("  {line}\n"));
+            }
+        }
+    }
+    out.push_str("\n--- engine.log (старый Chromium, может быть от прошлой версии) ---\n");
     {
         let v = s.vkladki.lock().unwrap();
         for (id, _) in v.iter() {
@@ -1094,6 +1109,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit

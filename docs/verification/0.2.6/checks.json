@@ -1,0 +1,16 @@
+{
+  "version": "0.2.6",
+  "frontend_build": "passed",
+  "linux_cargo_build": "passed",
+  "windows_gnu_cargo_check_cef_dox": "passed (types only, no native linking)",
+  "session_tests": {
+    "passed": 2,
+    "failed": 0
+  },
+  "gui_platform": "Linux/X11, Xvfb, physical xdotool input",
+  "ordinary_tabs": "passed",
+  "full_supertabs_stress": "passed",
+  "windows_gui": "not run; user retest required",
+  "ordinary_tabs_max_ui_interval_ms": 23,
+  "supertabs_max_ui_interval_ms": 74
+}

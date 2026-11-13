@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu } from "./Nastrojki";
 import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";
 
@@ -16,6 +17,36 @@ type Vidno = Nastrojki & { zapushchena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
 
 export default function App() {
+  const [nastrojki, setNastrojki] = useState<NastrojkiApp>(poUmolchaniyu);
+  const nastrojkiRef = useRef(nastrojki);
+  const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
+  const [tyanem, setTyanem] = useState(false);
+  const skrytiePriPeretaskivanii = useRef<Promise<unknown>>(Promise.resolve());
+  const ocheredZapisi = useRef<Promise<unknown>>(Promise.resolve());
+  async function sohranitNastrojki(n: NastrojkiApp) {
+    const previous = nastrojkiRef.current;
+    panel(n);
+    const next = ocheredZapisi.current.catch(() => {}).then(() => invoke<NastrojkiApp>("nastrojki_sohranit", { nastrojki: n }));
+    ocheredZapisi.current = next;
+    try {
+      const saved = await next;
+      if (nastrojkiRef.current === n) panel(saved);
+    } catch (e) {
+      if (nastrojkiRef.current === n) panel(previous);
+      throw e;
+    }
+  }
+  function panel(n: NastrojkiApp) {
+    nastrojkiRef.current = n;
+    setNastrojki(n);
+  }
+  useEffect(() => {
+    void invoke<NastrojkiApp>("nastrojki_poluchit").then((n) => {
+      panel(n);
+      if (n.avtoobnovleniya) void proverit_obnovlenie();
+    }).catch((e) => setOshibka(String(e)));
+  }, []);
+  useEffect(() => { document.documentElement.dataset.tema = nastrojki.tema; }, [nastrojki.tema]);
   const [vkladki, setVkladki] = useState<Vidno[]>([]);
   const [aktivnaya, setAktivnaya] = useState<string | null>(null);
   const aktivnayaRef = useRef<string | null>(null);
@@ -62,8 +93,10 @@ export default function App() {
     invoke<Vidno[]>("spisok").then(setVkladki);
     invoke<string | null>("aktivnaya").then(setAktivnaya);
     soobshchitMesto();
-    proverit_obnovlenie();
+
     window.addEventListener("resize", soobshchitMesto);
+    const observer = new ResizeObserver(soobshchitMesto);
+    if (mesto.current) observer.observe(mesto.current);
     // ядро само сообщает, когда список изменился
     const otpiskaOshibki = listen<string>("oshibka-dvizhka", (e) => {
       setOshibka(e.payload);
@@ -82,6 +115,7 @@ export default function App() {
     }, 3000);
     return () => {
       window.removeEventListener("resize", soobshchitMesto);
+      observer.disconnect();
       otpiska.then((f) => f());
       otpiskaOshibki.then((f) => f());
       clearInterval(chasy);
@@ -248,11 +282,12 @@ export default function App() {
   }, [aktivnaya]);
 
   return (
-    <div className="okno" onMouseDownCapture={() => { void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => e.preventDefault()}>
+    <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={() => { void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => e.preventDefault()}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
           горизонтальная полоса съедала высоту широкоформатников. */}
       <div className="reika">
-        <div className="zagolovok">NexusBro</div>
+        <div className="zagolovok"><span>NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
+          onClick={() => { void sohranitNastrojki({ ...nastrojkiRef.current, panel_svernuta: !nastrojkiRef.current.panel_svernuta }).catch((e) => setOshibka(String(e))); }}>{nastrojki.panel_svernuta ? "»" : "«"}</button></div>
         <div className="spisok">
           {vkladki.map((v) => (
             <button
@@ -266,19 +301,26 @@ export default function App() {
                 await invoke("pokazat_dvizhki", { vidno: false });
                 setMenyu(poziciya);
               }}
-              title={v.proxy || "прямое соединение"}
+              title={v.nazvanie + " — " + (v.proxy || "прямое соединение")}
             >
               <span
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
-              <span className="imya">{v.nazvanie}</span>
+              <span className="imya">{v.nazvanie}</span><span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
             </button>
           ))}
         </div>
+        {!nastrojki.panel_svernuta && <div className="razdelitel-paneli" role="separator" aria-label="Ширина левой панели" aria-orientation="vertical" tabIndex={0}
+          aria-valuemin={140} aria-valuemax={400} aria-valuenow={nastrojki.panel_shirina}
+          onKeyDown={(e) => { if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); void sohranitNastrojki({ ...nastrojkiRef.current, panel_shirina: Math.max(140, Math.min(400, nastrojkiRef.current.panel_shirina + (e.key === "ArrowRight" ? 10 : -10))) }).catch((e) => setOshibka(String(e))); } }}
+          onPointerDown={(e) => { if (e.button !== 0) return; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); setTyanem(true); skrytiePriPeretaskivanii.current = invoke("pokazat_dvizhki", { vidno: false }); }}
+          onPointerMove={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) panel({ ...nastrojkiRef.current, panel_shirina: Math.round(Math.max(140, Math.min(400, window.innerWidth * .45, e.clientX))) }); }}
+          onLostPointerCapture={() => { setTyanem(false); void sohranitNastrojki(nastrojkiRef.current).catch((e) => setOshibka(String(e))); void skrytiePriPeretaskivanii.current.catch(() => {}).then(() => invoke("pokazat_dvizhki", { vidno: true })).catch((e) => setOshibka(String(e))); }}
+          onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }} />}
         <div className="niz">
           <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
             +
@@ -329,13 +371,16 @@ export default function App() {
           >
             🛠
           </button>
+          <button className="plyus" title="Настройки NexusBro" onClick={async () => {
+            await invoke("pokazat_dvizhki", { vidno: false }); setNastroykiOtkryty(true);
+          }}>⚙</button>
         </div>
       </div>
 
       <div className="kolonka">
         {/* Тонкая полоса сверху: имя активной супер-вкладки и счётчики.
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
-        <ObychnyeVkladki id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
+        <ObychnyeVkladki novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
           {zarezano > 0 && (
             <span className="schet" title="Зарезано рекламы в этой вкладке">
@@ -389,6 +434,9 @@ export default function App() {
         </div>
       </div>
 
+      {nastroykiOtkryty && <NastrojkiOkno value={nastrojki} onSave={sohranitNastrojki} onClose={() => {
+        setNastroykiOtkryty(false); void invoke("pokazat_dvizhki", { vidno: true });
+      }} />}
       {dialog && (
         <Dialog
           zanyat={zanyat}

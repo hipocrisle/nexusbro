@@ -3,7 +3,7 @@ use crate::sessiya::{Komanda, Sessiya};
 use cef::*;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
-use std::sync::mpsc::{channel, Sender};
+use std::sync::mpsc::{channel, Receiver, Sender};
 
 enum Sobytie {
     Komanda(Komanda),
@@ -30,6 +30,12 @@ wrap_display_handler! {
 wrap_load_handler! {
     struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie> }
     impl LoadHandler {
+        fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode,
+            error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
+            if frame.map(|f| f.is_main() != 0).unwrap_or(false) {
+                eprintln!("cef: вкладка {} load_error {:?}: {}", self.id, error_code, error_text.map(|t| t.to_string()).unwrap_or_default());
+            }
+        }
         fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
             let _ = self.tx.send(Sobytie::Zagruzka(self.id, is_loading != 0, can_go_back != 0, can_go_forward != 0));
         }
@@ -55,9 +61,33 @@ wrap_life_span_handler! {
     }
 }
 
+wrap_focus_handler! {
+    struct FokusStranicy;
+    impl FocusHandler {
+        fn on_set_focus(&self, _browser: Option<&mut Browser>, source: FocusSource) -> i32 {
+            // Загрузка страницы не должна отбирать клавиатуру у адресной строки.
+            // Физический клик по странице (SYSTEM) CEF обрабатывает сам.
+            i32::from(source == FocusSource::NAVIGATION)
+        }
+    }
+}
+
+wrap_request_handler! {
+    struct SboyStranicy { id: u64 }
+    impl RequestHandler {
+        fn on_render_process_terminated(&self, _browser: Option<&mut Browser>, status: TerminationStatus,
+            error_code: i32, error_string: Option<&CefString>) {
+            eprintln!("cef: вкладка {} renderer terminated {:?}, code={}: {}", self.id, status, error_code,
+                error_string.map(|s| s.to_string()).unwrap_or_default());
+        }
+    }
+}
+
 wrap_client! {
     struct KlientVkladki { id: u64, tx: Sender<Sobytie> }
     impl Client {
+        fn focus_handler(&self) -> Option<FocusHandler> { Some(FokusStranicy::new()) }
+        fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id)) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(VidStranicy::new(self.id, self.tx.clone())) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(ZagruzkaStranicy::new(self.id, self.tx.clone())) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(ZhiznStranicy::new(self.id, self.tx.clone())) }
@@ -179,7 +209,11 @@ fn sozdat_brauzer(
     let roditel = sys::HWND(k.okno as usize as *mut sys::HWND__);
     #[cfg(not(target_os = "windows"))]
     let roditel = k.okno as sys::cef_window_handle_t;
-    let info = WindowInfo::default().set_as_child(
+    let info = WindowInfo {
+        runtime_style: RuntimeStyle::ALLOY,
+        ..WindowInfo::default()
+    }
+    .set_as_child(
         roditel,
         &Rect {
             x: 0,
@@ -212,7 +246,7 @@ pub fn rabotat(
     start: Option<&str>,
 ) -> anyhow::Result<()> {
     let k = Konteyner::sozdat(roditel, mesto)?;
-    let mut s = start
+    let s = start
         .map(Sessiya::novaya)
         .unwrap_or_else(|| Sessiya::zagruzit(profil));
     let (tx, rx) = channel();
@@ -232,12 +266,81 @@ pub fn rabotat(
             }
         }
     });
+    eprintln!(
+        "cef: контейнер {}, браузеров {}, активная {}, размер {:?}, runtime Alloy",
+        k.okno,
+        brauzery.len(),
+        s.aktivnaya,
+        k.razmer()
+    );
     println!("NB-OKNO {}", k.okno);
     println!("NB-VKLADKI {}", serde_json::to_string(&s)?);
     std::io::stdout().flush()?;
-    let mut razmer = k.razmer();
-    loop {
-        do_message_loop_work();
+    let razmer = k.razmer();
+    let rabota = Rabota {
+        k,
+        s,
+        tx,
+        rx,
+        brauzery,
+        razmer,
+    };
+    #[cfg(target_os = "windows")]
+    {
+        // Настоящая Win32-петля обслуживает WM_PAINT, ввод и compositor.
+        // Все браузеры и контейнер остаются на исходном CEF UI-потоке.
+        let rabota = std::rc::Rc::new(std::cell::RefCell::new(rabota));
+        if post_delayed_task(ThreadId::UI, Some(&mut Obrabotat::new(rabota)), 8) != 1 {
+            anyhow::bail!("не удалось запланировать обработку команд CEF");
+        }
+        run_message_loop();
+        Ok(())
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let mut rabota = rabota;
+        loop {
+            do_message_loop_work();
+            rabota.shag()?;
+            std::thread::sleep(std::time::Duration::from_millis(8));
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+wrap_task! {
+    struct Obrabotat { rabota: std::rc::Rc<std::cell::RefCell<Rabota>> }
+    impl Task {
+        fn execute(&self) {
+            if let Err(e) = self.rabota.borrow_mut().shag() {
+                eprintln!("cef: обработка команд: {e}");
+                quit_message_loop();
+                return;
+            }
+            let _ = post_delayed_task(ThreadId::UI, Some(&mut Obrabotat::new(self.rabota.clone())), 8);
+        }
+    }
+}
+
+struct Rabota {
+    k: Konteyner,
+    s: Sessiya,
+    tx: Sender<Sobytie>,
+    rx: Receiver<Sobytie>,
+    brauzery: HashMap<u64, Browser>,
+    razmer: Option<(u32, u32)>,
+}
+
+impl Rabota {
+    fn shag(&mut self) -> anyhow::Result<()> {
+        let Self {
+            k,
+            s,
+            tx,
+            rx,
+            brauzery,
+            razmer,
+        } = self;
         let mut izmeneno = false;
         let mut fokus = false;
         for sobytie in rx.try_iter().take(128) {
@@ -248,7 +351,7 @@ pub fn rabotat(
                     match sozdat_brauzer(&k, id, &adres, &tx) {
                         Ok(b) => {
                             brauzery.insert(id, b);
-                            s = novaya;
+                            *s = novaya;
                             fokus = true;
                         }
                         Err(e) => eprintln!("cef: {e}"),
@@ -263,6 +366,17 @@ pub fn rabotat(
                 Sobytie::Komanda(Komanda::Zakryt { id }) => {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         h.close_browser(0);
+                    }
+                }
+                Sobytie::Komanda(Komanda::ZakrytDrugie { id, sprava }) => {
+                    if let Some(poziciya) = s.vkladki.iter().position(|v| v.id == id) {
+                        for (i, v) in s.vkladki.iter().enumerate() {
+                            if v.id != id && !v.zakreplena && (!sprava || i > poziciya) {
+                                if let Some(h) = brauzery.get(&v.id).and_then(|b| b.host()) {
+                                    h.close_browser(0);
+                                }
+                            }
+                        }
                     }
                 }
                 Sobytie::Zakryta(id) => {
@@ -335,18 +449,18 @@ pub fn rabotat(
             pokazat(&s, &brauzery);
         }
         let novyj = k.razmer();
-        if novyj != razmer {
+        if novyj != *razmer {
             if let Some((w, h)) = novyj {
                 for b in brauzery.values() {
                     let _ = sistema::peremestit(handle(b), Mesto { x: 0, y: 0, w, h });
                 }
             }
-            razmer = novyj;
+            *razmer = novyj;
         }
         if izmeneno {
             println!("NB-VKLADKI {}", serde_json::to_string(&s)?);
             std::io::stdout().flush()?;
         }
-        std::thread::sleep(std::time::Duration::from_millis(8));
+        Ok(())
     }
 }

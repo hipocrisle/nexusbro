@@ -180,3 +180,36 @@ body {
 .navigaciya input { flex: 1; min-width: 50px; padding: 3px 9px; line-height: 20px; background: var(--fon); color: var(--tekst); border: 1px solid var(--kraj); border-radius: 6px; font: inherit; outline-color: var(--akcent); }
 .navigaciya button:disabled { opacity: .35; cursor: default; }
 .oshibka-navigacii { color: #ffd9de; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+
+.reika { position: relative; min-width: 0; }
+.zagolovok { display: flex; align-items: center; justify-content: space-between; padding-right: 8px; }
+.svernut-panel { border: 0; background: transparent; color: var(--tekst); cursor: pointer; font-size: 22px; padding: 0 5px; }
+.razdelitel-paneli { position: absolute; z-index: 5; top: 0; right: -3px; bottom: 0; width: 7px; cursor: col-resize; touch-action: none; }
+.razdelitel-paneli:hover, .razdelitel-paneli:focus-visible { background: var(--akcent); opacity: .5; }
+.tyanem-panel { cursor: col-resize; user-select: none; }
+.kratkoe-imya { display: none; }
+.niz { flex-wrap: wrap; }
+.niz .plyus { min-width: 26px; }
+.panel-svernuta .zagolovok { justify-content: center; padding: 8px 2px; }
+.panel-svernuta .zagolovok > span, .panel-svernuta .vkladka .imya, .panel-svernuta .vkladka .krest, .panel-svernuta .vkladka .tochka { display: none; }
+.panel-svernuta .kratkoe-imya { display: block; }
+.panel-svernuta .spisok { padding: 4px; }
+.panel-svernuta .vkladka { justify-content: center; padding: 8px 2px; }
+.panel-svernuta .niz { flex-direction: column; padding: 6px; }
+.panel-svernuta .niz .plyus { flex: 0 0 30px; }
+.menu-obychnyh { width: 252px; min-width: 0; max-height: calc(100vh - 16px); }
+.menu-obychnyh button { display: block; width: 100%; padding: 7px 8px; border: 0; border-radius: 6px; color: var(--tekst); background: transparent; text-align: left; cursor: pointer; font: inherit; }
+.menu-obychnyh button:hover, .menu-obychnyh button:focus-visible { background: var(--fon); color: var(--akcent); }
+.menu-obychnyh button:disabled { opacity: .4; cursor: default; }
+.menu-obychnyh hr { border: 0; border-top: 1px solid var(--kraj); }
+.dialog select { padding: 9px 11px; border-radius: 8px; border: 1px solid var(--kraj); background: var(--fon); color: var(--tekst); font: inherit; }
+.nastrojki-okno { max-height: 90vh; overflow-y: auto; width: min(520px, 94vw); }
+.dialog label.galka { flex-direction: row; }
+.oshibka-nastroek { color: #ed8396; }
+:root[data-tema="svetlaya"] { --fon: #f5f7fa; --fon2: #e9edf3; --kraj: #bac4d2; --tekst: #182334; --tiho: #4f5d70; --akcent: #137a53; color-scheme: light; }
+:root[data-tema="temnaya"] { color-scheme: dark; }
+@media (prefers-color-scheme: light) {
+  :root[data-tema="sistemnaya"] { --fon: #f5f7fa; --fon2: #e9edf3; --kraj: #bac4d2; --tekst: #182334; --tiho: #4f5d70; --akcent: #137a53; color-scheme: light; }
+}
+.vypadajka, .stroka-menyu:hover, .vkladka:hover, .schet { background: var(--fon2); }
+.vkladka:hover, .stroka-menyu:hover { box-shadow: inset 0 0 0 1px var(--kraj); }

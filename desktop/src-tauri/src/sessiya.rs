@@ -32,6 +32,7 @@ pub enum Komanda {
     Novaya { adres: String },
     Vybrat { id: u64 },
     Zakryt { id: u64 },
+    ZakrytDrugie { id: u64, sprava: bool },
     Zakrepit { id: u64, zakreplena: bool },
     Pereyti { id: u64, adres: String },
     Nazad { id: u64 },

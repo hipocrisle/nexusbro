@@ -413,7 +413,14 @@ pub mod sistema {
 
     pub fn pokazat(chuzhoe: u32, vidno: bool) -> Result<()> {
         unsafe {
-            let _ = ShowWindowAsync(hwnd(chuzhoe), if vidno { SW_SHOWNOACTIVATE } else { SW_HIDE });
+            if vidno {
+                // WebView2 — соседний child HWND. Явно поднимаем CEF: NOZORDER
+                // не исправит перекрытие, если WebView окажется выше него.
+                SetWindowPos(hwnd(chuzhoe), HWND_TOP, 0, 0, 0, 0,
+                    SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_ASYNCWINDOWPOS | SWP_SHOWWINDOW)?;
+            } else {
+                let _ = ShowWindowAsync(hwnd(chuzhoe), SW_HIDE);
+            }
         }
         Ok(())
     }
@@ -596,3 +603,36 @@ pub mod sistema {
     pub fn otsoedinit_vvod(_c: u32) {}
     pub fn fokus_dvizhku(_c: u32) {}
 }
+
+/// Только чтение метаданных HWND, без SendMessage к чужому процессу.
+#[cfg(target_os = "windows")]
+pub fn opisanie_okna(okno: u32) -> String {
+    use windows::Win32::{Foundation::{BOOL, HWND, LPARAM, RECT}, UI::WindowsAndMessaging::*};
+    fn opisat(h: HWND) -> String {
+        unsafe {
+            let mut r = RECT::default();
+            let mut c = RECT::default();
+            let mut class = [0u16; 128];
+            let n = GetClassNameW(h, &mut class).max(0) as usize;
+            let _ = GetWindowRect(h, &mut r);
+            let _ = GetClientRect(h, &mut c);
+            format!("HWND={} class={} visible={} rect=({},{},{}x{}) client={}x{} style={:x}",
+                h.0 as usize, String::from_utf16_lossy(&class[..n]), IsWindowVisible(h).as_bool(),
+                r.left, r.top, r.right-r.left, r.bottom-r.top, c.right-c.left, c.bottom-c.top,
+                GetWindowLongPtrW(h, GWL_STYLE))
+        }
+    }
+    unsafe extern "system" fn potomok(h: HWND, param: LPARAM) -> BOOL {
+        let out = &mut *(param.0 as *mut Vec<String>);
+        if out.len() < 20 { out.push(opisat(h)); }
+        BOOL::from(out.len() < 20)
+    }
+    unsafe {
+        let h = HWND(okno as usize as _);
+        let mut out = vec![opisat(h)];
+        let _ = EnumChildWindows(h, Some(potomok), LPARAM(&mut out as *mut Vec<String> as isize));
+        out.join("\n    ")
+    }
+}
+#[cfg(not(target_os = "windows"))]
+pub fn opisanie_okna(_okno: u32) -> String { String::new() }

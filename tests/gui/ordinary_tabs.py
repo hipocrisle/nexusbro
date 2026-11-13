@@ -115,7 +115,9 @@ def native(id,count,width=1280,height=820):
     x=int(re.search(r'Absolute upper-left X:\s*(\d+)',info)[1]);y=int(re.search(r'Absolute upper-left Y:\s*(\d+)',info)[1])
     w=int(re.search(r'Width:\s*(\d+)',info)[1]);h=int(re.search(r'Height:\s*(\d+)',info)[1])
     assert w+x==width and h+y==height,info
-    children=re.findall(r'^\s+(0x[0-9a-f]+) ',info,re.M)
+    tree=re.findall(r'^( +)(0x[0-9a-f]+) ',info,re.M)
+    depth=min(len(indent) for indent,_ in tree)
+    children=[handle for indent,handle in tree if len(indent)==depth]
     assert len(children)==count,info
     visible=0
     for child in children:
@@ -176,6 +178,88 @@ try:
     client.click(f'.obychnaya[data-id="{one}"] .obychnaya-imya')
     wait_sess(a,lambda s:s['aktivnaya']==one)
     results.append({'ordinary_create_navigate_popup_back_forward_pin_close':True,'cef_processes_for_three_browsers':1,'shared_cookie_in_supertab':True,'keyboard_in_cef_and_address_bar':True,'reload_and_unpin':True,'pin_button_keyboard':True,'native_children':3,'one_native_visible':True,'resize_all_browsers':True})
+    # Новая пустая вкладка: реальный ввод БЕЗ Ctrl+A должен заменить about:blank.
+    client.click('.novaya-obychnaya')
+    s=wait_sess(a,lambda s:len(s['vkladki'])==3 and active(s)['adres']=='about:blank')
+    blank=s['aktivnaya']
+    client.wait('(()=>{let e=document.querySelector(".navigaciya input");return document.activeElement===e && e.selectionStart===0 && e.selectionEnd===e.value.length && e.value==="about:blank"})()')
+    subprocess.run(['xdotool','type','--clearmodifiers','--delay','8','--',base+'/one'],env=env,check=True)
+    subprocess.run(['xdotool','key','Return'],env=env,check=True)
+    wait_sess(a,lambda s:active(s)['zagolovok']=='One')
+    def tabmenu(tab,text):
+        client.click(f'.obychnaya[data-id="{tab}"]',3)
+        client.wait('!!document.querySelector(".menu-obychnyh")')
+        client.text_button(text)
+        client.wait('!document.querySelector(".menu-obychnyh")')
+    tabmenu(blank,'Закрыть вкладку')
+    wait_sess(a,lambda s:len(s['vkladki'])==2)
+    tabmenu(one,'Дублировать')
+    s=wait_sess(a,lambda s:len(s['vkladki'])==3 and active(s)['zagolovok']=='One')
+    duplicate=s['aktivnaya']
+    tabmenu(duplicate,'Закрепить')
+    wait_sess(a,lambda s:next(v for v in s['vkladki'] if v['id']==duplicate)['zakreplena'])
+    tabmenu(duplicate,'Открепить')
+    wait_sess(a,lambda s:not next(v for v in s['vkladki'] if v['id']==duplicate)['zakreplena'])
+    tabmenu(duplicate,'Закрыть вкладку')
+    wait_sess(a,lambda s:len(s['vkladki'])==2)
+    tabmenu(one,'Дублировать')
+    wait_sess(a,lambda s:len(s['vkladki'])==3)
+    tabmenu(one,'Закрыть вкладки справа')
+    wait_sess(a,lambda s:len(s['vkladki'])==2 and any(v['id']==two and v['zakreplena'] for v in s['vkladki']))
+    tabmenu(one,'Дублировать')
+    wait_sess(a,lambda s:len(s['vkladki'])==3)
+    tabmenu(one,'Закрыть другие вкладки')
+    wait_sess(a,lambda s:len(s['vkladki'])==2 and any(v['id']==two and v['zakreplena'] for v in s['vkladki']))
+    client.click(f'.obychnaya[data-id="{one}"] .obychnaya-imya')
+    wait_sess(a,lambda s:s['aktivnaya']==one)
+    client.click(f'.obychnaya[data-id="{one}"]',3)
+    client.wait('!!document.querySelector(".menu-obychnyh")')
+    subprocess.run(['xdotool','key','Escape'],env=env,check=True)
+    client.wait('!document.querySelector(".menu-obychnyh")')
+    navigate(a,'/reload','Reload3');tabmenu(one,'Обновить')
+    wait_sess(a,lambda s:active(s)['zagolovok']=='Reload4')
+    navigate(a,'/one','One')
+    # Сворачивание и физическое перетягивание разделителя, включая нативный CEF.
+    client.click('.svernut-panel')
+    client.wait('document.querySelector(".reika").getBoundingClientRect().width===52')
+    wait_native(a,2)
+    client.click('.svernut-panel')
+    client.wait('!!document.querySelector(".razdelitel-paneli")')
+    point=client.js('(()=>{let r=document.querySelector(".razdelitel-paneli").getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()')
+    subprocess.run(['xdotool','mousemove',str(point[0]),str(point[1]),'mousedown','1','mousemove','310',str(point[1]),'sleep','0.2','mouseup','1'],env=env,check=True)
+    client.wait('document.querySelector(".reika").getBoundingClientRect().width===310')
+    wait_native(a,2)
+    # Настройки сохраняются на диске и управляют новой вкладкой.
+    client.click('button[title="Настройки NexusBro"]')
+    client.wait('!!document.querySelector(".nastrojki-okno")')
+    client.click('.nastrojki-okno select')
+    subprocess.run(['xdotool','key','Home','Down','Return'],env=env,check=True)
+    client.fill('.nastrojki-okno input:not([type])','javascript:alert(1)')
+    client.text_button('Сохранить')
+    client.wait('!!document.querySelector(".nastrojki-okno [role=alert]")')
+    assert json.loads((run/'data/NexusBro/nastrojki.json').read_text())['novaya_stranica']=='about:blank'
+    client.fill('.nastrojki-okno input:not([type])',base+'/one')
+    client.click('.nastrojki-okno input[type=checkbox]')
+    client.text_button('Сохранить')
+    client.wait('!document.querySelector(".nastrojki-okno") && document.documentElement.dataset.tema==="svetlaya"')
+    config=run/'data/NexusBro/nastrojki.json'
+    settings=json.loads(config.read_text())
+    assert settings['panel_shirina']==310 and settings['tema']=='svetlaya' and not settings['avtoobnovleniya'],settings
+    client.click('.novaya-obychnaya')
+    s=wait_sess(a,lambda s:len(s['vkladki'])==3 and active(s)['zagolovok']=='One')
+    tabmenu(s['aktivnaya'],'Закрыть вкладку')
+    wait_sess(a,lambda s:len(s['vkladki'])==2)
+    client.click(f'.obychnaya[data-id="{one}"] .obychnaya-imya')
+    wait_sess(a,lambda s:s['aktivnaya']==one)
+    wait_native(a,2)
+    # Изображение страницы, а не только заголовок: проверка пикселя нативного CEF.
+    shot=run/'paint.png'
+    subprocess.run(['ffmpeg','-y','-f','x11grab','-video_size','1280x900','-i',args.display,'-frames:v','1',str(shot)],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,check=True)
+    from PIL import Image
+    point=client.js('(()=>{let r=document.querySelector(".pole").getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()')
+    pixel=Image.open(shot).convert('RGB').getpixel(tuple(point))
+    assert pixel==(24,85,65),pixel
+    results.append({'blank_address_selected_and_replaced_without_ctrl_a':True,'tab_context_duplicate_pin_unpin_reload_close_other_right':True,'bulk_close_preserves_pinned':True,'context_escape_restores_cef':True,'sidebar_collapsed_width':52,'sidebar_drag_width':310,'settings_saved_theme_home_update_checks':True,'new_tab_uses_configured_home':True,'native_page_pixel_rgb':pixel})
     b=supertab('Work B');navigate(b,'/read','Cookie-none')
     assert len(engines())==2
     client.click('.obychnaya .zakryt-obychnuyu')
@@ -214,6 +298,8 @@ try:
     assert s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena']
     assert len(engines())==1,engines()
     wait_native(a,2)
+    client.wait('document.documentElement.dataset.tema==="svetlaya" && document.querySelector(".reika").getBoundingClientRect().width===310')
+    results.append({'settings_and_sidebar_survive_restart':True})
     assert len(sess(b)['vkladki'])==1
     results.append({'app_restart_restores_urls_order_pin_active':True,'only_active_supertab_autostarts':True})
     stop();assert not engines()
