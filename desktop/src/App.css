@@ -112,6 +112,7 @@ body {
   display: flex; align-items: center; justify-content: center; z-index: 10;
 }
 .dialog {
+  max-height: 90vh; overflow-y: auto;
   width: min(440px, 92vw); background: var(--fon2);
   border: 1px solid var(--kraj); border-radius: 12px; padding: 20px;
   display: flex; flex-direction: column; gap: 14px;

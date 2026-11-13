@@ -9,6 +9,7 @@ type Nastrojki = {
   id: string;
   nazvanie: string;
   proxy: string;
+  proxy_uzel?: string;
   adres: string;
   rezat_reklamu: boolean;
   pustaya: boolean;
@@ -122,7 +123,7 @@ export default function App() {
     };
   }, [soobshchitMesto]);
 
-  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean) {
+  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string) {
     setZanyat(true);
     setOshibka("");
     const id = "sv" + Date.now().toString(36);
@@ -132,6 +133,7 @@ export default function App() {
           id,
           nazvanie,
           proxy,
+          proxy_uzel,
           adres: adres || "about:blank",
           rezat_reklamu: rezat,
           pustaya,
@@ -180,13 +182,13 @@ export default function App() {
     setDialog(true);
   }
 
-  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean) {
+  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string) {
     if (!pravka) return;
     setZanyat(true);
     setOshibka("");
     try {
       const o = await invoke<Otvet>("izmenit", {
-        nastrojki: { ...pravka, nazvanie, proxy, adres: adres || "about:blank", rezat_reklamu: rezat, pustaya },
+        nastrojki: { ...pravka, nazvanie, proxy, proxy_uzel, adres: adres || "about:blank", rezat_reklamu: rezat, pustaya },
       });
       if (!o.ok) {
         setOshibka(o.soobshchenie);
@@ -590,10 +592,29 @@ function Dialog(props: {
   zanyat: boolean;
   pravka: Nastrojki | null;
   onOtmena: () => void;
-  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean) => void;
+  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string) => void;
 }) {
   const [nazvanie, setNazvanie] = useState(props.pravka?.nazvanie ?? "");
   const [proxy, setProxy] = useState(props.pravka?.proxy ?? "");
+  const [uzel, setUzel] = useState(props.pravka?.proxy_uzel ?? "");
+  const [uzly, setUzly] = useState<{ imya: string; ssylka: string }[]>([]);
+  const [zagruzka, setZagruzka] = useState(false);
+  const [oshibkaPodpiski, setOshibkaPodpiski] = useState("");
+  const zapros = useRef(0);
+  useEffect(() => () => { zapros.current++; }, []);
+  async function zagruzitUzly() {
+    const nomer = ++zapros.current;
+    setZagruzka(true);
+    setOshibkaPodpiski("");
+    try {
+      const list = await invoke<{ imya: string; ssylka: string }[]>("uzly_podpiski", { url: proxy.trim() });
+      if (nomer === zapros.current) setUzly(list);
+    } catch (e) {
+      if (nomer === zapros.current) setOshibkaPodpiski(String(e));
+    } finally {
+      if (nomer === zapros.current) setZagruzka(false);
+    }
+  }
   const [adres, setAdres] = useState(props.pravka?.adres ?? "");
   const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
   const [pustaya, setPustaya] = useState(props.pravka?.pustaya ?? false);
@@ -614,7 +635,11 @@ function Dialog(props: {
           Выход в сеть
           <input
             value={proxy}
-            onChange={(e) => setProxy(e.target.value)}
+            onChange={(e) => {
+              zapros.current++;
+              setProxy(e.target.value); setUzel(""); setUzly([]);
+              setZagruzka(false); setOshibkaPodpiski("");
+            }}
             placeholder="пусто = напрямую"
           />
           <small>
@@ -624,6 +649,19 @@ function Dialog(props: {
             <code>socks5://имя:пароль@адрес:порт</code>.
           </small>
         </label>
+        {/^https?:\/\/[^/]+\/.+/.test(proxy.trim()) && <>
+          <button type="button" className="zagruzit-uzly" disabled={zagruzka || props.zanyat} onClick={() => void zagruzitUzly()}>
+            {zagruzka ? "Загружаю узлы…" : "Загрузить узлы подписки"}
+          </button>
+          <label>Узел подписки
+            <select className="uzel-podpiski" value={uzel} onChange={(e) => setUzel(e.target.value)} disabled={props.zanyat}>
+              <option value="">Первый узел подписки</option>
+              {uzel && !uzly.some((u) => u.ssylka === uzel) && <option value={uzel}>Сохранённый узел (обнови список для проверки)</option>}
+              {uzly.map((u, i) => <option key={i} value={u.ssylka}>{u.imya}</option>)}
+            </select>
+          </label>
+          {oshibkaPodpiski && <small role="alert">{oshibkaPodpiski}</small>}
+        </>}
         <label>
           Открыть сразу
           <input
@@ -665,7 +703,7 @@ function Dialog(props: {
           <button
             className="glavnaya"
             disabled={props.zanyat || !nazvanie.trim()}
-            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya)}
+            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya, uzel)}
           >
             {props.zanyat
               ? props.pravka

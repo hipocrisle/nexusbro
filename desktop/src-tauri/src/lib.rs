@@ -36,6 +36,9 @@ pub struct Nastrojki {
     /// Пусто = прямое соединение. Иначе вид `socks5://127.0.0.1:1080`.
     #[serde(default)]
     pub proxy: String,
+    /// Выбранная ссылка из подписки. Пусто — первый узел (старые профили).
+    #[serde(default)]
+    pub proxy_uzel: String,
     #[serde(default = "domashnyaya")]
     pub adres: String,
     /// Резать рекламу в этой супер-вкладке.
@@ -389,10 +392,10 @@ async fn podgotovit_dvizhok(
         let papka = brauzer::papka_profilej().join(id);
         let zapis = nastrojki.proxy.trim().to_string();
         let itog = async {
-            // ссылка подписки — скачиваем и берём первый узел
+            // Проверяем выбор по свежему списку; исчезнувший узел не заменяем молча.
             let ssylka = if zapis.starts_with("http") {
                 let uzly = vpn::skachat_podpisku(&zapis).await?;
-                uzly[0].ssylka.clone()
+                vpn::vybrat_uzel(&uzly, &nastrojki.proxy_uzel)?.ssylka.clone()
             } else {
                 zapis.clone()
             };
@@ -1032,6 +1035,7 @@ pub fn run() {
                         id: "proba".into(),
                         nazvanie: "Проба".into(),
                         proxy: String::new(),
+                        proxy_uzel: String::new(),
                         adres: "about:blank".into(),
                         rezat_reklamu: true,
                         pustaya: true,
@@ -1049,6 +1053,7 @@ pub fn run() {
                             id: "proba2".into(),
                             nazvanie: "Проба2".into(),
                             proxy: String::new(),
+                            proxy_uzel: String::new(),
                             adres: "about:blank".into(),
                             rezat_reklamu: true,
                             pustaya: true,
@@ -1109,7 +1114,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit,
+            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit

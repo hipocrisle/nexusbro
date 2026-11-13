@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::process::Child;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct Uzel {
     pub imya: String,
     pub ssylka: String,
@@ -215,6 +215,25 @@ fn vyhod_iz_ssylki(ssylka: &str) -> anyhow::Result<Value> {
     }))
 }
 
+/// Пустой выбор сохраняет поведение старых профилей. Явный выбор — без fallback.
+pub fn vybrat_uzel<'a>(uzly: &'a [Uzel], vybor: &str) -> anyhow::Result<&'a Uzel> {
+    if vybor.is_empty() {
+        uzly.first().ok_or_else(|| anyhow::anyhow!("в подписке нет узлов"))
+    } else {
+        uzly.iter().find(|u| u.ssylka == vybor)
+            .ok_or_else(|| anyhow::anyhow!("выбранный узел исчез из подписки; выбери другой в настройках супер-вкладки"))
+    }
+}
+
+#[tauri::command]
+pub async fn uzly_podpiski(url: String) -> Result<Vec<Uzel>, String> {
+    let url = url.trim();
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("нужна http(s)-ссылка подписки".into());
+    }
+    skachat_podpisku(url).await.map_err(|_| "не удалось загрузить подписку; проверь ссылку и доступность сервера".into())
+}
+
 /// Скачать подписку.
 pub async fn skachat_podpisku(url: &str) -> anyhow::Result<Vec<Uzel>> {
     let otvet = reqwest::Client::builder()
@@ -234,6 +253,15 @@ pub async fn skachat_podpisku(url: &str) -> anyhow::Result<Vec<Uzel>> {
 #[cfg(test)]
 mod proverki {
     use super::*;
+
+    #[test]
+    fn vybor_ne_podmenyaet_ischeznuvshij_uzel() {
+        let uzly = razobrat_podpisku("vless://a@127.0.0.1:1#A\nvless://b@127.0.0.1:2#B");
+        assert_eq!(vybrat_uzel(&uzly, "").unwrap(), &uzly[0]);
+        assert_eq!(vybrat_uzel(&uzly, &uzly[1].ssylka).unwrap(), &uzly[1]);
+        assert!(vybrat_uzel(&uzly[..1], &uzly[1].ssylka).is_err());
+        assert!(vybrat_uzel(&[], "").is_err());
+    }
 
     #[test]
     fn otlichaem_podpisku_ot_veb_proksi() {
