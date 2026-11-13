@@ -1,0 +1,15 @@
+{
+  "vkladki": [
+    {
+      "id": 1,
+      "adres": "data:text/html,%3C%21doctype%20html%3E%3Ctitle%3ERenderFixture%3C/title%3E%3Cstyle%3Ehtml%2Cbody%7Bmargin%3A0%3Bbackground%3A%23185541%3Bwidth%3A100%25%3Bheight%3A100%25%7D%3C/style%3E",
+      "zagolovok": "RenderFixture",
+      "zakreplena": false,
+      "zagruzka": false,
+      "nazad": true,
+      "vpered": false
+    }
+  ],
+  "aktivnaya": 1,
+  "sleduyushchaya": 2
+}

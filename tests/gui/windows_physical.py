@@ -66,6 +66,7 @@ def pixels(stage):
             return
         time.sleep(.1)
     screen.save(run/f'{stage}-failure.png')
+    results.append({'stage': stage, 'rgb': rgb, 'success': False})
     raise AssertionError(f'{stage}: pixels={rgb}, expected (24,85,65)')
 
 try:
@@ -117,12 +118,19 @@ try:
     results.append({'success': True})
 finally:
     ImageGrab.grab().save(run/'final-screen.png')
-    if a.baseline and data.exists():
-        import shutil
-        shutil.copytree(data, run/'data', ignore=shutil.ignore_patterns('kesh','Cache','GPUCache'), dirs_exist_ok=True)
     if app:
         app.terminate()
         try: app.wait(timeout=10)
         except subprocess.TimeoutExpired: app.kill(); app.wait()
+    if a.baseline and data.exists():
+        import shutil
+        # Preserve only diagnostics, never locked Chromium cookie/cache databases.
+        files = [data/'zhurnal.log', *data.glob('profili/*/cef*.log'), *data.glob('profili/*/obychnye.json')]
+        for source in files:
+            if not source.is_file(): continue
+            target = run/'data'/source.relative_to(data)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            try: shutil.copyfile(source, target)
+            except OSError as error: results.append({'diagnostic_copy_error': str(error)})
     (run/'results.json').write_text(json.dumps(results,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     print(json.dumps(results))
