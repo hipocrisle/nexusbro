@@ -16,6 +16,7 @@ p = argparse.ArgumentParser()
 p.add_argument('--exe', required=True)
 p.add_argument('--cef', required=True)
 p.add_argument('--out', required=True)
+p.add_argument('--baseline', action='store_true')
 a = p.parse_args()
 assert os.name == 'nt'
 u = ctypes.windll.user32
@@ -34,6 +35,11 @@ cef = pathlib.Path(a.cef).resolve()
 env = {**os.environ, 'CEF_PATH': str(cef), 'PATH': str(cef)+os.pathsep+os.environ['PATH'],
        'NEXUSBRO_TEST_DATA': str(run/'data'), 'WEBVIEW2_USER_DATA_FOLDER': str(run/'webview2'), 'NEXUSBRO_PROBA': '1'}
 results = []
+data = run/'data'
+if a.baseline:
+    assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Baseline uses an ephemeral Windows runner only'
+    data = pathlib.Path(os.environ['LOCALAPPDATA'])/'NexusBro'
+    assert not data.exists(), 'Baseline requires a fresh Windows account'
 app = None
 container = None
 
@@ -65,7 +71,7 @@ def pixels(stage):
 try:
     app = subprocess.Popen([str(pathlib.Path(a.exe).resolve())], env=env)
     deadline = time.monotonic()+40
-    journal = run/'data/zhurnal.log'
+    journal = data/'zhurnal.log'
     while time.monotonic() < deadline:
         assert app.poll() is None, f'Application exited: {app.returncode}'
         hwnd = u.FindWindowW(None, 'NexusBro')
@@ -89,7 +95,7 @@ try:
     gui.write(fixture, interval=.003)
     gui.press('enter')
     pixels('initial')
-    session = json.loads((run/'data/profili/proba/obychnye.json').read_text(encoding='utf-8'))
+    session = json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
     assert any(t['zagolovok']=='RenderFixture' for t in session['vkladki']), session
     # Open a real shell dialog over the native engine and cancel with keyboard.
     pt = origin(); client = wintypes.RECT()
@@ -111,6 +117,9 @@ try:
     results.append({'success': True})
 finally:
     ImageGrab.grab().save(run/'final-screen.png')
+    if a.baseline and data.exists():
+        import shutil
+        shutil.copytree(data, run/'data', ignore=shutil.ignore_patterns('kesh','Cache','GPUCache'), dirs_exist_ok=True)
     if app:
         app.terminate()
         try: app.wait(timeout=10)

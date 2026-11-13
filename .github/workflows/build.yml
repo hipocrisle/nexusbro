@@ -12,6 +12,11 @@ on:
         description: Run only Windows screen test from an existing build run (empty = build)
         required: false
         default: ""
+      runtime_baseline:
+        description: Existing package predates NEXUSBRO_TEST_DATA (ephemeral runner only)
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   build:
@@ -207,6 +212,7 @@ jobs:
             .dev-check/windows-render/*.json
             .dev-check/windows-render/data/zhurnal.log
             .dev-check/windows-render/data/profili/*/cef*.log
+            .dev-check/windows-render/data/profili/*/obychnye.json
           retention-days: 14
 
       - name: Проверить содержимое установщика Windows
@@ -276,7 +282,9 @@ jobs:
           7z x -y $installer.FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install websocket-client Pillow pyautogui
-          python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render
+          $extra = @()
+          if ("${{ inputs.runtime_baseline }}" -eq "true") { $extra += "--baseline" }
+          python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save screen and diagnostics
         if: always()
@@ -289,6 +297,7 @@ jobs:
             .dev-check/windows-render/*.json
             .dev-check/windows-render/data/zhurnal.log
             .dev-check/windows-render/data/profili/*/cef*.log
+            .dev-check/windows-render/data/profili/*/obychnye.json
           retention-days: 14
 
   # Манифест latest.json для встроенного автообновления: собирается
