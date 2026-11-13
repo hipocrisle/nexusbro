@@ -194,7 +194,7 @@ jobs:
         timeout-minutes: 5
         shell: pwsh
         run: |
-          python -m pip install websocket-client Pillow pyautogui
+          python -m pip install Pillow pyautogui
           $installer = Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe | Select-Object -First 1
           7z x -y $installer.FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -281,7 +281,7 @@ jobs:
           if (-not $installer) { throw "Installer missing" }
           7z x -y $installer.FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install websocket-client Pillow pyautogui
+          python -m pip install Pillow pyautogui
           $extra = @()
           if ("${{ inputs.runtime_baseline }}" -eq "true") { $extra += "--baseline" }
           python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
