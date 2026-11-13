@@ -104,7 +104,10 @@ try:
     until('!!document.querySelector(".pole")')
     hwnd = user32.FindWindowW(None, 'NexusBro')
     assert hwnd
-    assert user32.SetWindowPos(hwnd, None, 100, 80, 1280, 820, 0x0040)
+    screen_width, screen_height = ImageGrab.grab().size
+    width, height = min(1280, screen_width-40), min(820, screen_height-60)
+    assert width >= 900 and height >= 560, 'Windows desktop is too small for the application'
+    assert user32.SetWindowPos(hwnd, None, 20, 20, width, height, 0x0040)
     user32.SetForegroundWindow(hwnd)
     command('nastrojki_sohranit', nastrojki={
         'tema': 'temnaya', 'poisk': 'google', 'novaya_stranica': 'about:blank',
@@ -124,7 +127,7 @@ try:
     js('Array.from(document.querySelectorAll(".diagnostika-okno button")).find(b=>b.textContent.trim()==="Закрыть").click();true')
     until('!document.querySelector(".diagnostika-okno")')
     page_pixel('after-dialog')
-    assert user32.SetWindowPos(hwnd, None, 100, 80, 1100, 700, 0x0040)
+    assert user32.SetWindowPos(hwnd, None, 20, 20, max(900, width-120), max(560, height-100), 0x0040)
     time.sleep(.3)
     page_pixel('after-resize')
     js('document.querySelector(".svernut-panel").click();true')

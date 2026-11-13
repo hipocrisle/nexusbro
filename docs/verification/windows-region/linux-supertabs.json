@@ -1,0 +1,177 @@
+[
+  {
+    "action": "открыть форму",
+    "ui_ms": 92.1
+  },
+  {
+    "action": "создать A",
+    "ui_ms": 548.0
+  },
+  {
+    "native_after_creation": [
+      {
+        "id": "svmwetrjge",
+        "mapped": true,
+        "has_cef_child": true
+      }
+    ]
+  },
+  {
+    "engines_before_close": [
+      {
+        "pid": 1263782,
+        "profile": "svmwetrjge"
+      }
+    ]
+  },
+  {
+    "action": "ответ Отмена",
+    "ui_ms": 89.5
+  },
+  {
+    "action": "ответ фон",
+    "ui_ms": 89.0
+  },
+  {
+    "action": "сохранить и закрыть A",
+    "ui_ms": 152.1
+  },
+  {
+    "engines_after_close": []
+  },
+  {
+    "action": "открыть сохранённую A",
+    "ui_ms": 292.9
+  },
+  {
+    "native_after_restore": [
+      {
+        "id": "svmwetrjge",
+        "mapped": true,
+        "has_cef_child": true
+      }
+    ]
+  },
+  {
+    "action": "правка работающей A",
+    "ui_ms": 355.1
+  },
+  {
+    "native_after_edit": [
+      {
+        "id": "svmwetrjge",
+        "mapped": true,
+        "has_cef_child": true
+      }
+    ]
+  },
+  {
+    "action": "создать B",
+    "ui_ms": 344.3
+  },
+  {
+    "action": "переключить на A",
+    "ui_ms": 89.4
+  },
+  {
+    "action": "переключить на B",
+    "ui_ms": 102.8
+  },
+  {
+    "native_after_switch": [
+      {
+        "id": "svmwetrjge",
+        "mapped": false,
+        "has_cef_child": true
+      },
+      {
+        "id": "svmwetrmz1",
+        "mapped": true,
+        "has_cef_child": true
+      }
+    ]
+  },
+  {
+    "action": "удалить B без сохранения",
+    "ui_ms": 156.0
+  },
+  {
+    "action": "закрыть A, цикл 1",
+    "ui_ms": 92.1
+  },
+  {
+    "action": "открыть A, цикл 1",
+    "ui_ms": 296.2
+  },
+  {
+    "action": "закрыть A, цикл 2",
+    "ui_ms": 89.4
+  },
+  {
+    "action": "открыть A, цикл 2",
+    "ui_ms": 293.9
+  },
+  {
+    "action": "закрыть A, цикл 3",
+    "ui_ms": 91.9
+  },
+  {
+    "action": "открыть A, цикл 3",
+    "ui_ms": 288.0
+  },
+  {
+    "close_stopped_startup": 1,
+    "ms": 90.4,
+    "pid_reaped": true
+  },
+  {
+    "close_stopped_startup": 2,
+    "ms": 96.0,
+    "pid_reaped": true
+  },
+  {
+    "close_stopped_startup": 3,
+    "ms": 86.4,
+    "pid_reaped": true
+  },
+  {
+    "close_stopped_startup": 4,
+    "ms": 96.2,
+    "pid_reaped": true
+  },
+  {
+    "close_stopped_startup": 5,
+    "ms": 97.0,
+    "pid_reaped": true
+  },
+  {
+    "edit_during_stopped_startup": true,
+    "old_pid_reaped": true
+  },
+  {
+    "duplicate_switches": 20,
+    "single_engine": true,
+    "late_start_did_not_steal_focus": true,
+    "delete_missing_profile_ms": 91.4
+  },
+  {
+    "no_ghost_tabs_after_cancel": true
+  },
+  {
+    "native_final": [
+      {
+        "id": "svmwetrjge",
+        "mapped": true,
+        "has_cef_child": true
+      }
+    ]
+  },
+  {
+    "max_timer_interval_ms": 506,
+    "engine_count_final": 1,
+    "overlay_final": false
+  },
+  {
+    "success": true
+  }
+]

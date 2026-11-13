@@ -1,0 +1,49 @@
+[
+  {
+    "ordinary_create_navigate_popup_back_forward_pin_close": true,
+    "cef_processes_for_three_browsers": 1,
+    "shared_cookie_in_supertab": true,
+    "keyboard_in_cef_and_address_bar": true,
+    "reload_and_unpin": true,
+    "pin_button_keyboard": true,
+    "native_children": 3,
+    "one_native_visible": true,
+    "resize_all_browsers": true
+  },
+  {
+    "blank_address_selected_and_replaced_without_ctrl_a": true,
+    "tab_context_duplicate_pin_unpin_reload_close_other_right": true,
+    "bulk_close_preserves_pinned": true,
+    "context_escape_restores_cef": true,
+    "sidebar_collapsed_width": 52,
+    "sidebar_drag_width": 310,
+    "settings_saved_theme_home_update_checks": true,
+    "new_tab_uses_configured_home": true,
+    "native_page_pixel_rgb": [
+      24,
+      85,
+      65
+    ]
+  },
+  {
+    "supertab_profile_isolation": true,
+    "last_closed_tab_becomes_blank": true,
+    "restore_saved_supertab_with_two_tabs": true
+  },
+  {
+    "commands_while_cef_stopped": 25,
+    "max_ui_interval_ms": 21.000000000003638,
+    "no_extra_engine": true
+  },
+  {
+    "settings_and_sidebar_survive_restart": true
+  },
+  {
+    "app_restart_restores_urls_order_pin_active": true,
+    "only_active_supertab_autostarts": true
+  },
+  {
+    "success": true,
+    "live_engines_after_exit": 0
+  }
+]

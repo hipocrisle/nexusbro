@@ -33,3 +33,12 @@ Workflow сборки выполняет сценарий на Windows и сох
 
 Локально: npm build, Linux cargo build и Windows GNU check с cef/dox прошли.
 Windows-результат и проверку пользовательской машины учитывать отдельно.
+
+Обновление выреза также привязано к `zadat_mesto`: CSS-resize панели может
+не менять размер HWND. Команда выполняется асинхронно с сериализацией оконных
+операций; при смерти движка область оболочки восстанавливается сторожем.
+Windows-тест проверяет цвет у левого/правого краёв и в центре страницы.
+
+Повторный Linux GUI и полный stress прошли: reopen 288–296 мс, edit 355 мс,
+close 89–156 мс, max UI в stress 506 мс. Сохранены JSON в
+[verification/windows-region](verification/windows-region/).
