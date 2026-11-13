@@ -217,15 +217,12 @@ fn so_oshibkoj_dvizhka(id: &str, zagolovok: String) -> Otvet {
 /// Куда встраивать движок: место сообщает лицевая часть при каждом
 /// изменении размера, чтобы окно браузера точно легло под полосу вкладок.
 #[tauri::command]
-fn zadat_mesto(s: State<Sostoyanie>, x: i32, y: i32, w: u32, h: u32) -> Otvet {
-    let m = Mesto { x, y, w, h };
-    *s.mesto.lock().unwrap() = Some(m);
-    let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-    let okno = aktivnaya.and_then(|id| s.vkladki.lock().unwrap().get(&id).and_then(|v| v.okno));
-    if let Some(o) = okno {
-        let _ = sistema::peremestit(o, m);
-    }
-    da()
+async fn zadat_mesto(s: State<'_, Sostoyanie>, x: i32, y: i32, w: u32, h: u32) -> Result<Otvet, String> {
+    let _okna = s.izmenenie_okon.lock().unwrap();
+    *s.mesto.lock().unwrap() = Some(Mesto { x, y, w, h });
+    // Область WebView2 должна следовать и за CSS-resize панели, не только HWND resize.
+    primenit_vidimost(&s);
+    Ok(da())
 }
 
 #[tauri::command]
@@ -1138,6 +1135,10 @@ pub fn run() {
                     };
                     for (id, proc, proxy, tunnel) in mertvye {
                         ostanovit_resursy(proc, proxy, tunnel);
+                        {
+                            let _okna = s.izmenenie_okon.lock().unwrap();
+                            primenit_vidimost(&s);
+                        }
                         zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
                         let _ = h.emit("vkladki-izmenilis", "");
                     }

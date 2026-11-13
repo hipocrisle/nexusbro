@@ -69,13 +69,16 @@ def until(expression, timeout=20):
 def page_pixel(stage):
     deadline = time.monotonic()+20
     while time.monotonic() < deadline:
-        x, y = js('(()=>{let r=document.querySelector(".pole").getBoundingClientRect();return [(r.x+r.width/2)*devicePixelRatio,(r.y+r.height/2)*devicePixelRatio]})()')
-        point = wintypes.POINT(round(x), round(y))
-        assert user32.ClientToScreen(hwnd, ctypes.byref(point))
+        points = js('(()=>{let r=document.querySelector(".pole").getBoundingClientRect();return [20,r.width/2,r.width-20].map(x=>[(r.x+x)*devicePixelRatio,(r.y+r.height/2)*devicePixelRatio])})()')
+        screen_points = []
+        for x, y in points:
+            point = wintypes.POINT(round(x), round(y))
+            assert user32.ClientToScreen(hwnd, ctypes.byref(point))
+            screen_points.append((point.x, point.y))
         # The test moves its only window onto the primary display.
         screen = ImageGrab.grab()
-        rgb = screen.getpixel((point.x, point.y))[:3]
-        if rgb == (24, 85, 65):
+        rgb = [screen.getpixel(p)[:3] for p in screen_points]
+        if all(color == (24, 85, 65) for color in rgb):
             screen.save(run/f'{stage}.png')
             results.append({'stage': stage, 'screen_rgb': rgb})
             return
