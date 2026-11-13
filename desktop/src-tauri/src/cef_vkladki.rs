@@ -11,6 +11,8 @@ enum Sobytie {
     Adres(u64, String),
     Zagruzka(u64, bool, bool, bool),
     Zakryta(u64),
+    #[cfg(target_os = "windows")]
+    ZakrytOkno(u64),
 }
 
 wrap_display_handler! {
@@ -54,6 +56,18 @@ wrap_life_span_handler! {
                 let _ = self.tx.send(Sobytie::Komanda(Komanda::Novaya { adres: u.to_string() }));
             }
             1
+        }
+        fn do_close(&self, _browser: Option<&mut Browser>) -> i32 {
+            #[cfg(target_os = "windows")]
+            {
+                // CEF по умолчанию посылает WM_CLOSE верхнему родителю — Tauri!
+                // Разрушаем только собственный HWND вкладки на CEF UI-потоке,
+                // после возврата из callback, чтобы не войти в teardown рекурсивно.
+                let _ = self.tx.send(Sobytie::ZakrytOkno(self.id));
+                return 1;
+            }
+            #[cfg(not(target_os = "windows"))]
+            { 0 }
         }
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
             let _ = self.tx.send(Sobytie::Zakryta(self.id));
@@ -376,6 +390,21 @@ impl Rabota {
                                     h.close_browser(0);
                                 }
                             }
+                        }
+                    }
+                }
+                #[cfg(target_os = "windows")]
+                Sobytie::ZakrytOkno(id) => {
+                    if let Some(b) = brauzery.get(&id) {
+                        use windows::Win32::{Foundation::HWND, System::Threading::{GetCurrentProcessId, GetCurrentThreadId}, UI::WindowsAndMessaging::*};
+                        unsafe {
+                            let h = HWND(handle(b) as usize as _);
+                            let mut pid = 0;
+                            let thread = GetWindowThreadProcessId(h, Some(&mut pid));
+                            if pid == GetCurrentProcessId() && thread == GetCurrentThreadId()
+                                && GetParent(h).ok().map(|p| p.0 as usize as u32) == Some(k.okno) {
+                                if let Err(e) = DestroyWindow(h) { eprintln!("cef: закрытие окна вкладки {id}: {e}"); }
+                            } else { eprintln!("cef: отказ закрытия чужого окна вкладки {id}"); }
                         }
                     }
                 }
