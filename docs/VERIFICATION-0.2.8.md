@@ -93,3 +93,13 @@ WebView2 в Tauri; это сделано `dragDropEnabled: false`:
 [Яндекс Метрика](https://yandex.ru/support/metrica/ru/general/counter-general),
 [Sentry Error Monitoring](https://sentry.io/product/error-monitoring/).
 Ограничения доменного блокировщика описаны в [заметках выпуска](RELEASE-0.2.8.md).
+
+## Публикация
+
+Релиз [v0.2.8](https://github.com/hipocrisle/nexusbro/releases/tag/v0.2.8)
+опубликован. Релизный [CI 43447180776](https://github.com/hipocrisle/nexusbro/actions/runs/43447180776)
+завершён success, экранная проверка Windows повторно пройдена на установщике
+релизной сборки. Публичный endpoint автообновления возвращает 0.2.8.
+Все три скачанных пакета проверены публичным ключом updater: Ed25519-подписи
+содержимого и trusted comment корректны, подписи в latest.json совпадают с .sig.
+[Хеши и результаты проверки](verification/0.2.8/release-signatures.json).
