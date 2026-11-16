@@ -6,9 +6,9 @@ use cef::*;
 use std::sync::mpsc::Sender;
 
 #[cfg(target_os = "windows")]
-type NativeKeyEvent = cef::sys::MSG;
+pub(crate) type NativeKeyEvent = cef::sys::MSG;
 #[cfg(not(target_os = "windows"))]
-type NativeKeyEvent = cef::sys::XEvent;
+pub(crate) type NativeKeyEvent = cef::sys::XEvent;
 
 wrap_keyboard_handler! {
     struct Klaviatura { id: u64, tx: Sender<Sobytie> }
@@ -19,12 +19,22 @@ wrap_keyboard_handler! {
             if e.type_ != KeyEventType::RAWKEYDOWN && e.type_ != KeyEventType::KEYDOWN { return 0 }
             let ctrl = e.modifiers & (1 << 2) != 0;
             let shift = e.modifiers & (1 << 1) != 0;
+            if ctrl && matches!(e.windows_key_code,72|74|66) {
+                let razdel=match e.windows_key_code{72=>"istoriya",74=>"zagruzki",_=>"zakladki"};
+                let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"panel","razdel":razdel,"id":self.id})));return 1;
+            }
+            if e.windows_key_code==68&&ctrl{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"zakladka","id":self.id})));return 1;}
+            if e.windows_key_code == 70 && ctrl {
+                let _ = self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"poisk","id":self.id,"open":true})));
+                return 1;
+            }
             let cmd = match e.windows_key_code {
                 116 => Some(if ctrl { Komanda::ObnovitBezKesha { id: self.id } } else { Komanda::Obnovit { id: self.id } }),
                 123 => Some(Komanda::Instrumenty { id: self.id }),
                 73 if ctrl && shift => Some(Komanda::Instrumenty { id: self.id }),
                 85 if ctrl => Some(Komanda::Iskhodnik { id: self.id }),
                 87 if ctrl => Some(Komanda::Zakryt { id: self.id }),
+                84 if ctrl && shift => Some(Komanda::VosstanovitZakrytuyu),
                 84 if ctrl => Some(Komanda::Novaya { adres: crate::nastrojki::zagruzit().novaya_stranica }),
                 82 if ctrl => Some(Komanda::Obnovit { id: self.id }),
                 9 if ctrl => Some(Komanda::Sleduyushchaya { nazad: shift }),
@@ -40,8 +50,7 @@ pub fn klaviatura(id: u64, tx: Sender<Sobytie>) -> KeyboardHandler {
     Klaviatura::new(id, tx)
 }
 
-wrap_client! { struct InstrumentyClient; impl Client {} }
-pub fn instrumenty(b: &Browser, inspect: Option<Point>, toggle: bool) {
+pub fn instrumenty(b: &Browser, inspect: Option<Point>, toggle: bool, id:u64, tx:Sender<Sobytie>) {
     let Some(h) = b.host() else { return };
     if toggle && h.has_dev_tools() != 0 {
         h.close_dev_tools();
@@ -63,7 +72,7 @@ pub fn instrumenty(b: &Browser, inspect: Option<Point>, toggle: bool) {
     let info = info.set_as_popup(Default::default(), "NexusBro — инструменты разработчика");
     h.show_dev_tools(
         Some(&info),
-        Some(&mut InstrumentyClient::new()),
+        Some(&mut crate::devtools::klient(id,tx)),
         Some(&BrowserSettings::default()),
         inspect.as_ref(),
     );
@@ -76,7 +85,7 @@ const INSPECT: i32 = 26504;
 const NEW_TAB: i32 = 26505;
 const PEREVOD: i32 = 26506;
 wrap_context_menu_handler! {
-    struct MenyuStranicy { id: u64, tx: Sender<Sobytie> }
+    struct MenyuStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl ContextMenuHandler {
         fn on_before_context_menu(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             params: Option<&mut ContextMenuParams>, model: Option<&mut MenuModel>) {
@@ -99,24 +108,19 @@ wrap_context_menu_handler! {
             if m.index_of(MenuId::VIEW_SOURCE.get_raw() as i32) < 0 {
                 m.add_item(MenuId::VIEW_SOURCE.get_raw() as i32, Some(&CefString::from("Исходный код страницы    Ctrl+U")));
             }
-            // Перевод страницы: у CEF в нашей сборке нет встроенного
-            // переводчика, поэтому открываем страницу через переводчик
-            // Google в новой вкладке (17.11.2026, просьба user'а).
             let stranica = CefString::from(&p.page_url()).to_string();
-            let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
-            if crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).is_ok() {
+            if reqwest::Url::parse(&stranica).ok().is_some_and(|u|matches!(u.scheme(),"http"|"https")) {
                 m.add_separator();
-                m.add_item(PEREVOD, Some(&CefString::from("Перевести страницу…")));
+                m.add_item(PEREVOD, Some(&CefString::from("Перевести страницу на русский")));
+                m.add_item(PEREVOD+1, Some(&CefString::from("Показать оригинал страницы")));
             }
             m.add_item(INSPECT, Some(&CefString::from("Исследовать элемент    F12")));
         }
         fn on_context_menu_command(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>,
             params: Option<&mut ContextMenuParams>, command_id: i32, _event_flags: EventFlags) -> i32 {
-            let stranica = params.as_ref().map(|p| CefString::from(&p.page_url()).to_string()).unwrap_or_default();
-            let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
             let cmd = match command_id {
-                n if (n == PEREVOD || n == PEREVOD + 1) && !stranica.is_empty() =>
-                    crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).ok().map(|adres| Komanda::Novaya { adres }),
+                PEREVOD => Some(Komanda::Perevesti{id:self.id}),
+                n if n==PEREVOD+1 => Some(Komanda::PerevodOriginal{id:self.id}),
                 OPEN_LINK => params.as_ref().map(|p| Komanda::Novaya { adres: CefString::from(&p.link_url()).to_string() }),
                 OPEN_IMAGE => params.as_ref().map(|p| Komanda::Novaya { adres: CefString::from(&p.source_url()).to_string() }),
                 DUPLICATE => frame.as_ref().map(|f| Komanda::Novaya { adres: CefString::from(&f.url()).to_string() }),
@@ -125,13 +129,13 @@ wrap_context_menu_handler! {
                 n if n == MenuId::VIEW_SOURCE.get_raw() as i32 => Some(Komanda::Iskhodnik { id: self.id }),
                 _ => None,
             };
-            if let Some(c) = cmd { let _ = self.tx.send(Sobytie::Komanda(c)); return 1 }
+            if let Some(c) = cmd { let c=match c{Komanda::Novaya{adres} if self.privatnaya=>Komanda::NovayaPrivatnaya{adres},c=>c};let _ = self.tx.send(Sobytie::Komanda(c)); return 1 }
             0
         }
     }
 }
-pub fn menyu(id: u64, tx: Sender<Sobytie>) -> ContextMenuHandler {
-    MenyuStranicy::new(id, tx)
+pub fn menyu(id: u64, tx: Sender<Sobytie>, privatnaya:bool) -> ContextMenuHandler {
+    MenyuStranicy::new(id, tx, privatnaya)
 }
 
 wrap_download_image_callback! {

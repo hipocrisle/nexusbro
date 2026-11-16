@@ -81,6 +81,10 @@ pub fn papka_profilej() -> PathBuf {
     baza.join("NexusBro").join("profili")
 }
 
+pub fn papka_profilya(id:&str)->PathBuf {
+    if crate::privatnost::eto_id(id){crate::privatnost::papka(id)}else{papka_profilej().join(id)}
+}
+
 enum Zakaz {
     Cef {
         komanda: Command,
@@ -221,7 +225,7 @@ pub fn ostanovit_dvizhka(ditya: &mut Child, #[cfg_attr(not(target_os = "windows"
 /// по настройке «открыть сразу»; у жилой по умолчанию восстанавливаем
 /// вкладки прошлой сессии.
 pub fn profil_svety(id: &str) -> bool {
-    let profil = papka_profilej().join(id);
+    let profil = papka_profilya(id);
     let def = profil.join("Default");
     let has_cookies = def.join("Cookies").exists()
         || profil.join("Cookies").exists()
@@ -234,7 +238,7 @@ pub fn profil_svety(id: &str) -> bool {
 fn zapustit_zdes(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavlivat: bool) -> anyhow::Result<Child> {
     let dvizhok = najti_dvizhok()
         .ok_or_else(|| anyhow::anyhow!("движок не найден: положи chromium рядом с программой"))?;
-    let profil = papka_profilej().join(id);
+    let profil = papka_profilya(id);
     let zhurnal = profil.join("engine.log");
     std::fs::create_dir_all(&profil)?;
     // ⛔ Блокировки профиля: после жёсткого убийства остаются, и движок
@@ -466,7 +470,7 @@ pub fn ubit_chuzhie_dvizhki(krome: &[u32]) {
 
 /// Очистить старые блокировки профиля (SingletonLock, SingletonSocket, SingletonCookie, lockfile).
 pub fn ochistit_blokirovki(id: &str) {
-    let profil = papka_profilej().join(id);
+    let profil = papka_profilya(id);
     for imya in ["SingletonLock", "SingletonSocket", "SingletonCookie", "lockfile"] {
         let _ = std::fs::remove_file(profil.join(imya));
     }

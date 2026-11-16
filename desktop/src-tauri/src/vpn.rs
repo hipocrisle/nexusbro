@@ -73,7 +73,7 @@ pub fn razobrat_podpisku(telo: &str) -> Vec<Uzel> {
         .collect()
 }
 
-fn imya_iz_ssylki(s: &str) -> String {
+pub(crate) fn imya_iz_ssylki(s: &str) -> String {
     match s.split_once('#') {
         Some((_, hvost)) => raskodirovat(hvost),
         None => "узел".to_string(),

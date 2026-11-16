@@ -9,6 +9,7 @@ pub fn obnovit_sohranennye(f: impl FnOnce(&mut Vec<Nastrojki>)) -> Result<(), St
 pub async fn sohranit_vkladku(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
     let n = s.vkladki.lock().map_err(|e| e.to_string())?.get(&id).map(|v| v.nastrojki.clone())
         .ok_or_else(|| "Такой супер-вкладки нет".to_string())?;
+    if n.privatnaya{return Ok(net("Приватная супер-вкладка не сохраняется"));}
     tauri::async_runtime::spawn_blocking(move || obnovit_sohranennye(|v| { v.retain(|v| v.id != n.id); v.push(n); }))
         .await.map_err(|e| e.to_string())??;
     let _ = app.emit("vkladki-izmenilis", &id);

@@ -1,3 +1,5 @@
+import {editableTarget} from "./addressSelection";
+import Biblioteka from "./Biblioteka";
 import Vybor from "./Vybor";
 import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -18,6 +20,7 @@ type Nastrojki = {
   adres: string;
   rezat_reklamu: boolean;
   pustaya: boolean;
+  privatnaya?: boolean;
 };
 type Vidno = Nastrojki & { zapushchena: boolean; sohranena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
@@ -157,10 +160,10 @@ export default function App() {
     };
   }, [soobshchitMesto]);
 
-  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string) {
+  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string, privatnaya=false) {
     setZanyat(true);
     setOshibka("");
-    const id = "sv" + Date.now().toString(36);
+    const id = (privatnaya?"pvt-":"sv") + Date.now().toString(36);
     try {
       const o = await invoke<Otvet>("otkryt", {
         nastrojki: {
@@ -171,6 +174,7 @@ export default function App() {
           adres: adres || "about:blank",
           rezat_reklamu: rezat,
           pustaya,
+          privatnaya,
         },
       });
       if (!o.ok) {
@@ -334,7 +338,7 @@ export default function App() {
     finally { await invoke("pokazat_dvizhki", { vidno: true }); }
   }
   return (
-    <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={() => { void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => e.preventDefault()}>
+    <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
           горизонтальная полоса съедала высоту широкоформатников. */}
       <div className="reika">
@@ -364,7 +368,7 @@ export default function App() {
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
-              <span className="imya">{v.nazvanie}</span>{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
+              <span className="imya">{v.privatnaya?"◐ ":""}{v.nazvanie}</span>{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
@@ -432,6 +436,7 @@ export default function App() {
             await invoke("pokazat_dvizhki", { vidno: false }); setNastroykiOtkryty(true);
           }}><Icon name="settings" /></button>
         </div>
+        <Biblioteka superId={aktivnaya}/>
         <div className="versiya-app" title={"NexusBro " + (versiya || "…")}>v{versiya || "…"}</div>
       </div>
 
@@ -655,7 +660,7 @@ function Dialog(props: {
   vyhody: Vyhod[];
   oshibka: string;
   onOtmena: () => void;
-  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string) => void;
+  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string, privatnaya:boolean) => void;
 }) {
   const [nazvanie, setNazvanie] = useState(props.pravka?.nazvanie ?? "");
   const [proxy, setProxy] = useState(props.pravka?.proxy ?? "");
@@ -685,6 +690,7 @@ function Dialog(props: {
   }, [proxy]);
   const [adres, setAdres] = useState(props.pravka?.adres ?? "");
   const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
+  const [privatnaya,setPrivatnaya]=useState(props.pravka?.privatnaya??false);
   const [pustaya, setPustaya] = useState(props.pravka?.pustaya ?? false);
   return (
     <div className="zatemnenie" onClick={props.zanyat ? undefined : props.onOtmena}>
@@ -770,12 +776,13 @@ function Dialog(props: {
             </small>
           </span>
         </label>
+        <label className="galka"><input type="checkbox" disabled={!!props.pravka||props.zanyat} checked={privatnaya} onChange={e=>setPrivatnaya(e.target.checked)}/><span>Приватная супер-вкладка<small>Cookies и вкладки не сохраняются после закрытия. Скачанные файлы остаются.</small></span></label>
         <div className="knopki">
           <button disabled={props.zanyat} onClick={props.onOtmena}>Отмена</button>
           <button
             className="glavnaya"
             disabled={props.zanyat || !nazvanie.trim()}
-            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya, uzel)}
+            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya, uzel, privatnaya)}
           >
             {props.zanyat
               ? props.pravka

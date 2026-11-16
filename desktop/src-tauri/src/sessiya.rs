@@ -21,6 +21,8 @@ pub struct Obychnaya {
     pub ikonka: Option<String>,
     #[serde(default)]
     pub vpered: bool,
+    #[serde(default)]
+    pub privatnaya: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -28,12 +30,18 @@ pub struct Sessiya {
     pub vkladki: Vec<Obychnaya>,
     pub aktivnaya: u64,
     pub sleduyushchaya: u64,
+    #[serde(default)]
+    pub zakrytye: Vec<Obychnaya>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "deystvie", rename_all = "snake_case")]
 pub enum Komanda {
     Novaya { adres: String },
+    NovayaPrivatnaya { adres:String },
+    VosstanovitZakrytuyu,
+    ZagruzkaUpravlenie{id:u32,action:String},
+    Skachat{adres:String,privatnaya:bool},
     Vybrat { id: u64 },
     Zakryt { id: u64 },
     ZakrytDrugie { id: u64, sprava: bool },
@@ -45,6 +53,12 @@ pub enum Komanda {
     /// F5 / Ctrl+F5 — перезагрузка без кеша.
     ObnovitBezKesha { id: u64 },
     Instrumenty { id: u64 },
+    InstrumentyRazmer { procent: u32 },
+    Nayti { id: u64, text: String, vpered: bool, dalshe: bool },
+    PoiskZakryt { id: u64 },
+    Perevesti { id:u64 },
+    PerevodOriginal { id:u64 },
+    PerevodOtvet { id:u64, token:String, items:Vec<(u32,String)>, done:u32, total:u32, error:Option<String> },
     Issledovat { id: u64, x: i32, y: i32 },
     Iskhodnik { id: u64 },
     Peremestit { id: u64, pered: Option<u64> },
@@ -58,6 +72,7 @@ impl Sessiya {
             vkladki: Vec::new(),
             aktivnaya: 0,
             sleduyushchaya: 1,
+            zakrytye: Vec::new(),
         };
         s.dobavit(adres);
         s
@@ -76,6 +91,7 @@ impl Sessiya {
             nazad: false,
             ikonka: None,
             vpered: false,
+            privatnaya: false,
         });
         self.aktivnaya = id;
         id
@@ -128,10 +144,13 @@ impl Sessiya {
     }
 
     pub fn sohranit(&self, profil: &Path) -> anyhow::Result<()> {
+        if profil.file_name().and_then(|s|s.to_str()).is_some_and(crate::privatnost::eto_id){return Ok(());}
+        let mut public=self.clone();public.vkladki.retain(|v|!v.privatnaya);public.zakrytye.retain(|v|!v.privatnaya);
+        if !public.vkladki.iter().any(|v|v.id==public.aktivnaya){public.aktivnaya=public.vkladki.first().map(|v|v.id).unwrap_or(0);}
         std::fs::create_dir_all(profil)?;
         let put = profil.join("obychnye.json");
         let vremennyj = profil.join("obychnye.tmp");
-        std::fs::write(&vremennyj, serde_json::to_vec_pretty(self)?)?;
+        std::fs::write(&vremennyj, serde_json::to_vec_pretty(&public)?)?;
         std::fs::rename(vremennyj, put)?;
         Ok(())
     }

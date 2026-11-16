@@ -17,6 +17,13 @@ mod vpn;
 mod win32_oblast;
 mod spisok_reklamy;
 mod borba_s_reklamoy;
+mod poisk;
+mod devtools;
+mod perevod;
+mod privatnost;
+mod biblioteka;
+mod zagruzki;
+mod set_status;
 mod supervkladki;
 
 use okna::{sistema, Mesto};
@@ -55,6 +62,8 @@ pub struct Nastrojki {
     /// Открывать пустой: не восстанавливать вкладки прошлой сессии.
     #[serde(default)]
     pub pustaya: bool,
+    #[serde(default)]
+    pub privatnaya: bool,
 }
 
 fn da_po_umolchaniyu() -> bool {
@@ -100,7 +109,7 @@ fn sohranit_spisok(v: &[Nastrojki]) {
     if let Some(d) = f.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    if let Ok(s) = serde_json::to_string_pretty(v) {
+    if let Ok(s) = serde_json::to_string_pretty(&v.iter().filter(|n|!n.privatnaya).collect::<Vec<_>>()) {
         let _ = std::fs::write(f, s);
     }
 }
@@ -110,7 +119,7 @@ fn sohranit_sohranennye(v: &[Nastrojki]) -> Result<(), String> {
     let d = f.parent().ok_or_else(|| "Нет каталога профилей".to_string())?;
     std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     let tmp = f.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&v.iter().filter(|n|!n.privatnaya).collect::<Vec<_>>()).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     std::fs::rename(tmp, f).map_err(|e| e.to_string())
 }
 
@@ -309,6 +318,8 @@ async fn otkryt(
     s: State<'_, Sostoyanie>,
     mut nastrojki: Nastrojki,
 ) -> Result<Otvet, String> {
+    nastrojki.privatnaya|=privatnost::eto_id(&nastrojki.id);
+    if nastrojki.privatnaya&&!privatnost::eto_id(&nastrojki.id){nastrojki.id=format!("pvt-{}",nastrojki.id);}
     let id = nastrojki.id.clone();
     v_zhurnal_granica("otkryt", &id, "вход");
     {
@@ -495,6 +506,7 @@ async fn podgotovit_dvizhok(
         let h_sessii = h.clone();
         let id_sessii = id_fon.clone();
         let h_adresa = h.clone(); let id_adresa = id_fon.clone();
+        let h_ui = h.clone(); let id_ui = id_fon.clone();
         let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25, move |sessiya| {
             let _zapis = sessiya::ZAPIS.lock().unwrap();
             let s: State<Sostoyanie> = h_sessii.state();
@@ -506,12 +518,27 @@ async fn podgotovit_dvizhok(
                 vk.obychnye = Some(sessiya.clone());
                 bylo != teper
             };
+            for tab in &sessiya.vkladki{biblioteka::poseshchenie(&id_sessii,tab);}
             if smena_vidimosti { vosstanovit_dvizhok(&h_sessii); }
-            if let Err(e) = sessiya.sohranit(&brauzer::papka_profilej().join(&id_sessii)) {
+            if let Err(e) = sessiya.sohranit(&brauzer::papka_profilya(&id_sessii)) {
                 zapisat_v_zhurnal(format!("{id_sessii}: сессия не записана: {e}"));
             }
             let _ = h_sessii.emit("obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
-        }, move || { let _ = h_adresa.emit("adres-vvesti", &id_adresa); });
+        }, move || { let _ = h_adresa.emit("adres-vvesti", &id_adresa); }, move |data| {
+            if data["tip"]=="download"{zagruzki::obnovit(&id_ui,&data);return;}
+            if data["tip"]=="private-ended"{zagruzki::ochistit_privatnye(&id_ui);return;}
+            if data["tip"]=="perevod-otmena" {
+                if let Some(id)=data["id"].as_u64(){perevod::otmenit(&id_ui,id);}
+            }
+            if data["tip"]=="perevod-zapros" {
+                let s:State<Sostoyanie>=h_ui.state();
+                let route=s.vkladki.lock().unwrap().get(&id_ui).filter(|v|v.zapusk_id==zapusk_id)
+                    .and_then(|v|Some((v.nash_proxy.as_ref()?.port,v.kanal.clone()?)));
+                if let Some((port,kanal))=route{perevod::zapros(id_ui.clone(),&data,port,kanal);}
+                return;
+            }
+            let _ = h_ui.emit("stranica-ui", serde_json::json!({"super_id":id_ui,"data":data}));
+        });
         let s: State<Sostoyanie> = h.state();
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(&id_fon)
@@ -608,6 +635,7 @@ async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
 }
 
 fn sohranit_aktivnuyu(id: &str) {
+    if privatnost::eto_id(id){return;}
     let f = brauzer::papka_profilej()
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
@@ -713,6 +741,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
         let vk = v.get(&nastrojki.id).ok_or("такой супер-вкладки нет")?;
         (vk.nastrojki.clone(), vk.obychnye.as_ref().map(|s| s.aktivnaya))
     };
+    if staraya.privatnaya!=nastrojki.privatnaya{return Ok(net("Приватный режим задаётся при создании супер-вкладки"));}
     let smena_seti = staraya.proxy != nastrojki.proxy || staraya.proxy_uzel != nastrojki.proxy_uzel;
     if smena_seti && vpn::eto_podpiska(&nastrojki.proxy) {
         let proverka = vpn::proverit_podklyuchenie(&nastrojki.proxy, &nastrojki.proxy_uzel).await;
@@ -781,7 +810,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
 /// вкладка закрывается без вопросов; жилая спрашивает «сохранить?».
 #[tauri::command]
 fn nuzhno_sohranenie(id: String) -> bool {
-    !brauzer::profil_svety(&id)
+    !privatnost::eto_id(&id) && !brauzer::profil_svety(&id)
 }
 
 /// Стереть профиль вкладки. Файлы могут быть ещё подхвачены только что
@@ -789,7 +818,7 @@ fn nuzhno_sohranenie(id: String) -> bool {
 /// иначе «не сохраняет/не удаляет».
 fn steret_profil(id: &str) {
     let _zapis = sessiya::ZAPIS.lock().unwrap();
-    let put = brauzer::papka_profilej().join(id);
+    let put = brauzer::papka_profilya(id);
     for _ in 0..5 {
         match std::fs::remove_dir_all(&put) {
             Ok(()) => return,
@@ -815,6 +844,7 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     };
     v_zhurnal_granica("zakryt", &id, "останавливаю движок");
     let nastrojki = vk.nastrojki;
+    let sohranit=sohranit && !nastrojki.privatnaya;
     let _ = tauri::async_runtime::spawn_blocking(move || {
         ostanovit_resursy(vk.proc, vk.nash_proxy, vk.tunnel);
     }).await;
@@ -1091,6 +1121,7 @@ pub fn run() {
             // Движки, оставшиеся от прошлого запуска, ломают новые:
             // Chromium пересылает команду старому процессу, а тот открывает
             // обычное окно поверх всего. Режем по уникальному имени exe.
+            privatnost::ochistit_posle_sboya();
             brauzer::pribit_proshlyh_dvizhkov();
             // Где лежит движок, положенный сборкой
             if let Ok(res) = app.path().resource_dir() {
@@ -1122,6 +1153,7 @@ pub fn run() {
                         adres: "about:blank".into(),
                         rezat_reklamu: true,
                         pustaya: true,
+                        privatnaya: false,
                     };
                     let o = tauri::async_runtime::block_on(otkryt(h.clone(), s, n))
                         .unwrap_or_else(|e| net(e));
@@ -1140,6 +1172,7 @@ pub fn run() {
                             adres: "about:blank".into(),
                             rezat_reklamu: true,
                             pustaya: true,
+                            privatnaya: false,
                         };
                         let s2: tauri::State<Sostoyanie> = h.state();
                         let o2 = tauri::async_runtime::block_on(otkryt(h.clone(), s2, n2))
@@ -1224,6 +1257,9 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            set_status::set_status,set_status::set_proverit_ip,
+            zagruzki::zagruzki_spisok,zagruzki::zagruzka_deystvie,
+            biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
@@ -1302,17 +1338,15 @@ pub fn run() {
             // (Linux) добьют остатки дерева сразу после нашего выхода.
             if let tauri::RunEvent::Exit = sobytie {
                 ZAVERSHENIE.store(true, std::sync::atomic::Ordering::SeqCst);
-                let deti: Vec<std::process::Child> = {
+                let deti: Vec<_> = {
                     let s: tauri::State<Sostoyanie> = app.state();
                     let mut v = s.vkladki.lock().unwrap();
                     v.values_mut()
-                        .filter_map(|vk| vk.proc.take())
+                        .map(|vk| (vk.proc.take(),vk.nash_proxy.take(),vk.tunnel.take()))
                         .collect()
                 };
-                for mut d in deti {
-                    let _ = d.kill();
-                    let _ = d.wait();
-                }
+                for (d,p,t) in deti { ostanovit_resursy(d,p,t); }
+                privatnost::ochistit();
             }
         });
 }

@@ -143,6 +143,10 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
             .as_ref(),
     );
 
+    if crate::privatnost::process_privatnyj(){nastrojki.cache_path=CefString::default();}
+    // Журнал CEF глобален для процесса, а в нём могут быть приватные вкладки.
+    // Наш журнал жизненного цикла не включает содержимое приватных страниц.
+    nastrojki.log_severity=LogSeverity::DISABLE;
     eprintln!("cef: initialize…");
     let mut prilozhenie = DvizhokApp::new();
     if initialize(
@@ -191,7 +195,7 @@ pub fn zapustit_cep(
     m: crate::okna::Mesto,
 ) -> anyhow::Result<std::process::Child> {
     let exe = std::env::current_exe()?;
-    let profil = crate::brauzer::papka_profilej().join(id);
+    let profil = crate::brauzer::papka_profilya(id);
     std::fs::create_dir_all(&profil)?;
     crate::brauzer::ochistit_blokirovki(id);
     let stdout = std::process::Stdio::piped();
@@ -209,6 +213,7 @@ pub fn zapustit_cep(
         .stdout(stdout)
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
+    if crate::privatnost::eto_id(id){cmd.arg("--nb-private-profile");}
     if rezat_reklamu { cmd.arg("--nb-rezat-reklamu"); }
     if crate::nastrojki::zagruzit().apparatnoe_uskorenie {
         cmd.arg("--nb-gpu");
@@ -258,6 +263,7 @@ pub fn dozhdatsya_okna(
     sek: u64,
     sessiya: impl Fn(crate::sessiya::Sessiya) + Send + 'static,
     adresnyi_vvod: impl Fn() + Send + 'static,
+    sluzhebnoe: impl Fn(serde_json::Value) + Send + 'static,
 ) -> Option<u32> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
     std::thread::spawn(move || {
@@ -265,7 +271,9 @@ pub fn dozhdatsya_okna(
         for stroka in chitat.lines() {
             match stroka {
                 Ok(s) => {
-                    if s == "NB-ADRES" { adresnyi_vvod(); }
+                    if let Some(json) = s.strip_prefix("NB-UI ") {
+                        if let Ok(data) = serde_json::from_str(json) { sluzhebnoe(data); }
+                    } else if s == "NB-ADRES" { adresnyi_vvod(); }
                     else if let Some(h) = s.strip_prefix("NB-OKNO ") {
                         let _ = tx.send(h.trim().parse().ok());
                     } else if let Some(json) = s.strip_prefix("NB-VKLADKI ") {
