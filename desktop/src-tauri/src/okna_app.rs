@@ -84,14 +84,16 @@ pub async fn okno_gotovo(app:tauri::AppHandle,window:tauri::WebviewWindow,s:taur
 fn podklyuchit(app:&tauri::AppHandle,s:&Sostoyanie,label:&str)->Result<(),String>{
     let window=app.get_webview_window(label).ok_or("Окно уже закрыто")?;
     let parent=crate::nash_descriptor(&window).ok_or("Не найден дескриптор окна")?;
-    let (id,private,session,mesto)={let map=s.okna.0.lock().unwrap();let w=map.get(label).ok_or("Окно уже закрыто")?;(w.super_id.clone(),w.privatnaya,w.sessiya.clone(),w.mesto.unwrap_or(Mesto{x:0,y:100,w:1200,h:700}))};
+    let (id,private,session,mesto)={let map=s.okna.0.lock().unwrap();let w=map.get(label).ok_or("Окно уже закрыто")?;if w.closing{return Err("Окно уже закрывается".into());}(w.super_id.clone(),w.privatnaya,w.sessiya.clone(),w.mesto.unwrap_or(Mesto{x:0,y:100,w:1200,h:700}))};
     let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).ok_or("Супер-вкладка закрыта")?;
     kanal(s,label,&id)?.try_send(Komanda::OknoNovoe{label:label.into(),parent,x:mesto.x,y:mesto.y,w:mesto.w,h:mesto.h,privatnaya:private,sessiya:session}).map_err(|e|e.to_string())?;
     if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.engine=engine;w.hwnd=None;}
     obolochka(app,s,label);Ok(())
 }
 pub fn vosstanovit(app:&tauri::AppHandle,s:&Sostoyanie,id:&str,engine:u64){
-    let labels=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.engine!=engine).map(|(label,_)|label.clone()).collect::<Vec<_>>();
+    let closed=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.closing).map(|(label,_)|label.clone()).collect::<Vec<_>>();
+    for label in closed{if let Some(window)=app.get_webview_window(&label){let _=window.destroy();}}
+    let labels=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.engine!=engine&&!w.closing).map(|(label,_)|label.clone()).collect::<Vec<_>>();
     for label in labels{if let Err(e)=podklyuchit(app,s,&label){let _=app.emit_to(&label,"oshibka-dvizhka",e);}}
 }
 pub fn zakryt_super(app:&tauri::AppHandle,s:&Sostoyanie,id:&str){
