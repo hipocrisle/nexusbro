@@ -1203,9 +1203,12 @@ pub fn run() {
                                 zapisat_v_zhurnal(format!("{id}: VPN завершился, восстанавливаю"));
                                 let result = tauri::async_runtime::block_on(zapustit_vnutri(&h, &s, &id));
                                 if result.ok {
-                                    if let Some(k) = s.vkladki.lock().unwrap().get(&id).and_then(|v| v.kanal.clone()) {
+                                    let restored = s.vkladki.lock().unwrap().get(&id).map(|v| (v.kanal.clone(), if v.nastrojki.pustaya { Some(1) } else { active }));
+                                    if let Some((Some(k), active)) = restored {
                                         if let Some(id) = active { let _ = k.try_send(sessiya::Komanda::Vybrat { id }); }
                                     }
+                                } else {
+                                    let _ = h.emit("oshibka-dvizhka", "VPN завершился, восстановить подключение не удалось. Нажмите супер-вкладку для повторного подключения или выберите другой узел.");
                                 }
                             } else {
                                 let _ = h.emit("oshibka-dvizhka", "VPN повторно завершился. Нажмите супер-вкладку для повторного подключения или выберите другой узел.");
