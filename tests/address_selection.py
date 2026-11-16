@@ -1,3 +1,4 @@
+import os,shutil
 """Реальный Chromium: исходный helper выделения, без сборки приложения."""
 import json,pathlib,subprocess
 from playwright.sync_api import sync_playwright
@@ -8,7 +9,7 @@ js=subprocess.check_output(['node','-e',"const fs=require('fs'),ts=require('./de
 js=js.replace('Object.defineProperty(exports, "__esModule", { value: true });','').replace('"use strict";','')
 js='var exports={};\n'+js
 with sync_playwright() as pw:
- browser=pw.chromium.launch(headless=True,args=['--no-sandbox']);page=browser.new_page()
+ browser=pw.chromium.launch(channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome' if shutil.which('google-chrome') else '') or None,headless=True,args=['--no-sandbox']);page=browser.new_page()
  page.set_content('<div id=root><button id=other>outside</button><input id=paste aria-label="Проверка вставки"><input id=address value="https://example.test/word/next" style="font:20px monospace;width:600px"></div>')
  page.add_script_tag(content=js)
  page.evaluate('''() => {

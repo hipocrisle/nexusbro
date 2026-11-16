@@ -1,10 +1,11 @@
+import os,shutil
 """Реальный DOM: перевод на месте, восстановление, поля и устаревшие ответы."""
 import json
 from pathlib import Path
 from playwright.sync_api import sync_playwright
 script=(Path(__file__).resolve().parents[1]/'desktop/src-tauri/scripts/perevod.js').read_text()
 with sync_playwright() as pw:
- browser=pw.chromium.launch(args=['--no-sandbox'])
+ browser=pw.chromium.launch(channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome' if shutil.which('google-chrome') else '') or None,args=['--no-sandbox'])
  page=browser.new_page()
  page.route('https://translation.test/**',lambda r:r.fulfill(content_type='text/html',body='''<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'none'"><h1>Hello world</h1><p id=dynamic>Original news</p><input value="Private form"><textarea>Private notes</textarea><pre>Code stays English</pre><div contenteditable>Unsent draft</div><div translate=no>Do not translate</div>'''))
  page.goto('https://translation.test/page')

@@ -211,7 +211,7 @@ try:
     new_tab()
     gui.click(r.left+95,r.top-70,button='right')
     time.sleep(.4)
-    gui.click(r.left+175,r.top+180)
+    ui('Закрыть вкладку',['MenuItem','Button']).click_input()
     wait_tabs(1)
     results.append({'context_menu_close_keeps_application':True})
 
