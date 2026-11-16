@@ -277,7 +277,8 @@ try:
     assert hits.get('/sleep/0') and not hits.get('/sleep/1') and not hits.get('/sleep/2'),hits
     assert all(t.get('otlozhena') for t in current['vkladki'][1:]),current
     # Plus is immediately after the third tab, not at the far right edge.
-    gui.click(r.left+765,r.top-70)
+    win=Desktop(backend="uia").window(handle=hwnd)
+    ui('Новая обычная вкладка',['Button']).click_input()
     wait_tabs(4)
     results.append({'restart_zero_page_requests_until_click':True,'click_wakes_one_only':True,'plus_next_to_last_tab_physical_click':True})
     results.append({'success': True})

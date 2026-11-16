@@ -93,7 +93,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   return <>
     <div className="polosa">
       <span className="aktivnaya-imya" title={nazvanie}>{nazvanie}</span>
-      <div className="obychnye" role="tablist" aria-label="Обычные вкладки"
+      <div className="tab-group"><div className="obychnye" role="tablist" aria-label="Обычные вкладки"
         onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-tab")) e.preventDefault(); }} onDrop={(e) => void finishDrag(null, e)}>
         {sessiya?.vkladki.map((v) => <div key={v.id} role="tab" aria-label={v.zagolovok || "Новая вкладка"} aria-selected={v.id === sessiya.aktivnaya} tabIndex={0}
           data-id={v.id} draggable className={"obychnaya" + (v.id === sessiya.aktivnaya ? " vybrana" : "") + (v.zakreplena ? " zakreplena" : "") + (v.otlozhena ? " otlozhena" : "") + (dragOver === v.id ? " drop-before" : "")}
@@ -110,7 +110,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
           {!v.zakreplena && <button className="zakryt-obychnuyu" title="Закрыть обычную вкладку" aria-label="Закрыть обычную вкладку"
             onClick={(e) => { e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); }}><Icon name="close" size={13} /></button>}
         </div>)}
-      <button className="novaya-obychnaya" title="Новая обычная вкладка" aria-label="Новая обычная вкладка" disabled={!id}
+      </div><button className="novaya-obychnaya" title="Новая обычная вкладка" aria-label="Новая обычная вкладка" disabled={!id}
         onClick={() => void poslat({ deystvie: "novaya", adres: novayaStranica })}><Icon name="plus" size={18} /></button>
       </div>
       {children}

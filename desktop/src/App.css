@@ -380,3 +380,7 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .vybor-popup [role=listbox] { max-height:var(--options-height,220px); }
 .vybor-popup input { padding:8px 10px; border:1px solid var(--kraj); border-radius:6px; background:var(--fon2); color:var(--tekst); font:inherit; }
 .vybor-popup [role=option] { overflow-wrap:anywhere; }
+.tab-group { display:flex; align-items:center; flex:0 1 auto; min-width:0; gap:4px; }
+.tab-group .obychnye { flex:0 1 auto; }
+.tab-group .novaya-obychnaya { flex:0 0 30px; }
+.protection-button { flex-shrink:0; }
