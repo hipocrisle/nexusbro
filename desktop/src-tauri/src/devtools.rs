@@ -2,14 +2,18 @@
 use cef::*;
 use std::sync::mpsc::Sender;
 use crate::cef_vkladki::Sobytie;
+// Chrome-style HWND появляется позднее on_after_created. Храним CEF-ссылку
+// только на UI-потоке и ждём настоящего native-окна перед встраиванием.
+thread_local!{static BROWSERS:std::cell::RefCell<std::collections::HashMap<u64,Browser>>=Default::default();}
+pub fn okno(id:u64)->Option<u32>{BROWSERS.with(|items|items.borrow().get(&id).map(crate::cef_vkladki::handle)).filter(|h|*h!=0)}
 wrap_life_span_handler! {
     struct Zhizn { id: u64, tx: Sender<Sobytie> }
     impl LifeSpanHandler {
         fn on_after_created(&self, browser: Option<&mut Browser>) {
             if let Some(b) = browser {
-                let okno = crate::cef_vkladki::handle(b);
-                let _ = crate::okna::sistema::pokazat(okno, false);
-                let _ = self.tx.send(Sobytie::DevtoolsGotovy(self.id, okno));
+                BROWSERS.with(|items|{items.borrow_mut().insert(self.id,b.clone());});
+                if let Some(okno)=okno(self.id){let _=crate::okna::sistema::pokazat(okno,false);}
+                let _ = self.tx.send(Sobytie::DevtoolsGotovy(self.id));
             }
         }
         fn do_close(&self,browser:Option<&mut Browser>)->i32{
@@ -17,6 +21,7 @@ wrap_life_span_handler! {
             #[cfg(not(target_os="windows"))]{let _=browser;0}
         }
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
+            BROWSERS.with(|items|{items.borrow_mut().remove(&self.id);});
             let _ = self.tx.send(Sobytie::DevtoolsZakryty(self.id));
         }
     }

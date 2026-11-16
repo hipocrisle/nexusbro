@@ -153,6 +153,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       if(e.payload.super_id!==id||e.payload.data.id!==aktivnaya?.id)return;
       if(e.payload.data.tip==="zakladka"){if(aktivnaya)void invoke("zakladki_sohranit",{adres:aktivnaya.adres,nazvanie:aktivnaya.zagolovok,papka:null}).catch(e=>setOshibka(String(e)));return;}
       if(e.payload.data.tip==="perevod"){const d=e.payload.data;setTranslation(d.original?null:{done:d.done??0,total:d.total??0,error:d.error});return;}
+      if(e.payload.data.tip==="devtools-error"){setOshibka(e.payload.data.error||"Не удалось открыть инструменты разработчика");return;}
       if(e.payload.data.tip==="devtools"){setToolsOpen(!!e.payload.data.open);setToolsWidth(e.payload.data.procent??40);return;}
       if(e.payload.data.tip!=="poisk")return;
       const d=e.payload.data;if(d.open)openFind();

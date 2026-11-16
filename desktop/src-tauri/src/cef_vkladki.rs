@@ -7,7 +7,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub(crate) enum Sobytie {
     Sluzhebnoe(serde_json::Value),
-    DevtoolsGotovy(u64,u32),
+    DevtoolsGotovy(u64),
     DevtoolsZakryty(u64),
     #[cfg(target_os="windows")]
     DevtoolsZakrytOkno(u64,u32),
@@ -385,7 +385,7 @@ pub fn rabotat(
         rx,
         brauzery,
         razmer,
-        devtools: HashMap::new(), devtools_procent:40, ui_last:String::new(), perevody:HashMap::new(),
+        devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40, ui_last:String::new(), perevody:HashMap::new(),
         label:String::new(), extras:HashMap::new(), closing:false, force_private:crate::privatnost::process_privatnyj(),
     };
     #[cfg(target_os = "windows")]
@@ -433,6 +433,7 @@ struct Rabota {
     brauzery: HashMap<u64, Browser>,
     razmer: Option<(u32, u32)>,
     devtools: HashMap<u64,u32>,
+    devtools_pending:HashMap<u64,std::time::Instant>,
     devtools_procent: u32,
     ui_last: String,
     perevody: HashMap<u64,(String,Registration)>,
@@ -458,7 +459,7 @@ impl Rabota {
             rx,
             brauzery,
             razmer,
-            devtools, devtools_procent, ui_last, perevody, label, extras, closing, force_private,
+            devtools, devtools_pending, devtools_procent, ui_last, perevody, label, extras, closing, force_private,
         } = self;
         let mut izmeneno = false;
         let mut layout_dirty=false;
@@ -519,7 +520,7 @@ impl Rabota {
                     let tab=&child_s.vkladki[active];child_b.insert(tab.id,sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya)?);
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_procent:40,ui_last:String::new(),perevody:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closing:false,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,ui_last:String::new(),perevody:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closing:false,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -698,14 +699,7 @@ impl Rabota {
                         }
                     }
                 }
-                Sobytie::DevtoolsGotovy(id, okno) => {
-                    // Chrome-style frontend создаётся CEF, но его native-окно
-                    // сразу становится дочерним панели NexusBro без отдельной рамки.
-                    if brauzery.contains_key(&id) {
-                        sistema::vstroit(okno, k.okno as u64, Mesto{x:0,y:0,w:320,h:320})?;
-                        devtools.insert(id,okno);layout_dirty=true;
-                    }
-                }
+                Sobytie::DevtoolsGotovy(id) => {if brauzery.contains_key(&id){devtools_pending.insert(id,std::time::Instant::now());}}
                 #[cfg(target_os="windows")]
                 Sobytie::DevtoolsZakrytOkno(_id,hwnd)=>{
                     use windows::Win32::{Foundation::HWND,System::Threading::{GetCurrentProcessId,GetCurrentThreadId},UI::WindowsAndMessaging::*};
@@ -713,7 +707,7 @@ impl Rabota {
                         if pid==GetCurrentProcessId()&&tid==GetCurrentThreadId()&&GetParent(h).ok().is_some_and(|p|p.0 as usize as u32==k.okno){let _=DestroyWindow(h);}}
                     layout_dirty=true;
                 }
-                Sobytie::DevtoolsZakryty(id) => { devtools.remove(&id);layout_dirty=true; }
+                Sobytie::DevtoolsZakryty(id) => {devtools_pending.remove(&id);devtools.remove(&id);layout_dirty=true; }
                 Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(25,65);layout_dirty=true; }
                 Sobytie::Komanda(Komanda::Perevesti{id}) => {
                     if let Some(b)=brauzery.get(&id){
@@ -848,6 +842,20 @@ impl Rabota {
             }
         }
         let novyj = k.razmer();
+        let pending_ids:Vec<_>=devtools_pending.keys().copied().collect();
+        for id in pending_ids{
+            let elapsed=devtools_pending.get(&id).unwrap().elapsed();
+            if !brauzery.contains_key(&id){devtools_pending.remove(&id);continue;}
+            if let Some(hwnd)=crate::devtools::okno(id){
+                if sistema::vstroit(hwnd,k.okno as u64,Mesto{x:0,y:0,w:320,h:320}).is_ok(){devtools.insert(id,hwnd);devtools_pending.remove(&id);layout_dirty=true;continue;}
+            }
+            if elapsed.as_secs()>=8{
+                devtools_pending.remove(&id);
+                eprintln!("cef: DevTools вкладки {id}: native-окно не готово");
+                if let Some(h)=brauzery.get(&id).and_then(|b|b.host()){h.close_dev_tools();}
+                let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"devtools-error","id":id,"error":"Не удалось встроить инструменты разработчика. Повторите F12."})));
+            }
+        }
         devtools.retain(|id,_| brauzery.contains_key(id));
         perevody.retain(|id,_|{if brauzery.contains_key(id){true}else{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));false}});
         let has_tools=devtools.contains_key(&s.aktivnaya);

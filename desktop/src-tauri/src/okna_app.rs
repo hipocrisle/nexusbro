@@ -54,7 +54,8 @@ pub fn zapros_okna(app:tauri::AppHandle,id:Option<String>,privatnaya:bool){
 pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Option<String>,mut privatnaya:bool)->Result<(),String>{
     let id=id.or_else(||s.aktivnaya.lock().unwrap().clone()).ok_or("Сначала откройте супер-вкладку")?;
     privatnaya|=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.nastrojki.privatnaya);
-    let result=crate::zapustit_vnutri(&app,&s,&id).await;if !result.ok{return Err(result.soobshchenie);}
+    let running=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.proc.is_some());
+    if !running{let result=crate::zapustit_vnutri(&app,&s,&id).await;if !result.ok{return Err(result.soobshchenie);}}
     static NEXT:AtomicU64=AtomicU64::new(1);
     let label=format!("browser-{}",NEXT.fetch_add(1,Ordering::Relaxed));
     let mut query=reqwest::Url::parse("http://localhost/index.html").map_err(|e|e.to_string())?;

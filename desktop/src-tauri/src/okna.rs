@@ -389,7 +389,11 @@ pub mod sistema {
             let stil = GetWindowLongPtrW(ch, GWL_STYLE) as u32;
             let novyj = (stil & !(WS_POPUP.0 | WS_CAPTION.0 | WS_THICKFRAME.0)) | WS_CHILD.0;
             SetWindowLongPtrW(ch, GWL_STYLE, novyj as isize);
-            SetParent(ch, HWND(nashe as usize as *mut core::ffi::c_void))?;
+            let parent=HWND(nashe as usize as *mut core::ffi::c_void);
+            let moved=SetParent(ch,parent);
+            // NULL — также успешный результат для прежнего top-level HWND.
+            // windows-rs превращает его в Err; проверяем фактическое дерево.
+            if GetParent(ch).ok()!=Some(parent){moved?;anyhow::bail!("не изменился родитель встроенного окна");}
             peremestit(chuzhoe, m)?;
             let _ = ShowWindowAsync(ch, SW_SHOW);
         }
