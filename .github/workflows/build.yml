@@ -36,6 +36,8 @@ jobs:
       - run: |
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py
+          python3 tests/address_selection.py
+          python3 tests/translation_dom.py
   build:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
@@ -202,6 +204,8 @@ jobs:
         run: |
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py
+          python3 tests/address_selection.py
+          python3 tests/translation_dom.py
 
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'

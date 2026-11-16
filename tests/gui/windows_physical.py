@@ -349,7 +349,7 @@ try:
             text=ctypes.create_unicode_buffer(256);u.GetClassNameW(h,text,256)
             if u.IsWindowVisible(h) and text.value=='ConsoleWindowClass':found.add(int(h))
             return True
-        u.EnumChildWindows(wintypes.HWND(container),enum,0);return found
+        u.EnumWindows(enum,0);return found
     old_consoles=consoles()
     # Перезапуск тестового приложения задаёт локальный HTTP endpoint для проверки VPN.
     app.terminate();app.wait(timeout=10);time.sleep(.5)
@@ -431,7 +431,7 @@ try:
     deadline=time.monotonic()+20
     while time.monotonic()<deadline and not any(r.get('text')==['Переведённые новости'] for r in translation_reports):time.sleep(.1)
     assert any(r.get('text')==['Переведённые новости'] for r in translation_reports),translation_reports
-    translated=session();assert len(translated['vkladki'])==old_count and translated['vkladki'][0]['adres']=='http://yandex.ru/ad-fixture',translated
+    translated=session();assert len(translated['vkladki'])==old_count and next(t for t in translated['vkladki'] if t['id']==translated['aktivnaya'])['adres']=='http://yandex.ru/ad-fixture',translated
     ui('Показать оригинал',['Button']).click_input()
     deadline=time.monotonic()+10
     while time.monotonic()<deadline and not any(r.get('text')==['Regular news'] for r in translation_reports):time.sleep(.1)

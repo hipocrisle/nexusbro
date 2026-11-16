@@ -166,6 +166,10 @@ wrap_client! {
     }
 }
 
+// Идентификаторы сохраняются до закрытия всей приватной группы: загрузка
+// может продолжаться после закрытия исходной вкладки, но не переживает группу.
+thread_local! {static PRIVATE_IDS:std::cell::RefCell<std::collections::HashSet<u64>>=Default::default();}
+
 struct Konteyner {
     okno: u32,
     private_context: std::rc::Rc<std::cell::RefCell<Option<RequestContext>>>,
@@ -306,7 +310,8 @@ fn sozdat_brauzer(
     );
     let mut context=if privatnaya {
         let mut slot=k.private_context.borrow_mut();
-        if slot.is_none(){*slot=request_context_create_context(Some(&RequestContextSettings::default()),None);}
+        if slot.is_none(){PRIVATE_IDS.with(|ids|ids.borrow_mut().clear());*slot=request_context_create_context(Some(&RequestContextSettings::default()),None);}
+        PRIVATE_IDS.with(|ids|{ids.borrow_mut().insert(id);});
         Some(slot.clone().ok_or_else(||anyhow::anyhow!("Не создан приватный контекст"))?)
     }else{None};
     let b = browser_host_create_browser_sync(
@@ -443,7 +448,7 @@ impl Rabota {
         self.extras.retain(|_,extra|!extra.closing||!extra.brauzery.is_empty());
         if self.label.is_empty() && !self.s.vkladki.iter().chain(self.extras.values().flat_map(|e|e.s.vkladki.iter())).any(|v|v.privatnaya)
             && self.k.private_context.borrow().is_some(){
-            crate::zagruzki::zakryt_privatnye();self.k.private_context.borrow_mut().take();
+            crate::zagruzki::zakryt_privatnye();self.k.private_context.borrow_mut().take();PRIVATE_IDS.with(|ids|ids.borrow_mut().clear());
             let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"private-ended"})));
         }
         let Self {
@@ -685,6 +690,7 @@ impl Rabota {
                     }
                 }
                 Sobytie::Komanda(Komanda::Masshtab { procent }) => {
+                    for extra in extras.values(){let _=extra.tx.send(Sobytie::Komanda(Komanda::Masshtab{procent}));}
                     let level = (procent.clamp(50, 200) as f64 / 100.0).ln() / 1.2_f64.ln();
                     for b in brauzery.values() {
                         if let Some(h) = b.host() {
@@ -740,7 +746,10 @@ impl Rabota {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) { h.stop_finding(1);h.set_focus(1); }
                 }
                 Sobytie::Sluzhebnoe(mut data) => {
-                    if data["privatnaya"]==true&&!s.vkladki.iter().any(|v|v.privatnaya){continue;}
+                    if data["privatnaya"]==true{
+                        let source=data["id"].as_u64().or_else(||data["tab_id"].as_u64());
+                        if k.private_context.borrow().is_none()||!source.is_some_and(|id|PRIVATE_IDS.with(|ids|ids.borrow().contains(&id))){continue;}
+                    }
                     data["label"]=serde_json::json!(label);
                     println!("NB-UI {}", serde_json::to_string(&data)?);
                     std::io::stdout().flush()?;
