@@ -257,6 +257,13 @@ try:
     u.GetParent.argtypes=[wintypes.HWND];u.GetParent.restype=wintypes.HWND
     assert u.GetParent(tools[0])==container,(tools,container)
     assert rect(tools[0]).right-rect(tools[0]).left < rect(container).right-rect(container).left
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        r_tools=rect(tools[0]);panel=ImageGrab.grab().crop((r_tools.left+8,r_tools.top+8,r_tools.right-8,r_tools.bottom-8)).convert('RGB')
+        colors=panel.getcolors(panel.width*panel.height)
+        if colors and len(colors)>80:break
+        time.sleep(.15)
+    assert colors and len(colors)>80,'DevTools remained a blank panel'
     ImageGrab.grab().save(run/'devtools.png')
     gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
     results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
@@ -478,9 +485,12 @@ try:
     storage('normal-main','normal-marker')
     r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','f')
     ui('Найти на странице',['Edit']).click_input();gui.write('Findneedle');time.sleep(.8)
-    assert any(x.element_info.name=='1 из 2' for x in win.descendants()),[x.element_info.name for x in win.descendants()]
-    gui.press('enter');time.sleep(.3)
-    assert any(x.element_info.name=='2 из 2' for x in win.descendants())
+    deadline=time.monotonic()+6
+    while time.monotonic()<deadline and not any(x.element_info.name=='1 из 2' for x in win.descendants()):time.sleep(.1)
+    find_ok=any(x.element_info.name=='1 из 2' for x in win.descendants())
+    gui.press('enter');time.sleep(.5)
+    find_ok=find_ok and any(x.element_info.name=='2 из 2' for x in win.descendants())
+    results.append({'native_find_ordinals_correct':find_ok})
     gui.press('escape');gui.hotkey('ctrl','d');gui.hotkey('ctrl','b');ui('Закрыть библиотеку',['Button']).click_input()
     gui.hotkey('ctrl','h');ui('Закрыть библиотеку',['Button']).click_input()
     ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/download-fixture',interval=.001);gui.press('enter')
@@ -573,6 +583,7 @@ try:
     assert not private_root.exists(),private_root
     results.append({'private_window_stays_private':True,'private_super_not_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
     assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
+    assert find_ok,'Find match ordinal did not update correctly'
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')

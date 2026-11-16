@@ -611,6 +611,7 @@ impl Rabota {
                     }
                 }
                 Sobytie::Zakryta(id) => {
+                    crate::poisk::ochistit(id);
                     if let Some(tab)=s.vkladki.iter().find(|v|v.id==id&&!v.privatnaya&&v.adres!="about:blank").cloned(){s.zakrytye.push(tab);if s.zakrytye.len()>30{s.zakrytye.remove(0);}}
                     if s.aktivnaya == id {
                         if let Some(i) = s.vkladki.iter().position(|v| v.id == id) {
@@ -738,11 +739,12 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::Nayti { id, text, vpered, dalshe }) => {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
-                        if text.is_empty() { h.stop_finding(1); }
+                        if text.is_empty() {crate::poisk::ochistit(id); h.stop_finding(1); }
                         else { h.find(Some(&CefString::from(text.as_str())), vpered as i32, 0, dalshe as i32); }
                     }
                 }
                 Sobytie::Komanda(Komanda::PoiskZakryt { id }) => {
+                    crate::poisk::ochistit(id);
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) { h.stop_finding(1);h.set_focus(1); }
                 }
                 Sobytie::Sluzhebnoe(mut data) => {
