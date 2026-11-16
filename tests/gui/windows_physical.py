@@ -302,7 +302,7 @@ try:
     dead=f'vless://{uid}@127.0.0.1:1?encryption=none&security=none&type=tcp#Unavailable'
     subscription=(dead+'\n'+local+'\n').encode()
     config={'log':{'loglevel':'debug'},'inbounds':[{'listen':'127.0.0.1','port':vless_port,'protocol':'vless','settings':{'clients':[{'id':uid}],'decryption':'none'}}],
-            'outbounds':[{'tag':'deny','protocol':'blackhole'},{'tag':'fixture','protocol':'freedom','settings':{'redirect':f'127.0.0.1:{server.server_port}'}}],
+            'outbounds':[{'tag':'deny','protocol':'blackhole'},{'tag':'fixture','protocol':'freedom','settings':{'redirect':f'127.0.0.1:{server.server_port}','finalRules':[{'action':'allow','ip':['127.0.0.1'],'port':str(server.server_port)}]}}],
             'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test'],'outboundTag':'fixture'}]}}
     config_file=run/'local-vless.json';config_file.write_text(json.dumps(config),encoding='utf-8')
     server_log=(run/'vless-server.txt').open('w',encoding='utf-8')
