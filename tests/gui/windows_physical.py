@@ -274,7 +274,7 @@ try:
     time.sleep(1)
     current=session();assert all(t.get('otlozhena') for t in current['vkladki']),current
     assert not any(path.startswith('/sleep/') for path in hits),hits
-    hwnd=u.FindWindowW(None,'NexusBro');u.SetForegroundWindow(hwnd);r=rect(container)
+    hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);u.SetForegroundWindow(hwnd);time.sleep(.5);r=rect(container)
     win=Desktop(backend="uia").window(handle=hwnd)
     ui('Загрузить вкладку',['Button'])
     ImageGrab.grab().save(run/'deferred-start.png')
@@ -332,7 +332,7 @@ try:
                 if matches and int(matches[-1])!=previous:return int(matches[-1])
             time.sleep(.2)
         raise AssertionError('CEF did not restart')
-    container=new_container();hwnd=u.FindWindowW(None,'NexusBro');win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd)
+    container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     def edit_super():
         pt=origin();gui.click(pt.x+26,pt.y+80,button='right');ui('Настройки').click_input()
     edit_super()
