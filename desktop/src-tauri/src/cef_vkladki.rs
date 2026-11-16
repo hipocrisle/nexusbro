@@ -81,7 +81,9 @@ wrap_display_handler! {
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if let Some(t) = title { let _ = self.tx.send(Sobytie::Zagolovok(self.id, t.to_string())); }
         }
-        fn on_address_change(&self, _browser: Option<&mut Browser>, mut frame: Option<&mut Frame>, url: Option<&CefString>) {
+        // ⛔ Без `mut` в объявлении: грамматика `wrap_*!` принимает только
+        // шаблон `имя: тип`, иначе «no rules expected». Внутри берём `&mut`.
+        fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false) {
                 if let Some(u) = url {
                     let u = u.to_string();
@@ -92,7 +94,7 @@ wrap_display_handler! {
                     // код обрезки вызова. Второй запуск в той же странице
                     // ничего не делает (флаг `__nbReklama`).
                     let prikaz = crate::borba_s_reklamoy::skript_dlya_vyzova(&u, &skript_vyzova());
-                    if let (Some(java), Some(f)) = (prikaz, frame.as_mut()) {
+                    if let (Some(java), Some(f)) = (prikaz, frame) {
                         f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0);
                     }
                 }
