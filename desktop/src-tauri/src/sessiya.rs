@@ -41,6 +41,7 @@ pub enum Komanda {
     OknoKomanda { label:String, komanda:Box<Komanda> },
     OknoZakryt { label:String },
     GlavnoeSkryto,
+    GlavnoePokazat,
     Novaya { adres: String },
     NovayaPrivatnaya { adres:String },
     VosstanovitZakrytuyu,

@@ -143,6 +143,15 @@ try:
   assert [x['privatnaya'] for x in calls[-2:]]==[False,True],calls
   targets=page.evaluate("window.__args.filter(x=>x.cmd==='plugin:event|listen').map(x=>x.args.target)")
   assert targets and all(t=={'kind':'Window','label':'main'} for t in targets),targets
+  # Второе окно сохраняет доступ к настройкам и слушает только свой target.
+  extra=browser.new_page(viewport={'width':1200,'height':800})
+  extra.add_init_script(mock+"window.__TAURI_INTERNALS__.metadata.currentWindow.label='browser-test';window.__TAURI_INTERNALS__.metadata.currentWebview.label='browser-test';")
+  extra.goto(f'http://127.0.0.1:{server.server_port}/?okno=browser-test&super=layout')
+  extra.get_by_role('button',name='Супер-вкладки и настройки',exact=True).click()
+  assert extra.evaluate("window.__calls.includes('pokazat_glavnoe')")
+  targets_extra=extra.evaluate("window.__args.filter(x=>x.cmd==='plugin:event|listen').map(x=>x.args.target)")
+  assert targets_extra and all(t=={'kind':'Window','label':'browser-test'} for t in targets_extra),targets_extra
+  extra.close()
   assert not errors,errors
   print(json.dumps({'mouse_font_density':True,'all_subscription_nodes':True,'overview_without_global_selection':True,'super_node_mouse_selection':True,'no_native_select':True,'plus_adjacent_to_last':True,'plus_vertically_centered':True,'many_tabs_no_scrollbar':True,'pending_placeholder':True}))
   browser.close()

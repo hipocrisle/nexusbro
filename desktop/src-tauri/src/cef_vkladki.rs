@@ -545,6 +545,7 @@ impl Rabota {
                     else{println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":target}));std::io::stdout().flush()?;}
                     continue;
                 }
+                Sobytie::Komanda(Komanda::GlavnoePokazat)=>{if label.is_empty(){*closing=false;}}
                 Sobytie::Komanda(Komanda::GlavnoeSkryto)=>{
                     if label.is_empty(){
                         *closing=true; // Не создаём скрытую приватную blank-вкладку.

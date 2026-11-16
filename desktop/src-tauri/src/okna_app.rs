@@ -56,6 +56,14 @@ pub fn zapros_okna(app:tauri::AppHandle,id:Option<String>,privatnaya:bool){
     });
 }
 #[tauri::command]
+pub async fn pokazat_glavnoe(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>)->Result<(),String>{
+    let channels=s.vkladki.lock().unwrap().values().filter_map(|v|v.kanal.clone()).collect::<Vec<_>>();
+    for channel in channels{let _=channel.try_send(Komanda::GlavnoePokazat);}
+    let window=app.get_webview_window("main").ok_or("Окно управления недоступно")?;
+    window.show().map_err(|e|e.to_string())?;
+    crate::fokus_obolochke(window).await
+}
+#[tauri::command]
 pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Option<String>,mut privatnaya:bool)->Result<(),String>{
     let id=id.or_else(||s.aktivnaya.lock().unwrap().clone()).ok_or("Сначала откройте супер-вкладку")?;
     privatnaya|=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.nastrojki.privatnaya);
@@ -68,7 +76,7 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let url=format!("index.html?{}",query.query().unwrap_or(""));
     let title=s.vkladki.lock().unwrap().get(&id).map(|v|format!("NexusBro — {}{}",v.nastrojki.nazvanie,if privatnaya{" · приватное окно"}else{""})).unwrap_or_else(||"NexusBro".into());
     s.okna.0.lock().unwrap().insert(label.clone(),Okno{super_id:id,engine:0,hwnd:None,mesto:None,sessiya:None,hidden:false,closing:false,privatnaya,generation:Default::default()});
-    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(1200.,800.).build(){
+    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(1200.,800.).min_inner_size(900.,560.).build(){
         Ok(_)=>Ok(()),Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
     }
 }

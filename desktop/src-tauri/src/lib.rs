@@ -1287,7 +1287,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            okna_app::novoe_okno,okna_app::okno_gotovo,
+            okna_app::novoe_okno,okna_app::okno_gotovo,okna_app::pokazat_glavnoe,
             set_status::set_status,set_status::set_proverit_ip,
             zagruzki::zagruzki_spisok,zagruzki::zagruzka_deystvie,
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_import,
