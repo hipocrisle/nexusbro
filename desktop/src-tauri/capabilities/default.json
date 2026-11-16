@@ -2,7 +2,7 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Права окна NexusBro",
-  "windows": ["main"],
+  "windows": ["main", "browser-*"],
   "permissions": [
     "core:default",
     "updater:default",

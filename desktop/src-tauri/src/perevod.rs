@@ -48,10 +48,17 @@ pub fn primenit(b:&Browser,token:&str,items:&[(u32,String)]){
 pub fn original(b:&Browser){if let Some(f)=b.main_frame(){f.execute_java_script(Some(&CefString::from("window.__nexusbroTranslation?.restore()")),None,0);}}
 
 type Key=(String,u64);
-static TASKS:OnceLock<Mutex<HashMap<Key,tokio::task::AbortHandle>>>=OnceLock::new();
+static TASKS:OnceLock<Mutex<HashMap<Key,(String,tokio::task::AbortHandle)>>>=OnceLock::new();
 pub fn otmenit(super_id:&str,id:u64){
-    if let Some(task)=TASKS.get_or_init(Default::default).lock().unwrap().remove(&(super_id.into(),id)){task.abort();}
+    if let Some((_,task))=TASKS.get_or_init(Default::default).lock().unwrap().remove(&(super_id.into(),id)){task.abort();}
 }
+pub fn otmenit_super(super_id:&str){
+    let mut tasks=TASKS.get_or_init(Default::default).lock().unwrap();
+    tasks.retain(|(super_key,_),(_,task)|{if super_key==super_id{task.abort();false}else{true}});
+}
+pub fn otmenit_vse(){let mut tasks=TASKS.get_or_init(Default::default).lock().unwrap();for (_,(_,task)) in tasks.drain(){task.abort();}}
+struct Ochistit {key:Key,token:String}
+impl Drop for Ochistit{fn drop(&mut self){let mut tasks=TASKS.get_or_init(Default::default).lock().unwrap();if tasks.get(&self.key).is_some_and(|(t,_)|t==&self.token){tasks.remove(&self.key);}}}
 #[derive(serde::Deserialize)]
 struct Tekst {id:u32,text:String}
 pub fn zapros(super_id:String,data:&Value,port:u16,kanal:SyncSender<Komanda>){
@@ -60,8 +67,12 @@ pub fn zapros(super_id:String,data:&Value,port:u16,kanal:SyncSender<Komanda>){
     let Ok(items)=serde_json::from_value::<Vec<Tekst>>(data["items"].clone()) else{return};
     if items.len()>1000||items.iter().map(|i|i.text.len()).sum::<usize>()>1_000_000{return;}
     otmenit(&super_id,id);
-    let key=(super_id,id);
+    let key=(super_id,id);let cleanup=Ochistit{key:key.clone(),token:token.clone()};
+    let label=data["label"].as_str().unwrap_or("").to_owned();
+    let task_token=token.clone();
+    let mut tasks=TASKS.get_or_init(Default::default).lock().unwrap();
     let task=tauri::async_runtime::spawn(async move{
+        let _cleanup=cleanup;
         let total=items.len() as u32;
         let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).unwrap()).timeout(std::time::Duration::from_secs(12)).build();
         let Ok(client)=client else{return};
@@ -76,22 +87,23 @@ pub fn zapros(super_id:String,data:&Value,port:u16,kanal:SyncSender<Komanda>){
         while let Some(result)=jobs.join_next().await{
             match result {Ok(Ok(item))=>{buffer.push(item);done+=1;},_=>{error=true;jobs.abort_all();}}
             if !buffer.is_empty()&&(buffer.len()>=6||done==total||error){
-                let _=otpravit(&kanal,Komanda::PerevodOtvet{id,token:token.clone(),items:std::mem::take(&mut buffer),done,total,error:if error{Some("Сервис перевода недоступен. Можно вернуть оригинал и повторить.".into())}else{None}}).await;
+                if otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token:token.clone(),items:std::mem::take(&mut buffer),done,total,error:if error{Some("Сервис перевода недоступен. Можно вернуть оригинал и повторить.".into())}else{None}}).await.is_err(){jobs.abort_all();return;}
             }
-            if error {let _=otpravit(&kanal,Komanda::PerevodOtvet{id,token:token.clone(),items:Vec::new(),done,total,error:Some("Сервис перевода недоступен. Можно вернуть оригинал и повторить.".into())}).await;break;}
+            if error {let _=otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token:token.clone(),items:Vec::new(),done,total,error:Some("Сервис перевода недоступен. Можно вернуть оригинал и повторить.".into())}).await;break;}
         }
-        if total==0{let _=otpravit(&kanal,Komanda::PerevodOtvet{id,token,items:Vec::new(),done:0,total:0,error:Some("На странице нет доступного текста для перевода".into())}).await;}
+        if total==0{let _=otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token,items:Vec::new(),done:0,total:0,error:Some("На странице нет доступного текста для перевода".into())}).await;}
     });
-    TASKS.get_or_init(Default::default).lock().unwrap().insert(key,task.inner().abort_handle());
+    tasks.insert(key,(task_token,task.inner().abort_handle()));
 }
-async fn otpravit(tx:&SyncSender<Komanda>,mut cmd:Komanda)->Result<(),()>{loop{match tx.try_send(cmd){Ok(())=>return Ok(()),Err(std::sync::mpsc::TrySendError::Full(c))=>{cmd=c;tokio::time::sleep(std::time::Duration::from_millis(10)).await;},Err(_)=>return Err(())}}}
+async fn otpravit(tx:&SyncSender<Komanda>,label:&str,cmd:Komanda)->Result<(),()>{let mut cmd=if label.is_empty(){cmd}else{Komanda::OknoKomanda{label:label.into(),komanda:Box::new(cmd)}};loop{match tx.try_send(cmd){Ok(())=>return Ok(()),Err(std::sync::mpsc::TrySendError::Full(c))=>{cmd=c;tokio::time::sleep(std::time::Duration::from_millis(10)).await;},Err(_)=>return Err(())}}}
 async fn perevesti(client:&reqwest::Client,text:&str)->Result<String,()>{
     let mut chunks=Vec::new();let mut chunk=String::new();
     for c in text.chars(){if chunk.len()+c.len_utf8()>900{chunks.push(std::mem::take(&mut chunk));}chunk.push(c);}
     if !chunk.is_empty(){chunks.push(chunk);}
     let mut out=String::new();
     for chunk in chunks {
-        let r=client.get("https://translate.googleapis.com/translate_a/single").query(&[("client","gtx"),("sl","auto"),("tl","ru"),("dt","t"),("q",chunk.as_str())]).send().await.map_err(|_|())?;
+        let endpoint=if std::env::var_os("NEXUSBRO_TEST_DATA").is_some(){std::env::var("NEXUSBRO_TEST_TRANSLATE_URL").unwrap_or_else(|_|"https://translate.googleapis.com/translate_a/single".into())}else{"https://translate.googleapis.com/translate_a/single".into()};
+        let r=client.get(endpoint).query(&[("client","gtx"),("sl","auto"),("tl","ru"),("dt","t"),("q",chunk.as_str())]).send().await.map_err(|_|())?;
         if !r.status().is_success(){return Err(());}
         let body=r.text().await.map_err(|_|())?;let v:Value=serde_json::from_str(&body).map_err(|_|())?;
         let sentences=v[0].as_array().ok_or(())?;

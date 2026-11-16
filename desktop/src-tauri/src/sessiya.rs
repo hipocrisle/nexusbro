@@ -37,6 +37,9 @@ pub struct Sessiya {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "deystvie", rename_all = "snake_case")]
 pub enum Komanda {
+    OknoNovoe { label:String, parent:u64, x:i32, y:i32, w:u32, h:u32, privatnaya:bool },
+    OknoKomanda { label:String, komanda:Box<Komanda> },
+    OknoZakryt { label:String },
     Novaya { adres: String },
     NovayaPrivatnaya { adres:String },
     VosstanovitZakrytuyu,

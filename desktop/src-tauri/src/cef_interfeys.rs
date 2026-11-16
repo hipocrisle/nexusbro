@@ -19,6 +19,7 @@ wrap_keyboard_handler! {
             if e.type_ != KeyEventType::RAWKEYDOWN && e.type_ != KeyEventType::KEYDOWN { return 0 }
             let ctrl = e.modifiers & (1 << 2) != 0;
             let shift = e.modifiers & (1 << 1) != 0;
+            if ctrl&&e.windows_key_code==78{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"novoe-okno","id":self.id,"privatnaya":shift})));return 1;}
             if ctrl && matches!(e.windows_key_code,72|74|66) {
                 let razdel=match e.windows_key_code{72=>"istoriya",74=>"zagruzki",_=>"zakladki"};
                 let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"panel","razdel":razdel,"id":self.id})));return 1;

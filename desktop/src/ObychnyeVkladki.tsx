@@ -113,9 +113,10 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       const k = e.key.toLowerCase();
       const ctrl = e.ctrlKey || e.metaKey;
       // F5 и Ctrl+F5 обязаны работать как в любом браузере, а не только ⟳.
-      if (k !== "f12" && k !== "f5" && !(ctrl && ["t", "w", "l", "u", "r", "tab", "i", "f", "d"].includes(k))) return;
+      if (k !== "f12" && k !== "f5" && !(ctrl && ["t", "w", "l", "u", "r", "tab", "i", "f", "d", "n"].includes(k))) return;
       e.preventDefault();
       if (document.querySelector(".zatemnenie")) return;
+      if (ctrl && k === "n") {void invoke("novoe_okno",{id,privatnaya:e.shiftKey}).catch(e=>setOshibka(String(e)));return;}
       if (ctrl && k === "d") {if(aktivnaya)void invoke("zakladki_sohranit",{adres:aktivnaya.adres,nazvanie:aktivnaya.zagolovok,papka:null}).catch(e=>setOshibka(String(e)));return;}
       if (ctrl && k === "f") { openFind(); return; }
       if (ctrl && k === "l") { focusAddress(); return; }
@@ -230,6 +231,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onContextMenu={e=>e.stopPropagation()}
         onBlur={()=>{addressPointer.current=null;setPravka(false);}}
         onChange={e=>setAdres(e.target.value)} />
+      <button type="button" title="Новое окно · Ctrl+N" aria-label="Новое окно" onClick={()=>void invoke("novoe_okno",{id,privatnaya:false}).catch(e=>setOshibka(String(e)))}>↗</button>
       <button type="button" title="Добавить в закладки · Ctrl+D" aria-label="Добавить в закладки" disabled={!aktivnaya} onClick={()=>{if(aktivnaya)void invoke("zakladki_sohranit",{adres:aktivnaya.adres,nazvanie:aktivnaya.zagolovok,papka:null}).catch(e=>setOshibka(String(e)));}}>☆</button>
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
     </form>

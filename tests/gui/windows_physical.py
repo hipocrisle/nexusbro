@@ -42,16 +42,22 @@ results = []
 hits = {}
 subscription = b''
 ad_reports=[]
+translation_reports=[]
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path=urllib.parse.urlsplit(self.path).path
         hits[path] = hits.get(path,0)+1
+        if path=='/translate':
+            body=json.dumps([[["Переведённые новости","Regular news",None,None]]],ensure_ascii=False).encode()
+            self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
+        if path=='/translation-result':translation_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         if path=='/sub':
             self.send_response(200);self.send_header('Content-Length',str(len(subscription)));self.end_headers();self.wfile.write(subscription);return
         if path=='/ad-result':
             ad_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         if path.startswith('/ad-fixture'):
             body=b'''<!doctype html><title>AdsFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}.browser-promo,.advert{position:fixed;top:0;width:100%;height:60px;background:red}</style><main id="news">Regular news</main><a id="sponsored" style="display:block"><span style="display:block">Lexus RX 2023, auto.ru sponsored product</span><span style="display:block">&#1056;&#1045;&#1050;&#1051;&#1040;&#1052;&#1040;</span></a><div id="browser-ad" class="browser-promo">Download: &#1057;&#1082;&#1072;&#1095;&#1072;&#1081; Chrome</div><aside id="yandex-ad" class="advert">Yandex ad</aside><img src="/ads/banner.png"><script>
+new MutationObserver(()=>fetch('/translation-result?text='+encodeURIComponent(document.getElementById('news').textContent))).observe(document.getElementById('news'),{subtree:true,characterData:true,childList:true});
 setTimeout(async()=>{let blocked=false;try{await fetch('/ads/fetch-promo')}catch(e){blocked=true}await fetch('/control?utm_source=news');const p=new URLSearchParams({path:location.pathname,sponsored:String(!!document.getElementById('sponsored')),browser:String(!!document.getElementById('browser-ad')),ad:String(!!document.getElementById('yandex-ad')),news:String(!!document.getElementById('news')),blocked:String(blocked)});await fetch('/ad-result?'+p);document.title='AdsFixtureVerified'},1500)
 </script>'''
         else:
@@ -213,16 +219,19 @@ try:
             text=ctypes.create_unicode_buffer(512);u.GetWindowTextW(h,text,512)
             if u.IsWindowVisible(h) and any(s in text.value.lower() for s in ['devtools','developer','инструмент']):found.append(int(h))
             return True
-        u.EnumWindows(enum,0);return found
+        u.EnumChildWindows(wintypes.HWND(container),enum,0);return found
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:
         tools=devtools_windows()
         if tools:break
         assert app.poll() is None;time.sleep(.1)
-    assert tools,'F12 did not open a visible DevTools window'
+    assert tools,'F12 did not create docked DevTools inside the page container'
+    u.GetParent.argtypes=[wintypes.HWND];u.GetParent.restype=wintypes.HWND
+    assert u.GetParent(tools[0])==container,(tools,container)
+    assert rect(tools[0]).right-rect(tools[0]).left < rect(container).right-rect(container).left
     ImageGrab.grab().save(run/'devtools.png')
-    u.SetForegroundWindow(tools[0]);gui.hotkey('alt','f4');time.sleep(.5);u.SetForegroundWindow(hwnd)
-    results.append({'native_f12_visible_devtools':True})
+    gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
+    results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
     # Physical HTML5 reorder in WebView2 (native drag handler must be disabled).
     gui.hotkey('ctrl','t');wait_tabs(2);gui.hotkey('ctrl','t');current=wait_tabs(3);time.sleep(.3)
     order=[t['id'] for t in current['vkladki']]
@@ -333,7 +342,7 @@ try:
             text=ctypes.create_unicode_buffer(256);u.GetClassNameW(h,text,256)
             if u.IsWindowVisible(h) and text.value=='ConsoleWindowClass':found.add(int(h))
             return True
-        u.EnumWindows(enum,0);return found
+        u.EnumChildWindows(wintypes.HWND(container),enum,0);return found
     old_consoles=consoles()
     # Перезапуск тестового приложения задаёт локальный HTTP endpoint для проверки VPN.
     app.terminate();app.wait(timeout=10);time.sleep(.5)
@@ -341,6 +350,7 @@ try:
     cfg['vyhody']=[{'id':'fixture','nazvanie':'Local subscription','adres':base+'/sub','proxy_uzel':''}]
     (data/'nastrojki.json').write_text(json.dumps(cfg),encoding='utf-8')
     env['NEXUSBRO_TEST_CONNECTIVITY_URL']='http://vpn-fixture.test/probe'
+    env['NEXUSBRO_TEST_TRANSLATE_URL']='http://vpn-fixture.test/translate'
     journal.unlink(missing_ok=True)
     app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
     def new_container(previous=None):
@@ -408,19 +418,18 @@ try:
         while time.monotonic()<deadline and len(ad_reports)<=before_reports:time.sleep(.1)
         assert len(ad_reports)>before_reports,ad_reports
         results.append({stage:True})
-    # Контекстное меню CEF: предпоследний пункт — перевод, последний — Inspect.
+    # Перевод текущего документа через реальный CEF callback и native proxy.
     old_count=len(session()['vkladki']);r=rect(container);gui.click(r.left+80,r.top+180,button='right');time.sleep(.4)
-    ImageGrab.grab().save(run/'translation-menu.png');gui.press('end');gui.press('up');gui.press('enter')
-    translated=wait_tabs(old_count+1)
+    ImageGrab.grab().save(run/'translation-menu.png');gui.press('end');gui.press('up',presses=2);gui.press('enter')
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and not any(r.get('text')==['Переведённые новости'] for r in translation_reports):time.sleep(.1)
+    assert any(r.get('text')==['Переведённые новости'] for r in translation_reports),translation_reports
+    translated=session();assert len(translated['vkladki'])==old_count and translated['vkladki'][0]['adres']=='http://yandex.ru/ad-fixture',translated
+    ui('Показать оригинал',['Button']).click_input()
     deadline=time.monotonic()+10
-    while time.monotonic()<deadline:
-        translated=session();urls=[t['adres'] for t in translated['vkladki'] if t['adres'].startswith('https://translate.google.com/translate?')]
-        if urls:break
-        time.sleep(.1)
-    assert urls,translated
-    query=urllib.parse.parse_qs(urllib.parse.urlsplit(urls[-1]).query)
-    assert query['tl']==['ru'] and query['u']==['http://yandex.ru/ad-fixture'],query
-    results.append({'native_context_translation_url':True,'cef_ad_resources_cancelled':True,'cef_browser_and_yandex_banners_removed':True,'regular_news_preserved':True})
+    while time.monotonic()<deadline and not any(r.get('text')==['Regular news'] for r in translation_reports):time.sleep(.1)
+    assert any(r.get('text')==['Regular news'] for r in translation_reports),translation_reports
+    results.append({'native_translation_same_document_and_original':True,'translation_uses_super_proxy':hits.get('/translate',0)>0,'cef_ad_resources_cancelled':True,'cef_browser_and_yandex_banners_removed':True,'regular_news_preserved':True})
     # Выключатель защиты должен отключать и ResourceRequestHandler, и DOM-скрипт.
     app.terminate();app.wait(timeout=10);time.sleep(.5)
     records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))

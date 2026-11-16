@@ -1,3 +1,4 @@
+mod okna_app;
 //! NexusBro — оболочка с супер-вкладками поверх готового Chromium.
 //!
 //! Супер-вкладка = отдельный процесс движка со СВОИМ профилем и СВОИМ
@@ -147,6 +148,7 @@ struct Vkladka {
 
 #[derive(Default)]
 struct Sostoyanie {
+    okna:okna_app::Okna,
     #[cfg(target_os = "windows")]
     obolochka: std::sync::OnceLock<tauri::WebviewWindow>,
     #[cfg(target_os = "windows")]
@@ -231,7 +233,11 @@ fn so_oshibkoj_dvizhka(id: &str, zagolovok: String) -> Otvet {
 /// Куда встраивать движок: место сообщает лицевая часть при каждом
 /// изменении размера, чтобы окно браузера точно легло под полосу вкладок.
 #[tauri::command]
-async fn zadat_mesto(s: State<'_, Sostoyanie>, x: i32, y: i32, w: u32, h: u32) -> Result<Otvet, String> {
+async fn zadat_mesto(app:tauri::AppHandle,window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, x: i32, y: i32, w: u32, h: u32) -> Result<Otvet, String> {
+    if window.label()!="main"{
+        if let Some(extra)=s.okna.0.lock().unwrap().get_mut(window.label()){extra.mesto=Some(Mesto{x,y,w,h});}
+        okna_app::obolochka(&app,&s,window.label());return Ok(da());
+    }
     let _okna = s.izmenenie_okon.lock().unwrap();
     *s.mesto.lock().unwrap() = Some(Mesto { x, y, w, h });
     // Область WebView2 должна следовать и за CSS-resize панели, не только HWND resize.
@@ -303,7 +309,11 @@ fn dvizhok_est() -> bool {
 /// движков: пересозданное окно старым хэндлом не видно и лежит поверх,
 /// поедая клики по диалогу.
 #[tauri::command]
-async fn pokazat_dvizhki(s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet, String> {
+async fn pokazat_dvizhki(app:tauri::AppHandle,window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, vidno: bool) -> Result<Otvet, String> {
+    if window.label()!="main"{
+        if let Some(extra)=s.okna.0.lock().unwrap().get_mut(window.label()){extra.hidden=!vidno;}
+        okna_app::obolochka(&app,&s,window.label());return Ok(da());
+    }
     v_zhurnal_granica("pokazat_dvizhki", "-", &format!("vidno={vidno}"));
     let _okna = s.izmenenie_okon.lock().unwrap();
     s.dvizhki_skryty.store(!vidno, std::sync::atomic::Ordering::SeqCst);
@@ -523,11 +533,15 @@ async fn podgotovit_dvizhok(
             if let Err(e) = sessiya.sohranit(&brauzer::papka_profilya(&id_sessii)) {
                 zapisat_v_zhurnal(format!("{id_sessii}: сессия не записана: {e}"));
             }
-            let _ = h_sessii.emit("obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
-        }, move || { let _ = h_adresa.emit("adres-vvesti", &id_adresa); }, move |data| {
+            let _ = h_sessii.emit_to("main","obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
+        }, move || { let _ = h_adresa.emit_to("main","adres-vvesti", &id_adresa); }, move |data| {
             // Поздние сообщения завершённого движка не должны менять новый сеанс.
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
+            {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
+            let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");
+            if data["tip"]=="novoe-okno"{let app=h_ui.clone();let id=id_ui.clone();let private=data["privatnaya"]==true;tauri::async_runtime::spawn(async move{if let Err(e)=okna_app::novoe_okno(app.clone(),app.state(),Some(id),private).await{let _=app.emit("oshibka-dvizhka",e);}});return;}
+            if data["tip"]=="adres-vvesti"{let _=h_ui.emit_to(target,"adres-vvesti",&id_ui);return;}
             if data["tip"]=="blocked"||data["tip"]=="blocked_dom"{
                 let s:State<Sostoyanie>=h_ui.state();let counter=s.vkladki.lock().unwrap().get(&id_ui).filter(|v|v.zapusk_id==zapusk_id).and_then(|v|v.nash_proxy.as_ref().map(|p|p.schet.clone()));
                 if let Some(counter)=counter{let host=data["host"].as_str().unwrap_or("");if data["tip"]=="blocked"{counter.blok(host,data["rule"].as_str().unwrap_or("Правило ресурса"),"CEF");}else if let Some(rules)=data["rules"].as_object(){for (rule,count) in rules{if let Some(n)=count.as_u64(){counter.kosmetika(host,rule,n.min(10000));}}}}
@@ -545,7 +559,7 @@ async fn podgotovit_dvizhok(
                 if let Some((port,kanal))=route{perevod::zapros(id_ui.clone(),&data,port,kanal);}
                 return;
             }
-            let _ = h_ui.emit("stranica-ui", serde_json::json!({"super_id":id_ui,"data":data}));
+            let _ = h_ui.emit_to(target,"stranica-ui", serde_json::json!({"super_id":id_ui,"data":data}));
         });
         let s: State<Sostoyanie> = h.state();
         let mut v = s.vkladki.lock().unwrap();
@@ -724,6 +738,7 @@ fn ostanovit_resursy(
 }
 
 async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
+    perevod::otmenit_super(id);
     let resursy = {
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(id) else { return };
@@ -958,7 +973,8 @@ async fn fokus_obolochke(window: tauri::WebviewWindow) -> Result<(),String> {
 }
 
 #[tauri::command]
-async fn obychnye_spisok(s: State<'_, Sostoyanie>, id: String) -> Result<sessiya::Sessiya,String> {
+async fn obychnye_spisok(window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, id: String) -> Result<sessiya::Sessiya,String> {
+    if window.label()!="main"{return s.okna.0.lock().unwrap().get(window.label()).filter(|w|w.super_id==id).and_then(|w|w.sessiya.clone()).ok_or("Окно ещё запускается".into());}
     {
         let v = s.vkladki.lock().unwrap();
         let vk = v.get(&id).ok_or("такой супер-вкладки нет")?;
@@ -969,9 +985,9 @@ async fn obychnye_spisok(s: State<'_, Sostoyanie>, id: String) -> Result<sessiya
 }
 
 #[tauri::command]
-async fn obychnaya_komanda(s: State<'_, Sostoyanie>, id: String, komanda: sessiya::Komanda) -> Result<(),String> {
-    let kanal = s.vkladki.lock().unwrap().get(&id).and_then(|v|v.kanal.clone())
-        .ok_or("движок ещё не запущен")?;
+async fn obychnaya_komanda(window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, id: String, komanda: sessiya::Komanda) -> Result<(),String> {
+    let kanal=okna_app::kanal(&s,window.label(),&id)?;
+    let komanda=if window.label()=="main"{komanda}else{sessiya::Komanda::OknoKomanda{label:window.label().into(),komanda:Box::new(komanda)}};
     kanal.try_send(komanda).map_err(|e| match e {
         std::sync::mpsc::TrySendError::Full(_) => "Движок занят. Повторите действие.".into(),
         std::sync::mpsc::TrySendError::Disconnected(_) => "Движок остановлен. Откройте супер-вкладку снова.".into(),
@@ -1114,6 +1130,11 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(|app,_args,_cwd|{
+            let app=app.clone();tauri::async_runtime::spawn(async move{
+                if let Err(e)=okna_app::novoe_okno(app.clone(),app.state(),None,false).await{let _=app.emit("oshibka-dvizhka",e);if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}}
+            });
+        }))
         .manage(Sostoyanie::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
@@ -1130,7 +1151,8 @@ pub fn run() {
             // Chromium пересылает команду старому процессу, а тот открывает
             // обычное окно поверх всего. Режем по уникальному имени exe.
             privatnost::ochistit_posle_sboya();
-            brauzer::pribit_proshlyh_dvizhkov();
+            // Жизнью CEF управляют JobObject/PDEATHSIG. Не убиваем процессы
+            // по имени exe: это закрывало уже работающий NexusBro при повторном запуске.
             // Где лежит движок, положенный сборкой
             if let Ok(res) = app.path().resource_dir() {
                 brauzer::zadat_papku_resursov(res);
@@ -1265,6 +1287,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            okna_app::novoe_okno,okna_app::okno_gotovo,
             set_status::set_status,set_status::set_proverit_ip,
             zagruzki::zagruzki_spisok,zagruzki::zagruzka_deystvie,
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_import,
@@ -1280,6 +1303,14 @@ pub fn run() {
             // Восстановление встроенного окна после сворачивания/фокуса:
             // чужое окно само не возвращается — показываем и ставим на место.
             match &sobytie {
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label=="main"=>{
+                    let s:State<Sostoyanie>=app.state();
+                    if !s.okna.0.lock().unwrap().is_empty(){api.prevent_close();if let Some(w)=app.get_webview_window("main"){let _=w.hide();}}
+                }
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label!="main"=>{okna_app::zakryt(app,label);}
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Focused(true)|tauri::WindowEvent::Resized(_),..} if label!="main"=>{
+                    let s:State<Sostoyanie>=app.state();okna_app::obolochka(app,&s,label);
+                }
                 tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Resized(r), .. }
                     if label == "main" && (r.width > 0 || r.height > 0) =>
                 {
@@ -1354,6 +1385,7 @@ pub fn run() {
                         .collect()
                 };
                 for (d,p,t) in deti { ostanovit_resursy(d,p,t); }
+                perevod::otmenit_vse();
                 privatnost::ochistit();
             }
         });
