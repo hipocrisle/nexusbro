@@ -19,101 +19,41 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const pole = useRef<HTMLInputElement>(null);
   const lenta = useRef<HTMLDivElement>(null);
   const sessiyaRef = useRef<Sessiya | null>(null);
-  // Ширина, которую даём каждой обычной вкладке. Вкладки не должны растить
-  // ползунок: считаем из места под вкладки; когда места мало — «тесно».
-  // Стартовое значение — 120px, а не 230px: с 230px первый замер ловил
-  // «старую» широкую ленту и ползунок оставался.
-  const [shirina, setShirina] = useState({ predel: 120, tesno: false });
-  // Плотный режим React'у нужен ПОСЛЕ коммита (подписи уже спрятаны), поэтому
-  // ещё один ref: эффект срабатывает позже, чем замер в том же кадре.
-  const plotnoRef = useRef(false);
-  // Плотный режим (без подписей вкладок и «Защиты») — по ширине полосы.
-  const [plotno, setPlotno] = useState(false);
+  const [shirina, setShirina] = useState({ predel: 230, tesno: false });
   const skolko = sessiya?.vkladki.length ?? 0;
   const zakrepleno = sessiya?.vkladki.filter((v) => v.zakreplena).length ?? 0;
-  // Ширина одной вкладки = (место группы − «+» и зазоры) / число вкладок.
-  // ⛔ Порядок важен: сначала вписываем подписи вкладок, не помещаются —
-  // прячем их (плотный режим), ещё не помещаемся — прячем подпись «Защиты».
-  // Только тогда узкие вкладки, и уже потом ползунок. Меряем свободное место
-  // по окну: полоса строится по содержимому, от её ширины — петля.
   const izmerit = useCallback(() => {
-    const el = lenta.current;
-    if (!el) return;
-    const spisok = sessiyaRef.current?.vkladki ?? [];
-    const zakreplennyh = spisok.filter((v) => v.zakreplena).length;
-    const obyknovennyh = spisok.filter((v) => !v.zakreplena).length;
-    const polosa = document.querySelector(".polosa") as HTMLElement | null;
-    const knopka = document.querySelector(".protection-button") as HTMLElement | null;
-    // Место под вкладки = полоса минус её отступы (16), «+» с зазором
-    // группы (34), «Защита» и закреплённые вкладки с зазорами.
-    // ⛔ Считать от окна нельзя: справа стоят «Защита» (105px в обычном
-    // режиме, 46px в плотном) и отступы — без них вкладки уезжали под неё.
-    // «Защиту» берём по БОЛЬШЕМУ значению: в плотном режиме у неё ещё
-    // подпись до следующего коммита, а запас карман не тянет.
-    // ⛔ offsetWidth у «Защиты» в обычном режиме не совпадает с местом,
-    // которое она занимает в полосе (внутри неё отступы и зазоры) — берём
-    // её внешнюю ширину.
-    const zashchita = Math.max(46, Math.ceil(knopka?.getBoundingClientRect().width ?? 105));
-    // ⛔ Каждая вкладка шире своего --w: 2px бордюра (border-box не гасит
-    // его при content-размерах вложенных частей) + 5px зазора. Считаем
-    // место под вкладку уже с этой «надбавкой», иначе лента длиннее
-    // расчёта ровно на 6px × число вкладок (10 вкладок = +60px).
-    const zazor = Math.max(0, obyknovennyh - 1) * 5;
-    const mesto = Math.max(0, (polosa?.clientWidth ?? document.documentElement.clientWidth)
-      - 16 - 30 - 4 - zashchita - zakreplennyh * 44 - zazor);
-    // ⛔ Никакого «по ширине вкладки»: у вкладки кроме --w есть ещё 1px
-    // бордюра и зазор 5px, поэтому при --w = 127 фактическая ширина 133 —
-    // лента на 58px длиннее расчёта. Считаем «место под ВКЛАДКУ» уже с
-    // бордюром и зазором.
-    const na_vkladku = Math.floor(mesto / Math.max(1, obyknovennyh));
-    const podpisi = obyknovennyh > 6 || na_vkladku < 120;
-    // Ширину ставим вместе с плотным режимом: атрибут на :root применится
-    // в этом же коммите, отдельного пересчёта в следующем кадре не нужно.
-    // ⛔ Запас «с подписью» (59px) съедает место НАВСЕГДА: после первого
-    // замера полоса уже плотная, но вкладки получают на 59px меньше — и
-    // дотянуться до края никогда не могут. Поэтому точный размер берём,
-    // когда атрибут на :root уже совпал с нужным режимом; до этого держим
-    // запас, чтобы «Защита» не прыгнула на вкладки.
-    const rezhim = podpisi ? "da" : "";
-    const uzhe = document.documentElement.dataset.tesno === rezhim;
-    if (!uzhe) {
-      document.documentElement.dataset.tesno = rezhim;
-      setPlotno(podpisi);
-      plotnoRef.current = podpisi;
-    }
-    // ⛔ Запас 66px нужен ТОЛЬКО пока на экране старая раскладка «Защиты»
-    // с подписью, и снимать его нельзя: иначе после переключения в плотный
-    // режим вкладки получают лишние 59px и уезжают под «Защиту». Цена
-    // запаса — 59px пустоты в плотном режиме, но без него 8 вкладок по
-    // 127px не влезали в 10 (и появлялся ползунок).
-    const zapas = 59 + 7;
-    void uzhe;
-    // ⛔ На 20+ вкладках в узком окне вкладкам не хватает даже 36px на
-    // каждую (20 × (36+1+5) = 840px при 605px места), и ленте физически
-    // некуда их девать — остаётся «влезло сколько влезло», дальше прокрутка
-    // внутри ленты. Минимум 36px сохраняем: так читается иконка и крестик.
-    const shirina = obyknovennyh === 0 ? 120
-      : Math.max(36, Math.min(230, Math.floor((mesto - zapas) / Math.max(1, obyknovennyh) - 0.6)));
-    const tesno = obyknovennyh > 3 && shirina < 160;
-    setShirina((s) => (s.predel === shirina && s.tesno === tesno ? s : { predel: shirina, tesno }));
+    const list = lenta.current, polosa = list?.closest(".polosa") as HTMLElement | null;
+    if (!list || !polosa) return;
+    const tabs = sessiyaRef.current?.vkladki ?? [];
+    const pinned = tabs.filter(v => v.zakreplena).length, normal = tabs.length - pinned;
+    const protection = polosa.querySelector(".protection-button") as HTMLElement | null;
+    const title = polosa.querySelector(".aktivnaya-imya") as HTMLElement | null;
+    const plus = polosa.querySelector(".novaya-obychnaya") as HTMLElement | null;
+    const css = getComputedStyle(polosa), group = list.parentElement!;
+    const px = (s: string) => parseFloat(s) || 0;
+    // Режим выбираем независимо от текущей ширины кнопки: иначе порог
+    // создаёт цикл «скрыть подпись → места хватает → показать подпись».
+    const compact = normal > 6 || (polosa.clientWidth - 200) / Math.max(1, normal) < 120;
+    document.documentElement.dataset.tesno = compact ? "da" : "";
+    const available = polosa.clientWidth - px(css.paddingLeft) - px(css.paddingRight)
+      - (title?.getBoundingClientRect().width ?? 0) - (protection?.getBoundingClientRect().width ?? 0)
+      - px(css.columnGap) * 2 - (plus?.getBoundingClientRect().width ?? 30)
+      - px(getComputedStyle(group).columnGap) - px(getComputedStyle(list).columnGap) * Math.max(0, tabs.length - 1)
+      - pinned * 44;
+    const width = normal ? Math.max(20, Math.min(230, Math.floor(available / normal))) : 230;
+    const tight = width < 160 && normal > 3;
+    setShirina(s => s.predel === width && s.tesno === tight ? s : {predel: width, tesno: tight});
   }, []);
-  // Меряем после каждого изменения списка и при смене плотного режима:
-  // плотный режим меняет полосу (у «Защиты» пропадает подпись), а React
-  // не перерисовывает соседей — без второго замера место остаётся старым.
-  // ⛔ Наблюдаем за ПОЛОСОЙ, а не за лентой: ширина ленты зависит от того,
-  // сколько места заняли вкладки, — вместе с наблюдателем это давало петлю
-  // «мерим → сжимаем → мерим» и бесконечный цикл React (#185).
+  useLayoutEffect(izmerit, [izmerit, skolko, zakrepleno]);
   useEffect(() => {
-    const el = lenta.current;
-    if (!el) return;
-    const k = () => izmerit();
-    // Два кадра: первый — плотный режим применился атрибутом на :root,
-    // второй — перестроилась полоса (у «Защиты» ушла подпись).
-    let kadr = requestAnimationFrame(() => { k(); kadr = requestAnimationFrame(k); });
-    window.addEventListener("resize", k);
-    return () => { cancelAnimationFrame(kadr); window.removeEventListener("resize", k); };
-  }, [izmerit, skolko, zakrepleno, plotno]);
-  useLayoutEffect(izmerit, [izmerit, skolko, zakrepleno, plotno]);
+    const polosa = lenta.current?.closest(".polosa");
+    if (!polosa) return;
+    const observer = new ResizeObserver(izmerit);
+    observer.observe(polosa);
+    window.addEventListener("resize", izmerit);
+    return () => { observer.disconnect(); window.removeEventListener("resize", izmerit); delete document.documentElement.dataset.tesno; };
+  }, [izmerit]);
   useEffect(() => {
     setPravka(false);
     setOshibka("");
@@ -199,7 +139,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-tab")) e.preventDefault(); }} onDrop={(e) => void finishDrag(null, e)}>
         {(sessiya?.vkladki ?? []).map((v) => <div key={v.id} role="tab" aria-label={v.zagolovok || "Новая вкладка"} aria-selected={v.id === sessiya?.aktivnaya} tabIndex={0}
           data-id={v.id} draggable style={{ "--w": shirina.predel + "px" } as React.CSSProperties}
-          className={"obychnaya" + (v.id === sessiya?.aktivnaya ? " vybrana" : "") + (v.zakreplena ? " zakreplena" : "") + (v.otlozhena ? " otlozhena" : "") + (shirina.tesno && !v.zakreplena ? " tesno" : "") + (dragOver === v.id ? " drop-before" : "")}
+          className={"obychnaya" + (v.id === sessiya?.aktivnaya ? " vybrana" : "") + (v.zakreplena ? " zakreplena" : "") + (v.otlozhena ? " otlozhena" : "") + (shirina.tesno && !v.zakreplena ? " tesno" : "") + (shirina.predel < 36 && !v.zakreplena ? " mikro" : "") + (dragOver === v.id ? " drop-before" : "")}
           onDragStart={(e) => { e.dataTransfer.setData("application/nexusbro-tab", String(v.id)); e.dataTransfer.effectAllowed = "move"; void invoke("pokazat_dvizhki", { vidno: false }); }}
           onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-tab")) { e.preventDefault(); e.stopPropagation(); setDragOver(v.id); } }}
           onDrop={(e) => void finishDrag(v.id, e)} onDragEnd={() => { setDragOver(null); void invoke("pokazat_dvizhki", { vidno: true }); }}

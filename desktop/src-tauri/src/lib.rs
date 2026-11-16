@@ -459,7 +459,7 @@ async fn podgotovit_dvizhok(
         }
     };
     let m = s.mesto.lock().unwrap().unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
-    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, m) {
+    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, nastrojki.rezat_reklamu, m) {
         Ok(d) => d,
         Err(e) => {
             nash.ostanovit();

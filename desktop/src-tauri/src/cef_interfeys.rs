@@ -103,13 +103,10 @@ wrap_context_menu_handler! {
             // переводчика, поэтому открываем страницу через переводчик
             // Google в новой вкладке (17.11.2026, просьба user'а).
             let stranica = CefString::from(&p.page_url()).to_string();
-            if !stranica.is_empty() {
+            let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
+            if crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).is_ok() {
                 m.add_separator();
                 m.add_item(PEREVOD, Some(&CefString::from("Перевести страницу…")));
-                let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
-                if crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).is_ok() {
-                    m.add_item(PEREVOD + 1, Some(&CefString::from(format!("Перевести на {yazyk}").as_str())));
-                }
             }
             m.add_item(INSPECT, Some(&CefString::from("Исследовать элемент    F12")));
         }
@@ -119,7 +116,7 @@ wrap_context_menu_handler! {
             let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
             let cmd = match command_id {
                 n if (n == PEREVOD || n == PEREVOD + 1) && !stranica.is_empty() =>
-                    Some(Komanda::Novaya { adres: crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).unwrap_or_default() }),
+                    crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).ok().map(|adres| Komanda::Novaya { adres }),
                 OPEN_LINK => params.as_ref().map(|p| Komanda::Novaya { adres: CefString::from(&p.link_url()).to_string() }),
                 OPEN_IMAGE => params.as_ref().map(|p| Komanda::Novaya { adres: CefString::from(&p.source_url()).to_string() }),
                 DUPLICATE => frame.as_ref().map(|f| Komanda::Novaya { adres: CefString::from(&f.url()).to_string() }),

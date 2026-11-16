@@ -1,7 +1,7 @@
 """Проверка DOM-списков и выбора узла мышью. Tauri IPC заменён локальной фикстурой.
 Запускается в CI после сборки frontend; native CEF проверяет windows_physical.py.
 """
-import functools,http.server,json,pathlib,threading
+import functools,http.server,json,pathlib,threading,os
 from playwright.sync_api import sync_playwright,expect
 root=pathlib.Path(__file__).resolve().parents[1]
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(root/'desktop/dist')))
@@ -25,7 +25,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
 }};'''
 try:
  with sync_playwright() as pw:
-  browser=pw.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox'])
+  browser=pw.chromium.launch(channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome') or None,headless=True,args=['--no-sandbox'])
   page=browser.new_page(viewport={'width':1280,'height':820});page.add_init_script(mock)
   errors=[]
   page.on('pageerror',lambda e:errors.append(str(e)))
@@ -103,17 +103,18 @@ try:
       const last=l.lastElementChild.getBoundingClientRect(),pr=p.getBoundingClientRect(),lr=l.getBoundingClientRect(),por=po.getBoundingClientRect();
       return {scroll:l.scrollWidth-l.clientWidth,plusTopMid:pr.top+pr.height/2,tabTopMid:last.top+last.height/2,
               zazor:pr.left-lr.right, plusInside: pr.right<=por.right+1, lastWidth:last.width, count:l.children.length,
-              tabBottom:last.bottom, polosaBottom:por.bottom};}""")
+              lastRight:last.right,listRight:lr.right,tabBottom:last.bottom, polosaBottom:por.bottom};}""")
+    assert m['lastRight']<=m['listRight']+1,(shirina,n,m)
     assert m['count']==n,(shirina,n,m)
     # Ползунка быть не должно: пока вкладки влезают, scrollWidth == clientWidth.
     # 20 вкладок в окне 900px физически не влезают (20 × минимум 42px > 624px) —
     # там разрешаем внутреннюю прокрутку и проверяем только «+» и высоту.
-    if shirina>900 or n<=10: assert m['scroll']<=0,(shirina,n,m)
+    assert m['scroll']<=1,(shirina,n,m)
     assert abs(m['plusTopMid']-m['tabTopMid'])<=1.5,(shirina,n,m)
     assert m['plusInside'],(shirina,n,m)
     assert 0<=m['zazor']<=16,(shirina,n,m)
     assert m['tabBottom']<=m['polosaBottom']+1,(shirina,n,m)
-    assert m['lastWidth']>=36,(shirina,n,m)
+    assert m['lastWidth']>=20,(shirina,n,m)
   assert not errors,errors
   print(json.dumps({'mouse_font_density':True,'all_subscription_nodes':True,'overview_without_global_selection':True,'super_node_mouse_selection':True,'no_native_select':True,'plus_adjacent_to_last':True,'plus_vertically_centered':True,'many_tabs_no_scrollbar':True,'pending_placeholder':True}))
   browser.close()

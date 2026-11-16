@@ -5,61 +5,6 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-// ───────────────────── обрезка рекламы внутри вызова ─────────────────────
-//
-// Второй заслон (17.11.2026): узлы режет прокси по имени, но трекеры-картинки
-// часто живут на домене, который знает и обычный ресурс сайта (`*.yandex.ru`,
-// `*.mail.ru`). Поэтому в модуле `spisok_reklamy` есть точечные правила
-// «содержит в адресе → отменить». Здесь они приводятся в исполнение:
-// адреса вызовов страницы видны только в самой странице, поэтому
-// перехватываем `fetch`, `XMLHttpRequest` и постановку `src`/`href` узлам,
-// которые приходят в документ.
-//
-// ⛔ Только отмена рекламного вызова. Ничего не подменяем, ничего не
-// переставляем: обычные запросы уходят как шли. ⛔ Сама страница верхней
-// навигации никогда не режется — это уже отсечено в `zarezannyj_resurs`.
-const SKRIPT_VYZOVA_ZAGOTOVKA: &str = concat!(
-    r#"(function(){var P=__PRAVILA__;"#,
-    // ---------- проверка одного адреса ----------
-    r#"function zamer(u){try{if(!u)return false;u=String(u).toLowerCase();"#,
-    r#"if(u.lastIndexOf("http",0)===0&&u.indexOf(location.host.toLowerCase())<0)return false;"#,
-    r#"if(u.indexOf("data:")===0||u.indexOf("blob:")===0)return false;"#,
-    r#"for(var i=0;i<P.length;i++)if(u.indexOf(P[i])>=0)return true;}catch(e){}return false;}"#,
-    r#"function nelzya(u){return zamer(u)&&!zamer(location.href);}"#,
-    // ---------- fetch ----------
-    r#"var F=window.fetch;if(F&&!F.__nb){var fx=function(v,o){try{var u=(v&&v.url)||v;"#,
-    r#"if(nelzya(u))return Promise.reject(new TypeError("blocked"));}catch(e){}"#,
-    r#"return F.apply(this,arguments);};fx.__nb=1;try{window.fetch=fx;}catch(e){}}"#,
-    // ---------- XMLHttpRequest ----------
-    r#"var X=window.XMLHttpRequest;if(X&&X.prototype&&!X.prototype.__nb){var xo=X.prototype.open;"#,
-    r#"X.prototype.open=function(m,u){if(nelzya(u)){this.__nbR=1;return;}return xo.apply(this,arguments);};"#,
-    r#"X.prototype.__nb=1;var xs=X.prototype.send;X.prototype.send=function(){"#,
-    r#"if(this.__nbR)return;return xs.apply(this,arguments);};}"#,
-    // ---------- узлы, которые приходят в документ ----------
-    r#"function vstavka(el){if(!el||el.nodeType!==1||el.__nbOk)return;el.__nbOk=1;"#,
-    r#"try{new MutationObserver(function(){var t=el.tagName;"#,
-    r#"if(t==="IMG"||t==="SCRIPT"||t==="IFRAME"){if(nelzya(el.src))el.removeAttribute("src");}"#,
-    r#"else if(t==="LINK"){if(nelzya(el.href))el.removeAttribute("href");}}"#,
-    r#").observe(el,{attributes:true,attributeFilter:["src","href"]});}catch(e){}}"#,
-    r#"if(window.MutationObserver){var m=function(){for(var i=0;i<arguments.length;i++){"#,
-    r#"var d=arguments[i].addedNodes;if(!d)continue;"#,
-    r#"for(var j=0;j<d.length;j++){var n=d[j];if(!n||n.nodeType!==1)continue;vstavka(n);"#,
-    r#"var v=n.querySelectorAll?n.querySelectorAll("img,script,iframe,link"):[];"#,
-    r#"for(var k=0;k<v.length;k++)vstavka(v[k]);}}};"#,
-    r#"new MutationObserver(function(ms){for(var i=0;i<ms.length;i++)m(ms[i]);})"#,
-    r#".observe(document.documentElement,{childList:true,subtree:true});}})();"#
-);
-
-/// Код обрезки вызова с подставленными правилами. Собирается один раз.
-fn skript_vyzova() -> String {
-    static KOD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
-    KOD.get_or_init(|| {
-        SKRIPT_VYZOVA_ZAGOTOVKA
-            .replace("__PRAVILA__", &crate::spisok_reklamy::pravila_vyzova_json())
-    })
-    .clone()
-}
-
 pub(crate) enum Sobytie {
     Komanda(Komanda),
     Zagolovok(u64, String),
@@ -88,15 +33,7 @@ wrap_display_handler! {
                 if let Some(u) = url {
                     let u = u.to_string();
                     let _ = self.tx.send(Sobytie::Adres(self.id, u.clone()));
-                    // ⛔ Всё, что мы вставляем в страницу, идёт ОДНИМ вызовом:
-                    // скрипт страницы (плашки «скачай Firefox/Chrome», «сделай
-                    // Яндекс поиском по умолчанию» — прокси их не видит) и
-                    // код обрезки вызова. Второй запуск в той же странице
-                    // ничего не делает (флаг `__nbReklama`).
-                    let prikaz = crate::borba_s_reklamoy::skript_dlya_vyzova(&u, &skript_vyzova());
-                    if let (Some(java), Some(f)) = (prikaz, frame) {
-                        f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0);
-                    }
+
                 }
             }
         }
@@ -106,6 +43,17 @@ wrap_display_handler! {
 wrap_load_handler! {
     struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie> }
     impl LoadHandler {
+        fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
+            if !crate::borba_s_reklamoy::vklyuchena() { return; }
+            if let Some(f) = frame {
+                if f.is_main() != 0 {
+                    let url = CefString::from(&f.url()).to_string();
+                    if let Some(js) = crate::borba_s_reklamoy::skript_dlya(&url) {
+                        f.execute_java_script(Some(&CefString::from(js)), None, 0);
+                    }
+                }
+            }
+        }
         fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode,
             error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
             if frame.map(|f| f.is_main() != 0).unwrap_or(false) {
@@ -180,6 +128,7 @@ wrap_request_handler! {
             // участвует: страница на сайте везде кидает трекеры-картинки, и
             // «сложить инициатора в решатель» означало бы вырезать сторонние
             // запросы любого сайта (это ломалось бы на логинах/капче).
+            if !crate::borba_s_reklamoy::vklyuchena() { return None; }
             let initiator = request_initiator.map(|s| s.to_string()).unwrap_or_default();
             let navigaciya = is_navigation != 0 && frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(true);
             Some(crate::borba_s_reklamoy::handler_resursov(self.id, &initiator, navigaciya).into())

@@ -187,6 +187,7 @@ pub fn zapustit_cep(
     proxy: &str,
     url: Option<&str>,
     roditel: u64,
+    rezat_reklamu: bool,
     m: crate::okna::Mesto,
 ) -> anyhow::Result<std::process::Child> {
     let exe = std::env::current_exe()?;
@@ -208,6 +209,7 @@ pub fn zapustit_cep(
         .stdout(stdout)
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
+    if rezat_reklamu { cmd.arg("--nb-rezat-reklamu"); }
     if crate::nastrojki::zagruzit().apparatnoe_uskorenie {
         cmd.arg("--nb-gpu");
     }

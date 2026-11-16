@@ -13,7 +13,6 @@ export default function Vybor(p: Props) {
   const popup = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<(CSSProperties & { "--options-height": string }) | null>(null);
   const root = useRef<HTMLDivElement>(null), button = useRef<HTMLButtonElement>(null), id = useId();
-  const otkryvshij = useRef<PointerEvent | null>(null);
   const selected = options.find((o) => o.value === String(p.value));
   const visible = options.filter((o) => String(o.label).toLocaleLowerCase().includes(search.toLocaleLowerCase()));
   function close() { setOpen(false); setSearch(""); setPosition(null); }
@@ -29,20 +28,9 @@ export default function Vybor(p: Props) {
         ...(up ? { top:"auto", bottom:window.innerHeight-r.top+4 } : { top:r.bottom+4, bottom:"auto" }),
         "--options-height":Math.max(40,Math.min(220,space-64))+"px" });
     }
-    // ⛔ Клик, которым список открыли, нельзя считать «нажали мимо»: список
-    // рисуется порталом, и до его отрисовки target клика уже не внутри root
-    // и не внутри popup — список закрывался сразу после открытия.
-    const outside = (e: PointerEvent) => {
-      if (e === otkryvshij.current) return;
-      if (!root.current?.contains(e.target as Node) && !popup.current?.contains(e.target as Node)) close();
-    };
-    const zapomnit = (e: PointerEvent) => {
-      otkryvshij.current = e;
-      setTimeout(() => { if (otkryvshij.current === e) otkryvshij.current = null; }, 0);
-    };
-    document.addEventListener("pointerdown", zapomnit, true);
+    const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node) && !popup.current?.contains(e.target as Node)) close(); };
     document.addEventListener("pointerdown", outside);
-    return () => { document.removeEventListener("pointerdown", zapomnit, true); document.removeEventListener("pointerdown", outside); };
+    return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
   useEffect(() => { popup.current?.querySelector('[data-highlight="true"]')?.scrollIntoView({ block: "nearest" }); }, [index, open, position]);
   return <div className={"vybor " + (p.className ?? "")} ref={root} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {

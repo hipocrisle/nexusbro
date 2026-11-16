@@ -41,13 +41,21 @@ env = {**os.environ, 'CEF_PATH': str(cef), 'PATH': str(cef)+os.pathsep+os.enviro
 results = []
 hits = {}
 subscription = b''
+ad_reports=[]
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path=urllib.parse.urlsplit(self.path).path
         hits[path] = hits.get(path,0)+1
         if path=='/sub':
             self.send_response(200);self.send_header('Content-Length',str(len(subscription)));self.end_headers();self.wfile.write(subscription);return
-        body=b'<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>'
+        if path=='/ad-result':
+            ad_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
+        if path.startswith('/ad-fixture'):
+            body=b'''<!doctype html><title>AdsFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}.browser-promo,.advert{position:fixed;top:0;width:100%;height:60px;background:red}</style><main id="news">Regular news</main><div id="browser-ad" class="browser-promo">Download: &#1057;&#1082;&#1072;&#1095;&#1072;&#1081; Chrome</div><aside id="yandex-ad" class="advert">Yandex ad</aside><img src="/ads/banner.png"><script>
+setTimeout(async()=>{let blocked=false;try{await fetch('/ads/fetch-promo')}catch(e){blocked=true}await fetch('/control?utm_source=news');const p=new URLSearchParams({path:location.pathname,browser:String(!!document.getElementById('browser-ad')),ad:String(!!document.getElementById('yandex-ad')),news:String(!!document.getElementById('news')),blocked:String(blocked)});await fetch('/ad-result?'+p);document.title='AdsFixtureVerified'},1500)
+</script>'''
+        else:
+            body=b'<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>'
         self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
     def log_message(self,*_):pass
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Fixture)
@@ -238,6 +246,8 @@ try:
                 if x.is_visible() and x.is_enabled():return x
             time.sleep(.2)
         raise AssertionError('UIA control missing: '+name)
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
     ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
     ui('Arial',['ListItem','Button']).click_input()
@@ -248,6 +258,8 @@ try:
         if cfg['shrift']=='arial':break
         time.sleep(.1)
     assert cfg['shrift']=='arial',cfg
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
     ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
     ui('Системный',['ListItem','Button']).click_input()
@@ -303,7 +315,7 @@ try:
     subscription=(dead+'\n'+local+'\n').encode()
     config={'log':{'loglevel':'debug'},'inbounds':[{'listen':'127.0.0.1','port':vless_port,'protocol':'vless','settings':{'clients':[{'id':uid}],'decryption':'none'}}],
             'outbounds':[{'tag':'deny','protocol':'blackhole'},{'tag':'fixture','protocol':'freedom','settings':{'redirect':f'127.0.0.1:{server.server_port}','finalRules':[{'action':'allow','ip':['127.0.0.1'],'port':str(server.server_port)}]}}],
-            'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test'],'outboundTag':'fixture'}]}}
+            'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test','full:yandex.ru'],'outboundTag':'fixture'}]}}
     config_file=run/'local-vless.json';config_file.write_text(json.dumps(config),encoding='utf-8')
     server_log=(run/'vless-server.txt').open('w',encoding='utf-8')
     vpn_server=subprocess.Popen([str(xray),'run','-c',str(config_file)],creationflags=subprocess.CREATE_NO_WINDOW,stdout=server_log,stderr=server_log)
@@ -345,8 +357,8 @@ try:
     previous=container;ui('Сохранить',['Button']).click_input();container=new_container(previous)
     assert hits.get('/probe'),hits
     assert not consoles()-old_consoles,'Xray created a visible console'
-    def vpn_page(path):
-        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');time.sleep(.2);gui.write('http://vpn-fixture.test/'+path,interval=.002);gui.press('enter')
+    def vpn_page(path,host='vpn-fixture.test'):
+        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');time.sleep(.2);gui.write('http://'+host+'/'+path,interval=.002);gui.press('enter')
         deadline=time.monotonic()+15
         while time.monotonic()<deadline and not hits.get('/'+path):time.sleep(.1)
         assert hits.get('/'+path),hits
@@ -373,8 +385,54 @@ try:
     vpn_page('vpn-after-recovery')
     assert not consoles()-old_consoles
     results.append({'vless_actual_http_route':True,'no_xray_console':True,'failed_node_keeps_previous_connection':True,'dead_tunnel_auto_recovers':True})
+    # Реальные callbacks CEF: путь ресурса, DOM-плашки, F5 и меню перевода.
+    vpn_page('ad-fixture','yandex.ru')
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and not ad_reports:time.sleep(.1)
+    assert ad_reports and ad_reports[-1]['browser']==['false'] and ad_reports[-1]['ad']==['false'] and ad_reports[-1]['news']==['true'] and ad_reports[-1]['blocked']==['true'],ad_reports
+    assert not hits.get('/ads/banner.png') and not hits.get('/ads/fetch-promo'),hits
+    for keys,stage in [(('f5',),'native_f5'),(('ctrl','f5'),'native_ctrl_f5')]:
+        before_reports=len(ad_reports);before=hits.get('/ad-fixture',0);r=rect(container);gui.click(r.left+80,r.top+180)
+        if len(keys)==1:gui.press(keys[0])
+        else:gui.hotkey(*keys)
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline and hits.get('/ad-fixture',0)<=before:time.sleep(.1)
+        assert hits.get('/ad-fixture',0)>before,stage
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline and len(ad_reports)<=before_reports:time.sleep(.1)
+        assert len(ad_reports)>before_reports,ad_reports
+        results.append({stage:True})
+    # Контекстное меню CEF: предпоследний пункт — перевод, последний — Inspect.
+    old_count=len(session()['vkladki']);r=rect(container);gui.click(r.left+80,r.top+180,button='right');time.sleep(.4)
+    ImageGrab.grab().save(run/'translation-menu.png');gui.press('end');gui.press('up');gui.press('enter')
+    translated=wait_tabs(old_count+1)
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        translated=session();urls=[t['adres'] for t in translated['vkladki'] if t['adres'].startswith('https://translate.google.com/translate?')]
+        if urls:break
+        time.sleep(.1)
+    assert urls,translated
+    query=urllib.parse.parse_qs(urllib.parse.urlsplit(urls[-1]).query)
+    assert query['tl']==['ru'] and query['u']==['http://yandex.ru/ad-fixture'],query
+    results.append({'native_context_translation_url':True,'cef_ad_resources_cancelled':True,'cef_browser_and_yandex_banners_removed':True,'regular_news_preserved':True})
+    # Выключатель защиты должен отключать и ResourceRequestHandler, и DOM-скрипт.
+    app.terminate();app.wait(timeout=10);time.sleep(.5)
+    records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))
+    for record in records:record['rezat_reklamu']=False
+    (data/'vkladki.json').write_text(json.dumps(records),encoding='utf-8');journal.unlink(missing_ok=True)
+    app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
+    container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
+    # При выключенной защите красная плашка ожидаема: проверяем DOM через ответ фикстуры.
+    ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://yandex.ru/ad-fixture-off',interval=.002);gui.press('enter')
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and not any(r.get('path')==['/ad-fixture-off'] for r in ad_reports):time.sleep(.1)
+    off=[r for r in ad_reports if r.get('path')==['/ad-fixture-off']]
+    assert off and off[-1]['browser']==['true'] and off[-1]['ad']==['true'] and off[-1]['blocked']==['false'],ad_reports
+    assert hits.get('/ads/banner.png') and hits.get('/ads/fetch-promo'),hits
+    results.append({'cef_ad_switch_off_preserves_banners_and_requests':True})
     results.append({'success': True})
 finally:
+    (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
     (run/'fixture-hits.json').write_text(json.dumps(hits,indent=2),encoding='utf-8')
     server.shutdown()
     if vpn_server:

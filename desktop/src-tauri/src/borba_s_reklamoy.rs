@@ -38,7 +38,7 @@ pub fn zarezannyj_resurs(adres: &str, navigaciya: bool) -> Option<&'static str> 
         // его рекламные пути ниже отсекаются правилами пути, а запросы на
         // `yandex.ru/clck/...` в списке нет — открытие поиска работает.
         if pokhozh_na_reklamu(hvost) {
-            return Some("домен-сеть");
+            return Some("домен");
         }
     }
     // Путь и параметры проверяем для ЛЮБОГО узла, включая узлы-сети: иначе
@@ -167,6 +167,9 @@ const ZNAKI: &[&str] = &[
     "скачать firefox",
     "загрузить firefox",
     "скачать chrome",
+    "скачай chrome",
+    "скачайте chrome",
+    "скачать google chrome",
     "загрузить chrome",
     "установить chrome",
     "установить google chrome",
@@ -208,14 +211,11 @@ const KLASSY: &[&str] = &[
 /// Страницы, где такие плашки живут. У остальных скрипт не запускаем вовсе —
 /// на чужом сайте мы ничего не трогаем.
 pub fn trebuet_skript(adres: &str) -> bool {
-    let a = adres.to_ascii_lowercase();
-    !a.starts_with("view-source:")
-        && (a.contains("yandex.")
-            || a.contains("google.")
-            || a.contains("mail.ru")
-            || a.contains("vk.com")
-            || a.contains("rambler")
-            || a.contains("dzen.ru"))
+    let Ok(url) = reqwest::Url::parse(adres) else { return false };
+    if !matches!(url.scheme(), "http" | "https") { return false; }
+    let host = url.host_str().unwrap_or("").trim_end_matches('.');
+    ["ya.ru", "yandex.ru", "yandex.com", "yandex.by", "yandex.kz", "yandex.uz", "yandex.com.tr", "google.com", "google.ru", "mail.ru", "vk.com", "rambler.ru", "dzen.ru"]
+        .iter().any(|d| host == *d || host.ends_with(&format!(".{d}")))
 }
 
 static SCRIPT_KOD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
@@ -255,19 +255,16 @@ document.documentElement,{{childList:true,subtree:true}});projti(document);}})()
         .map(|s| s.as_str())
 }
 
-/// Собрать ВСЕ обрезки в один запуск. Скрипт страницы не должен выполняться
-/// по кусочкам: каждый `.observe()` без отмены живёт до перезагрузки, и при
-/// частой смене адреса (SPA) получался бы флот наблюдателей на страницу.
-/// ⛔ Второй запуск в той же странице ничего не делает: `__nbReklama`.
-pub fn skript_dlya_vyzova(adres: &str, pravila: &str) -> Option<String> {
-    let skript = skript_dlya(adres)?;
-    Some(format!("{skript}{pravila}"))
+/// Настройка передаётся отдельно каждому процессу супер-вкладки.
+pub fn vklyuchena() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::args().any(|a| a == "--nb-rezat-reklamu"))
 }
 
 // ───────────────────────── обработчик ресурсов CEF ─────────────────────────
 
 wrap_resource_request_handler! {
-    struct ResursStranicy { id: u64, initiator: String, navigaciya: bool }
+    struct ResursStranicy { id: u64, navigaciya: bool }
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             request: Option<&mut Request>, callback: Option<&mut Callback>) -> ReturnValue {
@@ -275,7 +272,7 @@ wrap_resource_request_handler! {
                 .map(|r| CefString::from(&r.url()).to_string())
                 .unwrap_or_default();
             if let Some(pravilo) = zarezannyj_resurs(&adres, self.navigaciya) {
-                eprintln!("cef: вкладка {} зарезан ресурс ({pravilo}): {adres} (со страницы {})", self.id, self.initiator);
+                eprintln!("cef: вкладка {} зарезан ресурс ({pravilo})", self.id);
                 if let Some(c) = callback { c.cancel(); }
                 return ReturnValue::CANCEL;
             }
@@ -287,8 +284,8 @@ wrap_resource_request_handler! {
 /// Обработчик вызова для одной страницы. `initiator` — сайт, с которого идёт
 /// вызов (для журнала; решение принимает сам адрес). `navigaciya` — это
 /// документ верхней навигации: его не режем никогда.
-pub fn handler_resursov(id: u64, initiator: &str, navigaciya: bool) -> ResourceRequestHandler {
-    ResursStranicy::new(id, initiator.to_string(), navigaciya)
+pub fn handler_resursov(id: u64, _initiator: &str, navigaciya: bool) -> ResourceRequestHandler {
+    ResursStranicy::new(id, navigaciya)
 }
 
 #[cfg(test)]
@@ -311,15 +308,12 @@ mod proverki {
         );
         assert_eq!(zarezannyj_resurs("https://yandex.ru/", false), None);
         // у узла-сети обычный ресурс не трогаем, рекламный — режем
-        assert_eq!(
-            zarezannyj_resurs("https://an.yandex.ru/favicon.ico", false),
-            None
-        );
+        assert_eq!(zarezannyj_resurs("https://an.yandex.ru/favicon.ico", false), Some("домен"));
         assert!(zarezannyj_resurs("https://an.yandex.ru/ad/banner.png", false).is_some());
         // поддомен-сеть: маркер «.» перед правилом — не тот же домен
-        assert!(zarezannyj_resurs("https://ads.example.com/x", false).is_some());
+        assert!(zarezannyj_resurs("https://ads.example.com/x", false).is_none());
         assert!(zarezannyj_resurs("https://site.ru/ads/banner.png", false).is_some());
-        assert!(zarezannyj_resurs("https://site.ru/page?utm_source=x", false).is_some());
+        assert!(zarezannyj_resurs("https://site.ru/page?utm_source=x", false).is_none());
         // документ верхней навигации — никогда: иначе поиск Яндекса не откроется
         assert_eq!(zarezannyj_resurs("https://yandex.ru/ads/help", true), None);
         // обычное — не трогаем
@@ -340,17 +334,16 @@ mod proverki {
         let s = skript_dlya("https://yandex.ru/").unwrap();
         assert!(s.starts_with("(function()") && s.ends_with("})();"));
         assert!(s.contains("MutationObserver"));
-        // собранный вызов содержит и скрипт страницы, и обрезку вызова
-        let i = skript_dlya_vyzova("https://yandex.ru/", "FOO();").unwrap();
-        assert!(i.starts_with("(function()"));
-        assert!(i.ends_with("FOO();"));
-        assert!(skript_dlya_vyzova("https://example.com/", "FOO();").is_none());
+        assert!(!trebuet_skript("https://example.com/?url=https://yandex.ru/"));
+        assert!(!trebuet_skript("https://evilgoogle.com/"));
+        assert!(trebuet_skript("https://ya.ru/"));
     }
 
     #[test]
     fn perevod_stroitsya_iz_bezopasnogo_adresa() {
         let u = perevod_adres("https://example.com/a?b=c&d=е", "ru").unwrap();
-        assert!(u.starts_with("https://translate.google.com/translate?sl=auto&tl=ru&u=https://example.com/a?b=c&d=%D0%B5"));
+        let parsed = reqwest::Url::parse(&u).unwrap();
+        assert_eq!(parsed.query_pairs().find(|(key, _)| key == "u").unwrap().1, "https://example.com/a?b=c&d=е");
         assert!(perevod_adres("about:blank", "ru").is_err());
         assert!(perevod_adres("https://a.b/", "ru; rm").is_err());
     }
