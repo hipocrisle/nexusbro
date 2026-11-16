@@ -27,12 +27,18 @@ try:
   browser=pw.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox'])
   page=browser.new_page(viewport={'width':1280,'height':820});page.add_init_script(mock)
   errors=[];page.on('pageerror',lambda e:errors.append(str(e)))
+  def popup_fits():
+   page.locator('.vybor-popup').wait_for()
+   r=page.locator('.vybor-popup').bounding_box();v=page.viewport_size
+   assert r['y']>=0 and r['x']>=0 and r['y']+r['height']<=v['height'] and r['x']+r['width']<=v['width'],r
   page.goto(f'http://127.0.0.1:{server.server_port}')
   page.get_by_title('Настройки NexusBro',exact=True).click()
   page.get_by_role('combobox',name='Шрифт интерфейса',exact=True).click()
+  popup_fits()
   page.get_by_role('option',name='Arial',exact=True).click()
   expect(page.get_by_role('combobox',name='Шрифт интерфейса',exact=True)).to_contain_text('Arial')
   page.get_by_role('combobox',name='Плотность интерфейса',exact=True).click()
+  popup_fits()
   page.get_by_role('option',name='Компактная',exact=True).click()
   page.get_by_role('button',name='Сеть и VPN',exact=True).click()
   page.locator('.subscription-nodes summary').click()

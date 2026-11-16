@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      frontend_only:
+        description: Only build and test frontend controls (no Rust)
+        type: boolean
+        default: false
       runtime_build:
         description: Run only Windows screen test from an existing build run (empty = build)
         required: false
@@ -19,11 +23,24 @@ on:
         default: false
 
 jobs:
+  frontend:
+    if: github.event_name == 'workflow_dispatch' && inputs.frontend_only
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci && npm run build
+        working-directory: desktop
+      - run: |
+          python3 -m pip install --break-system-packages playwright
+          python3 tests/frontend_controls.py
   build:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
-      !inputs.runtime_build &&
+      !inputs.frontend_only && !inputs.runtime_build &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     strategy:

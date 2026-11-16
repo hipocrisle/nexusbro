@@ -25,7 +25,7 @@ export default function Vybor(p: Props) {
       const up = below < Math.min(300,above);
       const space = Math.max(100,up ? above : below), width = Math.min(window.innerWidth-24,Math.max(180,r.width));
       setPosition({ position:"fixed", left:Math.max(12,Math.min(r.left,window.innerWidth-width-12)), width,
-        ...(up ? { bottom:window.innerHeight-r.top+4 } : { top:r.bottom+4 }),
+        ...(up ? { top:"auto", bottom:window.innerHeight-r.top+4 } : { top:r.bottom+4, bottom:"auto" }),
         "--options-height":Math.max(40,Math.min(220,space-64))+"px" });
     }
     const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node) && !popup.current?.contains(e.target as Node)) close(); };
