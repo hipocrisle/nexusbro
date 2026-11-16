@@ -11,11 +11,11 @@ export default function Vybor(p: Props) {
   });
   const [open, setOpen] = useState(false), [index, setIndex] = useState(0), [search, setSearch] = useState("");
   const popup = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<CSSProperties>({});
+  const [position, setPosition] = useState<CSSProperties | null>(null);
   const root = useRef<HTMLDivElement>(null), button = useRef<HTMLButtonElement>(null), id = useId();
   const selected = options.find((o) => o.value === String(p.value));
   const visible = options.filter((o) => String(o.label).toLocaleLowerCase().includes(search.toLocaleLowerCase()));
-  function close() { setOpen(false); setSearch(""); }
+  function close() { setOpen(false); setSearch(""); setPosition(null); }
   function choose(i: number) { const o = visible[i]; if (o && !o.disabled) { p.onChange({ target: { value: o.value } }); close(); button.current?.focus(); } }
   useEffect(() => {
     if (!open) return;
@@ -32,7 +32,7 @@ export default function Vybor(p: Props) {
     document.addEventListener("pointerdown", outside);
     return () => document.removeEventListener("pointerdown", outside);
   }, [open]);
-  useEffect(() => { root.current?.querySelector('[data-highlight="true"]')?.scrollIntoView({ block: "nearest" }); }, [index, open]);
+  useEffect(() => { popup.current?.querySelector('[data-highlight="true"]')?.scrollIntoView({ block: "nearest" }); }, [index, open, position]);
   return <div className={"vybor " + (p.className ?? "")} ref={root} onClick={(e) => e.stopPropagation()} onKeyDown={(e) => {
     if (e.key === "Escape" && open) { e.preventDefault(); e.stopPropagation(); close(); button.current?.focus(); }
     else if (["ArrowDown","ArrowUp","Home","End"].includes(e.key)) {
@@ -42,6 +42,6 @@ export default function Vybor(p: Props) {
     else if (e.key === "Tab") close();
   }}>
     <button type="button" ref={button} role="combobox" aria-label={p["aria-label"]} aria-expanded={open} aria-controls={id} aria-haspopup="listbox" disabled={p.disabled} onClick={() => { if (open) close(); else { setIndex(Math.max(0,options.findIndex((o) => o.value === String(p.value)))); setOpen(true); } }}>{selected?.label ?? "Выберите…"}<span aria-hidden="true">⌄</span></button>
-    {open && createPortal(<div className="vybor-popup" ref={popup} style={position}><input aria-label="Поиск в списке" placeholder="Найти…" value={search} onChange={(e) => { setSearch(e.target.value); setIndex(0); }} /><div role="listbox" id={id} aria-label={p["aria-label"]}>{visible.map((o,i) => <button type="button" role="option" aria-selected={o.value === String(p.value)} disabled={o.disabled} data-highlight={i === index} key={o.value + i} onPointerMove={() => setIndex(i)} onClick={() => choose(i)}>{o.label}</button>)}{!visible.length && <small>Ничего не найдено</small>}</div></div>,document.body)}
+    {open && position && createPortal(<div className="vybor-popup" ref={popup} style={position}><input aria-label="Поиск в списке" placeholder="Найти…" value={search} onChange={(e) => { setSearch(e.target.value); setIndex(0); }} /><div role="listbox" id={id} aria-label={p["aria-label"]}>{visible.map((o,i) => <button type="button" role="option" aria-selected={o.value === String(p.value)} disabled={o.disabled} data-highlight={i === index} key={o.value + i} onPointerMove={() => setIndex(i)} onClick={() => choose(i)}>{o.label}</button>)}{!visible.length && <small>Ничего не найдено</small>}</div></div>,document.body)}
   </div>;
 }
