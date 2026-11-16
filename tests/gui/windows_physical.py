@@ -540,7 +540,14 @@ try:
     gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None
     hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
     main_tab_controls=[x for x in win.descendants() if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top]
-    assert len(main_tab_controls)==len(session()['vkladki']),'Another window overwrote the main tab strip'
+    window_events_scoped=len(main_tab_controls)==len(session()['vkladki'])
+    results.append({'window_events_are_isolated':window_events_scoped})
+    if not window_events_scoped:
+        # Собираем остальные независимые результаты даже на старом бинарнике;
+        # строгая проверка в конце всё равно запрещает зелёный итог.
+        count=len(session()['vkladki']);r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','t');wait_tabs(count+1)
+        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','w');wait_tabs(count)
+
     # A private ordinary tab shares the Super exit, but has neither normal cookies nor localStorage.
     r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
     private=storage('private-canary','private-marker');assert private['seen']==[''] and not private['cookie'][0],private
@@ -594,6 +601,7 @@ try:
     assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
     assert find_ok,'Find match ordinal did not update correctly'
     assert download_name_ok,'Completed download name was missing'
+    assert window_events_scoped,'Another window overwrote the main tab strip'
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
