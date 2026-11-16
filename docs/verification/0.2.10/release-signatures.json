@@ -1,0 +1,23 @@
+[
+  {
+    "file": "NexusBro_0.2.10_x64-setup.exe",
+    "bytes": 155411622,
+    "sha256": "64da107d8a901725e5f8b05e88df7c2d9c4af4fe94b6e0b6438b19779c434c0f",
+    "ed25519_payload_and_comment_verified": true,
+    "manifest_signature_matches": true
+  },
+  {
+    "file": "NexusBro_0.2.10_amd64.deb",
+    "bytes": 399033956,
+    "sha256": "c8c1ecf6d2f33446537da65a4aade87ec9d3a95982d537578b939e31ae91b9b0",
+    "ed25519_payload_and_comment_verified": true,
+    "manifest_signature_matches": true
+  },
+  {
+    "file": "NexusBro-0.2.10-1.x86_64.rpm",
+    "bytes": 399018863,
+    "sha256": "bd23e661e18f065d2e95cff69cedc11ac1b42a2a57b0465d85f647e2a2f5eaf2",
+    "ed25519_payload_and_comment_verified": true,
+    "manifest_signature_matches": true
+  }
+]

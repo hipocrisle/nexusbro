@@ -16,4 +16,4 @@
 
 Результаты: [Windows](verification/0.2.10/windows.json), [счётчик HTTP](verification/0.2.10/http-requests.json), [экран после восстановления VPN](verification/0.2.10/vpn-after-recovery.png), [frontend](verification/0.2.10/frontend.json).
 
-Публикация релиза ещё не подтверждена. На DE-1 Rust/CEF не собирались. Пользовательская подписка в тесты не копировалась; её доступность с конкретного ПК этим тестом не подтверждается.
+[0.2.10 опубликована](https://github.com/hipocrisle/nexusbro/releases/tag/v0.2.10). Релизный [CI43849766476](https://github.com/hipocrisle/nexusbro/actions/runs/43849766476) — success на обеих платформах. Все native Windows-сценарии повторены успешно на окончательном NSIS: [результат](verification/0.2.10/release-windows.json). Публичный `/releases/latest/download/latest.json` отдаёт0.2.10 и совпадает с манифестом релиза. NSIS/DEB/RPM скачаны, Ed25519 payload+trusted comment и соответствие подписей манифесту проверены: [хеши и подписи](verification/0.2.10/release-signatures.json). На DE-1 Rust/CEF не собирались. Пользовательская подписка в тесты не копировалась; её доступность с конкретного ПК этим тестом не подтверждается.
