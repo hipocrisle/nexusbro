@@ -16,6 +16,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
  if(cmd==='obychnye_spisok')return {aktivnaya:1,vkladki:[{id:1,adres:'about:blank',zagolovok:'One',zakreplena:false,otlozhena:true},{id:2,adres:'about:blank',zagolovok:'Two',zakreplena:false,otlozhena:true}]};
  if(cmd==='aktivnaya')return window.__active;
  if(cmd==='dvizhok_est')return true;
+ if(cmd==='schet_rezki')return [0,0];
  if(cmd==='uzly_podpiski')return [{imya:'Unavailable',ssylka:'vless://fixture@127.0.0.1:1'},{imya:'Local second',ssylka:'vless://fixture@127.0.0.1:2'}];
  if(cmd==='plugin:app|version')return 'test';
  if(cmd==='plugin:event|listen'){window.__events[args.event]=args.handler;return 1;}
