@@ -383,7 +383,7 @@ export default function App() {
           onLostPointerCapture={() => { setTyanem(false); void sohranitNastrojki(nastrojkiRef.current).catch((e) => setOshibka(String(e))); void skrytiePriPeretaskivanii.current.catch(() => {}).then(() => invoke("pokazat_dvizhki", { vidno: true })).catch((e) => setOshibka(String(e))); }}
           onPointerUp={(e) => { if (e.currentTarget.hasPointerCapture(e.pointerId)) e.currentTarget.releasePointerCapture(e.pointerId); }} />}
         <div className="niz">
-          <button className="plyus" onClick={() => otkrytDialog()} disabled={zanyat}>
+          <button className="plyus" aria-label="Новая супер-вкладка" title="Новая супер-вкладка" onClick={() => otkrytDialog()} disabled={zanyat}>
             <Icon name="plus" />
           </button>
           <button

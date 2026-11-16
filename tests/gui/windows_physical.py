@@ -149,13 +149,30 @@ try:
     pixels('initial')
     session = json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
     assert any(t['zagolovok']=='RenderFixture' for t in session['vkladki']), session
+    # UI Automation locates controls; actual input is mouse clicks in WebView2.
+    from pywinauto import Desktop
+    win=Desktop(backend="uia").window(handle=hwnd)
+    def ui(name, kinds=None):
+        # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
+        # после нашей же перерисовки дерево может ещё показывать прошлое
+        # состояние. Поэтому ищем дольше и с паузой, а в ошибке печатаем, что
+        # реально видно — по этому видно, на каком шаге остановились.
+        deadline=time.monotonic()+30
+        videno=set()
+        while time.monotonic()<deadline:
+            items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
+            for x in items:
+                if x.is_visible() and x.is_enabled():return x
+            videno={x.element_info.name for x in win.descendants() if x.element_info.name}
+            time.sleep(.25)
+        raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
     # Open a real shell dialog over the native engine and cancel with keyboard.
     pt = origin(); client = wintypes.RECT()
     assert u.GetClientRect(hwnd, ctypes.byref(client))
-    gui.click(pt.x+22, pt.y+client.bottom-46)
+    ui('Новая супер-вкладка',['Button']).click_input()
     time.sleep(.5)
     ImageGrab.grab().save(run/'dialog.png')
-    gui.click(pt.x+15,pt.y+90)
+    ui('Отмена',['Button']).click_input()
     pixels('after-dialog')
     assert u.SetWindowPos(hwnd, None,20,20,max(900,width-120),max(560,height-100),0x0040)
     time.sleep(.5)
@@ -251,23 +268,6 @@ try:
     assert [t['id'] for t in current['vkladki']]==[order[2],order[0],order[1]],current
     results.append({'physical_ordinary_drag_reorders':True})
 
-    # UI Automation locates controls; actual input is mouse clicks in WebView2.
-    from pywinauto import Desktop
-    win=Desktop(backend="uia").window(handle=hwnd)
-    def ui(name, kinds=None):
-        # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
-        # после нашей же перерисовки дерево может ещё показывать прошлое
-        # состояние. Поэтому ищем дольше и с паузой, а в ошибке печатаем, что
-        # реально видно — по этому видно, на каком шаге остановились.
-        deadline=time.monotonic()+30
-        videno=set()
-        while time.monotonic()<deadline:
-            items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
-            for x in items:
-                if x.is_visible() and x.is_enabled():return x
-            videno={x.element_info.name for x in win.descendants() if x.element_info.name}
-            time.sleep(.25)
-        raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
     deadline=time.monotonic()+10
     while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
@@ -477,8 +477,22 @@ try:
     while time.monotonic()<deadline and not (run/'downloads/nexusbro-fixture.txt').exists():time.sleep(.1)
     assert (run/'downloads/nexusbro-fixture.txt').read_bytes()==b'NexusBro download fixture\n'*256
     gui.hotkey('ctrl','j');ui('Закрыть библиотеку',['Button']).click_input()
-    downloads=json.loads((data/'zagruzki.json').read_text(encoding='utf-8'));assert any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads),downloads
+    deadline=time.monotonic()+8
+    while time.monotonic()<deadline:
+        downloads=json.loads((data/'zagruzki.json').read_text(encoding='utf-8'))
+        if any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads):break
+        time.sleep(.1)
+    assert any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads),downloads
     results.append({'native_download_file_and_history':True})
+    gui.hotkey('ctrl','t');storage('recent-normal');gui.hotkey('ctrl','w');time.sleep(.3);gui.hotkey('ctrl','shift','t')
+    deadline=time.monotonic()+8
+    while time.monotonic()<deadline:
+        current=session();active=next(t for t in current['vkladki'] if t['id']==current['aktivnaya'])
+        if 'case=recent-normal' in active['adres']:break
+        time.sleep(.1)
+    assert 'case=recent-normal' in active['adres'],current
+    gui.hotkey('ctrl','w');time.sleep(.3)
+    results.append({'native_restore_recently_closed':True})
     main_hwnd=hwnd;main_win=win
     def browser_windows():
         found=[]
@@ -508,6 +522,42 @@ try:
     for path in data.rglob('*.json'):
         contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-canary' not in contents and 'private-marker' not in contents,path
     results.append({'native_find_next':True,'native_history_and_bookmarks_panels':True,'second_exe_opens_shared_profile_window':True,'closing_secondary_keeps_main':True,'private_tab_storage_isolated_and_reset':True,'private_urls_not_persisted':True})
+    # Приватное окно остаётся приватным и после закрытия последней страницы.
+    gui.hotkey('ctrl','shift','n');time.sleep(.8)
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and len(browser_windows())<2:time.sleep(.1)
+    windows=browser_windows();assert len(windows)==2,windows
+    hwnd=next(h for h in windows if h!=main_hwnd);u.SetForegroundWindow(hwnd);win=Desktop(backend='uia').window(handle=hwnd)
+    assert storage('private-window','private-window-marker')['seen']==['']
+    gui.hotkey('ctrl','w');time.sleep(.4)
+    assert storage('private-window-still')['seen']==['private-window-marker']
+    gui.hotkey('alt','f4');time.sleep(.5);hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
+    # Новая приватная Super живёт во временном каталоге и отсутствует в сохранённом списке.
+    ui('Новая супер-вкладка',['Button']).click_input();gui.write('PrivateSuperFixture',interval=.02)
+    boxes=[x for x in win.descendants() if x.element_info.control_type=='CheckBox' and x.element_info.name.startswith('Приватная супер-вкладка')]
+    assert boxes,'Private Super checkbox missing';boxes[0].click_input()
+    ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-canary&set=private-super-marker',interval=.001)
+    ui('Создать',['Button']).click_input()
+    deadline=time.monotonic()+25
+    while time.monotonic()<deadline and not any(r.get('case')==['private-super-canary'] for r in storage_reports):time.sleep(.1)
+    assert any(r.get('case')==['private-super-canary'] for r in storage_reports),storage_reports
+    import tempfile
+    private_root=pathlib.Path(tempfile.gettempdir())/f'NexusBro-private-{app.pid}'
+    assert private_root.exists()
+    assert all(not r['id'].startswith('pvt-') for r in json.loads((data/'vkladki.json').read_text(encoding='utf-8')))
+    for path in data.rglob('*.json'):
+        contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-super-canary' not in contents and 'private-super-marker' not in contents,path
+    # Закрытие главного окна сохраняет дополнительное; последнее завершает приложение.
+    gui.hotkey('ctrl','n');time.sleep(.8)
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and len(browser_windows())<2:time.sleep(.1)
+    extra=next(h for h in browser_windows() if h!=main_hwnd)
+    u.SetForegroundWindow(main_hwnd);gui.hotkey('alt','f4');time.sleep(.6);assert app.poll() is None and u.IsWindowVisible(extra)
+    u.SetForegroundWindow(extra);gui.hotkey('alt','f4');app.wait(timeout=15)
+    deadline=time.monotonic()+5
+    while time.monotonic()<deadline and private_root.exists():time.sleep(.1)
+    assert not private_root.exists(),private_root
+    results.append({'private_window_stays_private':True,'private_super_not_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')

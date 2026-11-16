@@ -540,7 +540,7 @@ async fn podgotovit_dvizhok(
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
             let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");
-            if data["tip"]=="novoe-okno"{let app=h_ui.clone();let id=id_ui.clone();let private=data["privatnaya"]==true;tauri::async_runtime::spawn(async move{if let Err(e)=okna_app::novoe_okno(app.clone(),app.state(),Some(id),private).await{let _=app.emit("oshibka-dvizhka",e);}});return;}
+            if data["tip"]=="novoe-okno"{let app=h_ui.clone();let id=id_ui.clone();let private=data["privatnaya"]==true;okna_app::zapros_okna(app,Some(id),private);return;}
             if data["tip"]=="adres-vvesti"{let _=h_ui.emit_to(target,"adres-vvesti",&id_ui);return;}
             if data["tip"]=="blocked"||data["tip"]=="blocked_dom"{
                 let s:State<Sostoyanie>=h_ui.state();let counter=s.vkladki.lock().unwrap().get(&id_ui).filter(|v|v.zapusk_id==zapusk_id).and_then(|v|v.nash_proxy.as_ref().map(|p|p.schet.clone()));
@@ -1133,11 +1133,7 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|app,_args,_cwd|{
-            let app=app.clone();tauri::async_runtime::spawn(async move{
-                if let Err(e)=okna_app::novoe_okno(app.clone(),app.state(),None,false).await{let _=app.emit("oshibka-dvizhka",e);if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}}
-            });
-        }))
+        .plugin(tauri_plugin_single_instance::init(|app,_args,_cwd|{okna_app::zapros_okna(app.clone(),None,false);}))
         .manage(Sostoyanie::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())

@@ -40,6 +40,16 @@ pub fn sobytie(app:&tauri::AppHandle,s:&Sostoyanie,super_id:&str,data:&serde_jso
     if let Some(session)=session{for tab in &session.vkladki{crate::biblioteka::poseshchenie(super_id,tab);}let _=app.emit_to(label,"obychnye-izmenilis",serde_json::json!({"id":super_id,"sessiya":session}));}
     true
 }
+pub fn zapros_okna(app:tauri::AppHandle,id:Option<String>,privatnaya:bool){
+    // Отдельная короткая задача разрывает цикл opaque Future Send:
+    // запуск движка -> reader callback -> новое окно -> запуск движка.
+    std::thread::spawn(move||{
+        if let Err(e)=tauri::async_runtime::block_on(novoe_okno(app.clone(),app.state(),id,privatnaya)){
+            let _=app.emit("oshibka-dvizhka",e);
+            if let Some(w)=app.get_webview_window("main"){let _=w.show();let _=w.set_focus();}
+        }
+    });
+}
 #[tauri::command]
 pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Option<String>,mut privatnaya:bool)->Result<(),String>{
     let id=id.or_else(||s.aktivnaya.lock().unwrap().clone()).ok_or("Сначала откройте супер-вкладку")?;
