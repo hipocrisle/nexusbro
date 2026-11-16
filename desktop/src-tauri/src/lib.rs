@@ -1190,7 +1190,7 @@ pub fn run() {
                                 let _ = h.emit("oshibka-dvizhka", "VPN повторно завершился. Нажмите супер-вкладку для повторного подключения или выберите другой узел.");
                             }
                         }
-                        zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
+                        if !vpn_umer { zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит")); }
                         let _ = h.emit("vkladki-izmenilis", "");
                     }
                 }

@@ -12,6 +12,8 @@ import urllib.parse
 import pyautogui as gui
 import http.server
 import threading
+import socket
+import psutil
 from PIL import ImageGrab
 
 p = argparse.ArgumentParser()
@@ -38,9 +40,13 @@ env = {**os.environ, 'CEF_PATH': str(cef), 'PATH': str(cef)+os.pathsep+os.enviro
        'NEXUSBRO_TEST_DATA': str(run/'data'), 'WEBVIEW2_USER_DATA_FOLDER': str(run/'webview2'), 'NEXUSBRO_PROBA': '1'}
 results = []
 hits = {}
+subscription = b''
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        hits[self.path] = hits.get(self.path,0)+1
+        path=urllib.parse.urlsplit(self.path).path
+        hits[path] = hits.get(path,0)+1
+        if path=='/sub':
+            self.send_response(200);self.send_header('Content-Length',str(len(subscription)));self.end_headers();self.wfile.write(subscription);return
         body=b'<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>'
         self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
     def log_message(self,*_):pass
@@ -53,6 +59,7 @@ if a.baseline:
     assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Baseline uses an ephemeral Windows runner only'
     data = pathlib.Path(os.environ['LOCALAPPDATA'])/'NexusBro'
     assert not data.exists(), 'Baseline requires a fresh Windows account'
+vpn_server=None
 app = None
 container = None
 
@@ -285,9 +292,79 @@ try:
     ui('Новая обычная вкладка',['Button']).click_input()
     wait_tabs(4)
     results.append({'restart_zero_page_requests_until_click':True,'click_wakes_one_only':True,'plus_next_to_last_tab_physical_click':True})
+    # Настоящий VLESS через sidecar приложения: без консоли, с защитой при смене узла.
+    xray=pathlib.Path(a.exe).resolve().parent/'binaries/xray.exe'
+    assert xray.exists(),xray
+    with socket.socket() as sock:
+        sock.bind(('127.0.0.1',0));vless_port=sock.getsockname()[1]
+    uid='11111111-1111-4111-8111-111111111111'
+    local=f'vless://{uid}@127.0.0.1:{vless_port}?encryption=none&security=none&type=tcp#Local%20working'
+    dead=f'vless://{uid}@127.0.0.1:1?encryption=none&security=none&type=tcp#Unavailable'
+    subscription=(dead+'\n'+local+'\n').encode()
+    config={'log':{'loglevel':'error'},'inbounds':[{'listen':'127.0.0.1','port':vless_port,'protocol':'vless','settings':{'clients':[{'id':uid}],'decryption':'none'}}],
+            'outbounds':[{'tag':'deny','protocol':'blackhole'},{'tag':'fixture','protocol':'freedom','settings':{'redirect':f'127.0.0.1:{server.server_port}'}}],
+            'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test'],'outboundTag':'fixture'}]}}
+    config_file=run/'local-vless.json';config_file.write_text(json.dumps(config),encoding='utf-8')
+    vpn_server=subprocess.Popen([str(xray),'run','-c',str(config_file)],creationflags=subprocess.CREATE_NO_WINDOW,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    def consoles():
+        found=set()
+        @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        def enum(h,_):
+            text=ctypes.create_unicode_buffer(256);u.GetClassNameW(h,text,256)
+            if u.IsWindowVisible(h) and text.value=='ConsoleWindowClass':found.add(int(h))
+            return True
+        u.EnumWindows(enum,0);return found
+    old_consoles=consoles()
+    # Перезапуск тестового приложения задаёт локальный HTTP endpoint для проверки VPN.
+    app.terminate();app.wait(timeout=10);time.sleep(.5)
+    cfg=json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))
+    cfg['vyhody']=[{'id':'fixture','nazvanie':'Local subscription','adres':base+'/sub','proxy_uzel':''}]
+    (data/'nastrojki.json').write_text(json.dumps(cfg),encoding='utf-8')
+    env['NEXUSBRO_TEST_CONNECTIVITY_URL']='http://vpn-fixture.test/probe'
+    journal.unlink(missing_ok=True)
+    app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
+    def new_container(previous=None):
+        deadline=time.monotonic()+45
+        while time.monotonic()<deadline:
+            assert app.poll() is None
+            if journal.exists():
+                matches=re.findall(r'proba: запуск ок, окно (\d+)',journal.read_text(encoding='utf-8'))
+                if matches and int(matches[-1])!=previous:return int(matches[-1])
+            time.sleep(.2)
+        raise AssertionError('CEF did not restart')
+    container=new_container();hwnd=u.FindWindowW(None,'NexusBro');win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd)
+    def edit_super():
+        pt=origin();gui.click(pt.x+26,pt.y+80,button='right');ui('Настройки').click_input()
+    edit_super()
+    ui('Сохранённое подключение',['ComboBox','Button']).click_input();ui('Local subscription',['ListItem','Button']).click_input()
+    ui('Узел подписки',['ComboBox','Button']).click_input();ui('Local working',['ListItem','Button']).click_input()
+    previous=container;ui('Сохранить',['Button']).click_input();container=new_container(previous)
+    assert hits.get('/probe'),hits
+    assert not consoles()-old_consoles,'Xray created a visible console'
+    def vpn_page(path):
+        gui.hotkey('ctrl','l');time.sleep(.3);gui.write('http://vpn-fixture.test/'+path,interval=.002);gui.press('enter');pixels(path)
+        assert hits.get('/'+path),hits
+    vpn_page('vpn-working')
+    old_records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))
+    assert old_records[0]['proxy_uzel']==local,old_records
+    edit_super();ui('Узел подписки',['ComboBox','Button']).click_input();ui('Unavailable',['ListItem','Button']).click_input();ui('Сохранить',['Button']).click_input()
+    ui('Выбранный узел не прошёл проверку HTTP(S). Прежние настройки и подключение сохранены. Выберите другой узел или повторите проверку.')
+    assert json.loads((data/'vkladki.json').read_text(encoding='utf-8'))==old_records
+    assert not consoles()-old_consoles
+    ui('Отмена',['Button']).click_input();vpn_page('vpn-after-rejected-node')
+    # Убиваем только принадлежащий тестовому приложению Xray: watchdog обязан восстановить.
+    children=[c for c in psutil.Process(app.pid).children(recursive=True) if c.name().lower()=='xray.exe']
+    assert len(children)==1,children
+    children[0].terminate();children[0].wait(timeout=10)
+    previous=container;container=new_container(previous)
+    vpn_page('vpn-after-recovery')
+    assert not consoles()-old_consoles
+    results.append({'vless_actual_http_route':True,'no_xray_console':True,'failed_node_keeps_previous_connection':True,'dead_tunnel_auto_recovers':True})
     results.append({'success': True})
 finally:
     server.shutdown()
+    if vpn_server:
+        vpn_server.terminate();vpn_server.wait(timeout=10)
     ImageGrab.grab().save(run/'final-screen.png')
     if app:
         app.terminate()
