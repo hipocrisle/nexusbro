@@ -14,6 +14,8 @@ pub struct Obychnaya {
     #[serde(default)]
     pub zagruzka: bool,
     #[serde(default)]
+    pub otlozhena: bool,
+    #[serde(default)]
     pub nazad: bool,
     #[serde(default)]
     pub ikonka: Option<String>,
@@ -68,6 +70,7 @@ impl Sessiya {
             zagolovok: "Новая вкладка".into(),
             zakreplena: false,
             zagruzka: false,
+            otlozhena: false,
             nazad: false,
             ikonka: None,
             vpered: false,
@@ -114,6 +117,7 @@ impl Sessiya {
         s.sleduyushchaya = ids.iter().max().unwrap() + 1;
         for v in &mut s.vkladki {
             v.zagruzka = false;
+            v.otlozhena = true;
             v.nazad = false;
             v.vpered = false;
         }

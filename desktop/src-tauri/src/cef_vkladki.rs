@@ -277,7 +277,7 @@ pub fn rabotat(
     let (tx, rx) = channel();
     let mut brauzery = HashMap::new();
     for v in &s.vkladki {
-        brauzery.insert(v.id, sozdat_brauzer(&k, v.id, &v.adres, &tx)?);
+        if !v.otlozhena { brauzery.insert(v.id, sozdat_brauzer(&k, v.id, &v.adres, &tx)?); }
     }
     pokazat(&s, &brauzery);
     let tx_stdin = tx.clone();
@@ -370,6 +370,18 @@ impl Rabota {
         let mut fokus = false;
         let mut fokus_klaviatury = false;
         for sobytie in rx.try_iter().take(128) {
+            let budit = match &sobytie {
+                Sobytie::Komanda(Komanda::Pereyti { id, .. } | Komanda::Obnovit { id } | Komanda::Instrumenty { id } | Komanda::Issledovat { id, .. }) => Some(*id),
+                _ => None,
+            };
+            if let Some(id) = budit {
+                if !brauzery.contains_key(&id) {
+                    if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
+                        if let Sobytie::Komanda(Komanda::Pereyti { adres, .. }) = &sobytie { v.adres = adres.clone(); }
+                        brauzery.insert(id, sozdat_brauzer(k, id, &v.adres, tx)?); v.otlozhena = false;
+                    }
+                }
+            }
             match sobytie {
                 Sobytie::Komanda(Komanda::Novaya { adres }) => {
                     let mut novaya = s.clone();
@@ -384,7 +396,7 @@ impl Rabota {
                     }
                 }
                 Sobytie::Komanda(Komanda::Vybrat { id }) => {
-                    if brauzery.contains_key(&id) {
+                    if s.vkladki.iter().any(|v| v.id == id) {
                         s.aktivnaya = id;
                         fokus = true; fokus_klaviatury = true;
                     }
@@ -393,7 +405,7 @@ impl Rabota {
                     fokus_klaviatury |= s.aktivnaya == id;
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         h.close_browser(0);
-                    }
+                    } else { let _ = tx.send(Sobytie::Zakryta(id)); }
                 }
                 Sobytie::Komanda(Komanda::ZakrytDrugie { id, sprava }) => {
                     if let Some(poziciya) = s.vkladki.iter().position(|v| v.id == id) {
@@ -401,7 +413,7 @@ impl Rabota {
                             if v.id != id && !v.zakreplena && (!sprava || i > poziciya) {
                                 if let Some(h) = brauzery.get(&v.id).and_then(|b| b.host()) {
                                     h.close_browser(0);
-                                }
+                                } else { let _ = tx.send(Sobytie::Zakryta(v.id)); }
                             }
                         }
                     }
@@ -527,11 +539,18 @@ impl Rabota {
             fokus = true;
             izmeneno = true;
         }
-        if !brauzery.contains_key(&s.aktivnaya) {
+        if !s.vkladki.iter().any(|v| v.id == s.aktivnaya) {
             s.aktivnaya = s.vkladki[0].id;
             fokus = true;
         }
         if fokus {
+            // Восстановленные страницы не создаются до явного выбора. Закрытие
+            // соседней вкладки тоже не должно будить спящую автоматически.
+            if fokus_klaviatury && !brauzery.contains_key(&s.aktivnaya) {
+                if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == s.aktivnaya) {
+                    brauzery.insert(v.id, sozdat_brauzer(k, v.id, &v.adres, tx)?); v.otlozhena = false;
+                }
+            }
             pokazat(&s, &brauzery);
         }
         if fokus_klaviatury && s.vkladki.iter().any(|v| v.id == s.aktivnaya && v.adres != "about:blank") {

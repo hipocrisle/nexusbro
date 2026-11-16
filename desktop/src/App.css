@@ -358,3 +358,21 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .rule-tags code,.block-entry code { padding:3px 6px; border-radius:5px; background:var(--fon3); font-size:11px; }
 .block-entry dl { display:grid; grid-template-columns:100px 1fr; gap:8px 12px; margin:14px; font-size:12px; }
 .block-entry dt { color:var(--tiho); }.block-entry dd { margin:0; overflow-wrap:anywhere; }
+/* Списки рисует оболочка, без отдельных native popup HWND WebView2. */
+.vybor { position:relative; min-width:0; color:var(--tekst); }
+.vybor>button { display:flex; align-items:center; justify-content:space-between; gap:10px; width:100%; min-height:42px; padding:10px 12px; border:1px solid var(--kraj); border-radius:8px; color:var(--tekst); background:var(--fon2); font:inherit; text-align:left; cursor:pointer; }
+.vybor>button:disabled { opacity:.5; cursor:default; }
+.vybor-popup { position:absolute; top:calc(100% + 4px); left:0; right:0; z-index:80; min-width:180px; padding:7px; border:1px solid var(--kraj); border-radius:10px; background:var(--fon); box-shadow:0 10px 30px #0007; }
+.vybor-popup input { width:100%; margin-bottom:5px; font-size:12px; }
+.vybor-popup [role=listbox] { max-height:220px; overflow:auto; }
+.vybor-popup [role=option] { display:block; width:100%; border:0; border-radius:6px; padding:9px 10px; background:transparent; color:var(--tekst); text-align:left; font:inherit; cursor:pointer; }
+.vybor-popup [data-highlight=true],.vybor-popup [aria-selected=true] { background:var(--fon3); color:var(--akcent); }
+.obychnye { flex:0 1 auto; max-width:100%; }
+.polosa>.protection-button { margin-left:auto; }
+.subscription-nodes { margin-top:12px; padding:12px; border:1px solid var(--kraj); border-radius:10px; }
+.subscription-nodes ul { max-height:220px; overflow:auto; padding-left:20px; }
+.obychnaya.otlozhena .obychnaya-imya { font-style:italic; opacity:.75; }
+.subscription-nodes summary { cursor:pointer; color:var(--akcent); }
+.subscription-nodes>button { margin-top:10px; border:1px solid var(--kraj); border-radius:6px; background:var(--fon2); color:var(--tekst); padding:7px 10px; cursor:pointer; }
+.obychnaya { flex:0 0 230px; width:230px; }
+.obychnaya.zakreplena { flex:0 0 44px; width:44px; }

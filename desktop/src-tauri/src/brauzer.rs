@@ -99,6 +99,7 @@ enum Zakaz {
     Prosto {
         programma: PathBuf,
         dovody: Vec<String>,
+        log: Option<PathBuf>,
         otvet: SyncSender<anyhow::Result<Child>>,
     },
 }
@@ -129,8 +130,8 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
                         Zakaz::Dvizhok { id, proxy, adres, vosstanavlivat, otvet } => {
                             let _ = otvet.send(zapustit_zdes(&id, proxy.as_deref(), adres.as_deref(), vosstanavlivat));
                         }
-                        Zakaz::Prosto { programma, dovody, otvet } => {
-                            let _ = otvet.send(zapustit_prosto(&programma, &dovody));
+                        Zakaz::Prosto { programma, dovody, log, otvet } => {
+                            let _ = otvet.send(zapustit_prosto(&programma, &dovody, log.as_deref()));
                         }
                     }
                 }
@@ -361,18 +362,27 @@ unsafe fn libc_geteuid() -> u32 {
 
 /// Запустить вспомогательную программу (xray) так же надёжно, как движок.
 pub fn zapustit_sputnik(programma: &Path, dovody: &[String]) -> anyhow::Result<Child> {
+    zapustit_sputnik_s_logom(programma, dovody, None)
+}
+pub fn zapustit_sputnik_s_logom(programma: &Path, dovody: &[String], log: Option<PathBuf>) -> anyhow::Result<Child> {
     let (otvet, zhdem) = sync_channel(1);
     zapuskatel().send(Zakaz::Prosto {
         programma: programma.to_path_buf(),
         dovody: dovody.to_vec(),
+        log,
         otvet,
     })?;
     zhdem.recv()?
 }
 
-fn zapustit_prosto(programma: &Path, dovody: &[String]) -> anyhow::Result<Child> {
+fn zapustit_prosto(programma: &Path, dovody: &[String], log: Option<&Path>) -> anyhow::Result<Child> {
     let mut cmd = Command::new(programma);
     cmd.args(dovody).stdout(Stdio::null()).stderr(Stdio::null());
+    if let Some(dir) = programma.parent() { cmd.env("XRAY_LOCATION_ASSET", dir); }
+    if let Some(log) = log {
+        let f = std::fs::File::create(log)?;
+        cmd.stdout(Stdio::from(f.try_clone()?)).stderr(Stdio::from(f));
+    }
     #[cfg(target_os = "linux")]
     unsafe {
         use std::os::unix::process::CommandExt;

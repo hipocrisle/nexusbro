@@ -1,3 +1,4 @@
+import Vybor from "./Vybor";
 import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
@@ -659,6 +660,11 @@ function Dialog(props: {
       if (nomer === zapros.current) setZagruzka(false);
     }
   }
+  useEffect(() => {
+    if (!/^https?:\/\/[^/]+\/.+/.test(proxy.trim())) return;
+    const timer = setTimeout(() => { void zagruzitUzly(); }, 400);
+    return () => { clearTimeout(timer); zapros.current++; };
+  }, [proxy]);
   const [adres, setAdres] = useState(props.pravka?.adres ?? "");
   const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
   const [pustaya, setPustaya] = useState(props.pravka?.pustaya ?? false);
@@ -675,9 +681,9 @@ function Dialog(props: {
             placeholder="Работа"
           />
         </label>
-        {props.vyhody.length > 0 && <label>Сохранённое подключение<select aria-label="Сохранённое подключение" value={props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
-          if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(""); setUzly([]); setZagruzka(false); }
-        }}><option value="manual">Ввести вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</select></label>}
+        {props.vyhody.length > 0 && <label>Сохранённое подключение<Vybor aria-label="Сохранённое подключение" value={props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
+          if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(props.vyhody.find((v) => v.adres === e.target.value)?.proxy_uzel ?? ""); setUzly([]); setZagruzka(false); }
+        }}><option value="manual">Ввести вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</Vybor></label>}
         <label>
           Выход в сеть
           <input
@@ -701,11 +707,11 @@ function Dialog(props: {
             {zagruzka ? "Загружаю узлы…" : "Загрузить узлы подписки"}
           </button>
           <label>Узел подписки
-            <select className="uzel-podpiski" value={uzel} onChange={(e) => setUzel(e.target.value)} disabled={props.zanyat}>
+            <Vybor className="uzel-podpiski" value={uzel} onChange={(e) => setUzel(e.target.value)} disabled={props.zanyat}>
               <option value="">Первый узел подписки</option>
               {uzel && !uzly.some((u) => u.ssylka === uzel) && <option value={uzel}>Сохранённый узел (обнови список для проверки)</option>}
               {uzly.map((u, i) => <option key={i} value={u.ssylka}>{u.imya}</option>)}
-            </select>
+            </Vybor>
           </label>
           {oshibkaPodpiski && <small role="alert">{oshibkaPodpiski}</small>}
         </>}

@@ -373,16 +373,27 @@ pub async fn podnyat_tunnel(
     let fajl = papka.join("xray.json");
     std::fs::write(&fajl, nastrojka)?;
 
-    let mut ditya = crate::brauzer::zapustit_sputnik(
+    let log = papka.join("xray-startup.log");
+    let mut ditya = crate::brauzer::zapustit_sputnik_s_logom(
         &xray,
         &["run".into(), "-c".into(), fajl.display().to_string()],
+        Some(log.clone()),
     )?;
 
     // ⛔ Ждём, пока туннель ОТКРОЕТ порт. Без ожидания движок стартует
     // первым, утыкается в закрытую дверь и показывает ошибку сети.
     let srok = std::time::Instant::now();
     while srok.elapsed().as_secs() < 12 {
-        if let Some(exit) = ditya.try_wait()? { anyhow::bail!("Xray завершился при запуске ({exit}); проверь параметры узла"); }
+        if let Some(exit) = ditya.try_wait()? {
+            // Не показываем сырые сообщения Xray: они могут содержать параметры узла.
+            let detail = std::fs::read_to_string(&log).unwrap_or_default().to_lowercase();
+            let reason = if detail.contains("geoip.dat") || detail.contains("geosite.dat") {
+                "Не удалось загрузить базы GeoIP/GeoSite. Переустанови актуальную версию NexusBro."
+            } else if detail.contains("failed to find an available destination") || detail.contains("balancer") {
+                "Не удалось настроить балансировщик подписки. Проверь выбранный узел."
+            } else { "Конфигурация узла не принята. Подробности в xray-startup.log профиля (не публикуй его без удаления личных данных)." };
+            anyhow::bail!("Xray завершился при запуске ({exit}). {reason}");
+        }
         if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
             return Ok((ditya, port));
         }

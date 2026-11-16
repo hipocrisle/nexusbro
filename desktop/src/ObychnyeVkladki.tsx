@@ -3,7 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Icon from "./Icons";
 
-type Vkladka = { id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; ikonka?: string | null };
+type Vkladka = { id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number };
 type Komanda = { deystvie: string; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number };
 
@@ -95,23 +95,23 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <div className="obychnye" role="tablist" aria-label="Обычные вкладки"
         onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-tab")) e.preventDefault(); }} onDrop={(e) => void finishDrag(null, e)}>
         {sessiya?.vkladki.map((v) => <div key={v.id} role="tab" aria-label={v.zagolovok || "Новая вкладка"} aria-selected={v.id === sessiya.aktivnaya} tabIndex={0}
-          data-id={v.id} draggable className={"obychnaya" + (v.id === sessiya.aktivnaya ? " vybrana" : "") + (v.zakreplena ? " zakreplena" : "") + (dragOver === v.id ? " drop-before" : "")}
+          data-id={v.id} draggable className={"obychnaya" + (v.id === sessiya.aktivnaya ? " vybrana" : "") + (v.zakreplena ? " zakreplena" : "") + (v.otlozhena ? " otlozhena" : "") + (dragOver === v.id ? " drop-before" : "")}
           onDragStart={(e) => { e.dataTransfer.setData("application/nexusbro-tab", String(v.id)); e.dataTransfer.effectAllowed = "move"; void invoke("pokazat_dvizhki", { vidno: false }); }}
           onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-tab")) { e.preventDefault(); e.stopPropagation(); setDragOver(v.id); } }}
           onDrop={(e) => void finishDrag(v.id, e)} onDragEnd={() => { setDragOver(null); void invoke("pokazat_dvizhki", { vidno: true }); }}
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); } }}
           onContextMenu={async (e) => { e.preventDefault(); e.stopPropagation(); const m = { x: Math.max(8, Math.min(e.clientX, window.innerWidth - 260)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 350)), v }; await invoke("pokazat_dvizhki", { vidno: false }); setMenu(m); }}
-          title={v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
+          title={(v.otlozhena ? "Спит — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
           onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void poslat({ deystvie: "vybrat", id: v.id }); } }}>
           <span className={"favicon" + (v.zagruzka ? " loading" : "")}>{v.zagruzka ? <span className="spinner" /> : v.ikonka?.startsWith("data:image/png;base64,") ? <img src={v.ikonka} alt="" draggable={false} /> : <Icon name="globe" size={16} />}</span>
           {!v.zakreplena && <span className="obychnaya-imya">{v.zagolovok || "Новая вкладка"}</span>}
           {!v.zakreplena && <button className="zakryt-obychnuyu" title="Закрыть обычную вкладку" aria-label="Закрыть обычную вкладку"
             onClick={(e) => { e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); }}><Icon name="close" size={13} /></button>}
         </div>)}
-      </div>
       <button className="novaya-obychnaya" title="Новая обычная вкладка" aria-label="Новая обычная вкладка" disabled={!id}
         onClick={() => void poslat({ deystvie: "novaya", adres: novayaStranica })}><Icon name="plus" size={18} /></button>
+      </div>
       {children}
     </div>
     <form className="navigaciya" onSubmit={(e) => {
