@@ -338,7 +338,7 @@ try:
     edit_super()
     ui('Сохранённое подключение',['ComboBox','Button']).click_input();ui('Local subscription',['ListItem','Button']).click_input()
     ui('Узел подписки',['ComboBox','Button']).click_input();ui('Local working',['ListItem','Button']).click_input()
-    pt=origin();gui.moveTo(pt.x+500,pt.y+400);gui.scroll(-14);time.sleep(.3)
+    gui.press('tab',presses=5,interval=.1);time.sleep(.3)
     previous=container;ui('Сохранить',['Button']).click_input();container=new_container(previous)
     assert hits.get('/probe'),hits
     assert not consoles()-old_consoles,'Xray created a visible console'
@@ -349,12 +349,15 @@ try:
     old_records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))
     assert old_records[0]['proxy_uzel']==local,old_records
     edit_super();ui('Узел подписки',['ComboBox','Button']).click_input();ui('Unavailable',['ListItem','Button']).click_input()
-    pt=origin();gui.moveTo(pt.x+500,pt.y+400);gui.scroll(-14);time.sleep(.3);ui('Сохранить',['Button']).click_input()
-    time.sleep(2);gui.scroll(14);time.sleep(.3)
-    ui('Выбранный узел не прошёл проверку HTTP(S). Прежние настройки и подключение сохранены. Выберите другой узел или повторите проверку.')
+    gui.press('tab',presses=5,interval=.1);time.sleep(.3);ui('Сохранить',['Button']).click_input()
+    deadline=time.monotonic()+20
+    message='Выбранный узел не прошёл проверку HTTP(S). Прежние настройки и подключение сохранены. Выберите другой узел или повторите проверку.'
+    while time.monotonic()<deadline:
+        if any(x.element_info.name==message for x in win.descendants()):break
+        time.sleep(.2)
+    else:raise AssertionError('Failed node did not produce the expected error')
     assert json.loads((data/'vkladki.json').read_text(encoding='utf-8'))==old_records
     assert not consoles()-old_consoles
-    gui.moveTo(pt.x+500,pt.y+400);gui.scroll(-14);time.sleep(.3)
     ui('Отмена',['Button']).click_input();vpn_page('vpn-after-rejected-node')
     # Убиваем только принадлежащий тестовому приложению Xray: watchdog обязан восстановить.
     children=[c for c in psutil.Process(app.pid).children(recursive=True) if c.name().lower()=='xray.exe']
