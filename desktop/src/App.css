@@ -376,3 +376,7 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .subscription-nodes>button { margin-top:10px; border:1px solid var(--kraj); border-radius:6px; background:var(--fon2); color:var(--tekst); padding:7px 10px; cursor:pointer; }
 .obychnaya { flex:0 0 230px; width:230px; }
 .obychnaya.zakreplena { flex:0 0 44px; width:44px; }
+.vybor-popup { z-index:100; right:auto; }
+.vybor-popup [role=listbox] { max-height:var(--options-height,220px); }
+.vybor-popup input { padding:8px 10px; border:1px solid var(--kraj); border-radius:6px; background:var(--fon2); color:var(--tekst); font:inherit; }
+.vybor-popup [role=option] { overflow-wrap:anywhere; }
