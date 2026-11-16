@@ -180,6 +180,12 @@ jobs:
           rm -rf "src-tauri/target/${{ matrix.target }}/release/bundle"
           npm run tauri build -- --target ${{ matrix.target }}
 
+      - name: Проверить списки и подписки в интерфейсе
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          python3 -m pip install --break-system-packages playwright
+          python3 tests/frontend_controls.py
+
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4

@@ -10,6 +10,8 @@ import subprocess
 import time
 import urllib.parse
 import pyautogui as gui
+import http.server
+import threading
 from PIL import ImageGrab
 
 p = argparse.ArgumentParser()
@@ -35,6 +37,17 @@ cef = pathlib.Path(a.cef).resolve()
 env = {**os.environ, 'CEF_PATH': str(cef), 'PATH': str(cef)+os.pathsep+os.environ['PATH'],
        'NEXUSBRO_TEST_DATA': str(run/'data'), 'WEBVIEW2_USER_DATA_FOLDER': str(run/'webview2'), 'NEXUSBRO_PROBA': '1'}
 results = []
+hits = {}
+class Fixture(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        hits[self.path] = hits.get(self.path,0)+1
+        body=b'<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>'
+        self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+    def log_message(self,*_):pass
+server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Fixture)
+threading.Thread(target=server.serve_forever,daemon=True).start()
+base=f'http://127.0.0.1:{server.server_port}'
+
 data = run/'data'
 if a.baseline:
     assert os.environ.get('GITHUB_ACTIONS') == 'true', 'Baseline uses an ephemeral Windows runner only'
@@ -92,7 +105,7 @@ try:
     # Address bar immediately above the actual CEF container.
     gui.click(r.left+180, r.top-15)
     gui.hotkey('ctrl','a')
-    fixture = 'data:text/html,'+urllib.parse.quote('<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>')
+    fixture = base+'/page'
     gui.write(fixture, interval=.003)
     gui.press('enter')
     if a.baseline:
@@ -207,8 +220,69 @@ try:
     assert [t['id'] for t in current['vkladki']]==[order[2],order[0],order[1]],current
     results.append({'physical_ordinary_drag_reorders':True})
 
+    # UI Automation locates controls; actual input is mouse clicks in WebView2.
+    from pywinauto import Desktop
+    win=Desktop(backend="uia").window(handle=hwnd)
+    def ui(name, kinds=None):
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
+            for x in items:
+                if x.is_visible() and x.is_enabled():return x
+            time.sleep(.2)
+        raise AssertionError('UIA control missing: '+name)
+    ui('Настройки NexusBro',['Button']).click_input()
+    ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
+    ui('Arial',['ListItem','Button']).click_input()
+    ui('Сохранить',['Button']).click_input()
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        cfg=json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))
+        if cfg['shrift']=='arial':break
+        time.sleep(.1)
+    assert cfg['shrift']=='arial',cfg
+    ui('Настройки NexusBro',['Button']).click_input()
+    ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
+    ui('Системный',['ListItem','Button']).click_input()
+    ui('Сохранить',['Button']).click_input()
+    results.append({'physical_settings_dropdown_mouse_selection':True})
+    # Restore all URLs without any HTTP request, then wake exactly one by click.
+    app.terminate();app.wait(timeout=10);time.sleep(.5)
+    records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))
+    for record in records:record['pustaya']=False
+    (data/'vkladki.json').write_text(json.dumps(records),encoding='utf-8')
+    saved=session()
+    for i,t in enumerate(saved['vkladki']):t['adres']=base+f'/sleep/{i}';t['zagolovok']=f'Sleeping {i}'
+    (data/'profili/proba/obychnye.json').write_text(json.dumps(saved),encoding='utf-8')
+    journal.unlink(missing_ok=True)
+    app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
+    deadline=time.monotonic()+40
+    while time.monotonic()<deadline:
+        assert app.poll() is None
+        if journal.exists():
+            matches=re.findall(r'proba: запуск ок, окно (\d+)',journal.read_text(encoding='utf-8'))
+            if matches:
+                container=int(matches[-1]);break
+        time.sleep(.1)
+    time.sleep(1)
+    current=session();assert all(t.get('otlozhena') for t in current['vkladki']),current
+    assert not any(path.startswith('/sleep/') for path in hits),hits
+    hwnd=u.FindWindowW(None,'NexusBro');u.SetForegroundWindow(hwnd);r=rect(container)
+    gui.click(r.left+159,r.top-70)
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        current=session()
+        if hits.get('/sleep/0') and not current['vkladki'][0]['otlozhena']:break
+        time.sleep(.1)
+    assert hits.get('/sleep/0') and not hits.get('/sleep/1') and not hits.get('/sleep/2'),hits
+    assert all(t.get('otlozhena') for t in current['vkladki'][1:]),current
+    # Plus is immediately after the third tab, not at the far right edge.
+    gui.click(r.left+765,r.top-70)
+    wait_tabs(4)
+    results.append({'restart_zero_page_requests_until_click':True,'click_wakes_one_only':True,'plus_next_to_last_tab_physical_click':True})
     results.append({'success': True})
 finally:
+    server.shutdown()
     ImageGrab.grab().save(run/'final-screen.png')
     if app:
         app.terminate()

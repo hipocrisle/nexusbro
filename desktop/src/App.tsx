@@ -707,7 +707,7 @@ function Dialog(props: {
             {zagruzka ? "Загружаю узлы…" : "Загрузить узлы подписки"}
           </button>
           <label>Узел подписки
-            <Vybor className="uzel-podpiski" value={uzel} onChange={(e) => setUzel(e.target.value)} disabled={props.zanyat}>
+            <Vybor aria-label="Узел подписки" className="uzel-podpiski" value={uzel} onChange={(e) => setUzel(e.target.value)} disabled={props.zanyat}>
               <option value="">Первый узел подписки</option>
               {uzel && !uzly.some((u) => u.ssylka === uzel) && <option value={uzel}>Сохранённый узел (обнови список для проверки)</option>}
               {uzly.map((u, i) => <option key={i} value={u.ssylka}>{u.imya}</option>)}
