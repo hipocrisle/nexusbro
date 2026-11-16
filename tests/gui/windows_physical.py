@@ -239,13 +239,19 @@ try:
     from pywinauto import Desktop
     win=Desktop(backend="uia").window(handle=hwnd)
     def ui(name, kinds=None):
-        deadline=time.monotonic()+15
+        # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
+        # после нашей же перерисовки дерево может ещё показывать прошлое
+        # состояние. Поэтому ищем дольше и с паузой, а в ошибке печатаем, что
+        # реально видно — по этому видно, на каком шаге остановились.
+        deadline=time.monotonic()+30
+        videno=set()
         while time.monotonic()<deadline:
             items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
             for x in items:
                 if x.is_visible() and x.is_enabled():return x
-            time.sleep(.2)
-        raise AssertionError('UIA control missing: '+name)
+            videno={x.element_info.name for x in win.descendants() if x.element_info.name}
+            time.sleep(.25)
+        raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
     deadline=time.monotonic()+10
     while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
