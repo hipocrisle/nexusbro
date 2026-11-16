@@ -248,7 +248,8 @@ function projti(k){{if(!k||!k.querySelectorAll)return;\
 var v=k.querySelectorAll('a,div,section,aside,ins,iframe,span');\
 for(var i=v.length-1;i>=0;i--)otsenit(v[i]);}}\
 new MutationObserver(function(ms){{for(var i=0;i<ms.length;i++){{var d=ms[i].addedNodes;\
-for(var j=0;j<d.length;j++){{var n=d[j];if(n.nodeType===1){{otsenit(n);projti(n);}}}}}}}}).observe(\
+for(var j=0;j<d.length;j++){{var n=d[j];if(!n||n.nodeType!==1)continue;\
+otsenit(n);projti(n);}}}}}}).observe(\
 document.documentElement,{{childList:true,subtree:true}});projti(document);}})();"
                 )
             })
