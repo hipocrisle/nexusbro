@@ -301,11 +301,13 @@ try:
     local=f'vless://{uid}@127.0.0.1:{vless_port}?encryption=none&security=none&type=tcp#Local%20working'
     dead=f'vless://{uid}@127.0.0.1:1?encryption=none&security=none&type=tcp#Unavailable'
     subscription=(dead+'\n'+local+'\n').encode()
-    config={'log':{'loglevel':'error'},'inbounds':[{'listen':'127.0.0.1','port':vless_port,'protocol':'vless','settings':{'clients':[{'id':uid}],'decryption':'none'}}],
+    config={'log':{'loglevel':'debug'},'inbounds':[{'listen':'127.0.0.1','port':vless_port,'protocol':'vless','settings':{'clients':[{'id':uid}],'decryption':'none'}}],
             'outbounds':[{'tag':'deny','protocol':'blackhole'},{'tag':'fixture','protocol':'freedom','settings':{'redirect':f'127.0.0.1:{server.server_port}'}}],
             'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test'],'outboundTag':'fixture'}]}}
     config_file=run/'local-vless.json';config_file.write_text(json.dumps(config),encoding='utf-8')
-    vpn_server=subprocess.Popen([str(xray),'run','-c',str(config_file)],creationflags=subprocess.CREATE_NO_WINDOW,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+    server_log=(run/'vless-server.txt').open('w',encoding='utf-8')
+    vpn_server=subprocess.Popen([str(xray),'run','-c',str(config_file)],creationflags=subprocess.CREATE_NO_WINDOW,stdout=server_log,stderr=server_log)
+    time.sleep(.5);assert vpn_server.poll() is None,'Local VLESS server exited'
     def consoles():
         found=set()
         @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
@@ -331,6 +333,7 @@ try:
                 matches=re.findall(r'proba: запуск ок, окно (\d+)',journal.read_text(encoding='utf-8'))
                 if matches and int(matches[-1])!=previous:return int(matches[-1])
             time.sleep(.2)
+        (run/'vpn-diagnostic.json').write_text(json.dumps({'hits':hits,'server_exit':vpn_server.poll(),'uia':[x.element_info.name for x in win.descendants()]},ensure_ascii=False,indent=2),encoding='utf-8')
         raise AssertionError('CEF did not restart')
     container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     def edit_super():
@@ -369,6 +372,7 @@ try:
     results.append({'vless_actual_http_route':True,'no_xray_console':True,'failed_node_keeps_previous_connection':True,'dead_tunnel_auto_recovers':True})
     results.append({'success': True})
 finally:
+    (run/'fixture-hits.json').write_text(json.dumps(hits,indent=2),encoding='utf-8')
     server.shutdown()
     if vpn_server:
         vpn_server.terminate();vpn_server.wait(timeout=10)
