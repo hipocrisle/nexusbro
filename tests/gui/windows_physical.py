@@ -261,7 +261,14 @@ try:
     gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
     results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
     # Physical HTML5 reorder in WebView2 (native drag handler must be disabled).
-    gui.hotkey('ctrl','t');wait_tabs(2);gui.hotkey('ctrl','t');current=wait_tabs(3);time.sleep(.3)
+    gui.hotkey('ctrl','t');focus_after_tools=True
+    try:wait_tabs(2)
+    except AssertionError:
+        # Не скрываем ошибку фокуса: итог остаётся красным, но независимые
+        # проверки продолжаем, чтобы увидеть остальные проблемы за один прогон.
+        focus_after_tools=False;r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','t');wait_tabs(2)
+    results.append({'native_focus_after_devtools':focus_after_tools})
+    gui.hotkey('ctrl','t');current=wait_tabs(3);time.sleep(.3)
     order=[t['id'] for t in current['vkladki']]
     gui.moveTo(r.left+619,r.top-70);gui.mouseDown();gui.moveTo(r.left+159,r.top-70,duration=.7);gui.mouseUp()
     deadline=time.monotonic()+12
@@ -565,6 +572,7 @@ try:
     while time.monotonic()<deadline and private_root.exists():time.sleep(.1)
     assert not private_root.exists(),private_root
     results.append({'private_window_stays_private':True,'private_super_not_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
+    assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
