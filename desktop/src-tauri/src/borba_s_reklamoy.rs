@@ -240,11 +240,12 @@ if(el===document.body||el===document.documentElement)return;\
 var r=el.getBoundingClientRect();\
 if(r.width*r.height>window.innerWidth*window.innerHeight*0.5)return;\
 var t=(el.innerText||'').toLowerCase();if(t.length>2000)return;\
+if(el.matches('a,[role=link]')&&t.trim().length>30&&/(^|[\\n\\r])\\s*реклама\\s*($|[\\n\\r])/i.test(t)){{skryt(el);return;}}\
 for(var i=0;i<ZN.length;i++)if(t.indexOf(ZN[i])>=0){{skryt(el);return;}}\
 var k=((el.className&&el.className.baseVal)||el.className||'')+'';k=k.toLowerCase();\
 for(var j=0;j<KL.length;j++)if(k.indexOf(KL[j])>=0){{skryt(el);return;}}}}\
 function projti(k){{if(!k||!k.querySelectorAll)return;\
-var v=k.querySelectorAll('div,section,aside,ins,iframe,span');\
+var v=k.querySelectorAll('a,div,section,aside,ins,iframe,span');\
 for(var i=v.length-1;i>=0;i--)otsenit(v[i]);}}\
 new MutationObserver(function(ms){{for(var i=0;i<ms.length;i++){{var d=ms[i].addedNodes;\
 for(var j=0;j<d.length;j++){{var n=d[j];if(n.nodeType===1){{otsenit(n);projti(n);}}}}}}}}).observe(\
