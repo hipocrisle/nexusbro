@@ -267,8 +267,8 @@ fn zhurnal_rezki(s: State<Sostoyanie>, id: String) -> proxy::ZhurnalRezki {
     let data = s.vkladki.lock().unwrap().get(&id).map(|v| (v.nastrojki.rezat_reklamu, v.nash_proxy.as_ref().map(|p| p.schet.clone())));
     match data {
         Some((on, Some(s))) => s.snimok(on),
-        Some((on, None)) => proxy::ZhurnalRezki { pravila_vsego: crate::spisok_reklamy::SPISOK.len(), summy: Vec::new(), vklyuchena: on, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
-        None => proxy::ZhurnalRezki { pravila_vsego: crate::spisok_reklamy::SPISOK.len(), summy: Vec::new(), vklyuchena: false, zarezano: 0, propushcheno: 0, zapisi: Vec::new() },
+        Some((on, None)) => proxy::ZhurnalRezki { pravila_vsego: crate::spisok_reklamy::SPISOK.len(), summy: Vec::new(), vklyuchena: on, zarezano: 0, udaleny_elementy:0, propushcheno: 0, zapisi: Vec::new() },
+        None => proxy::ZhurnalRezki { pravila_vsego: crate::spisok_reklamy::SPISOK.len(), summy: Vec::new(), vklyuchena: false, zarezano: 0, udaleny_elementy:0, propushcheno: 0, zapisi: Vec::new() },
     }
 }
 
@@ -525,8 +525,16 @@ async fn podgotovit_dvizhok(
             }
             let _ = h_sessii.emit("obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
         }, move || { let _ = h_adresa.emit("adres-vvesti", &id_adresa); }, move |data| {
+            // Поздние сообщения завершённого движка не должны менять новый сеанс.
+            { let s:State<Sostoyanie>=h_ui.state();
+              if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
+            if data["tip"]=="blocked"||data["tip"]=="blocked_dom"{
+                let s:State<Sostoyanie>=h_ui.state();let counter=s.vkladki.lock().unwrap().get(&id_ui).filter(|v|v.zapusk_id==zapusk_id).and_then(|v|v.nash_proxy.as_ref().map(|p|p.schet.clone()));
+                if let Some(counter)=counter{let host=data["host"].as_str().unwrap_or("");if data["tip"]=="blocked"{counter.blok(host,data["rule"].as_str().unwrap_or("Правило ресурса"),"CEF");}else if let Some(rules)=data["rules"].as_object(){for (rule,count) in rules{if let Some(n)=count.as_u64(){counter.kosmetika(host,rule,n.min(10000));}}}}
+                return;
+            }
             if data["tip"]=="download"{zagruzki::obnovit(&id_ui,&data);return;}
-            if data["tip"]=="private-ended"{zagruzki::ochistit_privatnye(&id_ui);return;}
+            if data["tip"]=="private-ended"{zagruzki::ochistit_privatnye(&id_ui);let s:State<Sostoyanie>=h_ui.state();if let Some(p)=s.vkladki.lock().unwrap().get(&id_ui).and_then(|v|v.nash_proxy.as_ref().map(|p|p.schet.clone())){p.ochistit();}return;}
             if data["tip"]=="perevod-otmena" {
                 if let Some(id)=data["id"].as_u64(){perevod::otmenit(&id_ui,id);}
             }

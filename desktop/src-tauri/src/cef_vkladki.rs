@@ -23,7 +23,13 @@ pub(crate) enum Sobytie {
 wrap_display_handler! {
     struct VidStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl DisplayHandler {
-        fn on_console_message(&self,_browser:Option<&mut Browser>,_level:LogSeverity,_message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{self.privatnaya as i32}
+        fn on_console_message(&self,browser:Option<&mut Browser>,_level:LogSeverity,message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{
+            if let Some(data)=message.map(|m|m.to_string()).and_then(|m|m.strip_prefix("__NEXUSBRO_COSMETIC__").map(str::to_owned)).filter(|s|s.len()<16000).and_then(|s|serde_json::from_str::<serde_json::Value>(&s).ok()){
+                let host=browser.and_then(|b|b.main_frame()).and_then(|f|reqwest::Url::parse(&CefString::from(&f.url()).to_string()).ok()).and_then(|u|u.host_str().map(str::to_owned)).unwrap_or_default();
+                let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"blocked_dom","id":self.id,"host":host,"rules":data,"privatnaya":self.privatnaya})));return 1;
+            }
+            self.privatnaya as i32
+        }
 
         fn on_favicon_urlchange(&self, browser: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
             crate::cef_interfeys::ikonka(self.id, self.tx.clone(), browser, icon_urls);
@@ -115,7 +121,7 @@ wrap_focus_handler! {
 }
 
 wrap_request_handler! {
-    struct SboyStranicy { id: u64, privatnaya:bool }
+    struct SboyStranicy { id: u64, privatnaya:bool, tx:Sender<Sobytie> }
     impl RequestHandler {
         fn on_render_process_terminated(&self, _browser: Option<&mut Browser>, status: TerminationStatus,
             error_code: i32, error_string: Option<&CefString>) {
@@ -138,7 +144,7 @@ wrap_request_handler! {
             if !crate::borba_s_reklamoy::vklyuchena() { return None; }
             let initiator = request_initiator.map(|s| s.to_string()).unwrap_or_default();
             let navigaciya = is_navigation != 0 && frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(true);
-            Some(crate::borba_s_reklamoy::handler_resursov(self.id, &initiator, navigaciya).into())
+            Some(crate::borba_s_reklamoy::handler_resursov(self.id, &initiator, navigaciya,self.tx.clone(),self.privatnaya).into())
         }
     }
 }
@@ -151,7 +157,7 @@ wrap_client! {
         fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(crate::cef_interfeys::klaviatura(self.id, self.tx.clone())) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(crate::cef_interfeys::menyu(self.id, self.tx.clone(), self.privatnaya)) }
         fn focus_handler(&self) -> Option<FocusHandler> { Some(FokusStranicy::new()) }
-        fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id, self.privatnaya)) }
+        fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id, self.privatnaya, self.tx.clone())) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(VidStranicy::new(self.id, self.tx.clone(), self.privatnaya)) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(ZagruzkaStranicy::new(self.id, self.tx.clone(), self.privatnaya)) }
         fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(ZhiznStranicy::new(self.id, self.tx.clone(), self.privatnaya)) }
@@ -458,6 +464,16 @@ impl Rabota {
                     }
                 }
             }
+            // Поиск, перевод и отчёты защиты не меняют сохранённую сессию.
+            // Пробуждение отложенной страницы при этом обязательно публикуем.
+            let session_dirty = razbuzhen.is_some() || !matches!(&sobytie,
+                Sobytie::Sluzhebnoe(_) | Sobytie::DevtoolsGotovy(..) |
+                Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
+                Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
+                    Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
+                    Komanda::PerevodOtvet{..} | Komanda::Instrumenty{..} |
+                    Komanda::Issledovat{..} | Komanda::InstrumentyRazmer{..} |
+                    Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             match sobytie {
                 Sobytie::Komanda(Komanda::Novaya { adres }|Komanda::NovayaPrivatnaya { adres }) => {
@@ -645,6 +661,8 @@ impl Rabota {
                         if let Some(registration)=crate::perevod::nachat(b,id,token.clone(),tx.clone()){
                             perevody.insert(id,(token,registration));
                             let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"start":true,"done":0,"total":0})));
+                        } else {
+                            let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"error":"Перевод доступен для загруженных веб-страниц. Попробуйте после загрузки."})));
                         }
                     }
                 }
@@ -670,6 +688,7 @@ impl Rabota {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) { h.stop_finding(1);h.set_focus(1); }
                 }
                 Sobytie::Sluzhebnoe(data) => {
+                    if data["privatnaya"]==true&&!s.vkladki.iter().any(|v|v.privatnaya){continue;}
                     println!("NB-UI {}", serde_json::to_string(&data)?);
                     std::io::stdout().flush()?;
                 }
@@ -731,7 +750,7 @@ impl Rabota {
                     }
                 }
             }
-            izmeneno = true;
+            izmeneno |= session_dirty;
         }
         if s.vkladki.is_empty() {
             let id = s.dobavit("about:blank");

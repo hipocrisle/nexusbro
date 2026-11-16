@@ -21,6 +21,8 @@
 
 use crate::spisok_reklamy::{reklamnyj_host, PUTI, ZAPRESHCHENNYE_PARAMETRY};
 use cef::*;
+use crate::cef_vkladki::Sobytie;
+use std::sync::mpsc::Sender;
 
 /// Нужно ли отменить этот вызов. `None` = ресурс не наш, пусть идёт.
 pub fn zarezannyj_resurs(adres: &str, navigaciya: bool) -> Option<&'static str> {
@@ -233,17 +235,20 @@ pub fn skript_dlya(adres: &str) -> Option<&'static str> {
                 );
                 format!(
                     "{nacalo}\
-function skryt(el){{try{{if(!el||!el.isConnected)return;\
-el.style.setProperty('display','none','important');el.remove();}}catch(e){{}}}}\
+var removed=Object.create(null),pending=false;\
+function flush(){{pending=false;var data=removed;removed=Object.create(null);if(typeof console!=='undefined'&&console.debug)console.debug('__NEXUSBRO_COSMETIC__'+JSON.stringify(data));}}\
+function report(reason){{removed[reason]=(removed[reason]||0)+1;if(!pending){{pending=true;if(typeof queueMicrotask==='function')queueMicrotask(flush);else flush();}}}}\
+function skryt(el,reason){{try{{if(!el||!el.isConnected)return;\
+el.style.setProperty('display','none','important');el.remove();report(reason||'Рекламный элемент');}}catch(e){{}}}}\
 function otsenit(el){{if(!el||el.nodeType!==1)return;\
 if(el===document.body||el===document.documentElement)return;\
 var r=el.getBoundingClientRect();\
 if(r.width*r.height>window.innerWidth*window.innerHeight*0.5)return;\
 var t=(el.innerText||'').toLowerCase();if(t.length>2000)return;\
-if(el.matches('a,[role=link]')&&t.trim().length>30&&/(^|[\\n\\r])\\s*реклама\\s*($|[\\n\\r])/i.test(t)){{skryt(el);return;}}\
-for(var i=0;i<ZN.length;i++)if(t.indexOf(ZN[i])>=0){{skryt(el);return;}}\
+if(el.matches('a,[role=link]')&&t.trim().length>30&&/(^|[\\n\\r])\\s*реклама\\s*($|[\\n\\r])/i.test(t)){{skryt(el,'Маркировка РЕКЛАМА');return;}}\
+for(var i=0;i<ZN.length;i++)if(t.indexOf(ZN[i])>=0){{skryt(el,ZN[i]);return;}}\
 var k=((el.className&&el.className.baseVal)||el.className||'')+'';k=k.toLowerCase();\
-for(var j=0;j<KL.length;j++)if(k.indexOf(KL[j])>=0){{skryt(el);return;}}}}\
+for(var j=0;j<KL.length;j++)if(k.indexOf(KL[j])>=0){{skryt(el,KL[j]);return;}}}}\
 function projti(k){{if(!k||!k.querySelectorAll)return;\
 var v=k.querySelectorAll('a,div,section,aside,ins,iframe,span');\
 for(var i=v.length-1;i>=0;i--)otsenit(v[i]);}}\
@@ -266,7 +271,7 @@ pub fn vklyuchena() -> bool {
 // ───────────────────────── обработчик ресурсов CEF ─────────────────────────
 
 wrap_resource_request_handler! {
-    struct ResursStranicy { id: u64, navigaciya: bool }
+    struct ResursStranicy { id: u64, navigaciya: bool, tx:Sender<Sobytie>,privatnaya:bool }
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             request: Option<&mut Request>, _callback: Option<&mut Callback>) -> ReturnValue {
@@ -274,7 +279,7 @@ wrap_resource_request_handler! {
                 .map(|r| CefString::from(&r.url()).to_string())
                 .unwrap_or_default();
             if let Some(pravilo) = zarezannyj_resurs(&adres, self.navigaciya) {
-                eprintln!("cef: вкладка {} зарезан ресурс ({pravilo})", self.id);
+                if let Ok(url)=reqwest::Url::parse(&adres){let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"blocked","id":self.id,"host":url.host_str().unwrap_or(""),"rule":pravilo,"privatnaya":self.privatnaya})));}
                 return ReturnValue::CANCEL;
             }
             ReturnValue::CONTINUE
@@ -285,8 +290,8 @@ wrap_resource_request_handler! {
 /// Обработчик вызова для одной страницы. `initiator` — сайт, с которого идёт
 /// вызов (для журнала; решение принимает сам адрес). `navigaciya` — это
 /// документ верхней навигации: его не режем никогда.
-pub fn handler_resursov(id: u64, _initiator: &str, navigaciya: bool) -> ResourceRequestHandler {
-    ResursStranicy::new(id, navigaciya)
+pub fn handler_resursov(id: u64, _initiator: &str, navigaciya: bool,tx:Sender<Sobytie>,privatnaya:bool) -> ResourceRequestHandler {
+    ResursStranicy::new(id, navigaciya,tx,privatnaya)
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
 import Vybor from "./Vybor";
 import { useMemo, useState } from "react";
 import Icon from "./Icons";
-export type Zhurnal = { vklyuchena: boolean; zarezano: number; propushcheno: number; pravila_vsego: number; summy: [string, number][]; zapisi: { domen: string; pravilo: string; metod: string; vremya_ms: number }[] };
+export type Zhurnal = { vklyuchena: boolean; zarezano: number; udaleny_elementy?:number; propushcheno: number; pravila_vsego: number; summy: [string, number][]; zapisi: { domen: string; pravilo: string; metod: string; vremya_ms: number;kolichestvo?:number }[] };
 type Opisanie = { servis: string; kategoriya: string; zachem: string };
 const ads = "Реклама", stats = "Аналитика", social = "Социальные сети", telemetry = "Диагностика", tags = "Управление тегами";
 const catalog: [string[], string, string, string][] = [
@@ -56,20 +56,20 @@ export default function Blokirovki({ journal, name, onClose }: { journal: Zhurna
   const [search, setSearch] = useState(""); const [category, setCategory] = useState(""); const [view, setView] = useState("summary");
   const services = useMemo(() => {
     const grouped = new Map<string, Opisanie & { count: number; rules: string[] }>();
-    for (const [rule, count] of journal.summy ?? []) {
-      const info = opisanie(rule); const prior = grouped.get(info.servis);
-      grouped.set(info.servis, { ...info, count: count + (prior?.count ?? 0), rules: [...prior?.rules ?? [], rule] });
+    for (const entry of journal.zapisi ?? []) {
+      const info=opisanie(entry.domen),prior=grouped.get(info.servis),count=entry.kolichestvo??1;
+      grouped.set(info.servis,{...info,count:count+(prior?.count??0),rules:[...new Set([...(prior?.rules??[]),entry.pravilo])]});
     }
     return [...grouped.values()].sort((a,b) => b.count-a.count);
-  }, [journal.summy]);
+  }, [journal.zapisi]);
   const fits = (info: Opisanie, text: string) => (!category || category === info.kategoriya) && (info.servis + " " + text).toLowerCase().includes(search.toLowerCase());
   return <div className="zatemnenie" onClick={onClose} onKeyDown={(e) => { if (e.key === "Escape") onClose(); }}><section className="dialog protection-dialog" role="dialog" aria-label="Защита супер-вкладки" onClick={(e) => e.stopPropagation()}>
     <header className="settings-header"><div><span className="eyebrow">ЗАЩИТА · {name}</span><h2>Что заблокировано</h2><p className="muted">{journal.vklyuchena ? "Блокировка включена" : "Блокировка выключена"} · Все обычные вкладки этого профиля</p></div><button className="icon-button" aria-label="Закрыть журнал защиты" onClick={onClose}><Icon name="close" /></button></header>
-    <div className="protection-stats"><div><strong>{journal.zarezano}</strong><small>отклонено соединений</small></div><div><strong>{services.length}</strong><small>нежелательных сервисов</small></div><div><strong>{journal.propushcheno}</strong><small>пропущено соединений</small></div></div>
-    <p className="settings-tip">Это число соединений, а не баннеров: повторные попытки считаются отдельно. Встроенный список NexusBro: {journal.pravila_vsego} доменных правил.</p>
+    <div className="protection-stats"><div><strong>{journal.zarezano}</strong><small>заблокировано запросов</small></div><div><strong>{journal.udaleny_elementy??0}</strong><small>убрано элементов страницы</small></div><div><strong>{journal.propushcheno}</strong><small>пропущено соединений</small></div></div>
+    <p className="settings-tip">Запросы и элементы страницы считаются отдельно. В журнале — последние 200 событий; после закрытия приватных вкладок журнал профиля очищается. Встроенный список NexusBro: {journal.pravila_vsego} доменных правил.</p>
     <div className="protection-controls"><div className="protection-views"><button className={view === "summary" ? "selected" : ""} onClick={() => setView("summary")}>По сервисам</button><button className={view === "events" ? "selected" : ""} onClick={() => setView("events")}>События</button></div><input aria-label="Поиск в журнале защиты" placeholder="Домен или сервис…" value={search} onChange={(e) => setSearch(e.target.value)} /><Vybor aria-label="Категория блокировки" value={category} onChange={(e) => setCategory(e.target.value)}><option value="">Все категории</option>{[ads,stats,social,tags,telemetry,"Другие сервисы"].map((c) => <option key={c}>{c}</option>)}</Vybor></div>
-    <div className="block-list">{view === "summary" ? services.filter((s) => fits(s,s.rules.join(" "))).map((s) => <details className="service-entry" key={s.servis}><summary><Icon name="shield" size={18} /><div><strong>{s.servis}</strong><small>{s.kategoriya}</small></div><b>{s.count}</b></summary><p>{s.zachem}</p><small>Причина: домен соединения совпал с правилом встроенного списка.</small><div className="rule-tags">{s.rules.map((r) => <code key={r}>{r}</code>)}</div></details>) : journal.zapisi.filter((r) => fits(opisanie(r.pravilo),r.domen)).map((r,i) => { const info = opisanie(r.pravilo); return <details className="block-entry" key={r.vremya_ms+":"+i}><summary><Icon name="shield" size={16} /><div><strong>{info.servis}</strong><small>{r.domen}</small></div><time>{new Date(r.vremya_ms).toLocaleTimeString()}</time></summary><p>{info.zachem}</p><dl><dt>Категория</dt><dd>{info.kategoriya}</dd><dt>Действие</dt><dd>Соединение отклонено до выхода в сеть</dd><dt>Протокол</dt><dd>{r.metod === "CONNECT" ? "HTTPS (CONNECT)" : "HTTP · " + r.metod}</dd><dt>Правило</dt><dd><code>{r.pravilo}</code> и поддомены</dd><dt>Источник</dt><dd>Встроенный список NexusBro</dd></dl></details>; })}</div>
-    {!journal.zarezano && <p className="muted">За этот запуск заблокированных соединений ещё нет.</p>}
+    <div className="block-list">{view === "summary" ? services.filter((s) => fits(s,s.rules.join(" "))).map((s) => <details className="service-entry" key={s.servis}><summary><Icon name="shield" size={18} /><div><strong>{s.servis}</strong><small>{s.kategoriya}</small></div><b>{s.count}</b></summary><p>{s.zachem}</p><small>Причины блокировки показаны ниже. Сводка относится к последним событиям журнала.</small><div className="rule-tags">{s.rules.map((r) => <code key={r}>{r}</code>)}</div></details>) : journal.zapisi.filter((r) => fits(opisanie(r.pravilo),r.domen)).map((r,i) => { const info = opisanie(r.domen); return <details className="block-entry" key={r.vremya_ms+":"+i}><summary><Icon name="shield" size={16} /><div><strong>{info.servis}</strong><small>{r.domen}</small></div><time>{new Date(r.vremya_ms).toLocaleTimeString()}</time></summary><p>{info.zachem}</p><dl><dt>Категория</dt><dd>{info.kategoriya}</dd><dt>Действие</dt><dd>{r.metod==="DOM"?`Убрано элементов: ${r.kolichestvo??1}`:"Запрос отменён до загрузки"}</dd><dt>Протокол</dt><dd>{r.metod==="DOM"?"Косметическая очистка":r.metod==="CEF"?"Обработчик ресурса CEF":r.metod === "CONNECT" ? "HTTPS (CONNECT)" : "HTTP · " + r.metod}</dd><dt>Правило</dt><dd><code>{r.pravilo}</code></dd><dt>Источник</dt><dd>{r.metod==="DOM"?"Правила очистки страницы":r.metod==="CEF"?"Правила ресурсов CEF":"Список доменов прокси"}</dd></dl></details>; })}</div>
+    {!journal.zarezano&&!journal.udaleny_elementy && <p className="muted">За этот запуск заблокированных соединений ещё нет.</p>}
     <small className="muted">Итоги — за текущий запуск профиля; события — последние 200. Обновляется автоматически. Журнал хранится в памяти. Содержимое HTTPS не читается: конкретный баннер и сайт-инициатор по соединению не определяются.</small>
     <div className="knopki"><button onClick={onClose}>Закрыть</button></div>
   </section></div>;

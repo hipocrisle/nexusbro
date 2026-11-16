@@ -20,6 +20,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const addressPointer=useRef<AddressPointer>(null);
   const pole = useRef<HTMLInputElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
+  const findTimer = useRef<ReturnType<typeof setTimeout>>();
+  const lastFind = useRef("");
   const [translation,setTranslation]=useState<{done:number;total:number;error?:string|null}|null>(null);
   const [toolsOpen,setToolsOpen]=useState(false),[toolsWidth,setToolsWidth]=useState(40);
   const [findOpen, setFindOpen] = useState(false), [findText, setFindText] = useState("");
@@ -138,6 +140,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     void invoke("fokus_obolochke").then(() => requestAnimationFrame(() => {findInput.current?.focus();findInput.current?.select();}));
   }
   function closeFind() {
+    clearTimeout(findTimer.current);lastFind.current="";
     setFindOpen(false);
     if (aktivnaya) void poslat({deystvie:"poisk_zakryt",id:aktivnaya.id});
   }
@@ -156,11 +159,19 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     });
     return()=>{void off.then(f=>f());};
   },[id,aktivnaya?.id]);
+  function runFind(forward:boolean,next:boolean) {
+    clearTimeout(findTimer.current);
+    if(!aktivnaya)return;
+    const key=JSON.stringify([id,aktivnaya.id,findText]);
+    const repeat=next&&lastFind.current===key;
+    lastFind.current=key;
+    void poslat({deystvie:"nayti",id:aktivnaya.id,text:findText,vpered:forward,dalshe:repeat});
+  }
   useEffect(() => {
     if(!findOpen||!aktivnaya)return;
     setMatches({count:0,active:0});
-    const timer=setTimeout(()=>{void poslat({deystvie:"nayti",id:aktivnaya.id,text:findText,vpered:true,dalshe:false});},120);
-    return()=>clearTimeout(timer);
+    findTimer.current=setTimeout(()=>runFind(true,false),120);
+    return()=>clearTimeout(findTimer.current);
   },[findText,findOpen,id,aktivnaya?.id]);
   async function finishDrag(before: number | null, e: React.DragEvent) {
     e.preventDefault(); e.stopPropagation(); setDragOver(null);
@@ -224,10 +235,10 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </form>
     {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><label>Ширина<input type="range" aria-label="Ширина панели разработчика" min="25" max="65" value={toolsWidth} onChange={e=>{setToolsWidth(Number(e.target.value));void poslat({deystvie:"instrumenty_razmer",procent:Number(e.target.value)});}}/></label><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
-    {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();if(aktivnaya)void poslat({deystvie:"nayti",id:aktivnaya.id,text:findText,vpered:true,dalshe:true});}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();if(aktivnaya)void poslat({deystvie:"nayti",id:aktivnaya.id,text:findText,vpered:false,dalshe:true});}}}>
+    {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();runFind(true,true);}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();runFind(false,true);}}}>
       <input ref={findInput} aria-label="Найти на странице" placeholder="Найти на странице…" value={findText} onChange={e=>setFindText(e.target.value)}/>
       <span role="status">{findText ? `${matches.active} из ${matches.count}` : "Введите текст"}</span>
-      <button type="button" aria-label="Предыдущее совпадение" disabled={!findText} onClick={()=>{if(aktivnaya)void poslat({deystvie:"nayti",id:aktivnaya.id,text:findText,vpered:false,dalshe:true});}}>↑</button>
+      <button type="button" aria-label="Предыдущее совпадение" disabled={!findText} onClick={()=>{runFind(false,true);}}>↑</button>
       <button aria-label="Следующее совпадение" disabled={!findText}>↓</button>
       <button type="button" aria-label="Закрыть поиск" onClick={closeFind}>×</button>
     </form>}
