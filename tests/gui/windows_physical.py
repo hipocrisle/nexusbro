@@ -581,6 +581,14 @@ try:
     ui('Создать',['Button']).click_input()
     deadline=time.monotonic()+25
     while time.monotonic()<deadline and not any(r.get('case')==['private-super-canary'] for r in storage_reports):time.sleep(.1)
+    private_start_url=any(r.get('case')==['private-super-canary'] for r in storage_reports)
+    results.append({'new_private_super_uses_start_url':private_start_url})
+    if not private_start_url:
+        # Даём старым бинарникам пройти отдельную проверку очистки, но
+        # итог остаётся красным, если стартовый адрес проигнорирован.
+        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-canary&set=private-super-marker',interval=.001);gui.press('enter')
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline and not any(r.get('case')==['private-super-canary'] for r in storage_reports):time.sleep(.1)
     assert any(r.get('case')==['private-super-canary'] for r in storage_reports),storage_reports
     import tempfile
     private_root=pathlib.Path(tempfile.gettempdir())/f'NexusBro-private-{app.pid}'
@@ -603,6 +611,7 @@ try:
     assert find_ok,'Find match ordinal did not update correctly'
     assert download_name_ok,'Completed download name was missing'
     assert window_events_scoped,'Another window overwrote the main tab strip'
+    assert private_start_url,'New private Super ignored its start URL'
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
