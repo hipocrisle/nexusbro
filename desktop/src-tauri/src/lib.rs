@@ -1304,7 +1304,12 @@ pub fn run() {
             match &sobytie {
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label=="main"=>{
                     let s:State<Sostoyanie>=app.state();
-                    if !s.okna.0.lock().unwrap().is_empty(){api.prevent_close();if let Some(w)=app.get_webview_window("main"){let _=w.hide();}}
+                    if !s.okna.0.lock().unwrap().is_empty(){
+                        api.prevent_close();
+                        let channels=s.vkladki.lock().unwrap().values().filter_map(|v|v.kanal.clone()).collect::<Vec<_>>();
+                        for channel in channels{let _=channel.try_send(sessiya::Komanda::GlavnoeSkryto);}
+                        if let Some(w)=app.get_webview_window("main"){let _=w.hide();}
+                    }
                 }
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label!="main"=>{if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label!="main"=>{okna_app::zakryt(app,label);}

@@ -63,7 +63,7 @@ pub fn ochistit_privatnye(super_id:&str){let mut m=spisok().lock().unwrap();m.re
 #[tauri::command]
 pub async fn zagruzki_spisok()->Vec<Zapis>{let mut items:Vec<_>=spisok().lock().unwrap().values().cloned().collect();items.sort_by(|a,b|b.id.cmp(&a.id));items}
 #[tauri::command]
-pub async fn zagruzka_deystvie(app:tauri::AppHandle,s:tauri::State<'_,crate::Sostoyanie>,super_id:String,id:String,action:String)->Result<(),String>{
+pub async fn zagruzka_deystvie(app:tauri::AppHandle,window:tauri::WebviewWindow,s:tauri::State<'_,crate::Sostoyanie>,super_id:String,id:String,action:String)->Result<(),String>{
     let item=spisok().lock().unwrap().get(&id).filter(|i|i.super_id==super_id).cloned().ok_or("Загрузка не найдена")?;
     if action=="folder"{
         let path=std::path::PathBuf::from(&item.path);let parent=path.parent().filter(|p|p.exists()).ok_or("Папка не найдена")?;
@@ -72,9 +72,25 @@ pub async fn zagruzka_deystvie(app:tauri::AppHandle,s:tauri::State<'_,crate::Sos
         return Ok(());
     }
     if action=="retry"{
-        let result=crate::zapustit_vnutri(&app,&s,&super_id).await;if !result.ok{return Err(result.soobshchenie);}
+        let running=s.vkladki.lock().unwrap().get(&super_id).is_some_and(|v|v.proc.is_some());
+        if !running{
+            let previous=s.aktivnaya.lock().unwrap().clone();
+            let result=crate::zapustit_vnutri(&app,&s,&super_id).await;
+            if let Some(id)=previous{if id!=super_id{crate::pereklyuchit_vnutri(&s,&id);}}
+            if !result.ok{return Err(result.soobshchenie);}
+        }
         let channel=s.vkladki.lock().unwrap().get(&super_id).and_then(|v|v.kanal.clone()).ok_or("Супер-вкладка закрыта")?;
-        return channel.try_send(Komanda::Skachat{adres:item.url,privatnaya:item.privatnaya}).map_err(|_|"Движок занят".into());
+        use tauri::Manager;
+        let main_visible=app.get_webview_window("main").is_some_and(|w|w.is_visible().unwrap_or(false));
+        let target={let map=s.okna.0.lock().unwrap();
+            let fits=|w:&&crate::okna_app::Okno|w.super_id==super_id&&!w.closing&&(!item.privatnaya||w.privatnaya||w.sessiya.as_ref().is_some_and(|s|s.vkladki.iter().any(|v|v.privatnaya)));
+            if map.get(window.label()).filter(fits).is_some(){Some(window.label().to_owned())}
+            else if !main_visible{map.iter().find(|(_,w)|fits(w)).map(|(label,_)|label.clone())}else{None}
+        };
+        if item.privatnaya&&!main_visible&&target.is_none(){return Err("Приватный сеанс уже завершён".into());}
+        let command=Komanda::Skachat{adres:item.url,privatnaya:item.privatnaya};
+        let command=if let Some(label)=target{Komanda::OknoKomanda{label,komanda:Box::new(command)}}else{command};
+        return channel.try_send(command).map_err(|_|"Движок занят".into());
     }
     if !["cancel","pause","resume"].contains(&action.as_str()){return Err("Неизвестное действие".into());}
     let channel=s.vkladki.lock().unwrap().get(&super_id).filter(|v|v.proc.as_ref().is_some_and(|p|p.id()==item.engine_pid)).and_then(|v|v.kanal.clone()).ok_or("Процесс загрузки уже завершён")?;

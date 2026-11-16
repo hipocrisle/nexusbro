@@ -7,6 +7,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub(crate) enum Sobytie {
     Sluzhebnoe(serde_json::Value),
+    PoiskVybratPervoe(u64,u64,String,bool),
     DevtoolsGotovy(u64),
     DevtoolsZakryty(u64),
     #[cfg(target_os="windows")]
@@ -503,7 +504,7 @@ impl Rabota {
             // Поиск, перевод и отчёты защиты не меняют сохранённую сессию.
             // Пробуждение отложенной страницы при этом обязательно публикуем.
             let session_dirty = razbuzhen.is_some() || !matches!(&sobytie,
-                Sobytie::Sluzhebnoe(_) | Sobytie::DevtoolsGotovy(..) |
+                Sobytie::Sluzhebnoe(_) | Sobytie::PoiskVybratPervoe(..) | Sobytie::DevtoolsGotovy(..) |
                 Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
                 Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
                     Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
@@ -538,7 +539,16 @@ impl Rabota {
                     if let Some(extra)=extras.get_mut(&target){extra.closing=true;extra.s.vkladki.retain(|v|extra.brauzery.contains_key(&v.id));for b in extra.brauzery.values(){if let Some(h)=b.host(){h.close_browser(1);}}}
                     continue;
                 }
+                Sobytie::Komanda(Komanda::GlavnoeSkryto)=>{
+                    if label.is_empty(){
+                        *closing=true; // Не создаём скрытую приватную blank-вкладку.
+                        for tab in s.vkladki.iter().filter(|v|v.privatnaya){
+                            if let Some(h)=brauzery.get(&tab.id).and_then(|b|b.host()){h.close_browser(1);}else{let _=tx.send(Sobytie::Zakryta(tab.id));}
+                        }
+                    }
+                }
                 Sobytie::Komanda(Komanda::Novaya { adres }|Komanda::NovayaPrivatnaya { adres }) => {
+                    if label.is_empty(){*closing=false;}
                     let mut novaya = s.clone();
                     let private=private_command||*force_private||s.vkladki.iter().find(|v|v.id==s.aktivnaya).is_some_and(|v|v.privatnaya);
                     let id = novaya.dobavit(&adres);
@@ -748,8 +758,11 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Nayti { id, text, vpered, dalshe }) => {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         if text.is_empty() {crate::poisk::ochistit(id); h.stop_finding(1); }
-                        else { h.find(Some(&CefString::from(text.as_str())), vpered as i32, 0, dalshe as i32); }
+                        else {crate::poisk::nachat(id,&text,vpered,dalshe); h.find(Some(&CefString::from(text.as_str())), vpered as i32, 0, dalshe as i32); }
                     }
+                }
+                Sobytie::PoiskVybratPervoe(id,generation,text,forward)=>{
+                    if crate::poisk::aktualnyj(id,generation){if let Some(h)=brauzery.get(&id).and_then(|b|b.host()){h.find(Some(&CefString::from(text.as_str())),forward as i32,0,1);}}
                 }
                 Sobytie::Komanda(Komanda::PoiskZakryt { id }) => {
                     crate::poisk::ochistit(id);
