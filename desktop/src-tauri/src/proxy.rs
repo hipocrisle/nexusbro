@@ -11,7 +11,6 @@
 //! уровне запроса соединения. Поэтому не нужен свой корневой сертификат
 //! в системе — а это как раз то, за что ругают другие блокировщики.
 
-use std::net::SocketAddr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::collections::VecDeque;

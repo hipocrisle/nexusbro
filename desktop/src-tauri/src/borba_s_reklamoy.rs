@@ -19,7 +19,8 @@
 //! * скрипт удаляет элементы ТОЛЬКО вместе с рекламным текстом и только
 //!   небольшие (не страницу и не ленту), плюс запасное правило по классу.
 
-use crate::spisok_reklamy::{PUTI, ZAPRESHCHENNYE_PARAMETRY};
+use crate::spisok_reklamy::{reklamnyj_host, PUTI, ZAPRESHCHENNYE_PARAMETRY};
+use cef::*;
 
 /// Нужно ли отменить этот вызов. `None` = ресурс не наш, пусть идёт.
 pub fn zarezannyj_resurs(adres: &str, navigaciya: bool) -> Option<&'static str> {
@@ -28,9 +29,20 @@ pub fn zarezannyj_resurs(adres: &str, navigaciya: bool) -> Option<&'static str> 
         return None;
     }
     let (host, hvost) = razdelit(&nizhnij)?;
-    if crate::spisok_reklamy::reklamnyj_host(&host) {
-        return Some("домен");
+    if let Some(domen) = reklamnyj_host(&host) {
+        if domen == host {
+            return Some("домен");
+        }
+        // Домен-адware-сеть (например `yabs.yandex.ru`) режем, только если
+        // адрес похож на рекламный. ⛔ Сам `yandex.ru` от этого не страдает:
+        // его рекламные пути ниже отсекаются правилами пути, а запросы на
+        // `yandex.ru/clck/...` в списке нет — открытие поиска работает.
+        if pokhozh_na_reklamu(hvost) {
+            return Some("домен-сеть");
+        }
     }
+    // Путь и параметры проверяем для ЛЮБОГО узла, включая узлы-сети: иначе
+    // `yandex.ru/ads/...` (домен, равный правилу) выходил бы раньше.
     let (put, parametry) = match hvost.split_once('?') {
         Some((p, q)) => (p, q),
         None => (hvost, ""),
@@ -52,6 +64,40 @@ pub fn zarezannyj_resurs(adres: &str, navigaciya: bool) -> Option<&'static str> 
     None
 }
 
+/// Похож ли адрес на рекламный вызов у узла-сети. «Похож» — явные рекламные
+/// признаки в пути/параметрах. ⛔ Так мы НЕ режем обычный ресурс субдомена
+/// большой сети, но режем трекеры-картинки с `yabs.yandex.ru` у ЛЮБОГО
+/// сайта — именно они и вешали полосу «загружаем».
+fn pokhozh_na_reklamu(hvost: &str) -> bool {
+    const ZNAKI: &[&str] = &[
+        "/promo",
+        "/ads",
+        "/ad?",
+        "/ad/",
+        "/advert",
+        "/banner",
+        "/bann/",
+        "/click",
+        "/track",
+        "/pixel",
+        "/watch",
+        "/count",
+        "/stat",
+        "/metrika",
+        "/clck",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "ad_id",
+        "adunit",
+        "ad_unit",
+        "yclid",
+        "gclid",
+        "fbclid",
+    ];
+    ZNAKI.iter().any(|z| hvost.contains(z))
+}
+
 /// Хост и путь из адреса. `None` — не http(s)/ws(s) (data:, blob:, about:).
 fn razdelit(adres: &str) -> Option<(String, &str)> {
     let ostatok = adres
@@ -65,7 +111,12 @@ fn razdelit(adres: &str) -> Option<(String, &str)> {
         None => (ostatok, "/"),
     };
     let host = host_port.rsplit('@').next().unwrap_or(host_port);
-    let host = host.split(':').next().unwrap_or(host).trim_end_matches('.').to_string();
+    let host = host
+        .split(':')
+        .next()
+        .unwrap_or(host)
+        .trim_end_matches('.')
+        .to_string();
     if host.is_empty() {
         return None;
     }
@@ -78,8 +129,15 @@ pub fn perevod_adres(adres: &str, yazyk: &str) -> Result<String, String> {
     if !(a.starts_with("http://") || a.starts_with("https://")) {
         return Err("Первую страницу не перевести: она не открыта из сети".into());
     }
-    let yazyk = if yazyk.trim().is_empty() { "ru" } else { yazyk.trim() };
-    if !yazyk.chars().all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_') {
+    let yazyk = if yazyk.trim().is_empty() {
+        "ru"
+    } else {
+        yazyk.trim()
+    };
+    if !yazyk
+        .chars()
+        .all(|c| c.is_ascii_alphabetic() || c == '-' || c == '_')
+    {
         return Err("Неизвестный язык перевода".into());
     }
     let u = urlencode(a);
@@ -92,7 +150,9 @@ fn urlencode(s: &str) -> String {
     let mut r = String::new();
     for b in s.bytes() {
         match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => r.push(b as char),
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' | b'/' | b':' => {
+                r.push(b as char)
+            }
             _ => r.push_str(&format!("%{b:02X}")),
         }
     }
@@ -104,20 +164,45 @@ fn urlencode(s: &str) -> String {
 /// Подписи-признаки плашек. Только рекламный текст: обычную кнопку
 /// «Установить приложение» на полезном сайте так не задеть.
 const ZNAKI: &[&str] = &[
-    "скачать firefox", "загрузить firefox", "скачать chrome", "загрузить chrome",
-    "установить chrome", "установить google chrome", "скачать яндекс браузер",
-    "установить яндекс браузер", "яндекс браузер для windows", "скачать браузер",
-    "сделать яндекс поиском", "яндекс — поиск по умолчанию", "сделать google поиском",
-    "сделать google поисковой системой", "быстрее без тормозов",
-    "быстрее и безопаснее", "установите другой браузер", "этот браузер устарел",
+    "скачать firefox",
+    "загрузить firefox",
+    "скачать chrome",
+    "загрузить chrome",
+    "установить chrome",
+    "установить google chrome",
+    "скачать яндекс браузер",
+    "установить яндекс браузер",
+    "яндекс браузер для windows",
+    "скачать браузер",
+    "сделать яндекс поиском",
+    "яндекс — поиск по умолчанию",
+    "сделать google поиском",
+    "сделать google поисковой системой",
+    "быстрее без тормозов",
+    "быстрее и безопаснее",
+    "установите другой браузер",
+    "этот браузер устарел",
 ];
 
 /// Имена классов-приманок: их почти никто, кроме рекламы, не использует.
 const KLASSY: &[&str] = &[
-    "advert", "promo-banner", "promo_banner", "browser-promo", "browser_promo",
-    "browser-offer", "browser_offer", "smart-banner", "smart_banner",
-    "app-banner", "app_banner", "install-banner", "install_banner", "get-browser",
-    "browser-ad", "ad-banner", "ads-banner",
+    "advert",
+    "promo-banner",
+    "promo_banner",
+    "browser-promo",
+    "browser_promo",
+    "browser-offer",
+    "browser_offer",
+    "smart-banner",
+    "smart_banner",
+    "app-banner",
+    "app_banner",
+    "install-banner",
+    "install_banner",
+    "get-browser",
+    "browser-ad",
+    "ad-banner",
+    "ads-banner",
 ];
 
 /// Страницы, где такие плашки живут. У остальных скрипт не запускаем вовсе —
@@ -125,24 +210,29 @@ const KLASSY: &[&str] = &[
 pub fn trebuet_skript(adres: &str) -> bool {
     let a = adres.to_ascii_lowercase();
     !a.starts_with("view-source:")
-        && (a.contains("yandex.") || a.contains("google.") || a.contains("mail.ru")
-            || a.contains("vk.com") || a.contains("rambler") || a.contains("dzen.ru"))
+        && (a.contains("yandex.")
+            || a.contains("google.")
+            || a.contains("mail.ru")
+            || a.contains("vk.com")
+            || a.contains("rambler")
+            || a.contains("dzen.ru"))
 }
 
 static SCRIPT_KOD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 /// Скрипт для страницы. Собирается один раз за запуск процесса.
 pub fn skript_dlya(adres: &str) -> Option<&'static str> {
-    trebuet_skript(adres).then(|| {
-        SCRIPT_KOD.get_or_init(|| {
-            let nacalo = format!(
-                "(function(){{if(window.__nbReklama)return;window.__nbReklama=1;\
+    trebuet_skript(adres)
+        .then(|| {
+            SCRIPT_KOD.get_or_init(|| {
+                let nacalo = format!(
+                    "(function(){{if(window.__nbReklama)return;window.__nbReklama=1;\
                  var ZN={};var KL={};",
-                serde_json::to_string(ZNAKI).unwrap_or_else(|_| "[]".into()),
-                serde_json::to_string(KLASSY).unwrap_or_else(|_| "[]".into()),
-            );
-            format!(
-                "{nacalo}\
+                    serde_json::to_string(ZNAKI).unwrap_or_else(|_| "[]".into()),
+                    serde_json::to_string(KLASSY).unwrap_or_else(|_| "[]".into()),
+                );
+                format!(
+                    "{nacalo}\
 function skryt(el){{try{{if(!el||!el.isConnected)return;\
 el.style.setProperty('display','none','important');el.remove();}}catch(e){{}}}}\
 function otsenit(el){{if(!el||el.nodeType!==1)return;\
@@ -159,21 +249,31 @@ for(var i=v.length-1;i>=0;i--)otsenit(v[i]);}}\
 new MutationObserver(function(ms){{for(var i=0;i<ms.length;i++){{var d=ms[i].addedNodes;\
 for(var j=0;j<d.length;j++){{var n=d[j];if(n.nodeType===1){{otsenit(n);projti(n);}}}}}}}}).observe(\
 document.documentElement,{{childList:true,subtree:true}});projti(document);}})();"
-            )
+                )
+            })
         })
-    })
+        .map(|s| s.as_str())
+}
+
+/// Собрать ВСЕ обрезки в один запуск. Скрипт страницы не должен выполняться
+/// по кусочкам: каждый `.observe()` без отмены живёт до перезагрузки, и при
+/// частой смене адреса (SPA) получался бы флот наблюдателей на страницу.
+/// ⛔ Второй запуск в той же странице ничего не делает: `__nbReklama`.
+pub fn skript_dlya_vyzova(adres: &str, pravila: &str) -> Option<String> {
+    let skript = skript_dlya(adres)?;
+    Some(format!("{skript}{pravila}"))
 }
 
 // ───────────────────────── обработчик ресурсов CEF ─────────────────────────
 
 wrap_resource_request_handler! {
-    struct ResursStranicy { id: u64, navigaciya: bool }
+    struct ResursStranicy { id: u64, initiator: String, navigaciya: bool }
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             request: Option<&mut Request>, callback: Option<&mut Callback>) -> ReturnValue {
             let adres = request.map(|r| r.url().to_string()).unwrap_or_default();
             if let Some(pravilo) = zarezannyj_resurs(&adres, self.navigaciya) {
-                eprintln!("cef: вкладка {} зарезан ресурс ({pravilo}): {adres}", self.id);
+                eprintln!("cef: вкладка {} зарезан ресурс ({pravilo}): {adres} (со страницы {})", self.id, self.initiator);
                 if let Some(c) = callback { c.cancel(); }
                 return ReturnValue::CANCEL;
             }
@@ -185,8 +285,8 @@ wrap_resource_request_handler! {
 /// Обработчик вызова для одной страницы. `initiator` — сайт, с которого идёт
 /// вызов (для журнала; решение принимает сам адрес). `navigaciya` — это
 /// документ верхней навигации: его не режем никогда.
-pub fn handler_resursov(id: u64, _initiator: &str, navigaciya: bool) -> ResourceRequestHandler {
-    ResursStranicy::new(id, navigaciya)
+pub fn handler_resursov(id: u64, initiator: &str, navigaciya: bool) -> ResourceRequestHandler {
+    ResursStranicy::new(id, initiator.to_string(), navigaciya)
 }
 
 #[cfg(test)]
@@ -195,14 +295,30 @@ mod proverki {
 
     #[test]
     fn reklamnye_puti_rezhem_dokumenty_ne_trogaem() {
-        assert_eq!(zarezannyj_resurs("https://yabs.yandex.ru/promo/p.gif", false), Some("домен"));
-        assert_eq!(zarezannyj_resurs("https://ads.example.com/x", false), Some("домен"));
+        // Трекер-картинка у узла-сети Яндекса: домен-сеть + рекламный путь.
+        assert_eq!(
+            zarezannyj_resurs("https://yabs.yandex.ru/promo/p.gif", false),
+            Some("домен-сеть")
+        );
+        // ⛔ Главная опасность — зарезать сам поиск. `yandex.ru` не должен
+        // попасть ни под «домен» (он есть в SPISOK), ни под «домен-сеть»
+        // (у него нет правил): иначе поиск Яндекса не откроется никогда.
+        assert_eq!(zarezannyj_resurs("https://yandex.ru/search/?text=погода", false), None);
+        assert_eq!(zarezannyj_resurs("https://yandex.ru/", false), None);
+        // у узла-сети обычный ресурс не трогаем, рекламный — режем
+        assert_eq!(zarezannyj_resurs("https://an.yandex.ru/favicon.ico", false), None);
+        assert!(zarezannyj_resurs("https://an.yandex.ru/ad/banner.png", false).is_some());
+        // поддомен-сеть: маркер «.» перед правилом — не тот же домен
+        assert!(zarezannyj_resurs("https://ads.example.com/x", false).is_some());
         assert!(zarezannyj_resurs("https://site.ru/ads/banner.png", false).is_some());
         assert!(zarezannyj_resurs("https://site.ru/page?utm_source=x", false).is_some());
         // документ верхней навигации — никогда: иначе поиск Яндекса не откроется
         assert_eq!(zarezannyj_resurs("https://yandex.ru/ads/help", true), None);
         // обычное — не трогаем
-        assert_eq!(zarezannyj_resurs("https://site.ru/news/2026/11/16", false), None);
+        assert_eq!(
+            zarezannyj_resurs("https://site.ru/news/2026/11/16", false),
+            None
+        );
         assert_eq!(zarezannyj_resurs("data:image/png;base64,AAAA", false), None);
         assert_eq!(zarezannyj_resurs("about:blank", false), None);
     }
@@ -216,6 +332,11 @@ mod proverki {
         let s = skript_dlya("https://yandex.ru/").unwrap();
         assert!(s.starts_with("(function()") && s.ends_with("})();"));
         assert!(s.contains("MutationObserver"));
+        // собранный вызов содержит и скрипт страницы, и обрезку вызова
+        let i = skript_dlya_vyzova("https://yandex.ru/", "FOO();").unwrap();
+        assert!(i.starts_with("(function()"));
+        assert!(i.ends_with("FOO();"));
+        assert!(skript_dlya_vyzova("https://example.com/", "FOO();").is_none());
     }
 
     #[test]

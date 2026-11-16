@@ -173,7 +173,7 @@ pub fn zapustit(id: &str, proxy: Option<&str>, adres: Option<&str>, vosstanavliv
 /// ни с каким флагом (проверено опытом 10.11.2026). ⛔ Убийство
 /// прикреплённого (AttachThreadInput) процесса вешает нашу очередь
 /// ввода — поэтому вызывать только с нашего UI-потока после открепления.
-pub fn ostanovit_dvizhka(ditya: &mut Child, okno: Option<u32>) {
+pub fn ostanovit_dvizhka(ditya: &mut Child, #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] okno: Option<u32>) {
     let pid = ditya.id();
 
     #[cfg(target_os = "windows")]
@@ -591,7 +591,7 @@ mod proverki {
 /// короткий таймаут, вызывать с нашего UI-потока после открепления
 /// ввода!) или SIGTERM (Linux). Не ждёт — система всё равно добьёт
 /// дерево при закрытии, но чистый выход успевает сбросить сессию.
-pub fn poprosit_o_chem_vyhode(pid: u32, okno: Option<u32>) {
+pub fn poprosit_o_chem_vyhode(pid: u32, #[cfg_attr(not(target_os = "windows"), allow(unused_variables))] okno: Option<u32>) {
     #[cfg(target_os = "windows")]
     if let Some(o) = okno {
         crate::okna::sistema::otsoedinit_vvod(o);

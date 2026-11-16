@@ -1,9 +1,9 @@
 //! Пользовательские действия страниц CEF. Сетевые иконки получает сам CEF,
 //! поэтому они используют тот же профиль и VPN, а оболочка получает только PNG.
-use cef::*;
 use crate::{cef_vkladki::Sobytie, sessiya::Komanda};
-use std::sync::mpsc::Sender;
 use base64::Engine;
+use cef::*;
+use std::sync::mpsc::Sender;
 
 #[cfg(target_os = "windows")]
 type NativeKeyEvent = cef::sys::MSG;
@@ -36,19 +36,37 @@ wrap_keyboard_handler! {
         }
     }
 }
-pub fn klaviatura(id: u64, tx: Sender<Sobytie>) -> KeyboardHandler { Klaviatura::new(id, tx) }
+pub fn klaviatura(id: u64, tx: Sender<Sobytie>) -> KeyboardHandler {
+    Klaviatura::new(id, tx)
+}
 
 wrap_client! { struct InstrumentyClient; impl Client {} }
 pub fn instrumenty(b: &Browser, inspect: Option<Point>, toggle: bool) {
     let Some(h) = b.host() else { return };
-    if toggle && h.has_dev_tools() != 0 { h.close_dev_tools(); return }
+    if toggle && h.has_dev_tools() != 0 {
+        h.close_dev_tools();
+        return;
+    }
     // DevTools с CEF 128 работают только в Chrome style, даже у Alloy-страницы.
-    let info = WindowInfo { runtime_style: RuntimeStyle::CHROME,
+    let info = WindowInfo {
+        runtime_style: RuntimeStyle::CHROME,
         window_name: CefString::from("NexusBro — инструменты разработчика"),
-        bounds: Rect { x: 80, y: 80, width: 1000, height: 720 }, ..WindowInfo::default() };
+        bounds: Rect {
+            x: 80,
+            y: 80,
+            width: 1000,
+            height: 720,
+        },
+        ..WindowInfo::default()
+    };
     #[cfg(target_os = "windows")]
     let info = info.set_as_popup(Default::default(), "NexusBro — инструменты разработчика");
-    h.show_dev_tools(Some(&info), Some(&mut InstrumentyClient::new()), Some(&BrowserSettings::default()), inspect.as_ref());
+    h.show_dev_tools(
+        Some(&info),
+        Some(&mut InstrumentyClient::new()),
+        Some(&BrowserSettings::default()),
+        inspect.as_ref(),
+    );
 }
 
 const OPEN_LINK: i32 = 26501;
@@ -90,23 +108,23 @@ wrap_context_menu_handler! {
                 m.add_item(PEREVOD, Some(&CefString::from("Перевести страницу…")));
                 let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
                 if crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).is_ok() {
-                    m.add_item(PEREVOD + 1, Some(&CefString::from(format!("Перевести на {yazyk}"))));
+                    m.add_item(PEREVOD + 1, Some(&CefString::from(format!("Перевести на {yazyk}").as_str())));
                 }
             }
             m.add_item(INSPECT, Some(&CefString::from("Исследовать элемент    F12")));
         }
         fn on_context_menu_command(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>,
             params: Option<&mut ContextMenuParams>, command_id: i32, _event_flags: EventFlags) -> i32 {
-            let stranica = params.map(|p| CefString::from(&p.page_url()).to_string()).unwrap_or_default();
+            let stranica = params.as_ref().map(|p| CefString::from(&p.page_url()).to_string()).unwrap_or_default();
             let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
             let cmd = match command_id {
                 n if (n == PEREVOD || n == PEREVOD + 1) && !stranica.is_empty() =>
                     Some(Komanda::Novaya { adres: crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).unwrap_or_default() }),
-                OPEN_LINK => params.map(|p| Komanda::Novaya { adres: CefString::from(&p.link_url()).to_string() }),
-                OPEN_IMAGE => params.map(|p| Komanda::Novaya { adres: CefString::from(&p.source_url()).to_string() }),
-                DUPLICATE => frame.map(|f| Komanda::Novaya { adres: CefString::from(&f.url()).to_string() }),
+                OPEN_LINK => params.as_ref().map(|p| Komanda::Novaya { adres: CefString::from(&p.link_url()).to_string() }),
+                OPEN_IMAGE => params.as_ref().map(|p| Komanda::Novaya { adres: CefString::from(&p.source_url()).to_string() }),
+                DUPLICATE => frame.as_ref().map(|f| Komanda::Novaya { adres: CefString::from(&f.url()).to_string() }),
                 NEW_TAB => Some(Komanda::Novaya { adres: crate::nastrojki::zagruzit().novaya_stranica }),
-                INSPECT => params.map(|p| Komanda::Issledovat { id: self.id, x: p.xcoord(), y: p.ycoord() }),
+                INSPECT => params.as_ref().map(|p| Komanda::Issledovat { id: self.id, x: p.xcoord(), y: p.ycoord() }),
                 n if n == MenuId::VIEW_SOURCE.get_raw() as i32 => Some(Komanda::Iskhodnik { id: self.id }),
                 _ => None,
             };
@@ -115,7 +133,9 @@ wrap_context_menu_handler! {
         }
     }
 }
-pub fn menyu(id: u64, tx: Sender<Sobytie>) -> ContextMenuHandler { MenyuStranicy::new(id, tx) }
+pub fn menyu(id: u64, tx: Sender<Sobytie>) -> ContextMenuHandler {
+    MenyuStranicy::new(id, tx)
+}
 
 wrap_download_image_callback! {
     struct Ikonka { id: u64, stranica: String, tx: Sender<Sobytie> }
@@ -132,13 +152,31 @@ wrap_download_image_callback! {
         }
     }
 }
-pub fn ikonka(id: u64, tx: Sender<Sobytie>, browser: Option<&mut Browser>, urls: Option<&mut CefStringList>) {
-    let (Some(b), Some(urls)) = (browser, urls) else { return };
+pub fn ikonka(
+    id: u64,
+    tx: Sender<Sobytie>,
+    browser: Option<&mut Browser>,
+    urls: Option<&mut CefStringList>,
+) {
+    let (Some(b), Some(urls)) = (browser, urls) else {
+        return;
+    };
     // BorrowedMut сохраняет исходный opaque handle. From<*const> копирует
     // opaque value и не поддерживает IntoIterator (возвращает пустой список).
     let list = CefStringList::from(<*mut sys::_cef_string_list_t>::from(&mut *urls));
-    let Some(url) = list.into_iter().next() else { return };
+    let Some(url) = list.into_iter().next() else {
+        return;
+    };
     let Some(h) = b.host() else { return };
-    let stranica = b.main_frame().map(|f| CefString::from(&f.url()).to_string()).unwrap_or_default();
-    h.download_image(Some(&CefString::from(url.as_str())), 1, 32, 0, Some(&mut Ikonka::new(id, stranica, tx)));
+    let stranica = b
+        .main_frame()
+        .map(|f| CefString::from(&f.url()).to_string())
+        .unwrap_or_default();
+    h.download_image(
+        Some(&CefString::from(url.as_str())),
+        1,
+        32,
+        0,
+        Some(&mut Ikonka::new(id, stranica, tx)),
+    );
 }

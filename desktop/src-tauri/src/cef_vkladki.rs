@@ -5,6 +5,64 @@ use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::sync::mpsc::{channel, Receiver, Sender};
 
+// ───────────────────── обрезка рекламы внутри вызова ─────────────────────
+//
+// Второй заслон (17.11.2026): узлы режет прокси по имени, но трекеры-картинки
+// часто живут на домене, который знает и обычный ресурс сайта (`*.yandex.ru`,
+// `*.mail.ru`). Поэтому в модуле `spisok_reklamy` есть точечные правила
+// «содержит в адресе → отменить». Здесь они приводятся в исполнение:
+// адреса вызовов страницы видны только в самой странице, поэтому
+// перехватываем `fetch`, `XMLHttpRequest` и постановку `src`/`href` узлам,
+// которые приходят в документ.
+//
+// ⛔ Только отмена рекламного вызова. Ничего не подменяем, ничего не
+// переставляем: обычные запросы уходят как шли. ⛔ Сама страница верхней
+// навигации никогда не режется — это уже отсечено в `zarezannyj_resurs`.
+const SKRIPT_VYZOVA_ZAGOTOVKA: &str = concat!(
+    r#"(function(){var P=__PRAVILA__;"#,
+    // ---------- проверка одного адреса ----------
+    r#"function zamer(u){try{if(!u)return false;u=String(u).toLowerCase();"#,
+    r#"if(u.lastIndexOf("http",0)===0&&u.indexOf(location.host.toLowerCase())<0)return false;"#,
+    r#"if(u.indexOf("data:")===0||u.indexOf("blob:")===0)return false;"#,
+    r#"for(var i=0;i<P.length;i++)if(u.indexOf(P[i])>=0)return true;}catch(e){}return false;}"#,
+    r#"function nelzya(u){return zamer(u)&&!zamer(location.href);}"#,
+    // ---------- fetch ----------
+    r#"var F=window.fetch;if(F&&!F.__nb){var fx=function(v,o){try{var u=(v&&v.url)||v;"#,
+    r#"if(nelzya(u))return Promise.reject(new TypeError("blocked"));}catch(e){}"#,
+    r#"return F.apply(this,arguments);};fx.__nb=1;try{window.fetch=fx;}catch(e){}}"#,
+    // ---------- XMLHttpRequest ----------
+    r#"var X=window.XMLHttpRequest;if(X&&X.prototype&&!X.prototype.__nb){var xo=X.prototype.open;"#,
+    r#"X.prototype.open=function(m,u){if(nelzya(u)){this.__nbR=1;return;}return xo.apply(this,arguments);};"#,
+    r#"X.prototype.__nb=1;var xs=X.prototype.send;X.prototype.send=function(){"#,
+    r#"if(this.__nbR)return;return xs.apply(this,arguments);};}"#,
+    // ---------- узлы, которые приходят в документ ----------
+    r#"function vstavka(el){if(!el||el.nodeType!==1||el.__nbOk)return;el.__nbOk=1;"#,
+    r#"try{new MutationObserver(function(){var t=el.tagName;"#,
+    r#"if(t==="IMG"||t==="SCRIPT"||t==="IFRAME"){if(nelzya(el.src))el.removeAttribute("src");}"#,
+    r#"else if(t==="LINK"){if(nelzya(el.href))el.removeAttribute("href");}}"#,
+    r#").observe(el,{attributes:true,attributeFilter:["src","href"]});}catch(e){}}"#,
+    r#"if(window.MutationObserver){var m=function(){for(var i=0;i<arguments.length;i++){"#,
+    r#"var d=arguments[i].addedNodes;if(!d)continue;"#,
+    r#"for(var j=0;j<d.length;j++){var n=d[j];if(!n||n.nodeType!==1)continue;vstavka(n);"#,
+    r#"var v=n.querySelectorAll?n.querySelectorAll("img,script,iframe,link"):[];"#,
+    r#"for(var k=0;k<v.length;k++)vstavka(v[k]);}}};"#,
+    r#"new MutationObserver(function(ms){for(var i=0;i<ms.length;i++)m(ms[i]);})"#,
+    r#".observe(document.documentElement,{childList:true,subtree:true});}})();"#
+);
+
+
+/// Код обрезки вызова с подставленными правилами. Собирается один раз.
+fn skript_vyzova() -> String {
+    static KOD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    KOD.get_or_init(|| {
+        SKRIPT_VYZOVA_ZAGOTOVKA.replace(
+            "__PRAVILA__",
+            &crate::spisok_reklamy::pravila_vyzova_json(),
+        )
+    })
+    .clone()
+}
+
 pub(crate) enum Sobytie {
     Komanda(Komanda),
     Zagolovok(u64, String),
@@ -27,16 +85,19 @@ wrap_display_handler! {
             if let Some(t) = title { let _ = self.tx.send(Sobytie::Zagolovok(self.id, t.to_string())); }
         }
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
-            if frame.map(|f| f.is_main() != 0).unwrap_or(false) {
+            if frame.as_mut().map(|f| f.is_main() != 0).unwrap_or(false) {
                 if let Some(u) = url {
                     let u = u.to_string();
                     let _ = self.tx.send(Sobytie::Adres(self.id, u.clone()));
-                    // ⛔ Плашки «скачай Firefox/Chrome», «сделай Яндекс
-                    // поиском по умолчанию» приходят обычной разметкой с
-                    // легального домена — прокси их не видит. Убираем их в
-                    // самой странице (17.11.2026, жалобы пользователя).
-                    if let Some(java) = crate::borba_s_reklamoy::skript_dlya(&u) {
-                        if let Some(f) = frame { f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0); }
+                    // ⛔ Всё, что мы вставляем в страницу, идёт ОДНИМ вызовом:
+                    // скрипт страницы (плашки «скачай Firefox/Chrome», «сделай
+                    // Яндекс поиском по умолчанию» — прокси их не видит) и
+                    // код обрезки вызова. Второй запуск в той же странице
+                    // ничего не делает (флаг `__nbReklama`).
+                    if let Some(java) = crate::borba_s_reklamoy::skript_dlya_vyzova(&u, &skript_vyzova()) {
+                        if let Some(f) = frame.as_mut() {
+                            f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0);
+                        }
                     }
                 }
             }
@@ -117,9 +178,13 @@ wrap_request_handler! {
             // Здесь виден полный адрес ещё до загрузки.
             // ⛔ Документ верхней навигации (`is_navigation`) не трогаем
             // никогда: иначе поиск Яндекса с рекламным путём не откроется.
+            // ⛔ Решение принимает САМ адрес запроса. Инициатор в решении не
+            // участвует: страница на сайте везде кидает трекеры-картинки, и
+            // «сложить инициатора в решатель» означало бы вырезать сторонние
+            // запросы любого сайта (это ломалось бы на логинах/капче).
             let initiator = request_initiator.map(|s| s.to_string()).unwrap_or_default();
-            let navigaciya = is_navigation != 0 && frame.map(|f| f.is_main() != 0).unwrap_or(true);
-            Some(crate::borba_s_reklamoy::handler_resursov(self.id, initiator, navigaciya).into())
+            let navigaciya = is_navigation != 0 && frame.as_mut().map(|f| f.is_main() != 0).unwrap_or(true);
+            Some(crate::borba_s_reklamoy::handler_resursov(self.id, &initiator, navigaciya).into())
         }
     }
 }
@@ -275,7 +340,9 @@ fn sozdat_brauzer(
     )
     .ok_or_else(|| anyhow::anyhow!("не создалась обычная вкладка"))?;
     if let Some(h) = b.host() {
-        h.set_zoom_level((crate::nastrojki::zagruzit().masshtab_stranic as f64 / 100.0).ln() / 1.2_f64.ln());
+        h.set_zoom_level(
+            (crate::nastrojki::zagruzit().masshtab_stranic as f64 / 100.0).ln() / 1.2_f64.ln(),
+        );
     }
     Ok(b)
 }
@@ -299,7 +366,9 @@ pub fn rabotat(
     let (tx, rx) = channel();
     let mut brauzery = HashMap::new();
     for v in &s.vkladki {
-        if !v.otlozhena { brauzery.insert(v.id, sozdat_brauzer(&k, v.id, &v.adres, &tx)?); }
+        if !v.otlozhena {
+            brauzery.insert(v.id, sozdat_brauzer(&k, v.id, &v.adres, &tx)?);
+        }
     }
     pokazat(&s, &brauzery);
     let tx_stdin = tx.clone();
@@ -393,15 +462,25 @@ impl Rabota {
         let mut fokus_klaviatury = false;
         for sobytie in rx.try_iter().take(128) {
             let budit = match &sobytie {
-                Sobytie::Komanda(Komanda::Pereyti { id, .. } | Komanda::Obnovit { id } | Komanda::ObnovitBezKesha { id } | Komanda::Instrumenty { id } | Komanda::Issledovat { id, .. }) => Some(*id),
+                Sobytie::Komanda(
+                    Komanda::Pereyti { id, .. }
+                    | Komanda::Obnovit { id }
+                    | Komanda::ObnovitBezKesha { id }
+                    | Komanda::Instrumenty { id }
+                    | Komanda::Issledovat { id, .. },
+                ) => Some(*id),
                 _ => None,
             };
             let mut razbuzhen = None;
             if let Some(id) = budit {
                 if !brauzery.contains_key(&id) {
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
-                        if let Sobytie::Komanda(Komanda::Pereyti { adres, .. }) = &sobytie { v.adres = adres.clone(); }
-                        brauzery.insert(id, sozdat_brauzer(k, id, &v.adres, tx)?); v.otlozhena = false; razbuzhen = Some(id);
+                        if let Sobytie::Komanda(Komanda::Pereyti { adres, .. }) = &sobytie {
+                            v.adres = adres.clone();
+                        }
+                        brauzery.insert(id, sozdat_brauzer(k, id, &v.adres, tx)?);
+                        v.otlozhena = false;
+                        razbuzhen = Some(id);
                     }
                 }
             }
@@ -413,7 +492,8 @@ impl Rabota {
                         Ok(b) => {
                             brauzery.insert(id, b);
                             *s = novaya;
-                            fokus = true; fokus_klaviatury = true;
+                            fokus = true;
+                            fokus_klaviatury = true;
                         }
                         Err(e) => eprintln!("cef: {e}"),
                     }
@@ -421,14 +501,17 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Vybrat { id }) => {
                     if s.vkladki.iter().any(|v| v.id == id) {
                         s.aktivnaya = id;
-                        fokus = true; fokus_klaviatury = true;
+                        fokus = true;
+                        fokus_klaviatury = true;
                     }
                 }
                 Sobytie::Komanda(Komanda::Zakryt { id }) => {
                     fokus_klaviatury |= s.aktivnaya == id;
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         h.close_browser(0);
-                    } else { let _ = tx.send(Sobytie::Zakryta(id)); }
+                    } else {
+                        let _ = tx.send(Sobytie::Zakryta(id));
+                    }
                 }
                 Sobytie::Komanda(Komanda::ZakrytDrugie { id, sprava }) => {
                     if let Some(poziciya) = s.vkladki.iter().position(|v| v.id == id) {
@@ -436,7 +519,9 @@ impl Rabota {
                             if v.id != id && !v.zakreplena && (!sprava || i > poziciya) {
                                 if let Some(h) = brauzery.get(&v.id).and_then(|b| b.host()) {
                                     h.close_browser(0);
-                                } else { let _ = tx.send(Sobytie::Zakryta(v.id)); }
+                                } else {
+                                    let _ = tx.send(Sobytie::Zakryta(v.id));
+                                }
                             }
                         }
                     }
@@ -444,22 +529,34 @@ impl Rabota {
                 #[cfg(target_os = "windows")]
                 Sobytie::ZakrytOkno(id) => {
                     if let Some(b) = brauzery.get(&id) {
-                        use windows::Win32::{Foundation::HWND, System::Threading::{GetCurrentProcessId, GetCurrentThreadId}, UI::WindowsAndMessaging::*};
+                        use windows::Win32::{
+                            Foundation::HWND,
+                            System::Threading::{GetCurrentProcessId, GetCurrentThreadId},
+                            UI::WindowsAndMessaging::*,
+                        };
                         unsafe {
                             let h = HWND(handle(b) as usize as _);
                             let mut pid = 0;
                             let thread = GetWindowThreadProcessId(h, Some(&mut pid));
-                            if pid == GetCurrentProcessId() && thread == GetCurrentThreadId()
-                                && GetParent(h).ok().map(|p| p.0 as usize as u32) == Some(k.okno) {
-                                if let Err(e) = DestroyWindow(h) { eprintln!("cef: закрытие окна вкладки {id}: {e}"); }
-                            } else { eprintln!("cef: отказ закрытия чужого окна вкладки {id}"); }
+                            if pid == GetCurrentProcessId()
+                                && thread == GetCurrentThreadId()
+                                && GetParent(h).ok().map(|p| p.0 as usize as u32) == Some(k.okno)
+                            {
+                                if let Err(e) = DestroyWindow(h) {
+                                    eprintln!("cef: закрытие окна вкладки {id}: {e}");
+                                }
+                            } else {
+                                eprintln!("cef: отказ закрытия чужого окна вкладки {id}");
+                            }
                         }
                     }
                 }
                 Sobytie::Zakryta(id) => {
                     if s.aktivnaya == id {
                         if let Some(i) = s.vkladki.iter().position(|v| v.id == id) {
-                            if let Some(v) = s.vkladki.get(if i > 0 { i - 1 } else { i + 1 }) { s.aktivnaya = v.id; }
+                            if let Some(v) = s.vkladki.get(if i > 0 { i - 1 } else { i + 1 }) {
+                                s.aktivnaya = v.id;
+                            }
                         }
                     }
                     brauzery.remove(&id);
@@ -475,7 +572,9 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Pereyti { id, adres }) => {
                     if let Some(b) = brauzery.get(&id) {
                         if let Some(f) = b.main_frame() {
-                            if razbuzhen != Some(id) { f.load_url(Some(&CefString::from(adres.as_str()))); }
+                            if razbuzhen != Some(id) {
+                                f.load_url(Some(&CefString::from(adres.as_str())));
+                            }
                         }
                         if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                             v.ikonka = None;
@@ -494,17 +593,30 @@ impl Rabota {
                     }
                 }
                 Sobytie::Komanda(Komanda::Instrumenty { id }) => {
-                    if let Some(b) = brauzery.get(&id) { crate::cef_interfeys::instrumenty(b, None, true); }
+                    if let Some(b) = brauzery.get(&id) {
+                        crate::cef_interfeys::instrumenty(b, None, true);
+                    }
                 }
                 Sobytie::Komanda(Komanda::Issledovat { id, x, y }) => {
-                    if let Some(b) = brauzery.get(&id) { crate::cef_interfeys::instrumenty(b, Some(Point { x, y }), false); }
+                    if let Some(b) = brauzery.get(&id) {
+                        crate::cef_interfeys::instrumenty(b, Some(Point { x, y }), false);
+                    }
                 }
                 Sobytie::Komanda(Komanda::Iskhodnik { id }) => {
                     if let Some(v) = s.vkladki.iter().find(|v| v.id == id) {
-                        let adres = format!("view-source:{}", v.adres.strip_prefix("view-source:").unwrap_or(&v.adres));
-                        let mut next = s.clone(); let n = next.dobavit(&adres);
+                        let adres = format!(
+                            "view-source:{}",
+                            v.adres.strip_prefix("view-source:").unwrap_or(&v.adres)
+                        );
+                        let mut next = s.clone();
+                        let n = next.dobavit(&adres);
                         match sozdat_brauzer(k, n, &adres, tx) {
-                            Ok(b) => { brauzery.insert(n, b); *s = next; fokus = true; fokus_klaviatury = true; }
+                            Ok(b) => {
+                                brauzery.insert(n, b);
+                                *s = next;
+                                fokus = true;
+                                fokus_klaviatury = true;
+                            }
                             Err(e) => eprintln!("cef: исходный код: {e}"),
                         }
                     }
@@ -513,16 +625,31 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Sleduyushchaya { nazad }) => {
                     if let Some(i) = s.vkladki.iter().position(|v| v.id == s.aktivnaya) {
                         let n = s.vkladki.len();
-                        s.aktivnaya = s.vkladki[(i + if nazad { n - 1 } else { 1 }) % n].id; fokus = true; fokus_klaviatury = true;
+                        s.aktivnaya = s.vkladki[(i + if nazad { n - 1 } else { 1 }) % n].id;
+                        fokus = true;
+                        fokus_klaviatury = true;
                     }
                 }
                 Sobytie::Komanda(Komanda::Masshtab { procent }) => {
                     let level = (procent.clamp(50, 200) as f64 / 100.0).ln() / 1.2_f64.ln();
-                    for b in brauzery.values() { if let Some(h) = b.host() { h.set_zoom_level(level); } }
+                    for b in brauzery.values() {
+                        if let Some(h) = b.host() {
+                            h.set_zoom_level(level);
+                        }
+                    }
                 }
-                Sobytie::AdresnyiVvod => { println!("NB-ADRES"); std::io::stdout().flush()?; }
+                Sobytie::AdresnyiVvod => {
+                    println!("NB-ADRES");
+                    std::io::stdout().flush()?;
+                }
                 Sobytie::Ikonka(id, stranica, ikonka) => {
-                    if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id && v.adres == stranica) { v.ikonka = Some(ikonka); }
+                    if let Some(v) = s
+                        .vkladki
+                        .iter_mut()
+                        .find(|v| v.id == id && v.adres == stranica)
+                    {
+                        v.ikonka = Some(ikonka);
+                    }
                 }
                 Sobytie::Komanda(Komanda::Obnovit { id }) => {
                     if let Some(b) = brauzery.get(&id) {
@@ -544,10 +671,16 @@ impl Rabota {
                         // CEF сообщает underlying URL даже для view-source. Режим
                         // сохраняем для адресной строки и восстановления сессии;
                         // явный Pereyti выше предварительно меняет v.adres.
-                        let u = if v.adres.starts_with("view-source:") && !u.starts_with("view-source:") {
+                        let u = if v.adres.starts_with("view-source:")
+                            && !u.starts_with("view-source:")
+                        {
                             format!("view-source:{u}")
-                        } else { u };
-                        if v.adres != u { v.ikonka = None; }
+                        } else {
+                            u
+                        };
+                        if v.adres != u {
+                            v.ikonka = None;
+                        }
                         v.adres = u;
                     }
                 }
@@ -576,13 +709,20 @@ impl Rabota {
             // соседней вкладки тоже не должно будить спящую автоматически.
             if fokus_klaviatury && !brauzery.contains_key(&s.aktivnaya) {
                 if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == s.aktivnaya) {
-                    brauzery.insert(v.id, sozdat_brauzer(k, v.id, &v.adres, tx)?); v.otlozhena = false;
+                    brauzery.insert(v.id, sozdat_brauzer(k, v.id, &v.adres, tx)?);
+                    v.otlozhena = false;
                 }
             }
             pokazat(&s, &brauzery);
         }
-        if fokus_klaviatury && s.vkladki.iter().any(|v| v.id == s.aktivnaya && v.adres != "about:blank") {
-            if let Some(h) = brauzery.get(&s.aktivnaya).and_then(|b| b.host()) { h.set_focus(1); }
+        if fokus_klaviatury
+            && s.vkladki
+                .iter()
+                .any(|v| v.id == s.aktivnaya && v.adres != "about:blank")
+        {
+            if let Some(h) = brauzery.get(&s.aktivnaya).and_then(|b| b.host()) {
+                h.set_focus(1);
+            }
         }
         let novyj = k.razmer();
         if novyj != *razmer {

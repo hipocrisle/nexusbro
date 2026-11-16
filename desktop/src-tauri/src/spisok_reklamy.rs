@@ -102,6 +102,46 @@ pub const ZAPRESHCHENNYE_PARAMETRY: &[(&str, &str)] = &[
     ("adv_id", ""), ("banner_id", ""), ("clickid", ""),
 ];
 
+/// Точечные правила «содержит в адресе → отменить» для вызовов, которые
+/// уходят с домена самого сайта и которые прокси поэтому не видит.
+///
+/// ⛔ Это то, к чему авторы сайтов пришли сами: трекеры-картинки лежат на
+/// поддоменах, которые прокси считает своим (`*.yandex.ru`, `*.mail.ru`).
+/// Правило включает `?`/`=` — иначе `.../click` задевал бы живой переход.
+/// ⛔ Длину держим короткой: каждая строка уходит в страницу.
+pub const PUTI_VYZOVA: &[&str] = &[
+    "/promo/p.gif",
+    "/promo.png",
+    "/promo.gif",
+    "/ads/banner",
+    "/banner.gif",
+    "/banner.png",
+    "/pagead/",
+    "/adunit=",
+    "/ad_unit=",
+    "/click?",
+    "/clck?",
+    "/track?",
+    "/pixel?",
+    "/counter?",
+    "/metrika?",
+    "ad_type=",
+    "adtype=",
+    "adv_id=",
+    "banner_id=",
+    "clickid=",
+    "adunit=",
+    "yclid=",
+    "gclid=",
+    "fbclid=",
+];
+
+/// Правила для страницы: те, что реально включены. Список один для прокси и
+/// для страницы, чтобы не расходилось поведение.
+pub fn pravila_vyzova_json() -> String {
+    serde_json::to_string(PUTI_VYZOVA).unwrap_or_else(|_| "[]".into())
+}
+
 /// Поймать рекламный узел по хвосту имени (с поддоменами).
 pub fn reklamnyj_host(host: &str) -> Option<&'static str> {
     let h = host.trim_end_matches('.').to_ascii_lowercase();
