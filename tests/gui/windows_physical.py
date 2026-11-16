@@ -346,8 +346,11 @@ try:
     assert hits.get('/probe'),hits
     assert not consoles()-old_consoles,'Xray created a visible console'
     def vpn_page(path):
-        gui.hotkey('ctrl','l');time.sleep(.3);gui.write('http://vpn-fixture.test/'+path,interval=.002);gui.press('enter');pixels(path)
+        gui.hotkey('ctrl','l');time.sleep(.3);gui.write('http://vpn-fixture.test/'+path,interval=.002);gui.press('enter')
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline and not hits.get('/'+path):time.sleep(.1)
         assert hits.get('/'+path),hits
+        pixels(path)
     vpn_page('vpn-working')
     old_records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))
     assert old_records[0]['proxy_uzel']==local,old_records
