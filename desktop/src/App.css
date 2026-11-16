@@ -384,3 +384,7 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .tab-group .obychnye { flex:0 1 auto; }
 .tab-group .novaya-obychnaya { flex:0 0 30px; }
 .protection-button { flex-shrink:0; }
+.node-table { margin-top:10px; max-height:240px; overflow:auto; }
+.node-row { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--kraj); font-size:12px; }
+.node-row>span:first-child { flex:1; overflow-wrap:anywhere; }
+.node-row>span:last-child { flex-shrink:0; }.node-ok { color:var(--akcent); }

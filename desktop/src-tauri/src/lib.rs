@@ -707,6 +707,18 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
 #[tauri::command]
 async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nastrojki) -> Result<Otvet, String> {
     v_zhurnal_granica("izmenit", &nastrojki.id, "вход");
+    let (staraya, aktivnaya_stranica) = {
+        let v = s.vkladki.lock().unwrap();
+        let vk = v.get(&nastrojki.id).ok_or("такой супер-вкладки нет")?;
+        (vk.nastrojki.clone(), vk.obychnye.as_ref().map(|s| s.aktivnaya))
+    };
+    let smena_seti = staraya.proxy != nastrojki.proxy || staraya.proxy_uzel != nastrojki.proxy_uzel;
+    if smena_seti && vpn::eto_podpiska(&nastrojki.proxy) {
+        let proverka = vpn::proverit_podklyuchenie(&nastrojki.proxy, &nastrojki.proxy_uzel).await;
+        if proverka.is_err() {
+            return Ok(net("Выбранный узел не прошёл проверку HTTP(S). Прежние настройки и подключение сохранены. Выберите другой узел или повторите проверку."));
+        }
+    }
     let rabotaet = {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(&nastrojki.id) {
@@ -728,7 +740,16 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
     })).await.map_err(|e| e.to_string())??;
     if rabotaet {
         ostanovit_vnutri(&s, &nastrojki.id).await;
-        return Ok(zapustit_vnutri(&app, &s, &nastrojki.id).await);
+        let result = zapustit_vnutri(&app, &s, &nastrojki.id).await;
+        if result.ok {
+            let id = if nastrojki.pustaya { Some(1) } else { aktivnaya_stranica };
+            if let Some(id) = id {
+                if let Some(k) = s.vkladki.lock().unwrap().get(&nastrojki.id).and_then(|v| v.kanal.clone()) {
+                    let _ = k.try_send(sessiya::Komanda::Vybrat { id });
+                }
+            }
+        }
+        return Ok(result);
     }
     let _ = app.emit("vkladki-izmenilis", nastrojki.id);
     Ok(da())
@@ -917,6 +938,9 @@ async fn diagnostika(app: tauri::AppHandle, s: State<'_, Sostoyanie>) -> Result<
     {
         let v = s.vkladki.lock().unwrap();
         for (id, vk) in v.iter() {
+            if let Some(t) = &vk.tunnel {
+                out.push_str(&format!("VPN {id}: pid={}, жив={}\n", t.id(), sistema::pid_zhiv(t.id())));
+            }
             let proc_s = match (&vk.proc, vk.zapas_pid) {
                 (Some(p), Some(z)) if p.id() != z => format!("pid {} (реальный {})", p.id(), z),
                 (Some(p), _) => format!("pid {}", p.id()),
@@ -1123,7 +1147,9 @@ pub fn run() {
             // user: «окно внутри супервкладки живёт своей жизнью»).
             {
                 let h = app.handle().clone();
-                std::thread::spawn(move || loop {
+                std::thread::spawn(move || {
+                let mut vosstanovleniya = std::collections::HashMap::<String, std::time::Instant>::new();
+                loop {
                     std::thread::sleep(std::time::Duration::from_millis(1000));
                     if ZAVERSHENIE.load(std::sync::atomic::Ordering::SeqCst) {
                         return;
@@ -1134,28 +1160,46 @@ pub fn run() {
                         v.iter_mut().filter_map(|(id, vk)| {
                             if vk.zapusk_idet { return None }
                             let umer = matches!(vk.proc.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
-                            if !umer { return None }
+                            let vpn_umer = matches!(vk.tunnel.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
+                            if !umer && !vpn_umer { return None }
+                            let active = vk.obychnye.as_ref().map(|s| s.aktivnaya);
                             vk.okno = None;
                             vk.kanal = None;
                             vk.zapas_pid = None;
-                            Some((id.clone(), vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take()))
+                            Some((id.clone(), vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take(), vpn_umer, active))
                         }).collect()
                     };
-                    for (id, proc, proxy, tunnel) in mertvye {
+                    for (id, proc, proxy, tunnel, vpn_umer, active) in mertvye {
                         ostanovit_resursy(proc, proxy, tunnel);
                         {
                             let _okna = s.izmenenie_okon.lock().unwrap();
                             primenit_vidimost(&s);
                         }
+                        if vpn_umer {
+                            let mozhno = vosstanovleniya.get(&id).map(|t| t.elapsed().as_secs() >= 60).unwrap_or(true);
+                            if mozhno {
+                                vosstanovleniya.insert(id.clone(), std::time::Instant::now());
+                                zapisat_v_zhurnal(format!("{id}: VPN завершился, восстанавливаю"));
+                                let result = tauri::async_runtime::block_on(zapustit_vnutri(&h, &s, &id));
+                                if result.ok {
+                                    if let Some(k) = s.vkladki.lock().unwrap().get(&id).and_then(|v| v.kanal.clone()) {
+                                        if let Some(id) = active { let _ = k.try_send(sessiya::Komanda::Vybrat { id }); }
+                                    }
+                                }
+                            } else {
+                                let _ = h.emit("oshibka-dvizhka", "VPN повторно завершился. Нажмите супер-вкладку для повторного подключения или выберите другой узел.");
+                            }
+                        }
                         zapisat_v_zhurnal(format!("{id}: движок умер, вкладка спит"));
                         let _ = h.emit("vkladki-izmenilis", "");
                     }
+                }
                 });
             }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod,
+            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,

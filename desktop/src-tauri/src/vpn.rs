@@ -374,17 +374,18 @@ pub async fn podnyat_tunnel(
     std::fs::write(&fajl, nastrojka)?;
 
     let log = papka.join("xray-startup.log");
-    let mut ditya = crate::brauzer::zapustit_sputnik_s_logom(
+    let ditya = crate::brauzer::zapustit_sputnik_s_logom(
         &xray,
         &["run".into(), "-c".into(), fajl.display().to_string()],
         Some(log.clone()),
     )?;
+    let mut cleanup = DityaGuard(Some(ditya));
 
     // ⛔ Ждём, пока туннель ОТКРОЕТ порт. Без ожидания движок стартует
     // первым, утыкается в закрытую дверь и показывает ошибку сети.
     let srok = std::time::Instant::now();
     while srok.elapsed().as_secs() < 12 {
-        if let Some(exit) = ditya.try_wait()? {
+        if let Some(exit) = cleanup.0.as_mut().unwrap().try_wait()? {
             // Не показываем сырые сообщения Xray: они могут содержать параметры узла.
             let detail = std::fs::read_to_string(&log).unwrap_or_default().to_lowercase();
             let reason = if detail.contains("geoip.dat") || detail.contains("geosite.dat") {
@@ -395,11 +396,10 @@ pub async fn podnyat_tunnel(
             anyhow::bail!("Xray завершился при запуске ({exit}). {reason}");
         }
         if tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok() {
-            return Ok((ditya, port));
+            return Ok((cleanup.0.take().unwrap(), port));
         }
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     }
-    let _ = ditya.kill(); let _ = ditya.wait();
     Err(anyhow::anyhow!("туннель не поднялся за 12 секунд"))
 }
 
@@ -476,3 +476,59 @@ mod happ_tests {
     #[test]
     fn unicode_percent_ne_obrushivaet_parser() { assert_eq!(raskodirovat("%я#Тест"),"%я#Тест"); }
 }
+
+/// Временный туннель проверки всегда завершается, включая отмену async-задачи.
+struct Proba { child: Option<Child>, dir: std::path::PathBuf }
+impl Drop for Proba {
+    fn drop(&mut self) {
+        if let Some(mut c) = self.child.take() { let _ = c.kill(); let _ = c.wait(); }
+        let _ = std::fs::remove_dir_all(&self.dir);
+    }
+}
+#[derive(serde::Serialize)]
+pub struct ProverkaUzla { pub ms: Option<u128>, pub status: String }
+
+pub async fn proverit_podklyuchenie(adres: &str, uzel: &str) -> anyhow::Result<u128> {
+    let ssylka = if adres.starts_with("http") {
+        let nodes = skachat_podpisku(adres).await?;
+        vybrat_uzel(&nodes, uzel)?.ssylka.clone()
+    } else { adres.to_owned() };
+    proverit_marshrut(&ssylka).await
+}
+async fn proverit_marshrut(ssylka: &str) -> anyhow::Result<u128> {
+    static OCHERED: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+    let _permit = OCHERED.acquire().await?;
+    let unique = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos();
+    let dir = std::env::temp_dir().join(format!("nexusbro-probe-{}-{unique}", std::process::id()));
+    std::fs::create_dir(&dir)?;
+    let mut guard = Proba { child: None, dir };
+    let (child, port) = podnyat_tunnel(&guard.dir, ssylka).await?;
+    guard.child = Some(child);
+    let proxy = crate::proxy::podnyat(crate::proxy::Nastrojka {
+        vyhod: crate::proxy::Vyhod::Socks5 { adres: format!("127.0.0.1:{port}"), vhod: None }, rezat_reklamu: false,
+    }).await?;
+    let client = reqwest::Client::builder().no_proxy()
+        .proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{}",proxy.port))?)
+        .timeout(std::time::Duration::from_secs(5)).redirect(reqwest::redirect::Policy::none()).build()?;
+    let custom = if std::env::var_os("NEXUSBRO_TEST_DATA").is_some() { std::env::var("NEXUSBRO_TEST_CONNECTIVITY_URL").ok() } else { None };
+    let urls = custom.map(|u| vec![u]).unwrap_or_else(|| vec!["https://www.gstatic.com/generate_204".into(), "https://www.cloudflare.com/cdn-cgi/trace".into()]);
+    let mut result = None;
+    for url in urls {
+        let start = std::time::Instant::now();
+        if let Ok(r) = client.get(&url).send().await {
+            if r.status().is_success() { result = Some(start.elapsed().as_millis()); break }
+        }
+    }
+    proxy.ostanovit();
+    result.ok_or_else(|| anyhow::anyhow!("HTTP(S) через выбранный узел недоступен"))
+}
+#[tauri::command]
+pub async fn proverit_uzel(ssylka: String) -> ProverkaUzla {
+    match proverit_marshrut(&ssylka).await {
+        Ok(ms) => ProverkaUzla { ms: Some(ms), status: "Доступен".into() },
+        Err(_) => ProverkaUzla { ms: None, status: "Не отвечает".into() },
+    }
+}
+
+struct DityaGuard(Option<Child>);
+impl Drop for DityaGuard { fn drop(&mut self) { if let Some(mut c)=self.0.take(){let _=c.kill();let _=c.wait();} } }

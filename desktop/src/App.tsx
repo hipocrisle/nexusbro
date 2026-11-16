@@ -207,6 +207,7 @@ export default function App() {
     if (!pravka) return;
     setZanyat(true);
     setOshibka("");
+    let success = false;
     try {
       const o = await invoke<Otvet>("izmenit", {
         nastrojki: { ...pravka, nazvanie, proxy, proxy_uzel, adres: adres || "about:blank", rezat_reklamu: rezat, pustaya },
@@ -217,11 +218,12 @@ export default function App() {
       }
       setVkladki(await invoke<Vidno[]>("spisok"));
       setTimeout(soobshchitMesto, 100);
-    } finally {
+      success = true;
+    } catch (e) { setOshibka(String(e)); }
+    finally {
       setZanyat(false);
-      setDialog(false);
-      setPravka(null);
-      await invoke("pokazat_dvizhki", { vidno: true });
+      if (success) { setDialog(false); setPravka(null); }
+      if (success) await invoke("pokazat_dvizhki", { vidno: true });
     }
   }
 
@@ -482,6 +484,7 @@ export default function App() {
           onOtmena={() => zakrytDialog()}
           onOk={pravka ? pravit : dobavit}
           vyhody={nastrojki.vyhody}
+          oshibka={oshibka}
         />
       )}
       {menuSohranennyh !== null && (
@@ -636,6 +639,7 @@ function Dialog(props: {
   zanyat: boolean;
   pravka: Nastrojki | null;
   vyhody: Vyhod[];
+  oshibka: string;
   onOtmena: () => void;
   onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string) => void;
 }) {
@@ -669,9 +673,10 @@ function Dialog(props: {
   const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
   const [pustaya, setPustaya] = useState(props.pravka?.pustaya ?? false);
   return (
-    <div className="zatemnenie" onClick={props.onOtmena}>
+    <div className="zatemnenie" onClick={props.zanyat ? undefined : props.onOtmena}>
       <div className="dialog" onClick={(e) => e.stopPropagation()}>
         <h2>{props.pravka ? "Настройки супер-вкладки" : "Новая супер-вкладка"}</h2>
+        {props.oshibka && <p className="oshibka-nastroek" role="alert">{props.oshibka}</p>}
         <label>
           Название
           <input
@@ -682,7 +687,7 @@ function Dialog(props: {
           />
         </label>
         {props.vyhody.length > 0 && <label>Сохранённое подключение<Vybor aria-label="Сохранённое подключение" value={!proxy ? "" : props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
-          if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(props.vyhody.find((v) => v.adres === e.target.value)?.proxy_uzel ?? ""); setUzly([]); setZagruzka(false); }
+          if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(""); setUzly([]); setZagruzka(false); }
         }}><option value="manual" disabled>Адрес введён вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</Vybor></label>}
         <label>
           Выход в сеть
@@ -752,7 +757,7 @@ function Dialog(props: {
           </span>
         </label>
         <div className="knopki">
-          <button onClick={props.onOtmena}>Отмена</button>
+          <button disabled={props.zanyat} onClick={props.onOtmena}>Отмена</button>
           <button
             className="glavnaya"
             disabled={props.zanyat || !nazvanie.trim()}
@@ -760,7 +765,7 @@ function Dialog(props: {
           >
             {props.zanyat
               ? props.pravka
-                ? "Перезапускаю…"
+                ? "Проверяю и применяю…"
                 : "Запускаю…"
               : props.pravka
                 ? "Сохранить"

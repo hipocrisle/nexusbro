@@ -378,6 +378,12 @@ pub fn zapustit_sputnik_s_logom(programma: &Path, dovody: &[String], log: Option
 fn zapustit_prosto(programma: &Path, dovody: &[String], log: Option<&Path>) -> anyhow::Result<Child> {
     let mut cmd = Command::new(programma);
     cmd.args(dovody).stdout(Stdio::null()).stderr(Stdio::null());
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        // Console subsystem Xray не должен создавать окно conhost: его закрытие убивает VPN.
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
     if let Some(dir) = programma.parent() { cmd.env("XRAY_LOCATION_ASSET", dir); }
     if let Some(log) = log {
         let f = std::fs::File::create(log)?;
