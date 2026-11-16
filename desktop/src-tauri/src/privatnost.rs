@@ -5,7 +5,11 @@ pub fn process_privatnyj()->bool{std::env::args().any(|a|a=="--nb-private-profil
 pub fn papka(id:&str)->PathBuf{std::env::temp_dir().join(format!("NexusBro-private-{}",std::process::id())).join(id)}
 pub fn ochistit(){
     let root=std::env::temp_dir().join(format!("NexusBro-private-{}",std::process::id()));
-    let _=std::fs::remove_dir_all(root);
+    for _ in 0..10{
+        match std::fs::remove_dir_all(&root){Ok(())=>return,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>return,Err(_)=>{}}
+        // Windows может ещё закрывать дескрипторы уже завершённого CEF.
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
 }
 pub fn ochistit_posle_sboya(){
     let Ok(entries)=std::fs::read_dir(std::env::temp_dir()) else{return};

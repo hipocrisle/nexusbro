@@ -503,7 +503,9 @@ try:
         downloads=json.loads((data/'zagruzki.json').read_text(encoding='utf-8'))
         if any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads):break
         time.sleep(.1)
-    assert any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads),downloads
+    download_name_ok=any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads)
+    results.append({'native_download_name_correct':download_name_ok})
+    assert any(d['status']=='Готово' for d in downloads),downloads
     results.append({'native_download_file_and_history':True})
     gui.hotkey('ctrl','t');storage('recent-normal');gui.hotkey('ctrl','w');time.sleep(.3);gui.hotkey('ctrl','shift','t')
     deadline=time.monotonic()+8
@@ -584,6 +586,7 @@ try:
     results.append({'private_window_stays_private':True,'private_super_not_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
     assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
     assert find_ok,'Find match ordinal did not update correctly'
+    assert download_name_ok,'Completed download name was missing'
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')

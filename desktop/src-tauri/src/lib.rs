@@ -1306,6 +1306,7 @@ pub fn run() {
                     let s:State<Sostoyanie>=app.state();
                     if !s.okna.0.lock().unwrap().is_empty(){api.prevent_close();if let Some(w)=app.get_webview_window("main"){let _=w.hide();}}
                 }
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label!="main"=>{if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label!="main"=>{okna_app::zakryt(app,label);}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Focused(true)|tauri::WindowEvent::Resized(_),..} if label!="main"=>{
                     let s:State<Sostoyanie>=app.state();okna_app::obolochka(app,&s,label);

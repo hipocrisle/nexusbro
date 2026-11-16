@@ -49,7 +49,15 @@ fn zapisat(m:&HashMap<String,Zapis>){
 pub fn obnovit(super_id:&str,data:&Value){
     let mut data=data.clone();let Some(dl)=data["download_id"].as_u64()else{return};let Some(pid)=data["engine_pid"].as_u64()else{return};
     data["super_id"]=json!(super_id);data["id"]=json!(format!("{super_id}:{pid}:{dl}"));
-    if let Ok(item)=serde_json::from_value::<Zapis>(data){let mut m=spisok().lock().unwrap();let persist=!m.contains_key(&item.id)||!["Загружается","Приостановлена"].contains(&item.status.as_str());m.insert(item.id.clone(),item);if persist{zapisat(&m);}}
+    if let Ok(mut item)=serde_json::from_value::<Zapis>(data){
+        let mut m=spisok().lock().unwrap();
+        // CEF может очистить suggested_file_name после завершения. Показываем
+        // фактическое имя сохранённого файла, затем прежнее известное имя.
+        if let Some(name)=std::path::Path::new(&item.path).file_name().filter(|s|!s.is_empty()){
+            item.name=name.to_string_lossy().into_owned();
+        }else if item.name.is_empty(){item.name=m.get(&item.id).map(|old|old.name.clone()).unwrap_or_default();}
+        let persist=!m.contains_key(&item.id)||!["Загружается","Приостановлена"].contains(&item.status.as_str());m.insert(item.id.clone(),item);if persist{zapisat(&m);}
+    }
 }
 pub fn ochistit_privatnye(super_id:&str){let mut m=spisok().lock().unwrap();m.retain(|_,i|!(i.privatnaya&&i.super_id==super_id));}
 #[tauri::command]

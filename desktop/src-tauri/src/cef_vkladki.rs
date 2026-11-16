@@ -445,8 +445,16 @@ struct Rabota {
 
 impl Rabota {
     fn shag(&mut self) -> anyhow::Result<()> {
-        for extra in self.extras.values_mut(){extra.shag()?;}
-        self.extras.retain(|_,extra|!extra.closing||!extra.brauzery.is_empty());
+        for extra in self.extras.values_mut(){
+            if let Err(e)=extra.shag(){
+                // Ошибка одного дополнительного окна не останавливает Super.
+                eprintln!("cef: дополнительное окно: {e}");extra.closing=true;
+                for b in extra.brauzery.values(){if let Some(h)=b.host(){h.close_browser(1);}}
+            }
+        }
+        let closed:Vec<_>=self.extras.iter().filter(|(_,e)|e.closing&&e.brauzery.is_empty()).map(|(label,_)|label.clone()).collect();
+        for label in closed{self.extras.remove(&label);println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":label}));std::io::stdout().flush()?;}
+
         if self.label.is_empty() && !self.s.vkladki.iter().chain(self.extras.values().flat_map(|e|e.s.vkladki.iter())).any(|v|v.privatnaya)
             && self.k.private_context.borrow().is_some(){
             crate::zagruzki::zakryt_privatnye();self.k.private_context.borrow_mut().take();PRIVATE_IDS.with(|ids|ids.borrow_mut().clear());
