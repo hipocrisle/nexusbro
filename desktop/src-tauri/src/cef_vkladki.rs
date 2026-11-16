@@ -374,11 +374,12 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Pereyti { id, .. } | Komanda::Obnovit { id } | Komanda::Instrumenty { id } | Komanda::Issledovat { id, .. }) => Some(*id),
                 _ => None,
             };
+            let mut razbuzhen = None;
             if let Some(id) = budit {
                 if !brauzery.contains_key(&id) {
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                         if let Sobytie::Komanda(Komanda::Pereyti { adres, .. }) = &sobytie { v.adres = adres.clone(); }
-                        brauzery.insert(id, sozdat_brauzer(k, id, &v.adres, tx)?); v.otlozhena = false;
+                        brauzery.insert(id, sozdat_brauzer(k, id, &v.adres, tx)?); v.otlozhena = false; razbuzhen = Some(id);
                     }
                 }
             }
@@ -452,7 +453,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Pereyti { id, adres }) => {
                     if let Some(b) = brauzery.get(&id) {
                         if let Some(f) = b.main_frame() {
-                            f.load_url(Some(&CefString::from(adres.as_str())));
+                            if razbuzhen != Some(id) { f.load_url(Some(&CefString::from(adres.as_str()))); }
                         }
                         if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                             v.ikonka = None;

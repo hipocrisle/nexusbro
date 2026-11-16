@@ -16,3 +16,7 @@ desktop/src-tauri/binaries/*
 
 # Локальные данные GUI-проверок.
 .dev-check/
+
+# Локальный кэш Python-проверок.
+__pycache__/
+*.pyc
