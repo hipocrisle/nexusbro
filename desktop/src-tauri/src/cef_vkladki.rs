@@ -81,7 +81,7 @@ wrap_display_handler! {
         fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
             if let Some(t) = title { let _ = self.tx.send(Sobytie::Zagolovok(self.id, t.to_string())); }
         }
-        fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
+        fn on_address_change(&self, _browser: Option<&mut Browser>, mut frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false) {
                 if let Some(u) = url {
                     let u = u.to_string();
