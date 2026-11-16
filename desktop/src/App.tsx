@@ -681,9 +681,9 @@ function Dialog(props: {
             placeholder="Работа"
           />
         </label>
-        {props.vyhody.length > 0 && <label>Сохранённое подключение<Vybor aria-label="Сохранённое подключение" value={props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
+        {props.vyhody.length > 0 && <label>Сохранённое подключение<Vybor aria-label="Сохранённое подключение" value={!proxy ? "" : props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
           if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(props.vyhody.find((v) => v.adres === e.target.value)?.proxy_uzel ?? ""); setUzly([]); setZagruzka(false); }
-        }}><option value="manual">Ввести вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</Vybor></label>}
+        }}><option value="manual" disabled>Адрес введён вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</Vybor></label>}
         <label>
           Выход в сеть
           <input

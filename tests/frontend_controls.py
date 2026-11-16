@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright,expect
 root=pathlib.Path(__file__).resolve().parents[1]
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(root/'desktop/dist')))
 threading.Thread(target=server.serve_forever,daemon=True).start()
-mock=r'''window.__saved=null;window.__calls=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
+mock=r'''window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{}};window.__saved=null;window.__calls=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:(f)=>{window.__callbacks[++cb]=f;return cb;},unregisterCallback:()=>{},invoke:async(cmd,args)=>{
  window.__calls.push(cmd);
  if(cmd==='nastrojki_poluchit')return {tema:'temnaya',shrift:'system',razmer_shrifta:14,plotnost:'udobno',masshtab_stranic:100,vyhody:[{id:'local',nazvanie:'Test subscription',adres:'https://example.test/sub',proxy_uzel:''}],panel_shirina:180,panel_svernuta:false,novaya_stranica:'about:blank',poisk:'duckduckgo',avtoobnovleniya:false,apparatnoe_uskorenie:false};
@@ -49,6 +49,12 @@ try:
   saved=page.evaluate('window.__saved');assert saved['shrift']=='arial' and saved['plotnost']=='kompaktno',saved
   assert saved['vyhody'][0]['proxy_uzel'].endswith(':2'),saved
   page.locator('.niz button').first.click()
+  page.get_by_role('combobox',name='Сохранённое подключение',exact=True).click()
+  page.get_by_role('option',name='Test subscription',exact=True).click()
+  expect(page.get_by_role('combobox',name='Узел подписки',exact=True)).to_contain_text('Local second')
+  page.get_by_role('combobox',name='Сохранённое подключение',exact=True).click()
+  page.get_by_role('option',name='Прямое соединение',exact=True).click()
+  expect(page.get_by_role('combobox',name='Сохранённое подключение',exact=True)).to_contain_text('Прямое соединение')
   page.get_by_role('combobox',name='Сохранённое подключение',exact=True).click()
   page.get_by_role('option',name='Test subscription',exact=True).click()
   expect(page.get_by_role('combobox',name='Узел подписки',exact=True)).to_contain_text('Local second')
