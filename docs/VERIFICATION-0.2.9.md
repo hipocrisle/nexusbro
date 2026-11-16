@@ -76,3 +76,12 @@ gh workflow run build.yml --ref dev -f frontend_only=true
 Архивы и подписи для пользователей выпускаются обычным тегом `v0.2.9`.
 Старые Linux GUI-сценарии адаптированы к DOM combobox и явному выбору
 восстановленных вкладок; повторно на DE-1 не запускались.
+
+## Публикация и подписи
+
+[v0.2.9 опубликована](https://github.com/hipocrisle/nexusbro/releases/tag/v0.2.9).
+Релизный [CI 43839457193](https://github.com/hipocrisle/nexusbro/actions/runs/43839457193)
+завершён success; native Windows-проверки повторены на окончательном пакете.
+Публичный endpoint автообновления возвращает 0.2.9. Все скачанные NSIS/DEB/RPM
+проверены ключом updater: Ed25519 содержимого и trusted comment корректны,
+подписи совпадают с latest.json. [Хеши и результаты](verification/0.2.9/release-signatures.json).
