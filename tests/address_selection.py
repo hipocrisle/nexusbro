@@ -9,7 +9,7 @@ js=js.replace('Object.defineProperty(exports, "__esModule", { value: true });','
 js='var exports={};\n'+js
 with sync_playwright() as pw:
  browser=pw.chromium.launch(headless=True,args=['--no-sandbox']);page=browser.new_page()
- page.set_content('<div id=root><button id=other>outside</button><input id=address value="https://example.test/word/next" style="font:20px monospace;width:600px"></div>')
+ page.set_content('<div id=root><button id=other>outside</button><input id=paste aria-label="Проверка вставки"><input id=address value="https://example.test/word/next" style="font:20px monospace;width:600px"></div>')
  page.add_script_tag(content=js)
  page.evaluate('''() => {
  const input=document.querySelector('#address'),root=document.querySelector('#root');let start=null;
@@ -32,8 +32,19 @@ with sync_playwright() as pw:
  assert page.evaluate('window.contextPrevented') is False
  assert page.evaluate('window.shellFocus')==0
  page.keyboard.press('Escape')
+ # Копируем реальным сочетанием, затем вставляем в другое поле.
+ page.keyboard.press('Control+c')
+ page.locator('#paste').click()
+ page.keyboard.press('Control+v')
+ assert page.locator('#paste').input_value()=='word'
+ # ПКМ после потери фокуса не должен выделять весь адрес.
+ page.mouse.click(x,y,button='right')
+ assert inp.evaluate('(e)=>e.selectionEnd-e.selectionStart') < len(inp.input_value())
+ assert page.evaluate('window.contextPrevented') is False
+ assert page.evaluate('window.shellFocus')==0
+ page.keyboard.press('Escape')
  page.mouse.move(box['x']+8+8*12.04,y);page.mouse.down();page.mouse.move(box['x']+8+15*12.04,y,steps=10);page.mouse.up()
  selected=inp.evaluate('(e)=>e.value.slice(e.selectionStart,e.selectionEnd)')
  assert selected and selected!=inp.input_value(),selected
- print(json.dumps({'first_click_selects_all':True,'double_click_selects_word':True,'right_click_keeps_selection_and_native_menu':True,'drag_selects_substring':True,'no_forced_shell_focus':True}))
+ print(json.dumps({'first_click_selects_all':True,'double_click_selects_word':True,'right_click_keeps_selection_and_allows_native_menu':True,'selected_word_copy_paste':True,'right_click_after_blur_does_not_select_all':True,'drag_selects_substring':True,'no_forced_shell_focus':True}))
  browser.close()
