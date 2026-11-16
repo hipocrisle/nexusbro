@@ -285,6 +285,9 @@ try:
     client.click('.stroka-menyu');client.wait('document.querySelectorAll(".vkladka").length===2')
     s=wait_sess(a,lambda s:len(s['vkladki'])==2 and s['aktivnaya']==one and s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena'])
     client.wait('document.querySelectorAll(".obychnaya").length===2')
+    client.click(f'.obychnaya[data-id="{two}"]');wait_sess(a,lambda s:not s['vkladki'][0].get('otlozhena'))
+    client.click(f'.obychnaya[data-id="{one}"]');wait_sess(a,lambda s:all(not v.get('otlozhena') for v in s['vkladki']))
+    client.wait('document.querySelectorAll(".obychnaya").length===2')
     results.append({'supertab_profile_isolation':True,'last_closed_tab_becomes_blank':True,'restore_saved_supertab_with_two_tabs':True})
     # Проверяем очередь команд при замороженном CEF без создания новых браузеров.
     profile=run/'data/NexusBro/profili'/a
@@ -303,6 +306,8 @@ try:
     stop();assert not engines()
     start()
     client.wait('document.querySelectorAll(".obychnaya").length===2')
+    client.click(f'.obychnaya[data-id="{two}"]');wait_sess(a,lambda s:not s['vkladki'][0].get('otlozhena'))
+    client.click(f'.obychnaya[data-id="{one}"]');wait_sess(a,lambda s:all(not v.get('otlozhena') for v in s['vkladki']))
     s=wait_sess(a,lambda s:len(s['vkladki'])==2 and s['aktivnaya']==one and active(s)['zagolovok']=='One')
     assert s['vkladki'][0]['id']==two and s['vkladki'][0]['zakreplena']
     assert len(engines())==1,engines()
@@ -371,8 +376,8 @@ try:
     client.wait('document.querySelectorAll(".service-entry").length===1')
     client.text_button('Закрыть')
     client.click('button[title="Настройки NexusBro"]');client.text_button('Слива')
-    client.click('select[aria-label="Шрифт интерфейса"]');subprocess.run(['xdotool','key','End','Return'],env=env,check=True)
-    client.click('select[aria-label="Плотность интерфейса"]');subprocess.run(['xdotool','key','End','Return'],env=env,check=True)
+    client.click('[role=combobox][aria-label="Шрифт интерфейса"]');subprocess.run(['xdotool','key','End','Return'],env=env,check=True)
+    client.click('[role=combobox][aria-label="Плотность интерфейса"]');subprocess.run(['xdotool','key','End','Return'],env=env,check=True)
     client.text_button('Сеть и VPN')
     client.fill('.settings-content input:not([type])','Local fixture')
     client.fill('.settings-content input[type=password]',base+'/subscription')
@@ -380,7 +385,7 @@ try:
     client.wait('document.documentElement.dataset.tema==="sliva" && document.documentElement.dataset.plotnost==="kompaktno"')
     settings=json.loads(config.read_text());assert settings['shrift']=='consolas' and settings['vyhody'][0]['nazvanie']=='Local fixture',settings
     client.click('.niz button:first-child')
-    client.wait('!!document.querySelector(\'select[aria-label="Сохранённое подключение"]\')')
+    client.wait('!!document.querySelector(\'[role=combobox][aria-label="Сохранённое подключение"]\')')
     client.text_button('Отмена')
     client.click('button[title="Настройки NexusBro"]')
     client.wait('!!document.querySelector(".nastrojki-okno")')

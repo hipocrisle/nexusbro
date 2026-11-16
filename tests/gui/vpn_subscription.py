@@ -104,7 +104,7 @@ def stop():
 def wait_page(id):
     for _ in range(200):
         tabs = client.command('obychnye_spisok', id=id)
-        if tabs and any(t['zagolovok'] == 'ViaSelectedVLESS' for t in tabs['vkladki']): return
+        if tabs and any(t['zagolovok'] == 'ViaSelectedVLESS' and not t.get('otlozhena',False) for t in tabs['vkladki']): return
         time.sleep(.05)
     raise AssertionError(tabs)
 
@@ -115,10 +115,10 @@ try:
     client.fill('.dialog input', 'VPN fixture')
     client.fill('.dialog label:nth-of-type(2) input', base+'/sub')
     client.click('.zagruzit-uzly')
-    client.wait('document.querySelectorAll(".uzel-podpiski option").length===3')
-    client.click('.uzel-podpiski')
-    subprocess.run(['xdotool', 'key', 'End', 'Return'], env=env, check=True)
-    client.wait('document.querySelector(".uzel-podpiski").value==='+json.dumps(chosen))
+    client.click('.uzel-podpiski [role=combobox]')
+    client.wait('document.querySelectorAll(".vybor-popup [role=option]").length===3')
+    client.text_button('Local')
+    client.wait('document.querySelector(".uzel-podpiski [role=combobox]").textContent.includes("Local")')
     client.fill('.dialog label:nth-of-type(4) input', 'http://vpn-fixture.test/page')
     client.click('.dialog .glavnaya')
     client.wait('!document.querySelector(".dialog")')
@@ -141,15 +141,20 @@ try:
     result['physical_selection_and_real_cef_vless_page'] = True
     stop()
     start()
+    client.wait('!!document.querySelector(".obychnaya[aria-selected=true]")')
+    client.click('.obychnaya[aria-selected=true]')
     wait_page(id)
     result['selection_persisted_across_restart'] = True
     client.click('.vkladka', 3)
     client.text_button('Настройки')
     client.wait('!!document.querySelector(".uzel-podpiski")')
-    assert client.js('document.querySelector(".uzel-podpiski").value') == chosen
+    client.wait('document.querySelector(".uzel-podpiski [role=combobox]").textContent.includes("Local")')
     client.click('.zagruzit-uzly')
-    client.wait('document.querySelectorAll(".uzel-podpiski option").length===3')
-    assert client.js('document.querySelector(".uzel-podpiski").value') == chosen
+    client.wait('!document.querySelector(".zagruzit-uzly").disabled')
+    client.click('.uzel-podpiski [role=combobox]')
+    client.wait('document.querySelectorAll(".vybor-popup [role=option]").length===3')
+    assert client.js('document.querySelector(".vybor-popup [aria-selected=true]").textContent') == 'Local'
+    subprocess.run(['xdotool','key','Escape'],env=env,check=True)
     client.text_button('Отмена')
     client.wait('!document.querySelector(".zatemnenie")')
     result['edit_dialog_preserves_selection_after_refresh'] = True
