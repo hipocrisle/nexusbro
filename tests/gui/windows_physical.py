@@ -346,7 +346,7 @@ try:
     assert hits.get('/probe'),hits
     assert not consoles()-old_consoles,'Xray created a visible console'
     def vpn_page(path):
-        gui.hotkey('ctrl','l');time.sleep(.3);gui.write('http://vpn-fixture.test/'+path,interval=.002);gui.press('enter')
+        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');time.sleep(.2);gui.write('http://vpn-fixture.test/'+path,interval=.002);gui.press('enter')
         deadline=time.monotonic()+15
         while time.monotonic()<deadline and not hits.get('/'+path):time.sleep(.1)
         assert hits.get('/'+path),hits
