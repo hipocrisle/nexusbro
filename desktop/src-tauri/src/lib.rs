@@ -749,6 +749,27 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
                 }
             }
         }
+        if !result.ok && smena_seti {
+            // Между проверкой и запуском сеть может измениться: возвращаем прежний выход.
+            {
+                let mut v = s.vkladki.lock().unwrap();
+                if let Some(vk) = v.get_mut(&nastrojki.id) { vk.nastrojki = staraya.clone(); }
+                sohranit_spisok(&v.values().map(|vk| vk.nastrojki.clone()).collect::<Vec<_>>());
+            }
+            let archive = staraya.clone();
+            let _ = tauri::async_runtime::spawn_blocking(move || supervkladki::obnovit_sohranennye(|list| {
+                if let Some(n) = list.iter_mut().find(|n| n.id == archive.id) { *n = archive; }
+            })).await;
+            let old = zapustit_vnutri(&app, &s, &nastrojki.id).await;
+            if old.ok {
+                let id = if staraya.pustaya { Some(1) } else { aktivnaya_stranica };
+                if let Some(k) = s.vkladki.lock().unwrap().get(&nastrojki.id).and_then(|v| v.kanal.clone()) {
+                    if let Some(id) = id { let _ = k.try_send(sessiya::Komanda::Vybrat { id }); }
+                }
+                return Ok(net("Новый выход не запустился. Прежние настройки и подключение восстановлены."));
+            }
+            return Ok(net("Новый выход не запустился. Прежние настройки сохранены, но восстановить подключение не удалось. Повторите подключение супер-вкладки."));
+        }
         return Ok(result);
     }
     let _ = app.emit("vkladki-izmenilis", nastrojki.id);

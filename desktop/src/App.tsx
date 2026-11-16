@@ -198,6 +198,7 @@ export default function App() {
 
   // Правка супер-вкладки: тот же диалог, но с её настройками.
   async function nachatPravku(n: Nastrojki) {
+    setOshibka("");
     await invoke("pokazat_dvizhki", { vidno: false });
     setPravka(n);
     setDialog(true);
