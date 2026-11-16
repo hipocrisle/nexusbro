@@ -1,0 +1,255 @@
+[
+  {
+    "stage": "initial",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-dialog",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-resize",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-sidebar-collapse",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "middle_close_keeps_application": true
+  },
+  {
+    "cross_close_keeps_application": true
+  },
+  {
+    "context_menu_close_keeps_application": true
+  },
+  {
+    "last_close_recreates_blank_keeps_application": true
+  },
+  {
+    "stage": "before-source",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "source_opens_in_browser_tab": true
+  },
+  {
+    "native_f12_visible_devtools": true
+  },
+  {
+    "physical_ordinary_drag_reorders": true
+  },
+  {
+    "physical_settings_dropdown_mouse_selection": true
+  },
+  {
+    "stage": "after-lazy-click",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "restart_zero_page_requests_until_click": true,
+    "click_wakes_one_only": true,
+    "plus_next_to_last_tab_physical_click": true
+  },
+  {
+    "stage": "vpn-working",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "vpn-after-rejected-node",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "vpn-after-recovery",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "vless_actual_http_route": true,
+    "no_xray_console": true,
+    "failed_node_keeps_previous_connection": true,
+    "dead_tunnel_auto_recovers": true
+  },
+  {
+    "stage": "ad-fixture",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "native_f5": true
+  },
+  {
+    "native_ctrl_f5": true
+  },
+  {
+    "native_context_translation_url": true,
+    "cef_ad_resources_cancelled": true,
+    "cef_browser_and_yandex_banners_removed": true,
+    "regular_news_preserved": true
+  },
+  {
+    "cef_ad_switch_off_preserves_banners_and_requests": true
+  },
+  {
+    "success": true
+  }
+]

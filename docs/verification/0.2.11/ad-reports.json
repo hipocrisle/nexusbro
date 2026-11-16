@@ -1,0 +1,82 @@
+[
+  {
+    "path": [
+      "/ad-fixture"
+    ],
+    "sponsored": [
+      "false"
+    ],
+    "browser": [
+      "false"
+    ],
+    "ad": [
+      "false"
+    ],
+    "news": [
+      "true"
+    ],
+    "blocked": [
+      "true"
+    ]
+  },
+  {
+    "path": [
+      "/ad-fixture"
+    ],
+    "sponsored": [
+      "false"
+    ],
+    "browser": [
+      "false"
+    ],
+    "ad": [
+      "false"
+    ],
+    "news": [
+      "true"
+    ],
+    "blocked": [
+      "true"
+    ]
+  },
+  {
+    "path": [
+      "/ad-fixture"
+    ],
+    "sponsored": [
+      "false"
+    ],
+    "browser": [
+      "false"
+    ],
+    "ad": [
+      "false"
+    ],
+    "news": [
+      "true"
+    ],
+    "blocked": [
+      "true"
+    ]
+  },
+  {
+    "path": [
+      "/ad-fixture-off"
+    ],
+    "sponsored": [
+      "true"
+    ],
+    "browser": [
+      "true"
+    ],
+    "ad": [
+      "true"
+    ],
+    "news": [
+      "true"
+    ],
+    "blocked": [
+      "false"
+    ]
+  }
+]
