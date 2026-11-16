@@ -345,6 +345,7 @@ jobs:
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
       - name: Собрать latest.json и опубликовать релиз
         env:
           TAG: ${{ github.ref_name }}
@@ -380,5 +381,11 @@ jobs:
           }
           EOF
           cat latest.json
-          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
-          gh release edit "$TAG" --repo "$REPO" --draft=false --latest
+          # Не публикуем обновление, пока payload, trusted comment и manifest
+          # не проверены публичным ключом из приложения.
+          python3 -m pip install cryptography
+          gh release download "$TAG" --repo "$REPO" -D /tmp/payloads -p "*.exe" -p "*.deb" -p "*.rpm" -p "*.sig"
+          cp latest.json /tmp/payloads/latest.json
+          python3 tests/release_signatures.py --directory /tmp/payloads --version "$VERSION"
+          gh release upload "$TAG" latest.json /tmp/payloads/signature-verification.json --repo "$REPO" --clobber
+          gh release edit "$TAG" --repo "$REPO" --notes-file "docs/RELEASE-$VERSION.md" --draft=false --latest

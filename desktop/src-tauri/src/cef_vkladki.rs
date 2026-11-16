@@ -465,6 +465,7 @@ impl Rabota {
         let mut layout_dirty=false;
         let mut fokus = false;
         let mut fokus_klaviatury = false;
+        let mut fokus_posle_devtools=false;
         for sobytie in rx.try_iter().take(128) {
             let budit = match &sobytie {
                 Sobytie::Komanda(
@@ -707,7 +708,10 @@ impl Rabota {
                         if pid==GetCurrentProcessId()&&tid==GetCurrentThreadId()&&GetParent(h).ok().is_some_and(|p|p.0 as usize as u32==k.okno){let _=DestroyWindow(h);}}
                     layout_dirty=true;
                 }
-                Sobytie::DevtoolsZakryty(id) => {devtools_pending.remove(&id);devtools.remove(&id);layout_dirty=true; }
+                Sobytie::DevtoolsZakryty(id) => {
+                    devtools_pending.remove(&id);devtools.remove(&id);layout_dirty=true;
+                    if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
+                }
                 Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(25,65);layout_dirty=true; }
                 Sobytie::Komanda(Komanda::Perevesti{id}) => {
                     if let Some(b)=brauzery.get(&id){
@@ -833,9 +837,9 @@ impl Rabota {
             pokazat(&s, &brauzery);
         }
         if fokus_klaviatury
-            && s.vkladki
+            && (fokus_posle_devtools||s.vkladki
                 .iter()
-                .any(|v| v.id == s.aktivnaya && v.adres != "about:blank")
+                .any(|v| v.id == s.aktivnaya && v.adres != "about:blank"))
         {
             if let Some(h) = brauzery.get(&s.aktivnaya).and_then(|b| b.host()) {
                 h.set_focus(1);
