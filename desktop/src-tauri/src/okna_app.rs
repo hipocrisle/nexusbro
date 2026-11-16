@@ -6,6 +6,7 @@ use crate::{Sostoyanie,sessiya::{Komanda,Sessiya},okna::{Mesto,sistema}};
 
 pub struct Okno {
     pub super_id:String,
+    pub engine:u64,
     pub hwnd:Option<u32>,
     pub mesto:Option<Mesto>,
     pub sessiya:Option<Sessiya>,
@@ -40,14 +41,17 @@ pub fn sobytie(app:&tauri::AppHandle,s:&Sostoyanie,super_id:&str,data:&serde_jso
     true
 }
 #[tauri::command]
-pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Option<String>,privatnaya:bool)->Result<(),String>{
+pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Option<String>,mut privatnaya:bool)->Result<(),String>{
     let id=id.or_else(||s.aktivnaya.lock().unwrap().clone()).ok_or("Сначала откройте супер-вкладку")?;
+    privatnaya|=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.nastrojki.privatnaya);
     let result=crate::zapustit_vnutri(&app,&s,&id).await;if !result.ok{return Err(result.soobshchenie);}
     static NEXT:AtomicU64=AtomicU64::new(1);
     let label=format!("browser-{}",NEXT.fetch_add(1,Ordering::Relaxed));
-    let url=format!("index.html?okno={label}&super={id}");
+    let mut query=reqwest::Url::parse("http://localhost/index.html").map_err(|e|e.to_string())?;
+    query.query_pairs_mut().append_pair("okno",&label).append_pair("super",&id);
+    let url=format!("index.html?{}",query.query().unwrap_or(""));
     let title=s.vkladki.lock().unwrap().get(&id).map(|v|format!("NexusBro — {}{}",v.nastrojki.nazvanie,if privatnaya{" · приватное окно"}else{""})).unwrap_or_else(||"NexusBro".into());
-    s.okna.0.lock().unwrap().insert(label.clone(),Okno{super_id:id,hwnd:None,mesto:None,sessiya:None,hidden:false,privatnaya,generation:Default::default()});
+    s.okna.0.lock().unwrap().insert(label.clone(),Okno{super_id:id,engine:0,hwnd:None,mesto:None,sessiya:None,hidden:false,privatnaya,generation:Default::default()});
     match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(1200.,800.).build(){
         Ok(_)=>Ok(()),Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
     }
@@ -55,10 +59,28 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
 #[tauri::command]
 pub async fn okno_gotovo(app:tauri::AppHandle,window:tauri::WebviewWindow,s:tauri::State<'_,Sostoyanie>,)->Result<(),String>{
     let label=window.label().to_owned();
-    let (id,privatnaya)=s.okna.0.lock().unwrap().get(&label).map(|w|(w.super_id.clone(),w.privatnaya)).ok_or("Окно не найдено")?;
+    let id=s.okna.0.lock().unwrap().get(&label).map(|w|w.super_id.clone()).ok_or("Окно не найдено")?;
+    // Команда может прийти, пока CEF ещё запускается. Ждём канал без блокировки UI.
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(25);
+    while kanal(&s,&label,&id).is_err(){if std::time::Instant::now()>=deadline{return Err("Движок не ответил при открытии окна".into());}tokio::time::sleep(std::time::Duration::from_millis(100)).await;}
+    podklyuchit(&app,&s,&label)?;Ok(())
+}
+fn podklyuchit(app:&tauri::AppHandle,s:&Sostoyanie,label:&str)->Result<(),String>{
+    let window=app.get_webview_window(label).ok_or("Окно уже закрыто")?;
     let parent=crate::nash_descriptor(&window).ok_or("Не найден дескриптор окна")?;
-    kanal(&s,&label,&id)?.try_send(Komanda::OknoNovoe{label,parent,x:0,y:100,w:1200,h:700,privatnaya}).map_err(|e|e.to_string())?;
-    let _=app;Ok(())
+    let (id,private,session,mesto)={let map=s.okna.0.lock().unwrap();let w=map.get(label).ok_or("Окно уже закрыто")?;(w.super_id.clone(),w.privatnaya,w.sessiya.clone(),w.mesto.unwrap_or(Mesto{x:0,y:100,w:1200,h:700}))};
+    let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).ok_or("Супер-вкладка закрыта")?;
+    kanal(s,label,&id)?.try_send(Komanda::OknoNovoe{label:label.into(),parent,x:mesto.x,y:mesto.y,w:mesto.w,h:mesto.h,privatnaya:private,sessiya:session}).map_err(|e|e.to_string())?;
+    if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.engine=engine;w.hwnd=None;}
+    obolochka(app,s,label);Ok(())
+}
+pub fn vosstanovit(app:&tauri::AppHandle,s:&Sostoyanie,id:&str,engine:u64){
+    let labels=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.engine!=engine).map(|(label,_)|label.clone()).collect::<Vec<_>>();
+    for label in labels{if let Err(e)=podklyuchit(app,s,&label){let _=app.emit_to(&label,"oshibka-dvizhka",e);}}
+}
+pub fn zakryt_super(app:&tauri::AppHandle,s:&Sostoyanie,id:&str){
+    let labels=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id).map(|(label,_)|label.clone()).collect::<Vec<_>>();
+    for label in labels{if let Some(window)=app.get_webview_window(&label){let _=window.close();}}
 }
 pub fn zakryt(app:&tauri::AppHandle,label:&str){
     let s:tauri::State<Sostoyanie>=app.state();

@@ -14,7 +14,9 @@ wrap_download_handler!{
                 let name=suggested_name.map(|s|s.to_string()).unwrap_or_else(||"download".into());
                 let name=std::path::Path::new(&name).file_name().unwrap_or_else(||std::ffi::OsStr::new("download"));
                 let path=dirs::download_dir().unwrap_or_else(std::env::temp_dir).join(name);
-                c.cont(Some(&CefString::from(path.to_string_lossy().as_ref())),1);return 1;
+                let test_dir=std::env::var_os("NEXUSBRO_TEST_DATA").and_then(|_|std::env::var_os("NEXUSBRO_TEST_DOWNLOAD_DIR"));
+                let (path,dialog)=if let Some(dir)=test_dir{let dir=std::path::PathBuf::from(dir);let _=std::fs::create_dir_all(&dir);(dir.join(name),0)}else{(path,1)};
+                c.cont(Some(&CefString::from(path.to_string_lossy().as_ref())),dialog);return 1;
             }0
         }
         fn on_download_updated(&self,_browser:Option<&mut Browser>,download_item:Option<&mut DownloadItem>,callback:Option<&mut DownloadItemCallback>){
@@ -47,7 +49,7 @@ fn zapisat(m:&HashMap<String,Zapis>){
 pub fn obnovit(super_id:&str,data:&Value){
     let mut data=data.clone();let Some(dl)=data["download_id"].as_u64()else{return};let Some(pid)=data["engine_pid"].as_u64()else{return};
     data["super_id"]=json!(super_id);data["id"]=json!(format!("{super_id}:{pid}:{dl}"));
-    if let Ok(item)=serde_json::from_value::<Zapis>(data){let mut m=spisok().lock().unwrap();let terminal=!["Загружается","Приостановлена"].contains(&item.status.as_str());m.insert(item.id.clone(),item);if terminal{zapisat(&m);}}
+    if let Ok(item)=serde_json::from_value::<Zapis>(data){let mut m=spisok().lock().unwrap();let persist=!m.contains_key(&item.id)||!["Загружается","Приостановлена"].contains(&item.status.as_str());m.insert(item.id.clone(),item);if persist{zapisat(&m);}}
 }
 pub fn ochistit_privatnye(super_id:&str){let mut m=spisok().lock().unwrap();m.retain(|_,i|!(i.privatnaya&&i.super_id==super_id));}
 #[tauri::command]

@@ -37,16 +37,21 @@ assert not run.exists(), 'Use a fresh output directory'
 run.mkdir(parents=True)
 cef = pathlib.Path(a.cef).resolve()
 env = {**os.environ, 'CEF_PATH': str(cef), 'PATH': str(cef)+os.pathsep+os.environ['PATH'],
-       'NEXUSBRO_TEST_DATA': str(run/'data'), 'WEBVIEW2_USER_DATA_FOLDER': str(run/'webview2'), 'NEXUSBRO_PROBA': '1'}
+       'NEXUSBRO_TEST_DATA': str(run/'data'), 'WEBVIEW2_USER_DATA_FOLDER': str(run/'webview2'), 'NEXUSBRO_PROBA': '1','NEXUSBRO_TEST_DOWNLOAD_DIR':str(run/'downloads')}
 results = []
 hits = {}
 subscription = b''
 ad_reports=[]
 translation_reports=[]
+storage_reports=[]
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         path=urllib.parse.urlsplit(self.path).path
         hits[path] = hits.get(path,0)+1
+        if path=='/download-fixture':
+            body=b'NexusBro download fixture\n'*256
+            self.send_response(200);self.send_header('Content-Type','application/octet-stream');self.send_header('Content-Disposition','attachment; filename="nexusbro-fixture.txt"');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
+        if path=='/storage-result':storage_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True))
         if path=='/translate':
             body=json.dumps([[["Переведённые новости","Regular news",None,None]]],ensure_ascii=False).encode()
             self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
@@ -55,7 +60,9 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Length',str(len(subscription)));self.end_headers();self.wfile.write(subscription);return
         if path=='/ad-result':
             ad_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
-        if path.startswith('/ad-fixture'):
+        if path=='/storage':
+            body=b'''<!doctype html><title>StorageFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style><p>Findneedle Findneedle</p><script>const q=new URLSearchParams(location.search);let seen=localStorage.getItem('marker')||'';let cookie=document.cookie;if(q.has('set')){localStorage.setItem('marker',q.get('set'));document.cookie='marker='+q.get('set')+';path=/;SameSite=Lax'}fetch('/storage-result?'+new URLSearchParams({case:q.get('case'),seen,cookie}));</script>'''
+        elif path.startswith('/ad-fixture'):
             body=b'''<!doctype html><title>AdsFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}.browser-promo,.advert{position:fixed;top:0;width:100%;height:60px;background:red}</style><main id="news">Regular news</main><a id="sponsored" style="display:block"><span style="display:block">Lexus RX 2023, auto.ru sponsored product</span><span style="display:block">&#1056;&#1045;&#1050;&#1051;&#1040;&#1052;&#1040;</span></a><div id="browser-ad" class="browser-promo">Download: &#1057;&#1082;&#1072;&#1095;&#1072;&#1081; Chrome</div><aside id="yandex-ad" class="advert">Yandex ad</aside><img src="/ads/banner.png"><script>
 new MutationObserver(()=>fetch('/translation-result?text='+encodeURIComponent(document.getElementById('news').textContent))).observe(document.getElementById('news'),{subtree:true,characterData:true,childList:true});
 setTimeout(async()=>{let blocked=false;try{await fetch('/ads/fetch-promo')}catch(e){blocked=true}await fetch('/control?utm_source=news');const p=new URLSearchParams({path:location.pathname,sponsored:String(!!document.getElementById('sponsored')),browser:String(!!document.getElementById('browser-ad')),ad:String(!!document.getElementById('yandex-ad')),news:String(!!document.getElementById('news')),blocked:String(blocked)});await fetch('/ad-result?'+p);document.title='AdsFixtureVerified'},1500)
@@ -445,6 +452,62 @@ try:
     assert off and off[-1]['sponsored']==['true'] and off[-1]['browser']==['true'] and off[-1]['ad']==['true'] and off[-1]['blocked']==['false'],ad_reports
     assert hits.get('/ads/banner.png') and hits.get('/ads/fetch-promo'),hits
     results.append({'cef_ad_switch_off_preserves_banners_and_requests':True})
+    # Find, history/bookmarks/downloads and multiwindow storage use native CEF.
+    env['NEXUSBRO_TEST_DOWNLOAD_DIR']=str(run/'downloads')
+    def storage(case,value=None):
+        params={'case':case}
+        if value is not None:params['set']=value
+        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/storage?'+urllib.parse.urlencode(params),interval=.001);gui.press('enter')
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            report=next((r for r in storage_reports if r.get('case')==[case]),None)
+            if report:return report
+            time.sleep(.1)
+        raise AssertionError(('No storage report',case,storage_reports))
+    storage('normal-main','normal-marker')
+    r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','f')
+    ui('Найти на странице',['Edit']).click_input();gui.write('Findneedle');time.sleep(.8)
+    assert any(x.element_info.name=='1 из 2' for x in win.descendants()),[x.element_info.name for x in win.descendants()]
+    gui.press('enter');time.sleep(.3)
+    assert any(x.element_info.name=='2 из 2' for x in win.descendants())
+    gui.press('escape');gui.hotkey('ctrl','d');gui.hotkey('ctrl','b');ui('Закрыть библиотеку',['Button']).click_input()
+    gui.hotkey('ctrl','h');ui('Закрыть библиотеку',['Button']).click_input()
+    ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/download-fixture',interval=.001);gui.press('enter')
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline and not (run/'downloads/nexusbro-fixture.txt').exists():time.sleep(.1)
+    assert (run/'downloads/nexusbro-fixture.txt').read_bytes()==b'NexusBro download fixture\n'*256
+    gui.hotkey('ctrl','j');ui('Закрыть библиотеку',['Button']).click_input()
+    downloads=json.loads((data/'zagruzki.json').read_text(encoding='utf-8'));assert any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads),downloads
+    results.append({'native_download_file_and_history':True})
+    main_hwnd=hwnd;main_win=win
+    def browser_windows():
+        found=[]
+        @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        def enum(h,_):
+            pid=wintypes.DWORD();u.GetWindowThreadProcessId(h,ctypes.byref(pid))
+            text=ctypes.create_unicode_buffer(512);u.GetWindowTextW(h,text,512)
+            if pid.value==app.pid and u.IsWindowVisible(h) and text.value.startswith('NexusBro'):found.append(int(h))
+            return True
+        u.EnumWindows(enum,0);return found
+    second=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'});second.wait(timeout=15)
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and len(browser_windows())<2:time.sleep(.1)
+    windows=browser_windows();assert len(windows)==2 and app.poll() is None,windows
+    hwnd=next(h for h in windows if h!=main_hwnd);u.SetForegroundWindow(hwnd);win=Desktop(backend='uia').window(handle=hwnd)
+    assert storage('second-normal')['seen']==['normal-marker']
+    gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None
+    hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
+    # A private ordinary tab shares the Super exit, but has neither normal cookies nor localStorage.
+    r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
+    private=storage('private-canary','private-marker');assert private['seen']==[''] and not private['cookie'][0],private
+    gui.hotkey('ctrl','w');time.sleep(.5)
+    r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
+    private2=storage('private-again');assert private2['seen']==[''] and not private2['cookie'][0],private2
+    gui.hotkey('ctrl','w');time.sleep(.4)
+    assert storage('normal-after-private')['seen']==['normal-marker']
+    for path in data.rglob('*.json'):
+        contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-canary' not in contents and 'private-marker' not in contents,path
+    results.append({'native_find_next':True,'native_history_and_bookmarks_panels':True,'second_exe_opens_shared_profile_window':True,'closing_secondary_keeps_main':True,'private_tab_storage_isolated_and_reset':True,'private_urls_not_persisted':True})
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')

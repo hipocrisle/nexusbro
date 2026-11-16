@@ -257,6 +257,13 @@ impl Konteyner {
     }
 }
 
+impl Drop for Konteyner {
+    fn drop(&mut self){
+        #[cfg(target_os="windows")]unsafe{let _=windows::Win32::UI::WindowsAndMessaging::DestroyWindow(windows::Win32::Foundation::HWND(self.okno as usize as _));}
+        #[cfg(target_os="linux")]{use x11rb::{connection::Connection,protocol::xproto::ConnectionExt};let _=self.svyaz.destroy_window(self.okno);let _=self.svyaz.flush();}
+    }
+}
+
 pub(crate) fn handle(b: &Browser) -> u32 {
     b.host()
         .map(|h| {
@@ -374,7 +381,7 @@ pub fn rabotat(
         brauzery,
         razmer,
         devtools: HashMap::new(), devtools_procent:40, ui_last:String::new(), perevody:HashMap::new(),
-        label:String::new(), extras:HashMap::new(), closing:false,
+        label:String::new(), extras:HashMap::new(), closing:false, force_private:crate::privatnost::process_privatnyj(),
     };
     #[cfg(target_os = "windows")]
     {
@@ -427,6 +434,7 @@ struct Rabota {
     label:String,
     extras:HashMap<String,Rabota>,
     closing:bool,
+    force_private:bool,
 }
 
 impl Rabota {
@@ -445,7 +453,7 @@ impl Rabota {
             rx,
             brauzery,
             razmer,
-            devtools, devtools_procent, ui_last, perevody, label, extras, closing,
+            devtools, devtools_procent, ui_last, perevody, label, extras, closing, force_private,
         } = self;
         let mut izmeneno = false;
         let mut layout_dirty=false;
@@ -489,21 +497,24 @@ impl Rabota {
                     Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             match sobytie {
-                Sobytie::Komanda(Komanda::OknoNovoe{label:new_label,parent,x,y,w,h,privatnaya})=>{
+                Sobytie::Komanda(Komanda::OknoNovoe{label:new_label,parent,x,y,w,h,privatnaya,sessiya})=>{
                     if !label.is_empty()||extras.contains_key(&new_label){continue;}
                     let mut child_k=Konteyner::sozdat(parent,Mesto{x,y,w,h})?;
                     child_k.private_context=k.private_context.clone();
                     let (child_tx,child_rx)=channel();
-                    let mut child_s=Sessiya::novaya("about:blank");
+                    let restoring=sessiya.is_some();
+                    let mut child_s=sessiya.unwrap_or_else(||Sessiya::novaya("about:blank"));
+                    if child_s.vkladki.is_empty(){child_s=Sessiya::novaya("about:blank");}
                     static NEXT_VIEW:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
                     let base=NEXT_VIEW.fetch_add(1,std::sync::atomic::Ordering::Relaxed)*1_000_000;
-                    child_s.vkladki[0].id=base;child_s.aktivnaya=base;child_s.sleduyushchaya=base+1;
-                    child_s.vkladki[0].privatnaya=privatnaya||crate::privatnost::process_privatnyj();
+                    let active=child_s.vkladki.iter().position(|v|v.id==child_s.aktivnaya).unwrap_or(0);
+                    for (i,v) in child_s.vkladki.iter_mut().enumerate(){v.id=base+i as u64;v.privatnaya|=privatnaya||crate::privatnost::process_privatnyj();v.zagruzka=false;v.otlozhena=restoring&&i!=active;}
+                    child_s.aktivnaya=child_s.vkladki[active].id;child_s.sleduyushchaya=base+child_s.vkladki.len() as u64;
                     let mut child_b=HashMap::new();
-                    child_b.insert(base,sozdat_brauzer(&child_k,base,"about:blank",&child_tx,child_s.vkladki[0].privatnaya)?);
+                    let tab=&child_s.vkladki[active];child_b.insert(tab.id,sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya)?);
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_procent:40,ui_last:String::new(),perevody:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closing:false});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_procent:40,ui_last:String::new(),perevody:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closing:false,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -514,7 +525,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::Novaya { adres }|Komanda::NovayaPrivatnaya { adres }) => {
                     let mut novaya = s.clone();
-                    let private=private_command||crate::privatnost::process_privatnyj()||s.vkladki.iter().find(|v|v.id==s.aktivnaya).is_some_and(|v|v.privatnaya);
+                    let private=private_command||*force_private||s.vkladki.iter().find(|v|v.id==s.aktivnaya).is_some_and(|v|v.privatnaya);
                     let id = novaya.dobavit(&adres);
                     novaya.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=private;
                     match sozdat_brauzer(&k, id, &adres, &tx, private) {
@@ -531,7 +542,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Skachat{adres,privatnaya})=>{
                     let target=s.vkladki.iter().find(|v|v.privatnaya==privatnaya&&brauzery.contains_key(&v.id)).map(|v|v.id);
                     let target=if let Some(id)=target{id}else{let id=s.dobavit("about:blank");s.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=privatnaya;brauzery.insert(id,sozdat_brauzer(k,id,"about:blank",tx,privatnaya)?);fokus=true;id};
-                    if let Some(h)=brauzery.get(&target).and_then(|b|b.host()){h.start_download(Some(&CefString::from(adres)));}
+                    if let Some(h)=brauzery.get(&target).and_then(|b|b.host()){h.start_download(Some(&CefString::from(adres.as_str())));}
                 }
                 Sobytie::Komanda(Komanda::VosstanovitZakrytuyu) => {
                     if let Some(old)=s.zakrytye.pop(){
@@ -722,7 +733,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Nayti { id, text, vpered, dalshe }) => {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         if text.is_empty() { h.stop_finding(1); }
-                        else { h.find(Some(&CefString::from(text)), vpered as i32, 0, dalshe as i32); }
+                        else { h.find(Some(&CefString::from(text.as_str())), vpered as i32, 0, dalshe as i32); }
                     }
                 }
                 Sobytie::Komanda(Komanda::PoiskZakryt { id }) => {
@@ -796,7 +807,7 @@ impl Rabota {
         }
         if s.vkladki.is_empty() && !*closing {
             let id = s.dobavit("about:blank");
-            let private=crate::privatnost::process_privatnyj();s.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=private;
+            let private=*force_private;s.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=private;
             brauzery.insert(id, sozdat_brauzer(&k, id, "about:blank", &tx, private)?);
             fokus = true;
             izmeneno = true;

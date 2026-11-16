@@ -10,9 +10,9 @@ class FrontendServer(http.server.SimpleHTTPRequestHandler):
   super().do_GET()
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(FrontendServer,directory=str(root/'desktop/dist')))
 threading.Thread(target=server.serve_forever,daemon=True).start()
-mock=r'''window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{},listen:async()=>()=>{},once:async()=>()=>{}};window.__saved=null;window.__calls=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
+mock=r'''window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{},listen:async()=>()=>{},once:async()=>()=>{}};window.__saved=null;window.__calls=[];window.__args=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:(f)=>{window.__callbacks[++cb]=f;return cb;},unregisterCallback:()=>{},invoke:async(cmd,args)=>{
- window.__calls.push(cmd);
+ window.__calls.push(cmd);window.__args.push({cmd,args});
  if(cmd==='nastrojki_poluchit')return {tema:'temnaya',shrift:'system',razmer_shrifta:14,plotnost:'udobno',masshtab_stranic:100,vyhody:[{id:'local',nazvanie:'Test subscription',adres:'https://example.test/sub',proxy_uzel:''}],panel_shirina:180,panel_svernuta:false,novaya_stranica:'about:blank',poisk:'duckduckgo',avtoobnovleniya:false,apparatnoe_uskorenie:false};
  if(cmd==='nastrojki_sohranit'){window.__saved=args.nastrojki;return args.nastrojki;}
  if(cmd==='spisok')return window.__tabs;
@@ -20,6 +20,9 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
  if(cmd==='obychnye_spisok'){const v=window.__many?Array.from({length:window.__many},(_,i)=>({id:i+1,adres:'about:blank',zagolovok:'Tab number '+(i+1),zakreplena:false,otlozhena:false})):[{id:1,adres:'about:blank',zagolovok:'One',zakreplena:false,otlozhena:true},{id:2,adres:'about:blank',zagolovok:'Two',zakreplena:false,otlozhena:true}];return {aktivnaya:1,vkladki:v};}
  if(cmd==='aktivnaya')return window.__active;
  if(cmd==='dvizhok_est')return true;
+ if(cmd==='biblioteka_spisok')return [{id:'history-test',adres:'https://example.test/history',nazvanie:'History fixture',vremya:1790000000,papka:''}];
+ if(cmd==='zagruzki_spisok')return [{id:'download-test',super_id:'layout',name:'fixture.zip',url:'https://example.test/fixture.zip',path:'',percent:50,received:512,total:1024,speed:128,status:'Загружается',privatnaya:false}];
+ if(cmd==='set_status')return {mode:'Напрямую',node:'',running:true,starting:false,tunnel_running:false,proxy_running:true};
  if(cmd==='schet_rezki')return [0,0];
  if(cmd==='uzly_podpiski')return [{imya:'Unavailable',ssylka:'vless://fixture@127.0.0.1:1'},{imya:'Local second',ssylka:'vless://fixture@127.0.0.1:2'}];
  if(cmd==='proverit_uzel')return args.ssylka.endsWith(':2')?{ms:34,status:'Доступен'}:{ms:null,status:'Не отвечает'};
@@ -112,6 +115,25 @@ try:
     assert 0<=m['zazor']<=16,(shirina,n,m)
     assert m['tabBottom']<=m['polosaBottom']+1,(shirina,n,m)
     assert m['lastWidth']>=20,(shirina,n,m)
+  page.get_by_role('button',name='Отмена',exact=True).click()
+  page.locator('.zatemnenie').wait_for(state='detached')
+  # Ctrl+F: Enter раньше debounce не должен позже сбрасывать поиск к первому совпадению.
+  page.keyboard.press('Control+f')
+  field=page.get_by_role('textbox',name='Найти на странице',exact=True)
+  field.fill('needle');field.press('Enter');page.wait_for_timeout(200);field.press('Enter')
+  calls=page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='nayti').map(x=>x.args.komanda)")
+  assert len(calls)==2 and calls[0]['dalshe'] is False and calls[1]['dalshe'] is True,calls
+  field.press('Escape');expect(field).not_to_be_visible()
+  page.keyboard.press('Control+h');expect(page.get_by_role('dialog',name='История',exact=True)).to_be_visible()
+  expect(page.get_by_text('History fixture',exact=True)).to_be_visible()
+  page.get_by_role('button',name='Закрыть библиотеку',exact=True).click()
+  page.keyboard.press('Control+j');expect(page.get_by_text('fixture.zip',exact=True)).to_be_visible()
+  page.get_by_role('button',name='Отменить',exact=True).click()
+  assert page.evaluate("window.__args.some(x=>x.cmd==='zagruzka_deystvie'&&x.args.action==='cancel')")
+  page.get_by_role('button',name='Закрыть библиотеку',exact=True).click()
+  page.keyboard.press('Control+n');page.keyboard.press('Control+Shift+n')
+  calls=page.evaluate("window.__args.filter(x=>x.cmd==='novoe_okno').map(x=>x.args)")
+  assert [x['privatnaya'] for x in calls[-2:]]==[False,True],calls
   assert not errors,errors
   print(json.dumps({'mouse_font_density':True,'all_subscription_nodes':True,'overview_without_global_selection':True,'super_node_mouse_selection':True,'no_native_select':True,'plus_adjacent_to_last':True,'plus_vertically_centered':True,'many_tabs_no_scrollbar':True,'pending_placeholder':True}))
   browser.close()

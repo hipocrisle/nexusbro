@@ -33,7 +33,7 @@ pub fn nachat(b:&Browser,id:u64,token:String,tx:Sender<Sobytie>)->Option<Registr
     let registration=h.add_dev_tools_message_observer(Some(&mut Snimok::new(id,token.clone(),message,tx)))?;
     let expression=include_str!("../scripts/perevod.js").replace("__TOKEN__",&serde_json::to_string(&token).ok()?);
     let params=dictionary_value_create()?;
-    params.set_string(Some(&CefString::from("expression")),Some(&CefString::from(expression)));
+    params.set_string(Some(&CefString::from("expression")),Some(&CefString::from(expression.as_str())));
     params.set_bool(Some(&CefString::from("returnByValue")),1);
     let _=h.execute_dev_tools_method(message,Some(&CefString::from("Runtime.evaluate")),Some(&mut params.clone()));
     Some(registration)
@@ -42,7 +42,7 @@ pub fn primenit(b:&Browser,token:&str,items:&[(u32,String)]){
     if let Some(f)=b.main_frame(){
         let args=json!([token,items.iter().map(|(id,text)|json!({"id":id,"text":text})).collect::<Vec<_>>()]);
         let js=format!("window.__nexusbroTranslation?.apply(...{})",args);
-        f.execute_java_script(Some(&CefString::from(js)),None,0);
+        f.execute_java_script(Some(&CefString::from(js.as_str())),None,0);
     }
 }
 pub fn original(b:&Browser){if let Some(f)=b.main_frame(){f.execute_java_script(Some(&CefString::from("window.__nexusbroTranslation?.restore()")),None,0);}}

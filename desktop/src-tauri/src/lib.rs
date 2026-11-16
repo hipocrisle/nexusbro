@@ -1,10 +1,10 @@
-mod okna_app;
 //! NexusBro — оболочка с супер-вкладками поверх готового Chromium.
 //!
 //! Супер-вкладка = отдельный процесс движка со СВОИМ профилем и СВОИМ
 //! выходом в сеть. Внутри неё человек открывает сколько угодно обычных
 //! вкладок, и весь сервис со всеми его адресами идёт через нужный выход.
 
+mod okna_app;
 mod brauzer;
 mod sessiya;
 mod nastrojki;
@@ -574,6 +574,7 @@ async fn podgotovit_dvizhok(
                 let _okna = s.izmenenie_okon.lock().unwrap();
                 primenit_vidimost(&s);
             }
+            okna_app::vosstanovit(&h,&s,&id_fon,zapusk_id);
             zapisat_v_zhurnal(format!("{id_fon}: запуск ок, окно {okno}"));
         } else {
             let resursy = (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take());
@@ -858,6 +859,8 @@ fn steret_profil(id: &str) {
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
+    okna_app::zakryt_super(&app,&s,&id);
+    perevod::otmenit_super(&id);
     let udalena = {
         let mut v = s.vkladki.lock().unwrap();
         v.remove(&id)
