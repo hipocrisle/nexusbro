@@ -9,7 +9,7 @@ export default function Biblioteka({superId}:{superId:string|null}){
  const [open,setOpen]=useState<Razdel|null>(null),[items,setItems]=useState<Zapis[]>([]),[downloads,setDownloads]=useState<Download[]>([]);
  const [query,setQuery]=useState(''),[error,setError]=useState(''),[info,setInfo]=useState('');
  const input=useRef<HTMLInputElement>(null);
- async function show(section:Razdel){await invoke('pokazat_dvizhki',{vidno:false});setQuery('');setError('');setInfo('');setOpen(section);}
+ async function show(section:Razdel){await invoke('pokazat_dvizhki',{vidno:false});await invoke('fokus_obolochke');setQuery('');setError('');setInfo('');setOpen(section);}
  async function close(){setOpen(null);await invoke('pokazat_dvizhki',{vidno:true});}
  async function refresh(){if(!open)return;try{if(open==='zagruzki')setDownloads(await invoke<Download[]>('zagruzki_spisok'));else setItems(await invoke<Zapis[]>('biblioteka_spisok',{razdel:open}));}catch(e){setError(String(e));}}
  useEffect(()=>{const key=(e:KeyboardEvent)=>{if(!(e.ctrlKey||e.metaKey))return;const s=({h:'istoriya',j:'zagruzki',b:'zakladki'} as Record<string,Razdel>)[e.key.toLowerCase()];if(s&&!document.querySelector('.zatemnenie')){e.preventDefault();void show(s);}};document.addEventListener('keydown',key,true);return()=>document.removeEventListener('keydown',key,true);},[]);

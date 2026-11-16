@@ -10,7 +10,7 @@ pub(crate) enum Sobytie {
     DevtoolsGotovy(u64,u32),
     DevtoolsZakryty(u64),
     #[cfg(target_os="windows")]
-    DevtoolsZakrytOkno(u64),
+    DevtoolsZakrytOkno(u64,u32),
     Komanda(Komanda),
     Zagolovok(u64, String),
     Adres(u64, String),
@@ -707,8 +707,10 @@ impl Rabota {
                     }
                 }
                 #[cfg(target_os="windows")]
-                Sobytie::DevtoolsZakrytOkno(id)=>{
-                    if let Some(hwnd)=devtools.get(&id){unsafe{let _=windows::Win32::UI::WindowsAndMessaging::DestroyWindow(windows::Win32::Foundation::HWND(*hwnd as usize as _));}}
+                Sobytie::DevtoolsZakrytOkno(_id,hwnd)=>{
+                    use windows::Win32::{Foundation::HWND,System::Threading::{GetCurrentProcessId,GetCurrentThreadId},UI::WindowsAndMessaging::*};
+                    unsafe{let h=HWND(hwnd as usize as _);let mut pid=0;let tid=GetWindowThreadProcessId(h,Some(&mut pid));
+                        if pid==GetCurrentProcessId()&&tid==GetCurrentThreadId()&&GetParent(h).ok().is_some_and(|p|p.0 as usize as u32==k.okno){let _=DestroyWindow(h);}}
                     layout_dirty=true;
                 }
                 Sobytie::DevtoolsZakryty(id) => { devtools.remove(&id);layout_dirty=true; }

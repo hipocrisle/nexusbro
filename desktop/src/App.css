@@ -418,3 +418,5 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .secondary-window{height:100vh;display:flex;flex-direction:column;background:var(--fon);color:var(--tekst);overflow:hidden}.secondary-window>.pole{flex:1;min-height:0}.secondary-window .library-shortcuts{flex-shrink:0}
 
 :root[data-tesno="da"] .network-button span{display:none}.network-button{flex-shrink:0}
+/* Действия диалога доступны и на невысоком экране, при длинном списке настроек. */
+.dialog>.knopki{position:sticky;bottom:0;z-index:2;flex-shrink:0;padding:12px 0 4px;background:var(--fon);border-top:1px solid var(--kraj)}

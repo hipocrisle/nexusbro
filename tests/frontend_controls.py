@@ -62,6 +62,11 @@ try:
   saved=page.evaluate('window.__saved');assert saved['shrift']=='arial' and saved['plotnost']=='kompaktno',saved
   assert saved['vyhody'][0]['proxy_uzel']=='',saved
   page.locator('.niz button').first.click()
+  page.set_viewport_size({'width':900,'height':560})
+  footer=page.get_by_role('button',name='Отмена',exact=True)
+  expect(footer).to_be_visible();box=footer.bounding_box()
+  assert box['y']>=0 and box['y']+box['height']<=560,box
+  page.set_viewport_size({'width':1280,'height':820})
   page.get_by_role('combobox',name='Сохранённое подключение',exact=True).click()
   page.get_by_role('option',name='Test subscription',exact=True).click()
   expect(page.get_by_role('combobox',name='Узел подписки',exact=True)).to_contain_text('Первый узел подписки')

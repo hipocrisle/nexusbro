@@ -158,11 +158,15 @@ try:
         # состояние. Поэтому ищем дольше и с паузой, а в ошибке печатаем, что
         # реально видно — по этому видно, на каком шаге остановились.
         deadline=time.monotonic()+30
-        videno=set()
+        videno=set();scrolled=0
         while time.monotonic()<deadline:
             items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
             for x in items:
                 if x.is_visible() and x.is_enabled():return x
+                try:x.iface_scroll_item.ScrollIntoView()
+                except Exception:pass
+            if name in ['Отмена','Создать','Сохранить'] and scrolled<2 and time.monotonic()>deadline-28:
+                r=rect(hwnd);gui.moveTo((r.left+r.right)//2,r.bottom-150);gui.scroll(-4);scrolled+=1
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
@@ -535,7 +539,10 @@ try:
     # Новая приватная Super живёт во временном каталоге и отсутствует в сохранённом списке.
     ui('Новая супер-вкладка',['Button']).click_input();gui.write('PrivateSuperFixture',interval=.02)
     boxes=[x for x in win.descendants() if x.element_info.control_type=='CheckBox' and x.element_info.name.startswith('Приватная супер-вкладка')]
-    assert boxes,'Private Super checkbox missing';boxes[0].click_input()
+    assert boxes,'Private Super checkbox missing'
+    try:boxes[0].iface_scroll_item.ScrollIntoView()
+    except Exception:pass
+    boxes[0].click_input()
     ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-canary&set=private-super-marker',interval=.001)
     ui('Создать',['Button']).click_input()
     deadline=time.monotonic()+25

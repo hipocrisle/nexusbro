@@ -12,9 +12,9 @@ wrap_life_span_handler! {
                 let _ = self.tx.send(Sobytie::DevtoolsGotovy(self.id, okno));
             }
         }
-        fn do_close(&self,_browser:Option<&mut Browser>)->i32{
-            #[cfg(target_os="windows")]{let _=self.tx.send(Sobytie::DevtoolsZakrytOkno(self.id));return 1;}
-            #[cfg(not(target_os="windows"))]{0}
+        fn do_close(&self,browser:Option<&mut Browser>)->i32{
+            #[cfg(target_os="windows")]{if let Some(b)=browser{let _=self.tx.send(Sobytie::DevtoolsZakrytOkno(self.id,crate::cef_vkladki::handle(b)));}return 1;}
+            #[cfg(not(target_os="windows"))]{let _=browser;0}
         }
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
             let _ = self.tx.send(Sobytie::DevtoolsZakryty(self.id));
