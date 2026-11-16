@@ -596,6 +596,8 @@ try:
     assert all(not r['id'].startswith('pvt-') for r in json.loads((data/'vkladki.json').read_text(encoding='utf-8')))
     for path in data.rglob('*.json'):
         contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-super-canary' not in contents and 'private-super-marker' not in contents,path
+    # Сочетание отправляем в браузер, а не в окно runner после запуска CEF.
+    ui('Адрес страницы',['Edit']).click_input()
     # Закрытие главного окна сохраняет дополнительное; последнее завершает приложение.
     gui.hotkey('ctrl','n');time.sleep(.8)
     deadline=time.monotonic()+20
