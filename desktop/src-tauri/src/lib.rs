@@ -497,11 +497,15 @@ async fn podgotovit_dvizhok(
         let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25, move |sessiya| {
             let _zapis = sessiya::ZAPIS.lock().unwrap();
             let s: State<Sostoyanie> = h_sessii.state();
-            {
+            let smena_vidimosti = {
                 let mut v = s.vkladki.lock().unwrap();
                 let Some(vk) = v.get_mut(&id_sessii).filter(|vk| vk.zapusk_id == zapusk_id && vk.proc.is_some()) else { return };
+                let bylo = vk.obychnye.as_ref().is_some_and(stranica_gotova);
+                let teper = stranica_gotova(&sessiya);
                 vk.obychnye = Some(sessiya.clone());
-            }
+                bylo != teper
+            };
+            if smena_vidimosti { vosstanovit_dvizhok(&h_sessii); }
             if let Err(e) = sessiya.sohranit(&brauzer::papka_profilej().join(&id_sessii)) {
                 zapisat_v_zhurnal(format!("{id_sessii}: сессия не записана: {e}"));
             }
@@ -637,16 +641,19 @@ fn obnovit_oblast_obolochki(s: &State<Sostoyanie>, oblast: Option<Mesto>) {
     });
 }
 
+fn stranica_gotova(s: &sessiya::Sessiya) -> bool {
+    s.vkladki.iter().find(|v| v.id == s.aktivnaya).is_some_and(|v| !v.otlozhena)
+}
 fn primenit_vidimost(s: &State<Sostoyanie>) {
     let m = *s.mesto.lock().unwrap();
     let aktivnaya = s.aktivnaya.lock().unwrap().clone();
     let skryty = s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst);
     let okna: Vec<_> = s.vkladki.lock().unwrap().iter()
-        .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o))).collect();
+        .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o, vk.obychnye.as_ref().is_some_and(stranica_gotova)))).collect();
     #[cfg(target_os = "windows")]
-    let vyrez = !skryty && okna.iter().any(|(id, _)| Some(id) == aktivnaya.as_ref());
-    for (id, o) in okna {
-        let vidno = !skryty && Some(&id) == aktivnaya.as_ref();
+    let vyrez = !skryty && okna.iter().any(|(id, _, gotova)| *gotova && Some(id) == aktivnaya.as_ref());
+    for (id, o, gotova) in okna {
+        let vidno = !skryty && gotova && Some(&id) == aktivnaya.as_ref();
         let _ = sistema::pokazat(o, vidno);
         if vidno {
             if let Some(m) = m { let _ = sistema::peremestit(o, m); }

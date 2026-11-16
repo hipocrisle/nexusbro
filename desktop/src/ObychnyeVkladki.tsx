@@ -2,12 +2,13 @@ import { ReactNode, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import Icon from "./Icons";
+import { createPortal } from "react-dom";
 
 type Vkladka = { id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number };
 type Komanda = { deystvie: string; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number };
 
-export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk }: { id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string }) {
+export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta }: { id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
   const [sessiya, setSessiya] = useState<Sessiya | null>(null);
   const [adres, setAdres] = useState("");
   const [pravka, setPravka] = useState(false);
@@ -130,6 +131,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         value={adres} onFocus={(e) => { setPravka(true); e.currentTarget.select(); vybratPriPusteni.current = true; }} onMouseUp={(e) => { if (vybratPriPusteni.current) { e.preventDefault(); vybratPriPusteni.current = false; } }} onBlur={() => setPravka(false)} onChange={(e) => setAdres(e.target.value)} />
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
     </form>
+    {aktivnaya?.otlozhena && poleKontenta.current && createPortal(<div className="pusto"><Icon name="tabs" size={36} /><h1>Вкладка ждёт открытия</h1><p>Страница не загружалась после запуска. Нажмите вкладку или кнопку ниже, когда она понадобится.</p><button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button></div>, poleKontenta.current)}
     {menu && <div className="zatemnenie-prozrachnoe" onClick={() => void zakrytMenu()} onContextMenu={(e) => { e.preventDefault(); void zakrytMenu(); }}>
       <div className="vypadajka menu-obychnyh" role="menu" aria-label="Действия с вкладкой" style={{ left: menu.x, top: menu.y, bottom: "auto" }} onClick={(e) => e.stopPropagation()}>
         <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya", adres: novayaStranica })}>Новая вкладка</button>

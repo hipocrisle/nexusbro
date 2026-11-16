@@ -422,7 +422,7 @@ export default function App() {
       <div className="kolonka">
         {/* Тонкая полоса сверху: имя активной супер-вкладки и счётчики.
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
-        <ObychnyeVkladki novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
+        <ObychnyeVkladki poleKontenta={mesto} novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
           {aktivnaya && <button className="schet protection-button" title="Какие соединения заблокированы" aria-label="Защита супер-вкладки" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={16} /><span>Защита</span><b>{zarezano}</b></button>}
         </ObychnyeVkladki>
