@@ -126,8 +126,10 @@ try:
   page.keyboard.press('Control+f')
   field=page.get_by_role('textbox',name='Найти на странице',exact=True)
   field.fill('needle');field.press('Enter');page.wait_for_timeout(200);field.press('Enter')
-  calls=page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='nayti').map(x=>x.args.komanda)")
-  assert len(calls)==2 and calls[0]['dalshe'] is False and calls[1]['dalshe'] is True,calls
+  calls=page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='nayti'&&x.args.komanda.text==='needle').map(x=>x.args.komanda)")
+  # На медленном CI debounce может успеть ДО первого Enter — это правильно.
+  # Запрещён повторный старт поиска после Enter, а не лишний FindNext.
+  assert len(calls) in (2,3) and calls[0]['dalshe'] is False and all(c['dalshe'] is True for c in calls[1:]),calls
   field.press('Escape');expect(field).not_to_be_visible()
   page.keyboard.press('Control+h');expect(page.get_by_role('dialog',name='История',exact=True)).to_be_visible()
   expect(page.get_by_text('History fixture',exact=True)).to_be_visible()
