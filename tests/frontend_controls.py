@@ -27,7 +27,14 @@ try:
  with sync_playwright() as pw:
   browser=pw.chromium.launch(channel='chrome',headless=True,args=['--no-sandbox'])
   page=browser.new_page(viewport={'width':1280,'height':820});page.add_init_script(mock)
-  errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('console',lambda m:errors.append('console:'+m.text) if m.type=='error' else None)
+  errors=[]
+  page.on('pageerror',lambda e:errors.append(str(e)))
+  # ⛔ 404 на ресурс страницы (обычно /favicon.ico от локального сервера теста)
+  # — не ошибка интерфейса: браузер сам просит значок. Ошибки нашего кода
+  # всё равно ловятся через pageerror и console:error с текстом.
+  def _console(m):
+    if m.type=='error' and 'Failed to load resource' not in m.text: errors.append('console:'+m.text)
+  page.on('console',_console)
   def popup_fits():
    page.locator('.vybor-popup').wait_for()
    r=page.locator('.vybor-popup').bounding_box();v=page.viewport_size
