@@ -565,6 +565,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::ZagruzkaUpravlenie{id,action})=>{crate::zagruzki::upravlyat(id,&action);}
                 Sobytie::Komanda(Komanda::Skachat{adres,privatnaya})=>{
+                    let privatnaya=privatnaya||*force_private;
                     let target=s.vkladki.iter().find(|v|v.privatnaya==privatnaya&&brauzery.contains_key(&v.id)).map(|v|v.id);
                     let target=if let Some(id)=target{id}else{let id=s.dobavit("about:blank");s.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=privatnaya;brauzery.insert(id,sozdat_brauzer(k,id,"about:blank",tx,privatnaya)?);fokus=true;id};
                     if let Some(h)=brauzery.get(&target).and_then(|b|b.host()){h.start_download(Some(&CefString::from(adres.as_str())));}
