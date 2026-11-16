@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {listen} from '@tauri-apps/api/event';
+import {listenWindow as listen} from './windowEvents';
 import ObychnyeVkladki from './ObychnyeVkladki';
 import Biblioteka from './Biblioteka';
 import Blokirovki,{type Zhurnal} from './Blokirovki';

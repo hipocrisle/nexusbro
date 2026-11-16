@@ -6,7 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { getVersion } from "@tauri-apps/api/app";
 import Icon from "./Icons";
 import Blokirovki, { Zhurnal } from "./Blokirovki";
-import { listen } from "@tauri-apps/api/event";
+import {listenWindow as listen} from "./windowEvents";
 import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu, shrifty, Vyhod } from "./Nastrojki";
 import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";

@@ -139,6 +139,8 @@ try:
   page.keyboard.press('Control+n');page.keyboard.press('Control+Shift+n')
   calls=page.evaluate("window.__args.filter(x=>x.cmd==='novoe_okno').map(x=>x.args)")
   assert [x['privatnaya'] for x in calls[-2:]]==[False,True],calls
+  targets=page.evaluate("window.__args.filter(x=>x.cmd==='plugin:event|listen').map(x=>x.args.target)")
+  assert targets and all(t=={'kind':'Window','label':'main'} for t in targets),targets
   assert not errors,errors
   print(json.dumps({'mouse_font_density':True,'all_subscription_nodes':True,'overview_without_global_selection':True,'super_node_mouse_selection':True,'no_native_select':True,'plus_adjacent_to_last':True,'plus_vertically_centered':True,'many_tabs_no_scrollbar':True,'pending_placeholder':True}))
   browser.close()

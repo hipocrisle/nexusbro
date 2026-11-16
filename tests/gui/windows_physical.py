@@ -539,6 +539,8 @@ try:
     assert storage('second-normal')['seen']==['normal-marker']
     gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None
     hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
+    main_tab_controls=[x for x in win.descendants() if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top]
+    assert len(main_tab_controls)==len(session()['vkladki']),'Another window overwrote the main tab strip'
     # A private ordinary tab shares the Super exit, but has neither normal cookies nor localStorage.
     r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
     private=storage('private-canary','private-marker');assert private['seen']==[''] and not private['cookie'][0],private

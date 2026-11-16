@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState} from 'react';
 import {invoke} from '@tauri-apps/api/core';
-import {listen} from '@tauri-apps/api/event';
+import {listenWindow as listen} from './windowEvents';
 type Zapis={id:string;adres:string;nazvanie:string;vremya:number;papka:string};
 type Download={id:string;super_id:string;name:string;url:string;path:string;percent:number;received:number;total:number;speed:number;status:string;privatnaya:boolean};
 type Razdel='istoriya'|'zakladki'|'zagruzki';

@@ -2,7 +2,7 @@ import {addressDown,addressUp,type AddressPointer} from "./addressSelection";
 import SetStatus from "./SetStatus";
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import {listenWindow as listen} from "./windowEvents";
 import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
