@@ -268,6 +268,9 @@ try:
     current=session();assert all(t.get('otlozhena') for t in current['vkladki']),current
     assert not any(path.startswith('/sleep/') for path in hits),hits
     hwnd=u.FindWindowW(None,'NexusBro');u.SetForegroundWindow(hwnd);r=rect(container)
+    win=Desktop(backend="uia").window(handle=hwnd)
+    ui('Загрузить вкладку',['Button'])
+    ImageGrab.grab().save(run/'deferred-start.png')
     gui.click(r.left+159,r.top-70)
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:
@@ -276,6 +279,7 @@ try:
         time.sleep(.1)
     assert hits.get('/sleep/0') and not hits.get('/sleep/1') and not hits.get('/sleep/2'),hits
     assert all(t.get('otlozhena') for t in current['vkladki'][1:]),current
+    pixels('after-lazy-click')
     # Plus is immediately after the third tab, not at the far right edge.
     win=Desktop(backend="uia").window(handle=hwnd)
     ui('Новая обычная вкладка',['Button']).click_input()

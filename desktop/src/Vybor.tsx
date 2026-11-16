@@ -11,7 +11,7 @@ export default function Vybor(p: Props) {
   });
   const [open, setOpen] = useState(false), [index, setIndex] = useState(0), [search, setSearch] = useState("");
   const popup = useRef<HTMLDivElement>(null);
-  const [position, setPosition] = useState<CSSProperties | null>(null);
+  const [position, setPosition] = useState<(CSSProperties & { "--options-height": string }) | null>(null);
   const root = useRef<HTMLDivElement>(null), button = useRef<HTMLButtonElement>(null), id = useId();
   const selected = options.find((o) => o.value === String(p.value));
   const visible = options.filter((o) => String(o.label).toLocaleLowerCase().includes(search.toLocaleLowerCase()));
@@ -26,7 +26,7 @@ export default function Vybor(p: Props) {
       const space = Math.max(100,up ? above : below), width = Math.min(window.innerWidth-24,Math.max(180,r.width));
       setPosition({ position:"fixed", left:Math.max(12,Math.min(r.left,window.innerWidth-width-12)), width,
         ...(up ? { bottom:window.innerHeight-r.top+4 } : { top:r.bottom+4 }),
-        "--options-height":Math.max(40,Math.min(220,space-64))+"px" } as CSSProperties);
+        "--options-height":Math.max(40,Math.min(220,space-64))+"px" });
     }
     const outside = (e: PointerEvent) => { if (!root.current?.contains(e.target as Node) && !popup.current?.contains(e.target as Node)) close(); };
     document.addEventListener("pointerdown", outside);

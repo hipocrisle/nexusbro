@@ -6,17 +6,19 @@ from playwright.sync_api import sync_playwright,expect
 root=pathlib.Path(__file__).resolve().parents[1]
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(root/'desktop/dist')))
 threading.Thread(target=server.serve_forever,daemon=True).start()
-mock=r'''window.__saved=null;window.__calls=[];let cb=0;
-window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:()=>++cb,unregisterCallback:()=>{},invoke:async(cmd,args)=>{
+mock=r'''window.__saved=null;window.__calls=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
+window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:(f)=>{window.__callbacks[++cb]=f;return cb;},unregisterCallback:()=>{},invoke:async(cmd,args)=>{
  window.__calls.push(cmd);
  if(cmd==='nastrojki_poluchit')return {tema:'temnaya',shrift:'system',razmer_shrifta:14,plotnost:'udobno',masshtab_stranic:100,vyhody:[{id:'local',nazvanie:'Test subscription',adres:'https://example.test/sub',proxy_uzel:''}],panel_shirina:180,panel_svernuta:false,novaya_stranica:'about:blank',poisk:'duckduckgo',avtoobnovleniya:false,apparatnoe_uskorenie:false};
  if(cmd==='nastrojki_sohranit'){window.__saved=args.nastrojki;return args.nastrojki;}
- if(cmd==='spisok'||cmd==='sohranennye')return [];
- if(cmd==='aktivnaya')return null;
+ if(cmd==='spisok')return window.__tabs;
+ if(cmd==='sohranennye')return [];
+ if(cmd==='obychnye_spisok')return {aktivnaya:1,vkladki:[{id:1,adres:'about:blank',zagolovok:'One',zakreplena:false,otlozhena:true},{id:2,adres:'about:blank',zagolovok:'Two',zakreplena:false,otlozhena:true}]};
+ if(cmd==='aktivnaya')return window.__active;
  if(cmd==='dvizhok_est')return true;
  if(cmd==='uzly_podpiski')return [{imya:'Unavailable',ssylka:'vless://fixture@127.0.0.1:1'},{imya:'Local second',ssylka:'vless://fixture@127.0.0.1:2'}];
  if(cmd==='plugin:app|version')return 'test';
- if(cmd==='plugin:event|listen')return 1;
+ if(cmd==='plugin:event|listen'){window.__events[args.event]=args.handler;return 1;}
  return null;
 }};'''
 try:
@@ -46,8 +48,14 @@ try:
   page.get_by_role('combobox',name='Узел подписки',exact=True).click()
   page.get_by_role('option',name='Unavailable',exact=True).click()
   expect(page.get_by_role('combobox',name='Узел подписки',exact=True)).to_contain_text('Unavailable')
+  page.get_by_role('button',name='Отмена',exact=True).click()
+  page.evaluate("""() => {window.__tabs=[{id:'layout',nazvanie:'Layout',proxy:'',zapushchena:true,sohranena:false}];window.__active='layout';window.__callbacks[window.__events['vkladki-izmenilis']]({event:'vkladki-izmenilis',payload:'layout'});} """)
+  page.get_by_role('tab',name='Two',exact=True).wait_for()
+  last=page.get_by_role('tab',name='Two',exact=True).bounding_box();plus=page.get_by_role('button',name='Новая обычная вкладка',exact=True).bounding_box()
+  assert 0<=plus['x']-(last['x']+last['width'])<=16,(last,plus)
+  expect(page.get_by_role('button',name='Загрузить вкладку',exact=True)).to_be_visible()
   assert page.locator('select').count()==0
   assert not errors,errors
-  print(json.dumps({'mouse_font_density':True,'all_subscription_nodes':True,'saved_node_default_in_super':True,'super_node_mouse_selection':True,'no_native_select':True}))
+  print(json.dumps({'mouse_font_density':True,'all_subscription_nodes':True,'saved_node_default_in_super':True,'super_node_mouse_selection':True,'no_native_select':True,'plus_adjacent_to_last':True,'pending_placeholder':True}))
   browser.close()
 finally:server.shutdown()
