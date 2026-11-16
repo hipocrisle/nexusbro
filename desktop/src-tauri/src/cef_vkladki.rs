@@ -50,15 +50,12 @@ const SKRIPT_VYZOVA_ZAGOTOVKA: &str = concat!(
     r#".observe(document.documentElement,{childList:true,subtree:true});}})();"#
 );
 
-
 /// Код обрезки вызова с подставленными правилами. Собирается один раз.
 fn skript_vyzova() -> String {
     static KOD: std::sync::OnceLock<String> = std::sync::OnceLock::new();
     KOD.get_or_init(|| {
-        SKRIPT_VYZOVA_ZAGOTOVKA.replace(
-            "__PRAVILA__",
-            &crate::spisok_reklamy::pravila_vyzova_json(),
-        )
+        SKRIPT_VYZOVA_ZAGOTOVKA
+            .replace("__PRAVILA__", &crate::spisok_reklamy::pravila_vyzova_json())
     })
     .clone()
 }
@@ -85,7 +82,7 @@ wrap_display_handler! {
             if let Some(t) = title { let _ = self.tx.send(Sobytie::Zagolovok(self.id, t.to_string())); }
         }
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
-            if frame.as_mut().map(|f| f.is_main() != 0).unwrap_or(false) {
+            if frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false) {
                 if let Some(u) = url {
                     let u = u.to_string();
                     let _ = self.tx.send(Sobytie::Adres(self.id, u.clone()));
@@ -94,10 +91,9 @@ wrap_display_handler! {
                     // Яндекс поиском по умолчанию» — прокси их не видит) и
                     // код обрезки вызова. Второй запуск в той же странице
                     // ничего не делает (флаг `__nbReklama`).
-                    if let Some(java) = crate::borba_s_reklamoy::skript_dlya_vyzova(&u, &skript_vyzova()) {
-                        if let Some(f) = frame.as_mut() {
-                            f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0);
-                        }
+                    let prikaz = crate::borba_s_reklamoy::skript_dlya_vyzova(&u, &skript_vyzova());
+                    if let (Some(java), Some(f)) = (prikaz, frame.as_mut()) {
+                        f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0);
                     }
                 }
             }
@@ -183,7 +179,7 @@ wrap_request_handler! {
             // «сложить инициатора в решатель» означало бы вырезать сторонние
             // запросы любого сайта (это ломалось бы на логинах/капче).
             let initiator = request_initiator.map(|s| s.to_string()).unwrap_or_default();
-            let navigaciya = is_navigation != 0 && frame.as_mut().map(|f| f.is_main() != 0).unwrap_or(true);
+            let navigaciya = is_navigation != 0 && frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(true);
             Some(crate::borba_s_reklamoy::handler_resursov(self.id, &initiator, navigaciya).into())
         }
     }

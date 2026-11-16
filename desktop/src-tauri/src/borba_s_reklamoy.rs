@@ -271,7 +271,9 @@ wrap_resource_request_handler! {
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             request: Option<&mut Request>, callback: Option<&mut Callback>) -> ReturnValue {
-            let adres = request.map(|r| r.url().to_string()).unwrap_or_default();
+            let adres = request
+                .map(|r| CefString::from(&r.url()).to_string())
+                .unwrap_or_default();
             if let Some(pravilo) = zarezannyj_resurs(&adres, self.navigaciya) {
                 eprintln!("cef: вкладка {} зарезан ресурс ({pravilo}): {adres} (со страницы {})", self.id, self.initiator);
                 if let Some(c) = callback { c.cancel(); }
@@ -303,10 +305,16 @@ mod proverki {
         // ⛔ Главная опасность — зарезать сам поиск. `yandex.ru` не должен
         // попасть ни под «домен» (он есть в SPISOK), ни под «домен-сеть»
         // (у него нет правил): иначе поиск Яндекса не откроется никогда.
-        assert_eq!(zarezannyj_resurs("https://yandex.ru/search/?text=погода", false), None);
+        assert_eq!(
+            zarezannyj_resurs("https://yandex.ru/search/?text=погода", false),
+            None
+        );
         assert_eq!(zarezannyj_resurs("https://yandex.ru/", false), None);
         // у узла-сети обычный ресурс не трогаем, рекламный — режем
-        assert_eq!(zarezannyj_resurs("https://an.yandex.ru/favicon.ico", false), None);
+        assert_eq!(
+            zarezannyj_resurs("https://an.yandex.ru/favicon.ico", false),
+            None
+        );
         assert!(zarezannyj_resurs("https://an.yandex.ru/ad/banner.png", false).is_some());
         // поддомен-сеть: маркер «.» перед правилом — не тот же домен
         assert!(zarezannyj_resurs("https://ads.example.com/x", false).is_some());
