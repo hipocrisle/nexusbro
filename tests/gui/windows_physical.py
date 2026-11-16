@@ -510,7 +510,8 @@ try:
     download_name_ok=any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads)
     results.append({'native_download_name_correct':download_name_ok})
     assert any(d['status']=='Готово' for d in downloads),downloads
-    results.append({'native_download_file_and_history':True})
+    after_download=session();assert '/storage?' in next(t['adres'] for t in after_download['vkladki'] if t['id']==after_download['aktivnaya']),after_download
+    results.append({'native_download_file_and_history':True,'download_keeps_source_document_url':True})
     gui.hotkey('ctrl','t');storage('recent-normal');gui.hotkey('ctrl','w');time.sleep(.3);gui.hotkey('ctrl','shift','t')
     deadline=time.monotonic()+8
     while time.monotonic()<deadline:

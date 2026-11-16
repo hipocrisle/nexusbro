@@ -8,6 +8,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 pub(crate) enum Sobytie {
     Sluzhebnoe(serde_json::Value),
     PoiskVybratPervoe(u64,u64,String,bool),
+    DownloadNachata(u64,String),
     DevtoolsGotovy(u64),
     DevtoolsZakryty(u64),
     #[cfg(target_os="windows")]
@@ -664,6 +665,7 @@ impl Rabota {
                         if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                             v.ikonka = None;
                             v.adres = adres;
+                            v.zagruzka = true;
                         }
                     }
                 }
@@ -805,6 +807,9 @@ impl Rabota {
                     if let Some(b) = brauzery.get(&id) {
                         b.reload_ignore_cache();
                     }
+                }
+                Sobytie::DownloadNachata(id,adres)=>{
+                    if !adres.is_empty(){if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.adres=adres;v.zagruzka=false;}}
                 }
                 Sobytie::Zagolovok(id, t) => {
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {

@@ -9,7 +9,11 @@ wrap_download_handler!{
     struct Zagruzka{id:u64,tx:Sender<Sobytie>,privatnaya:bool}
     impl DownloadHandler{
         fn can_download(&self,_browser:Option<&mut Browser>,_url:Option<&CefString>,_request_method:Option<&CefString>)->i32{1}
-        fn on_before_download(&self,_browser:Option<&mut Browser>,_download_item:Option<&mut DownloadItem>,suggested_name:Option<&CefString>,callback:Option<&mut BeforeDownloadCallback>)->i32{
+        fn on_before_download(&self,browser:Option<&mut Browser>,_download_item:Option<&mut DownloadItem>,suggested_name:Option<&CefString>,callback:Option<&mut BeforeDownloadCallback>)->i32{
+            // Навигация с ответом attachment не заменяет документ страницы.
+            if let Some(frame)=browser.and_then(|b|b.main_frame()){
+                let _=self.tx.send(Sobytie::DownloadNachata(self.id,CefString::from(&frame.url()).to_string()));
+            }
             if let Some(c)=callback{
                 let name=suggested_name.map(|s|s.to_string()).unwrap_or_else(||"download".into());
                 let name=std::path::Path::new(&name).file_name().unwrap_or_else(||std::ffi::OsStr::new("download"));

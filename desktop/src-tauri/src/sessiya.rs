@@ -90,7 +90,7 @@ impl Sessiya {
             adres: adres.into(),
             zagolovok: "Новая вкладка".into(),
             zakreplena: false,
-            zagruzka: false,
+            zagruzka: adres!="about:blank",
             otlozhena: false,
             nazad: false,
             ikonka: None,
