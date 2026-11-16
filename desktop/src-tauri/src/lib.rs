@@ -456,9 +456,10 @@ async fn podgotovit_dvizhok(
     };
     let cherez = format!("http://127.0.0.1:{}", nash.port);
 
-    // Стартовый адрес подаём только для режима «открывать пустой»:
-    // восстановление обычных вкладок переезжает в наш JSON (этап 3).
-    let adres = if nastrojki.pustaya {
+    // Новая и приватная Super начинают со стартового адреса. Старые
+    // обычные профили восстанавливают вкладки из JSON без фоновой загрузки.
+    let adres = if nastrojki.pustaya || nastrojki.privatnaya
+        || !brauzer::papka_profilya(id).join("obychnye.json").is_file() {
         Some(nastrojki.adres.as_str())
     } else {
         None

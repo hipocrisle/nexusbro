@@ -570,13 +570,14 @@ try:
     assert storage('private-window-still')['seen']==['private-window-marker']
     gui.hotkey('alt','f4');time.sleep(.5);hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
     # Новая приватная Super живёт во временном каталоге и отсутствует в сохранённом списке.
-    ui('Новая супер-вкладка',['Button']).click_input();gui.write('PrivateSuperFixture',interval=.02)
-    boxes=[x for x in win.descendants() if x.element_info.control_type=='CheckBox' and x.element_info.name.startswith('Приватная супер-вкладка')]
-    assert boxes,'Private Super checkbox missing'
-    try:boxes[0].iface_scroll_item.ScrollIntoView()
-    except Exception:pass
-    boxes[0].click_input()
+    ui('Новая супер-вкладка',['Button']).click_input()
+    ui('Название',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('PrivateSuperFixture',interval=.02)
     ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-canary&set=private-super-marker',interval=.001)
+    # Фокус браузера прокручивает форму к чекбоксу; не кликаем по его
+    # исходным координатам за пределами viewport (там может быть taskbar).
+    gui.press('tab',presses=3,interval=.1);gui.press('space')
+    boxes=[x for x in win.descendants() if x.element_info.control_type=='CheckBox' and x.element_info.name.startswith('Приватная супер-вкладка')]
+    assert boxes and boxes[0].iface_toggle.CurrentToggleState==1,'Private Super checkbox is not checked'
     ui('Создать',['Button']).click_input()
     deadline=time.monotonic()+25
     while time.monotonic()<deadline and not any(r.get('case')==['private-super-canary'] for r in storage_reports):time.sleep(.1)
