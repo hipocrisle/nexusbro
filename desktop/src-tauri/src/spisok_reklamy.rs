@@ -9,6 +9,22 @@
 //! `a.ads.example.com`, но не поймает `notads.example.com`.
 
 pub const SPISOK: &[&str] = &[
+    // ── реклама и промо Яндекса (17.11.2026: на главной лезло «сделать
+    //    Яндекс поиском», «скачай Яндекс Браузер», блоки рекламы) ──
+    "yabs.yandex.ru",
+    "an.yandex.ru",
+    "ads.yandex.ru",
+    "advertising.yandex.ru",
+    "an.yandex.com",
+    "yandexwebcache.net",
+    "strm.yandex.ru",
+    // ── подборки «читайте ещё» и медиареклама ──
+    "ad.adriver.ru",
+    "adv.mail.ru",
+    "target.my.com",
+    "x01.aidata.io",
+    "onetag-sys.com",
+    "mediametrics.ru",
     // рекламные сети Google
     "doubleclick.net",
     "googlesyndication.com",
@@ -69,3 +85,25 @@ pub const SPISOK: &[&str] = &[
     "newrelic.com",
     "nr-data.net",
 ];
+
+/// Рекламные ПУТИ внутри сайта. ⛔ Смотрим их только у вызовов страницы
+/// (`borba_s_reklamoy.rs`), и НИКОГДА — у документа верхней навигации:
+/// `yandex.ru/ads/...` — реклама, а сам yandex.ru обязан открываться.
+pub const PUTI: &[&str] = &[
+    "/ads/", "/advert", "/adv/", "/banners/", "/promo/", "/pagead/",
+    "/adserver", "/adsense", "/gampad", "/doubleclick", "/yabs/",
+];
+
+/// Параметры адреса, которые есть ТОЛЬКО у рекламных и следящих вызовов.
+/// (utm_* не берём: их ставят и обычные ссылки — сломали бы переходы.)
+pub const ZAPRESHCHENNYE_PARAMETRY: &[(&str, &str)] = &[
+    ("ad_type", ""), ("adtype", ""), ("ad_unit", ""), ("adunit", ""),
+    ("gclid", ""), ("yclid", ""), ("fbclid", ""),
+    ("adv_id", ""), ("banner_id", ""), ("clickid", ""),
+];
+
+/// Поймать рекламный узел по хвосту имени (с поддоменами).
+pub fn reklamnyj_host(host: &str) -> Option<&'static str> {
+    let h = host.trim_end_matches('.').to_ascii_lowercase();
+    SPISOK.iter().copied().find(|p| h == *p || h.ends_with(&format!(".{p}")))
+}

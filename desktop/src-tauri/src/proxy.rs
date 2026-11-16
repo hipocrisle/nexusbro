@@ -137,8 +137,7 @@ pub async fn podnyat(n: Nastrojka) -> anyhow::Result<Rabotayushchij> {
 }
 
 fn pravilo_reklamy(host: &str) -> Option<&'static str> {
-    let h = host.trim_end_matches('.').to_ascii_lowercase();
-    SPISOK.iter().copied().find(|p| h == *p || h.ends_with(&format!(".{p}")))
+    crate::spisok_reklamy::reklamnyj_host(host)
 }
 #[cfg(test)]
 fn reklama(host: &str) -> bool { pravilo_reklamy(host).is_some() }
@@ -441,5 +440,10 @@ mod journal_tests {
         assert!(n.zapisi[0].vremya_ms>0);
         assert_eq!(pravilo_reklamy("ad.doubleclick.net"),Some("doubleclick.net"));
         assert_eq!(pravilo_reklamy("notdoubleclick.net"),None);
+        // Яндекс: рекламный узел ловим, сам поиск — нет.
+        assert_eq!(pravilo_reklamy("yabs.yandex.ru"),Some("yabs.yandex.ru"));
+        assert_eq!(pravilo_reklamy("an.yandex.ru"),Some("an.yandex.ru"));
+        assert_eq!(pravilo_reklamy("yandex.ru"),None);
+        assert_eq!(pravilo_reklamy("avatars.mds.yandex.net"),None);
     }
 }

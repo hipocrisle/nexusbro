@@ -21,6 +21,8 @@ pub struct Nastrojki {
     pub poisk: String,
     pub avtoobnovleniya: bool,
     pub apparatnoe_uskorenie: bool,
+    /// Язык, на который переводить страницу по правому клику.
+    pub yazyk_perevoda: String,
 }
 impl Default for Nastrojki {
     fn default() -> Self {
@@ -34,6 +36,7 @@ impl Default for Nastrojki {
             poisk: "duckduckgo".into(),
             avtoobnovleniya: true,
             apparatnoe_uskorenie: false,
+            yazyk_perevoda: "ru".into(),
         }
     }
 }
@@ -59,6 +62,11 @@ pub fn sohranit(mut n: Nastrojki) -> Result<Nastrojki, String> {
     if !["system", "segoe", "arial", "verdana", "georgia", "consolas"].contains(&n.shrift.as_str()) { return Err("Неизвестный шрифт".into()); }
     if !["udobno", "kompaktno"].contains(&n.plotnost.as_str()) { return Err("Неизвестная плотность интерфейса".into()); }
     n.razmer_shrifta = n.razmer_shrifta.clamp(12, 20);
+    let yazyk = n.yazyk_perevoda.trim().to_ascii_lowercase();
+    if yazyk.is_empty() || yazyk.len() > 12 || !yazyk.chars().all(|c| c.is_ascii_alphabetic() || c == '-') {
+        return Err("Неизвестный язык перевода".into());
+    }
+    n.yazyk_perevoda = yazyk;
     n.masshtab_stranic = n.masshtab_stranic.clamp(50, 200);
     if n.vyhody.len() > 100 { return Err("Можно сохранить до 100 подключений".into()); }
     let mut ids = std::collections::HashSet::new();

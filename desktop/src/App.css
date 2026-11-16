@@ -374,16 +374,55 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .obychnaya.otlozhena .obychnaya-imya { font-style:italic; opacity:.75; }
 .subscription-nodes summary { cursor:pointer; color:var(--akcent); }
 .subscription-nodes>button { margin-top:10px; border:1px solid var(--kraj); border-radius:6px; background:var(--fon2); color:var(--tekst); padding:7px 10px; cursor:pointer; }
-.obychnaya { flex:0 0 230px; width:230px; }
-.obychnaya.zakreplena { flex:0 0 44px; width:44px; }
+/* ── Обычные вкладки (переписано 16.11.2026) ─────────────────────────────
+   ⛔ Здесь было наслоение из трёх правил flex (230px → var(--w) → min-width
+   из базового 130px), и вкладки не сжимались: 10 вкладок давали ползунок,
+   «+» уезжал за край. Теперь одно правило: ширина = --w из React, сжатие
+   запрещено (flex 0 0), минимум 48px, ползунка нет (overflow hidden). */
+.obychnaya { flex:0 0 var(--w, 230px); width:var(--w, 230px); min-width:36px; }
+.obychnaya .obychnaya-imya { min-width:0; }
+.obychnaya.zakreplena { flex:0 0 44px; width:44px; max-width:44px; min-width:44px; }
+.obychnye { overflow-x:hidden; }
+/* Плотный режим — когда вкладок много: узкие, только иконка и подсказка. */
+.obychnaya.tesno { padding:5px 7px; gap:5px; justify-content:center; }
+/* ⛔ Подпись вкладки в плотном режиме не переносится и не режется по
+   ширине — она распирала вкладку (flex-basis --w не сжимался ниже текста). */
+.obychnaya.tesno .obychnaya-imya { display:none !important; }
+:root[data-tesno="da"] .obychnaya .obychnaya-imya { display:none !important; }
+:root[data-tesno="da"] .obychnaya { justify-content:center; padding:5px 6px; gap:4px; }
+.obychnaya.tesno .zakryt-obychnuyu { display:none !important; }
+.obychnaya.tesno.vybrana .zakryt-obychnuyu { display:flex !important; }
+/* Группа «вкладки + плюс» стоит по центру полосы и берёт столько места,
+   сколько нужно содержимому; «+» прилипает к последней вкладке.
+   ⛔ Лента — это flex-элемент, и ширину от --w она НЕ уважает: при
+   flex:0 1 auto она упирается в содержимое и лезет под «Защиту». Раскладку
+   задаёт группа: строкой таблицы (лента = auto по содержимому, «+» вплотную
+   справа, «Защита» в остатке). */
+.tab-group { display:flex; align-items:center; flex:0 1 auto; min-width:0; gap:4px; max-width:calc(100% - 60px); }
+/* ⛔ grid-колонка auto = max-content: с minmax(0,auto) лента брала своё
+   содержимое и распирала полосу (20 узких вкладок → группа на 119px шире
+   полосы). Лента = 1fr: занимает РОВНО остаток после «+», не больше. */
+.tab-group { display:flex; align-items:center; gap:4px; min-width:0; max-width:calc(100% - 60px); }
+/* ⛔ overflow-x:clip, а не auto: при 20 вкладках в 900px окне вкладки
+   упираются в минимум 36px, и прокрутка «протекает» наружу — полоса
+   начинает ехать. Обрезаем без всякой прокрутки: ширину вписывает React. */
+.tab-group .obychnye { display:flex; flex-wrap:nowrap; gap:5px; min-width:0; flex:0 1 auto; overflow:hidden; scrollbar-width:none; }
+.tab-group .obychnye::-webkit-scrollbar { width:0; height:0; display:none; }
+/* ⛔ padding-bottom у .obychnye смещал центр группы вверх («+» на 24px,
+   вкладка на 21px) — компенсируем тем же отступом сверху. */
+.tab-group .obychnye { padding-top:6px; padding-bottom:6px; }
+.tab-group { align-self:stretch; position:relative; }
+/* «+» стоит по центру ленты вкладок (лента 34px + запас 6px). */
+.tab-group .novaya-obychnaya { flex:0 0 30px; height:34px; position:relative; top:.5px; margin:0; order:2; }
+.polosa { min-height:46px; }
 .vybor-popup { z-index:100; right:auto; }
 .vybor-popup [role=listbox] { max-height:var(--options-height,220px); }
 .vybor-popup input { padding:8px 10px; border:1px solid var(--kraj); border-radius:6px; background:var(--fon2); color:var(--tekst); font:inherit; }
 .vybor-popup [role=option] { overflow-wrap:anywhere; }
-.tab-group { display:flex; align-items:center; flex:0 1 auto; min-width:0; gap:4px; }
-.tab-group .obychnye { flex:0 1 auto; }
-.tab-group .novaya-obychnaya { flex:0 0 30px; }
 .protection-button { flex-shrink:0; }
+/* Плотные вкладки (много вкладок) — у «Защиты» остаётся только значок. */
+:root[data-tesno="da"] .protection-button span { display:none !important; }
+:root[data-tesno="da"] .protection-button { padding:5px 7px; }
 .node-table { margin-top:10px; max-height:240px; overflow:auto; }
 .node-row { display:flex; justify-content:space-between; gap:12px; padding:9px 0; border-bottom:1px solid var(--kraj); font-size:12px; }
 .node-row>span:first-child { flex:1; overflow-wrap:anywhere; }

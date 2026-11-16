@@ -16,6 +16,7 @@ mod vpn;
 #[cfg(target_os = "windows")]
 mod win32_oblast;
 mod spisok_reklamy;
+mod borba_s_reklamoy;
 mod supervkladki;
 
 use okna::{sistema, Mesto};

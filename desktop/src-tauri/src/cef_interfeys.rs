@@ -20,6 +20,7 @@ wrap_keyboard_handler! {
             let ctrl = e.modifiers & (1 << 2) != 0;
             let shift = e.modifiers & (1 << 1) != 0;
             let cmd = match e.windows_key_code {
+                116 => Some(if ctrl { Komanda::ObnovitBezKesha { id: self.id } } else { Komanda::Obnovit { id: self.id } }),
                 123 => Some(Komanda::Instrumenty { id: self.id }),
                 73 if ctrl && shift => Some(Komanda::Instrumenty { id: self.id }),
                 85 if ctrl => Some(Komanda::Iskhodnik { id: self.id }),
@@ -55,6 +56,7 @@ const OPEN_IMAGE: i32 = 26502;
 const DUPLICATE: i32 = 26503;
 const INSPECT: i32 = 26504;
 const NEW_TAB: i32 = 26505;
+const PEREVOD: i32 = 26506;
 wrap_context_menu_handler! {
     struct MenyuStranicy { id: u64, tx: Sender<Sobytie> }
     impl ContextMenuHandler {
@@ -79,11 +81,27 @@ wrap_context_menu_handler! {
             if m.index_of(MenuId::VIEW_SOURCE.get_raw() as i32) < 0 {
                 m.add_item(MenuId::VIEW_SOURCE.get_raw() as i32, Some(&CefString::from("Исходный код страницы    Ctrl+U")));
             }
+            // Перевод страницы: у CEF в нашей сборке нет встроенного
+            // переводчика, поэтому открываем страницу через переводчик
+            // Google в новой вкладке (17.11.2026, просьба user'а).
+            let stranica = CefString::from(&p.page_url()).to_string();
+            if !stranica.is_empty() {
+                m.add_separator();
+                m.add_item(PEREVOD, Some(&CefString::from("Перевести страницу…")));
+                let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
+                if crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).is_ok() {
+                    m.add_item(PEREVOD + 1, Some(&CefString::from(format!("Перевести на {yazyk}"))));
+                }
+            }
             m.add_item(INSPECT, Some(&CefString::from("Исследовать элемент    F12")));
         }
         fn on_context_menu_command(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>,
             params: Option<&mut ContextMenuParams>, command_id: i32, _event_flags: EventFlags) -> i32 {
+            let stranica = params.map(|p| CefString::from(&p.page_url()).to_string()).unwrap_or_default();
+            let yazyk = crate::nastrojki::zagruzit().yazyk_perevoda;
             let cmd = match command_id {
+                n if (n == PEREVOD || n == PEREVOD + 1) && !stranica.is_empty() =>
+                    Some(Komanda::Novaya { adres: crate::borba_s_reklamoy::perevod_adres(&stranica, &yazyk).unwrap_or_default() }),
                 OPEN_LINK => params.map(|p| Komanda::Novaya { adres: CefString::from(&p.link_url()).to_string() }),
                 OPEN_IMAGE => params.map(|p| Komanda::Novaya { adres: CefString::from(&p.source_url()).to_string() }),
                 DUPLICATE => frame.map(|f| Komanda::Novaya { adres: CefString::from(&f.url()).to_string() }),

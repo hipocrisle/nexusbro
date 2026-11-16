@@ -55,6 +55,23 @@ wrap_app! {
                 }
                 // Движок не должен стучаться за обновлениями к Google.
                 ks.append_switch(Some(&CefString::from("disable-component-update")));
+                // 17.11.2026: фоновый обмен с Google (метрики, «нужно ли
+                // обновиться») и промо-подсказки страниц — выключаем, как в
+                // ungoogled-chromium. Плашки «загрузите Chrome/Firefox» —
+                // это разметка самих сайтов, их убирает borba_s_reklamoy.
+                for flag in [
+                    "disable-background-networking",
+                    "disable-breakpad",
+                    "disable-domain-reliability",
+                    "disable-sync",
+                    "metrics-recording-only",
+                    "no-pings",
+                    "no-default-browser-check",
+                    "disable-prompt-on-repost",
+                    "disable-features=Translate,MediaRouter,OptimizationHints,InterestFeedContentSuggestions,AutofillServerCommunication,PrivacySandboxSettings4,TranslateUI",
+                ] {
+                    ks.append_switch(Some(&CefString::from(flag)));
+                }
                 // Движок — тёмный, как вся программа.
                 ks.append_switch(Some(&CefString::from("force-dark-mode")));
             }

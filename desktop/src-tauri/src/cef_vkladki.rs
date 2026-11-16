@@ -28,7 +28,17 @@ wrap_display_handler! {
         }
         fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.map(|f| f.is_main() != 0).unwrap_or(false) {
-                if let Some(u) = url { let _ = self.tx.send(Sobytie::Adres(self.id, u.to_string())); }
+                if let Some(u) = url {
+                    let u = u.to_string();
+                    let _ = self.tx.send(Sobytie::Adres(self.id, u.clone()));
+                    // ⛔ Плашки «скачай Firefox/Chrome», «сделай Яндекс
+                    // поиском по умолчанию» приходят обычной разметкой с
+                    // легального домена — прокси их не видит. Убираем их в
+                    // самой странице (17.11.2026, жалобы пользователя).
+                    if let Some(java) = crate::borba_s_reklamoy::skript_dlya(&u) {
+                        if let Some(f) = frame { f.execute_java_script(Some(&CefString::from(java.as_str())), None, 0); }
+                    }
+                }
             }
         }
     }
@@ -98,6 +108,18 @@ wrap_request_handler! {
             error_code: i32, error_string: Option<&CefString>) {
             eprintln!("cef: вкладка {} renderer terminated {:?}, code={}: {}", self.id, status, error_code,
                 error_string.map(|s| s.to_string()).unwrap_or_default());
+        }
+        fn resource_request_handler(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>,
+            _request: Option<&mut Request>, is_navigation: i32, _is_download: i32,
+            request_initiator: Option<&CefString>, _disable_default_handling: Option<&mut i32>) -> Option<ResourceRequestHandler> {
+            // Вызов ресурса: прокси видит только ИМЯ УЗЛА, а реклама по
+            // пути (`/promo`, `/ads/gif`) и трекеры-картинки так проходят.
+            // Здесь виден полный адрес ещё до загрузки.
+            // ⛔ Документ верхней навигации (`is_navigation`) не трогаем
+            // никогда: иначе поиск Яндекса с рекламным путём не откроется.
+            let initiator = request_initiator.map(|s| s.to_string()).unwrap_or_default();
+            let navigaciya = is_navigation != 0 && frame.map(|f| f.is_main() != 0).unwrap_or(true);
+            Some(crate::borba_s_reklamoy::handler_resursov(self.id, initiator, navigaciya).into())
         }
     }
 }
@@ -371,7 +393,7 @@ impl Rabota {
         let mut fokus_klaviatury = false;
         for sobytie in rx.try_iter().take(128) {
             let budit = match &sobytie {
-                Sobytie::Komanda(Komanda::Pereyti { id, .. } | Komanda::Obnovit { id } | Komanda::Instrumenty { id } | Komanda::Issledovat { id, .. }) => Some(*id),
+                Sobytie::Komanda(Komanda::Pereyti { id, .. } | Komanda::Obnovit { id } | Komanda::ObnovitBezKesha { id } | Komanda::Instrumenty { id } | Komanda::Issledovat { id, .. }) => Some(*id),
                 _ => None,
             };
             let mut razbuzhen = None;
@@ -505,6 +527,11 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Obnovit { id }) => {
                     if let Some(b) = brauzery.get(&id) {
                         b.reload();
+                    }
+                }
+                Sobytie::Komanda(Komanda::ObnovitBezKesha { id }) => {
+                    if let Some(b) = brauzery.get(&id) {
+                        b.reload_ignore_cache();
                     }
                 }
                 Sobytie::Zagolovok(id, t) => {

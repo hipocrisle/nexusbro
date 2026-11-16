@@ -56,6 +56,7 @@ export default function App() {
     nastrojkiRef.current = n;
     setNastrojki(n);
   }
+
   useEffect(() => {
     void getVersion().then(setVersiya).catch(() => {});
     void invoke<NastrojkiApp>("nastrojki_poluchit").then((n) => {
@@ -74,6 +75,18 @@ export default function App() {
   const aktivnayaRef = useRef<string | null>(null);
   const [dvizhokEst, setDvizhokEst] = useState(true);
   const [dialog, setDialog] = useState(false);
+
+  // Esc закрывает окна оболочки. Формы Tauri-окна (CEF) нажатие не получают,
+  // а без этого выход был только мышью — на окне без видимой кнопки это ловушка.
+  useEffect(() => {
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      if (nastroykiOtkryty) { setNastroykiOtkryty(false); void invoke("pokazat_dvizhki", { vidno: true }); return; }
+      if (dialog) void zakrytDialog();
+    };
+    document.addEventListener("keydown", key);
+    return () => document.removeEventListener("keydown", key);
+  }, [nastroykiOtkryty, dialog]);
   const [pravka, setPravka] = useState<Nastrojki | null>(null);
   // Вопрос «сохранить вкладку?»: null = не спрашиваем, иначе обещание.
   const [vopros, setVopros] = useState<{

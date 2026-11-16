@@ -42,6 +42,8 @@ pub enum Komanda {
     Nazad { id: u64 },
     Vpered { id: u64 },
     Obnovit { id: u64 },
+    /// F5 / Ctrl+F5 — перезагрузка без кеша.
+    ObnovitBezKesha { id: u64 },
     Instrumenty { id: u64 },
     Issledovat { id: u64, x: i32, y: i32 },
     Iskhodnik { id: u64 },
