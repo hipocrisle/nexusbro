@@ -4,7 +4,11 @@
 import functools,http.server,json,pathlib,threading,os
 from playwright.sync_api import sync_playwright,expect
 root=pathlib.Path(__file__).resolve().parents[1]
-server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(http.server.SimpleHTTPRequestHandler,directory=str(root/'desktop/dist')))
+class FrontendServer(http.server.SimpleHTTPRequestHandler):
+ def do_GET(self):
+  if self.path=='/favicon.ico':self.send_response(204);self.end_headers();return
+  super().do_GET()
+server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(FrontendServer,directory=str(root/'desktop/dist')))
 threading.Thread(target=server.serve_forever,daemon=True).start()
 mock=r'''window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{},listen:async()=>()=>{},once:async()=>()=>{}};window.__saved=null;window.__calls=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:(f)=>{window.__callbacks[++cb]=f;return cb;},unregisterCallback:()=>{},invoke:async(cmd,args)=>{
@@ -29,12 +33,7 @@ try:
   page=browser.new_page(viewport={'width':1280,'height':820});page.add_init_script(mock)
   errors=[]
   page.on('pageerror',lambda e:errors.append(str(e)))
-  # ⛔ 404 на ресурс страницы (обычно /favicon.ico от локального сервера теста)
-  # — не ошибка интерфейса: браузер сам просит значок. Ошибки нашего кода
-  # всё равно ловятся через pageerror и console:error с текстом.
-  def _console(m):
-    if m.type=='error' and 'Failed to load resource' not in m.text: errors.append('console:'+m.text)
-  page.on('console',_console)
+  page.on('console',lambda m:errors.append('console:'+m.text) if m.type=='error' else None)
   def popup_fits():
    page.locator('.vybor-popup').wait_for()
    r=page.locator('.vybor-popup').bounding_box();v=page.viewport_size
@@ -106,9 +105,7 @@ try:
               lastRight:last.right,listRight:lr.right,tabBottom:last.bottom, polosaBottom:por.bottom};}""")
     assert m['lastRight']<=m['listRight']+1,(shirina,n,m)
     assert m['count']==n,(shirina,n,m)
-    # Ползунка быть не должно: пока вкладки влезают, scrollWidth == clientWidth.
-    # 20 вкладок в окне 900px физически не влезают (20 × минимум 42px > 624px) —
-    # там разрешаем внутреннюю прокрутку и проверяем только «+» и высоту.
+    # Проверяем геометрию всех вкладок, а не только отсутствие видимого scrollbar.
     assert m['scroll']<=1,(shirina,n,m)
     assert abs(m['plusTopMid']-m['tabTopMid'])<=1.5,(shirina,n,m)
     assert m['plusInside'],(shirina,n,m)
