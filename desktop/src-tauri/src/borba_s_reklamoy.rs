@@ -268,13 +268,12 @@ wrap_resource_request_handler! {
     struct ResursStranicy { id: u64, navigaciya: bool }
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
-            request: Option<&mut Request>, callback: Option<&mut Callback>) -> ReturnValue {
+            request: Option<&mut Request>, _callback: Option<&mut Callback>) -> ReturnValue {
             let adres = request
                 .map(|r| CefString::from(&r.url()).to_string())
                 .unwrap_or_default();
             if let Some(pravilo) = zarezannyj_resurs(&adres, self.navigaciya) {
                 eprintln!("cef: вкладка {} зарезан ресурс ({pravilo})", self.id);
-                if let Some(c) = callback { c.cancel(); }
                 return ReturnValue::CANCEL;
             }
             ReturnValue::CONTINUE
