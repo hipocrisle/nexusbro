@@ -277,7 +277,11 @@ try:
     results.append({'native_focus_after_devtools':focus_after_tools})
     gui.hotkey('ctrl','t');current=wait_tabs(3);time.sleep(.3)
     order=[t['id'] for t in current['vkladki']]
-    gui.moveTo(r.left+619,r.top-70);gui.mouseDown();gui.moveTo(r.left+159,r.top-70,duration=.7);gui.mouseUp()
+    tab_controls=sorted([x for x in win.descendants() if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top],key=lambda x:x.rectangle().left)
+    assert len(tab_controls)==3,[(x.element_info.name,str(x.rectangle())) for x in tab_controls]
+    source_rect=tab_controls[2].rectangle();target_rect=tab_controls[0].rectangle()
+    gui.moveTo((source_rect.left+source_rect.right)//2,(source_rect.top+source_rect.bottom)//2);gui.mouseDown()
+    gui.moveTo((target_rect.left+target_rect.right)//2,(target_rect.top+target_rect.bottom)//2,duration=.7);gui.mouseUp()
     deadline=time.monotonic()+12
     while time.monotonic()<deadline:
         current=session()
