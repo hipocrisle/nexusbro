@@ -1,0 +1,9 @@
+{
+  "mouse_font_density": true,
+  "all_subscription_nodes": true,
+  "saved_node_default_in_super": true,
+  "super_node_mouse_selection": true,
+  "no_native_select": true,
+  "plus_adjacent_to_last": true,
+  "pending_placeholder": true
+}

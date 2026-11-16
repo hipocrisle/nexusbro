@@ -1,0 +1,154 @@
+[
+  {
+    "stage": "initial",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-dialog",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-resize",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-sidebar-collapse",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "middle_close_keeps_application": true
+  },
+  {
+    "cross_close_keeps_application": true
+  },
+  {
+    "context_menu_close_keeps_application": true
+  },
+  {
+    "last_close_recreates_blank_keeps_application": true
+  },
+  {
+    "stage": "before-source",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "source_opens_in_browser_tab": true
+  },
+  {
+    "native_f12_visible_devtools": true
+  },
+  {
+    "physical_ordinary_drag_reorders": true
+  },
+  {
+    "physical_settings_dropdown_mouse_selection": true
+  },
+  {
+    "stage": "after-lazy-click",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "restart_zero_page_requests_until_click": true,
+    "click_wakes_one_only": true,
+    "plus_next_to_last_tab_physical_click": true
+  },
+  {
+    "success": true
+  }
+]
