@@ -1,0 +1,29 @@
+{
+  "binarySource": "7e49303539676d410e68ba6a37af59c91d5335fb",
+  "buildRun": 44100402504,
+  "checks": [
+    {
+      "native_cef_document_loaded": true
+    },
+    {
+      "native_color_persistence_without_browser_restart": true
+    },
+    {
+      "native_cookie_delete_observed_in_cef": true,
+      "native_cache_completion_ack": true,
+      "native_history_suggestions_and_cleanup": true
+    },
+    {
+      "secondary_super_switch_and_main_unchanged": true
+    },
+    {
+      "secondary_local_settings_menu": true
+    },
+    {
+      "delete_other_super_keeps_windows": true
+    },
+    {
+      "success": true
+    }
+  ]
+}

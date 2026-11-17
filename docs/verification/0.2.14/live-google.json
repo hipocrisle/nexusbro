@@ -1,0 +1,21 @@
+{
+  "binarySource": "7e49303539676d410e68ba6a37af59c91d5335fb",
+  "buildRun": 44100402504,
+  "binarySha256": "c0f9984a939da0891526d6fa0f72f4eed5110174c8537b134829dada50dd751b",
+  "checks": [
+    {
+      "real_google_through_native_super_proxy": true,
+      "initialSeconds": 0.849,
+      "status": "Перевод на русский\n3 из 3\nАвтоперевод этого сайта\nПоказать оригинал и выключить\n"
+    },
+    {
+      "auto_translation_after_real_cef_navigation": true,
+      "seconds": 0.755
+    },
+    {
+      "original_restored_and_auto_cancelled": true,
+      "synthetic_text_only": true,
+      "success": true
+    }
+  ]
+}
