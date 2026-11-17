@@ -1005,6 +1005,19 @@ async fn obychnaya_komanda(window:tauri::WebviewWindow,s: State<'_, Sostoyanie>,
     })
 }
 
+// Доступ имеет только доверенная оболочка Tauri, не страницы CEF.
+#[tauri::command]
+async fn bufer_chitat(app:tauri::AppHandle)->Result<String,String>{
+ use tauri_plugin_clipboard_manager::ClipboardExt;
+ tauri::async_runtime::spawn_blocking(move||app.clipboard().read_text().map_err(|_|"Не удалось прочитать текст буфера обмена".to_owned())).await.map_err(|e|e.to_string())?
+}
+#[tauri::command]
+async fn bufer_zapisat(app:tauri::AppHandle,text:String)->Result<(),String>{
+ use tauri_plugin_clipboard_manager::ClipboardExt;
+ if text.len()>2*1024*1024{return Err("Слишком большой текст для буфера обмена".into());}
+ tauri::async_runtime::spawn_blocking(move||app.clipboard().write_text(text).map_err(|_|"Не удалось скопировать текст".to_owned())).await.map_err(|e|e.to_string())?
+}
+
 /// Диагностика по живому: состояние вкладок, окна, журнал сторожа,
 /// хвосты engine.log. Человек копирует и присылает — разбираем факты,
 /// а не гадания (10.11.2026).
@@ -1145,6 +1158,7 @@ pub fn run() {
         .manage(Sostoyanie::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         // Размер, позиция и монитор окна запоминаются сами.
         .plugin(tauri_plugin_window_state::Builder::default().build())
@@ -1303,7 +1317,7 @@ pub fn run() {
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
-            sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
+            bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
         ])
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")

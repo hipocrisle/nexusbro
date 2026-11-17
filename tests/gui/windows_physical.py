@@ -524,6 +524,29 @@ try:
     r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape')
     gui.hotkey('ctrl','l');ui('Адрес страницы',['Edit']);before_count=len(session()['vkladki']);gui.hotkey('ctrl','t');wait_tabs(before_count+1);gui.hotkey('ctrl','w');wait_tabs(before_count)
     input_layout('00000409');results.append({'native_russian_shortcuts_cef_and_shell':True})
+    # Собственное адресное меню обращается к системному clipboard, не WebView permissions.
+    address=ui('Адрес страницы',['Edit']);address.click_input();gui.hotkey('ctrl','a');expected_address=address.iface_value.CurrentValue;address.click_input(button='right')
+    def address_action(prefix):
+        deadline=time.monotonic()+10
+        while time.monotonic()<deadline:
+            matches=[x for x in win.descendants() if x.element_info.control_type in ['MenuItem','Button'] and x.element_info.name.startswith(prefix) and x.is_visible() and x.is_enabled()]
+            if matches:matches[0].click_input();return
+            time.sleep(.1)
+        raise AssertionError('Address menu item missing: '+prefix)
+    address_action('Копировать')
+    u.GetClipboardData.argtypes=[wintypes.UINT];u.GetClipboardData.restype=wintypes.HANDLE
+    k32=ctypes.windll.kernel32;k32.GlobalLock.argtypes=[wintypes.HANDLE];k32.GlobalLock.restype=ctypes.c_void_p;k32.GlobalUnlock.argtypes=[wintypes.HANDLE]
+    assert u.OpenClipboard(None)
+    try:
+        handle=u.GetClipboardData(13);ptr=k32.GlobalLock(handle);assert ptr;copied=ctypes.wstring_at(ptr);k32.GlobalUnlock(handle)
+    finally:u.CloseClipboard()
+    assert copied==expected_address,(copied,expected_address)
+    address.click_input();gui.hotkey('ctrl','a');gui.press('delete');address.click_input(button='right');address_action('Вставить')
+    deadline=time.monotonic()+5
+    while time.monotonic()<deadline and address.iface_value.CurrentValue!=expected_address:time.sleep(.1)
+    assert address.iface_value.CurrentValue==expected_address
+    results.append({'native_address_menu_system_clipboard_copy_paste':True})
+
     gui.hotkey('ctrl','d');ui('Удалить закладку',['Button']).click_input();ui('Добавить в закладки',['Button']).click_input()
     # Живой импорт Chromium JSON и Firefox SQLite при открытом WAL writer.
     gui.hotkey('ctrl','b');ui('Перенести закладки из другого браузера…',['Button']).click_input()

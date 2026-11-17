@@ -10,8 +10,9 @@ export default function AddressMenu({input,onChange,onError}:{input:RefObject<HT
  async function edit(action:string){const e=input.current;if(!e||!at)return;
   try{e.focus();e.setSelectionRange(at.start,at.end);
    if(action==='selectAll'){e.select();}
-   else if(action==='paste'){const value=await Promise.race([navigator.clipboard.readText(),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error("Clipboard timeout")),2500))]);e.setRangeText(value,at.start,at.end,'end');onChange(e.value);}
-   else if(action==='delete'){e.setRangeText('',at.start,at.end,'end');onChange(e.value);}
+   else if(action==='paste'){const value=await Promise.race([invoke<string>('bufer_chitat'),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error("Clipboard timeout")),2500))]);document.execCommand('insertText',false,value);onChange(e.value);}
+   else if(action==='copy'||action==='cut'){await invoke('bufer_zapisat',{text:e.value.slice(at.start,at.end)});if(action==='cut'){document.execCommand('delete');onChange(e.value);}}
+   else if(action==='delete'){document.execCommand('delete');onChange(e.value);}
    else{document.execCommand(action);onChange(e.value);}
   }catch{onError('Не удалось выполнить действие с буфером обмена. Используйте Ctrl+C / Ctrl+V.');}
   finally{await close();await invoke('fokus_obolochke');e.focus();}

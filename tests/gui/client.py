@@ -7,12 +7,12 @@ import urllib.request
 import websocket
 
 class Client:
-    def __init__(self, display=':94', port=9223):
+    def __init__(self, display=':94', port=9223, page_index=0):
         self.display = display
         index=urllib.request.urlopen(f'http://127.0.0.1:{port}',timeout=2).read().decode()
-        route=re.search(r'/socket/\d+/\d+/WebPage',index)
-        if not route:raise ConnectionError('WebKit ещё не создал страницу')
-        self.ws = websocket.create_connection(f'ws://127.0.0.1:{port}'+route[0], timeout=5)
+        routes=re.findall(r'/socket/\d+/\d+/WebPage',index)
+        if len(routes)<=page_index:raise ConnectionError('WebKit ещё не создал страницу')
+        self.ws = websocket.create_connection(f'ws://127.0.0.1:{port}'+routes[page_index], timeout=5)
         self.target = 'page-7'
         self.seq = 0
         self.ws.settimeout(.3)

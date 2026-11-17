@@ -448,7 +448,7 @@ export default function App() {
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
         <ObychnyeVkladki panelZakladok={!!nastrojki.panel_zakladok} onToggleBookmarks={()=>{void sohranitNastrojki({...nastrojkiRef.current,panel_zakladok:!nastrojkiRef.current.panel_zakladok}).catch(e=>setOshibka(String(e)));}} poleKontenta={mesto} novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
-          {aktivnaya && <button className="schet protection-button" title={"Защита · Заблокировано: "+zarezano} aria-label="Защита супер-вкладки" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={18} /></button>}
+          {aktivnaya && <button type="button" className="schet protection-button" title={"Защита · Заблокировано: "+zarezano} aria-label="Защита супер-вкладки" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={18} /></button>}
         </ObychnyeVkladki>
         {progress && (
           <div className="polosa-progress">

@@ -114,7 +114,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config \
-            libxcb1-dev patchelf rpm
+            libxcb1-dev patchelf rpm xvfb
 
       # Движок CEF кладём внутрь установщика (замена ungoogled-chromium,
       # ветка cef-migration). Архивные файлы лежат в Release/ и Resources/ —
@@ -216,6 +216,22 @@ jobs:
           python3 tests/browser_ui_0213.py
           python3 tests/address_selection.py
           python3 tests/translation_dom.py
+
+      - name: Проверить CEF и окна Linux под Xvfb
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          python3 -m pip install --break-system-packages websocket-client psutil Pillow
+          BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
+          readelf --dyn-syms --wide "$BIN" | awk '$5=="GLOBAL" && $6=="DEFAULT" && $7!="UND" && $8 ~ /^sqlite3_/ {bad=1} END {exit bad}'
+          python3 tests/gui/linux_smoke.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/linux-runtime
+
+      - name: Сохранить Linux runtime диагностику
+        if: always() && matrix.os == 'ubuntu-24.04'
+        uses: actions/upload-artifact@v4
+        with:
+          name: linux-runtime-verification
+          path: .dev-check/linux-runtime
+          retention-days: 14
 
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'
