@@ -449,17 +449,20 @@ try:
     def edit_super():
         pt=origin();gui.click(pt.x+26,pt.y+80,button='right');ui('Настройки').click_input()
     def fill_start_url(url):
-        # Start URL and private controls are in the lower, scrollable half.
-        # Reach it physically instead of trusting WebView2's unclipped UIA bounds.
-        r=rect(hwnd);gui.moveTo((r.left+r.right)//2,(r.top+r.bottom)//2);gui.scroll(-14);time.sleep(.3)
-        field=ui('Открыть сразу',['Edit']);field.click_input();gui.hotkey('ctrl','a');gui.write(url,interval=.001)
+        # Focus the actual native edit control, then type real keys and read back.
+        # WebView2 ScrollItem/IsOffscreen ignore the sticky footer's occlusion.
+        fields=[x for x in win.descendants() if x.element_info.name=='Открыть сразу' and x.element_info.control_type=='Edit' and x.is_enabled()]
+        assert fields,'No start URL edit control'
+        field=fields[0];field.set_focus();deadline=time.monotonic()+3
+        while time.monotonic()<deadline and not field.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
+        assert field.element_info.element.CurrentHasKeyboardFocus,'Start URL did not receive keyboard focus'
+        gui.hotkey('ctrl','a');gui.write(url,interval=.001)
         deadline=time.monotonic()+3;actual=''
         while time.monotonic()<deadline:
-            actual=ui('Открыть сразу',['Edit']).iface_value.CurrentValue
+            actual=field.iface_value.CurrentValue
             if actual==url:return
             time.sleep(.1)
         raise AssertionError(('Start URL was not entered before Create',actual,url))
-
     def choose_subscription_node(name):
         # UIA ScrollItem is unavailable for some WebView2 buttons. Use the same
         # physical wheel action a user needs for this deliberately scrollable form.

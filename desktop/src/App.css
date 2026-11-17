@@ -445,7 +445,7 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .translation-auto{display:inline-flex;align-items:center;gap:6px;font-size:12px;white-space:nowrap;cursor:pointer}
 .translation-auto input{width:auto;accent-color:var(--akcent)}
 .clear-data-panel{width:min(600px,calc(100vw - 32px));max-height:calc(100vh - 32px);overflow:auto}
-.clear-data-panel>label{display:flex;align-items:center;gap:12px}.clear-data-panel select{width:auto;flex:1}
-.clear-data-options{display:grid;gap:12px;margin:18px 0}.clear-data-options label{display:flex;align-items:flex-start;gap:10px}
+.clear-data-panel>label{display:flex;flex-direction:row;align-items:center;gap:12px}.clear-data-panel select{width:auto;flex:1}
+.clear-data-options{display:grid;gap:12px;margin:18px 0}.clear-data-options label{display:flex;flex-direction:row;align-items:flex-start;gap:10px}
 .clear-data-options input[type="checkbox"]{width:auto;flex:none;margin-top:4px;accent-color:var(--akcent)}
 .clear-data-panel p{font-size:12px;color:var(--tiho)}.clear-data-panel p[role="alert"]{color:#f396a2}.clear-data-panel footer{display:flex;justify-content:flex-end;gap:10px}
