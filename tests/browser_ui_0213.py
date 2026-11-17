@@ -46,7 +46,7 @@ try:
   expect(page.get_by_role('textbox',name='Найти на странице',exact=True)).to_be_visible();page.keyboard.press('Escape')
   print('stage: russian',flush=True)
   hides_before=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
-  address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.focus();address.evaluate('(e)=>e.setSelectionRange(21,25)');selected=address.evaluate('(e)=>e.value.slice(e.selectionStart,e.selectionEnd)');position=address.evaluate("e=>{const c=document.createElement('canvas').getContext('2d');c.font=getComputedStyle(e).font;const r=e.getBoundingClientRect();return {x:r.x+parseFloat(getComputedStyle(e).paddingLeft)+c.measureText(e.value.slice(0,23)).width,y:r.y+r.height/2};}");page.mouse.click(position['x'],position['y'],button='right')
+  address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.focus();address.press('Control+a');selected=address.input_value();address.click(button='right')
   print('stage: address',flush=True)
   page.wait_for_function('window.__menuPopped===true')
   assert page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")==hides_before
