@@ -161,6 +161,21 @@ try:
     # UI Automation locates controls; actual input is mouse clicks in WebView2.
     from pywinauto import Desktop
     win=Desktop(backend="uia").window(handle=hwnd)
+    ui_probes=[]
+    def click_target_visible(candidate,name):
+        r=candidate.rectangle()
+        if r.width()<=0 or r.height()<=0:return False
+        try:
+            hit=Desktop(backend='uia').from_point((r.left+r.right)//2,(r.top+r.bottom)//2).element_info
+            original=hit
+            for _ in range(12):
+                if hit==candidate.element_info:return True
+                hit=hit.parent
+                if hit is None:break
+            if len(ui_probes)<200:ui_probes.append({'target':name,'rect':[r.left,r.top,r.right,r.bottom],'hit':original.name,'hitType':original.control_type})
+        except Exception as e:
+            if len(ui_probes)<200:ui_probes.append({'target':name,'hitTestError':type(e).__name__})
+        return False
     def ui(name, kinds=None):
         # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
         # после нашей же перерисовки дерево может ещё показывать прошлое
@@ -170,12 +185,19 @@ try:
         videno=set();scrolled=0
         while time.monotonic()<deadline:
             items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
+            clipped=None
             for x in items:
                 # WebView2 reports clipped form controls visible. Scroll BEFORE
                 # the coordinate click; otherwise its center can hit the backdrop.
                 try:x.iface_scroll_item.ScrollIntoView()
                 except Exception:pass
-                if x.is_visible() and x.is_enabled():return x
+                if x.is_visible() and x.is_enabled():
+                    if click_target_visible(x,name):return x
+                    clipped=x
+            if clipped is not None and scrolled<8:
+                wr=win.rectangle();cr=clipped.rectangle()
+                gui.moveTo((wr.left+wr.right)//2,(wr.top+wr.bottom)//2)
+                gui.scroll(2 if cr.top<wr.top+70 else -2);scrolled+=1;time.sleep(.2)
             if name in ['Отмена','Создать','Сохранить'] and scrolled<2 and time.monotonic()>deadline-28:
                 r=rect(hwnd);gui.moveTo((r.left+r.right)//2,r.bottom-150);gui.scroll(-4);scrolled+=1
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
@@ -787,6 +809,7 @@ try:
     assert private_start_url,'New private Super ignored its start URL'
     results.append({'success': True})
 finally:
+    (run/'uia-click-probes.json').write_text(json.dumps(globals().get('ui_probes',[]),ensure_ascii=False,indent=2),encoding='utf-8')
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
     (run/'fixture-hits.json').write_text(json.dumps(hits,indent=2),encoding='utf-8')
     server.shutdown()
