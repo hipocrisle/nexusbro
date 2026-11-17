@@ -612,7 +612,7 @@ try:
     hwnd=next(h for h in windows if h!=main_hwnd);u.SetForegroundWindow(hwnd);win=Desktop(backend='uia').window(handle=hwnd)
     assert storage('second-normal')['seen']==['normal-marker']
     ui('Меню NexusBro',['Button']).click_input();ui('Настройки NexusBro',['MenuItem','Button']).click_input();ui('Закрыть настройки',['Button']).click_input()
-    assert any(x.element_info.control_type=='TabItem' and 'Проба' in x.element_info.name for x in win.descendants()),'No Super sidebar in secondary window'
+    assert any(x.element_info.control_type=='Button' and 'Проба' in x.element_info.name for x in win.descendants()),'No Super sidebar in secondary window'
     results.append({'secondary_full_shell_and_local_menu':True})
     gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None
     hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
@@ -694,7 +694,7 @@ try:
     # Название UIA включает приватный значок; ищем точную запись по содержимому.
     deadline=time.monotonic()+20
     while time.monotonic()<deadline:
-        candidates=[x for x in win.descendants() if x.element_info.control_type=='TabItem' and 'PrivateSuperFixture' in x.element_info.name]
+        candidates=[x for x in win.descendants() if x.element_info.control_type=='Button' and 'PrivateSuperFixture' in x.element_info.name]
         if candidates:break
         time.sleep(.1)
     assert candidates,'Private Super definition disappeared after restart';candidates[0].click_input()
