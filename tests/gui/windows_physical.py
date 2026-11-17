@@ -508,7 +508,23 @@ try:
     gui.press('enter');time.sleep(.5)
     find_ok=find_ok and any(x.element_info.name=='2 из 2' for x in win.descendants())
     results.append({'native_find_ordinals_correct':find_ok})
-    gui.press('escape');gui.hotkey('ctrl','d');ui('Удалить закладку',['Button']).click_input();ui('Добавить в закладки',['Button']).click_input()
+    gui.press('escape')
+    # Настоящая русская раскладка в потоках WebView2 и CEF, не синтетический key='а'.
+    u.LoadKeyboardLayoutW.argtypes=[wintypes.LPCWSTR,wintypes.UINT];u.LoadKeyboardLayoutW.restype=wintypes.HANDLE
+    u.PostMessageW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM]
+    def input_layout(name):
+        layout=u.LoadKeyboardLayoutW(name,1);assert layout,'Keyboard layout unavailable: '+name
+        targets=[hwnd]
+        @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        def child(h,_):targets.append(h);return True
+        u.EnumChildWindows(hwnd,child,0)
+        for target in targets:u.PostMessageW(target,0x0050,0,layout)
+        time.sleep(.3)
+    input_layout('00000419')
+    r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape')
+    gui.hotkey('ctrl','l');ui('Адрес страницы',['Edit']);before_count=len(session()['vkladki']);gui.hotkey('ctrl','t');wait_tabs(before_count+1);gui.hotkey('ctrl','w');wait_tabs(before_count)
+    input_layout('00000409');results.append({'native_russian_shortcuts_cef_and_shell':True})
+    gui.hotkey('ctrl','d');ui('Удалить закладку',['Button']).click_input();ui('Добавить в закладки',['Button']).click_input()
     # Живой импорт Chromium JSON и Firefox SQLite при открытом WAL writer.
     gui.hotkey('ctrl','b');ui('Перенести закладки из другого браузера…',['Button']).click_input()
     for source,url in [('Chrome Default','https://import-fixture.test/chrome'),('Firefox fixture.default','https://import-fixture.test/firefox')]:
