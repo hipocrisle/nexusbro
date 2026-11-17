@@ -520,10 +520,18 @@ try:
         u.EnumChildWindows(hwnd,child,0)
         for target in targets:u.PostMessageW(target,0x0050,0,layout)
         time.sleep(.3)
-    input_layout('00000419')
-    r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape')
-    gui.hotkey('ctrl','l');ui('Адрес страницы',['Edit']);before_count=len(session()['vkladki']);gui.hotkey('ctrl','t');wait_tabs(before_count+1);gui.hotkey('ctrl','w');wait_tabs(before_count)
-    input_layout('00000409');results.append({'native_russian_shortcuts_cef_and_shell':True})
+    input_layout('00000419');russian_shortcuts_ok=True;before_count=len(session()['vkladki'])
+    try:
+        r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape')
+        gui.hotkey('ctrl','l');address=ui('Адрес страницы',['Edit']);deadline=time.monotonic()+3
+        while time.monotonic()<deadline and not address.has_keyboard_focus():time.sleep(.05)
+        assert address.has_keyboard_focus(),'Ctrl+L did not focus the address input in Russian layout'
+        gui.hotkey('ctrl','t');wait_tabs(before_count+1);gui.hotkey('ctrl','w');wait_tabs(before_count)
+    except AssertionError:russian_shortcuts_ok=False
+    finally:input_layout('00000409')
+    # Продолжаем независимые сценарии, но общий итог остаётся красным при провале RU.
+    while len(session()['vkladki'])>before_count:gui.hotkey('ctrl','w');time.sleep(.15)
+    results.append({'native_russian_shortcuts_cef_and_shell':russian_shortcuts_ok})
     # Собственное адресное меню обращается к системному clipboard, не WebView permissions.
     address=ui('Адрес страницы',['Edit']);address.click_input();gui.hotkey('ctrl','a');expected_address=address.iface_value.CurrentValue;address.click_input(button='right')
     def address_action(prefix):
@@ -719,6 +727,7 @@ try:
     assert candidates,'Private Super definition disappeared after restart';candidates[0].click_input()
     check=storage('private-super-after-restart',origin=base);assert check['seen']==[''] and not check['cookie'][0],check
     results.append({'private_super_survives_restart_without_browsing_data':True})
+    assert russian_shortcuts_ok,'Russian keyboard shortcuts failed'
     assert splitter_drag_ok,'Native DevTools boundary did not move'
     assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
     assert find_ok,'Find match ordinal did not update correctly'

@@ -71,15 +71,19 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   useEffect(() => {
     setPravka(false);
     setOshibka("");
+    setSessiya(null);
     if (!id) return;
     let zhiv = true;
     let obnovleniya = 0;
     const otpiska = listen<{ id: string; sessiya: Sessiya }>("obychnye-izmenilis", (e) => {
       if (zhiv && e.payload.id === id) { obnovleniya++; setSessiya(e.payload.sessiya); }
     });
-    void otpiska.then(() => invoke<Sessiya>("obychnye_spisok", { id })).then((s) => {
-      if (zhiv && obnovleniya === 0) setSessiya(s);
-    }).catch((e) => { if (zhiv) setOshibka(String(e)); });
+    void otpiska.then(async()=>{
+      for(let attempt=0;zhiv&&obnovleniya===0&&attempt<30;attempt++){
+        try{const s=await invoke<Sessiya>("obychnye_spisok",{id});if(zhiv&&obnovleniya===0)setSessiya(s);return;}
+        catch(e){if(!zhiv||obnovleniya>0)return;if(String(e).includes("ещё запускается")&&attempt<29){await new Promise(r=>setTimeout(r,500));continue;}setOshibka(String(e));return;}
+      }
+    });
     return () => { zhiv = false; void otpiska.then((f) => f()); };
   }, [id]);
   sessiyaRef.current = sessiya;
@@ -171,6 +175,9 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       const d=e.payload.data;if(d.open)openFind();
       if(d.count!==undefined)setMatches({count:d.count,active:d.active??0});
     });
+    // После смены Super/страницы повторяем нативное состояние docked DevTools:
+    // одноразовый старый event мог прийти до регистрации нового обработчика.
+    if(id&&aktivnaya)void off.then(()=>invoke("obychnaya_komanda",{id,komanda:{deystvie:"obnovit_interfeys"}})).catch(()=>{});
     return()=>{void off.then(f=>f());};
   },[id,aktivnaya?.id,aktivnaya?.adres,onToggleBookmarks]);
   function runFind(forward:boolean,next:boolean) {

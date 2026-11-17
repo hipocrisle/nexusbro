@@ -51,6 +51,8 @@ try:
   page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'а',code:'KeyF',ctrlKey:true,bubbles:true}))")
   expect(page.get_by_role('textbox',name='Найти на странице',exact=True)).to_be_visible();page.keyboard.press('Escape')
   print('stage: russian',flush=True)
+  page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'е',code:'Unidentified',ctrlKey:true,bubbles:true}))")
+  assert page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda').at(-1).args.komanda.deystvie")=='novaya'
   hides_before=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
   address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.focus();address.press('Control+a');selected=address.input_value();address.click(button='right')
   print('stage: address',flush=True)

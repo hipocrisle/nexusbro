@@ -740,6 +740,7 @@ impl Rabota {
                     devtools_pending.remove(&id);devtools.remove(&id);layout_dirty=true;
                     if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
                 }
+                Sobytie::Komanda(Komanda::ObnovitInterfeys)=>{ui_last.clear();}
                 Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(10,90);layout_dirty=true; }
                 Sobytie::Komanda(Komanda::Perevesti{id}) => {
                     if let Some(b)=brauzery.get(&id){

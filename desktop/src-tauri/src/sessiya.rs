@@ -40,6 +40,7 @@ pub enum Komanda {
     OknoNovoe { label:String, parent:u64, x:i32, y:i32, w:u32, h:u32, privatnaya:bool, #[serde(default)] sessiya:Option<Sessiya> },
     OknoKomanda { label:String, komanda:Box<Komanda> },
     OknoZakryt { label:String },
+    ObnovitInterfeys,
     GlavnoeSkryto,
     GlavnoePokazat,
     Novaya { adres: String },
