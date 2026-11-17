@@ -636,7 +636,14 @@ try:
     gui.hotkey('ctrl','shift','b');time.sleep(.3);assert json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))['panel_zakladok']
     gui.hotkey('ctrl','shift','b');time.sleep(.3);assert not json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))['panel_zakladok']
     results.append({'native_bookmark_bar_toggle':True})
-    gui.hotkey('ctrl','h');ui('Закрыть библиотеку',['Button']).click_input()
+    gui.hotkey('ctrl','h')
+    # Await the newly opened dialog's focused search, not a stale close button
+    # from the preceding library. Exercise its actual Escape dismissal.
+    search=ui('Поиск в библиотеке',['Edit']);search.click_input()
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline and not search.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
+    assert search.element_info.element.CurrentHasKeyboardFocus,'Library search did not receive focus'
+    gui.press('escape')
     # UIA can retain the closing dialog. Wait for its disappearance before
     # targeting a shell control behind it; verify real keyboard focus and text.
     deadline=time.monotonic()+5
