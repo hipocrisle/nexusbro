@@ -426,9 +426,15 @@ try:
     container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     def edit_super():
         pt=origin();gui.click(pt.x+26,pt.y+80,button='right');ui('Настройки').click_input()
+    def choose_subscription_node(name):
+        # UIA ScrollItem is unavailable for some WebView2 buttons. Use the same
+        # physical wheel action a user needs for this deliberately scrollable form.
+        r=rect(hwnd);gui.moveTo((r.left+r.right)//2,(r.top+r.bottom)//2);gui.scroll(-2);time.sleep(.3)
+        ui('Узел подписки',['ComboBox','Button']).click_input();ui(name,['ListItem','Button']).click_input()
+
     edit_super()
     ui('Сохранённое подключение',['ComboBox','Button']).click_input();ui('Local subscription',['ListItem','Button']).click_input()
-    ui('Узел подписки',['ComboBox','Button']).click_input();ui('Local working',['ListItem','Button']).click_input()
+    choose_subscription_node('Local working')
     gui.press('tab',presses=5,interval=.1);time.sleep(.3)
     previous=container;ui('Сохранить',['Button']).click_input();container=new_container(previous)
     assert hits.get('/probe'),hits
@@ -442,7 +448,7 @@ try:
     vpn_page('vpn-working')
     old_records=json.loads((data/'vkladki.json').read_text(encoding='utf-8'))
     assert old_records[0]['proxy_uzel']==local,old_records
-    edit_super();ui('Узел подписки',['ComboBox','Button']).click_input();ui('Unavailable',['ListItem','Button']).click_input()
+    edit_super();choose_subscription_node('Unavailable')
     gui.press('tab',presses=5,interval=.1);time.sleep(.3);ui('Сохранить',['Button']).click_input()
     deadline=time.monotonic()+20
     message='Выбранный узел не прошёл проверку HTTP(S). Прежние настройки и подключение сохранены. Выберите другой узел или повторите проверку.'
