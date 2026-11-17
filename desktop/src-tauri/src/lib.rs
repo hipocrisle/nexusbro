@@ -990,8 +990,11 @@ async fn obychnye_spisok(window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, i
         let v = s.vkladki.lock().unwrap();
         let vk = v.get(&id).ok_or("такой супер-вкладки нет")?;
         if let Some(sessiya) = &vk.obychnye { return Ok(sessiya.clone()) }
+        // Не подставлять фиктивную about:blank во время запуска: она могла
+        // перехватить фокус и затереть ввод до первой настоящей сессии CEF.
+        if vk.zapusk_idet||vk.proc.is_some(){return Err("Окно ещё запускается".into());}
     }
-    tauri::async_runtime::spawn_blocking(move || sessiya::Sessiya::zagruzit(&brauzer::papka_profilej().join(id)))
+    tauri::async_runtime::spawn_blocking(move || sessiya::Sessiya::zagruzit(&brauzer::papka_profilya(&id)))
         .await.map_err(|e| e.to_string())
 }
 

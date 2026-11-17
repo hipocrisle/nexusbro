@@ -713,6 +713,7 @@ try:
     while time.monotonic()<deadline and private_root.exists():time.sleep(.1)
     assert not private_root.exists(),private_root
     results.append({'private_window_stays_private':True,'private_super_definition_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
+    reports_before_restart=len(storage_reports)
     app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
     deadline=time.monotonic()+30
     while time.monotonic()<deadline:
@@ -727,7 +728,12 @@ try:
         if candidates:break
         time.sleep(.1)
     assert candidates,'Private Super definition disappeared after restart';candidates[0].click_input()
-    check=storage('private-super-after-restart',origin=base);assert check['seen']==[''] and not check['cookie'][0],check
+    deadline=time.monotonic()+20;check=None
+    while time.monotonic()<deadline:
+        check=next((r for r in storage_reports[reports_before_restart:] if r.get('case')==['private-super-start']),None)
+        if check:break
+        time.sleep(.1)
+    assert check and check['seen']==[''] and not check['cookie'][0],check
     results.append({'private_super_survives_restart_without_browsing_data':True})
     assert russian_shortcuts_ok,'Russian keyboard shortcuts failed'
     assert splitter_drag_ok,'Native DevTools boundary did not move'
