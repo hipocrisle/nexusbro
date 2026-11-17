@@ -595,7 +595,21 @@ try:
     assert 'case=recent-normal' in active['adres'],current
     gui.hotkey('ctrl','w');time.sleep(.3)
     results.append({'native_restore_recently_closed':True})
-    main_hwnd=hwnd;main_win=win
+    # Во втором окне должны быть все Super, а выбор — локальным для окна.
+    assert storage('normal-loopback','normal-loopback-marker',origin=base)['seen']==['']
+    ui('Новая супер-вкладка',['Button']).click_input();ui('Название',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('OtherSuperFixture',interval=.01)
+    ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=other-super-start',interval=.001);ui('Создать',['Button']).click_input()
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and not any(r.get('case')==['other-super-start'] for r in storage_reports):time.sleep(.1)
+    assert any(r.get('case')==['other-super-start'] for r in storage_reports)
+    def choose_super(name):
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            matches=[x for x in win.descendants() if x.element_info.control_type=='Button' and name in x.element_info.name and x.is_visible()]
+            if matches:matches[0].click_input();time.sleep(.4);return
+            time.sleep(.1)
+        raise AssertionError('Super button missing: '+name)
+    choose_super('Проба');main_before_extra=session();main_hwnd=hwnd;main_win=win
     def browser_windows():
         found=[]
         @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
@@ -611,6 +625,11 @@ try:
     windows=browser_windows();assert len(windows)==2 and app.poll() is None,windows
     hwnd=next(h for h in windows if h!=main_hwnd);u.SetForegroundWindow(hwnd);win=Desktop(backend='uia').window(handle=hwnd)
     assert storage('second-normal')['seen']==['normal-marker']
+    choose_super('OtherSuperFixture');other_report=storage('second-other-super',origin=base);assert other_report['seen']==[''] and not other_report['cookie'][0],other_report
+    choose_super('Проба');assert storage('second-normal-after-switch')['seen']==['normal-marker']
+    assert session()['aktivnaya']==main_before_extra['aktivnaya']
+    assert next(t for t in session()['vkladki'] if t['id']==session()['aktivnaya'])['adres']==next(t for t in main_before_extra['vkladki'] if t['id']==main_before_extra['aktivnaya'])['adres']
+    results.append({'native_secondary_switches_supers_without_changing_main':True,'super_profiles_isolated_between_windows':True})
     ui('Меню NexusBro',['Button']).click_input();ui('Настройки NexusBro',['MenuItem','Button']).click_input();ui('Закрыть настройки',['Button']).click_input()
     assert any(x.element_info.control_type=='Button' and 'Проба' in x.element_info.name for x in win.descendants()),'No Super sidebar in secondary window'
     results.append({'secondary_full_shell_and_local_menu':True})
