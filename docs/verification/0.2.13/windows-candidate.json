@@ -1,0 +1,326 @@
+[
+  {
+    "stage": "initial",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-dialog",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-resize",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "after-sidebar-collapse",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "middle_close_keeps_application": true
+  },
+  {
+    "cross_close_keeps_application": true
+  },
+  {
+    "context_menu_close_keeps_application": true
+  },
+  {
+    "last_close_recreates_blank_keeps_application": true
+  },
+  {
+    "stage": "before-source",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "source_opens_in_browser_tab": true
+  },
+  {
+    "native_devtools_boundary_drag": true,
+    "before": 580,
+    "after": 472
+  },
+  {
+    "native_f12_docked_devtools": true,
+    "devtools_close_keeps_browser": true
+  },
+  {
+    "native_focus_after_devtools": true
+  },
+  {
+    "physical_ordinary_drag_reorders": true
+  },
+  {
+    "physical_settings_dropdown_mouse_selection": true
+  },
+  {
+    "stage": "after-lazy-click",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "restart_zero_page_requests_until_click": true,
+    "click_wakes_one_only": true,
+    "plus_next_to_last_tab_physical_click": true
+  },
+  {
+    "stage": "vpn-working",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "vpn-after-rejected-node",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "stage": "vpn-after-recovery",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "vless_actual_http_route": true,
+    "no_xray_console": true,
+    "failed_node_keeps_previous_connection": true,
+    "dead_tunnel_auto_recovers": true
+  },
+  {
+    "stage": "ad-fixture",
+    "rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "native_f5": true
+  },
+  {
+    "native_ctrl_f5": true
+  },
+  {
+    "native_translation_same_document_and_original": true,
+    "translation_uses_super_proxy": true,
+    "cef_ad_resources_cancelled": true,
+    "cef_browser_and_yandex_banners_removed": true,
+    "regular_news_preserved": true
+  },
+  {
+    "cef_ad_switch_off_preserves_banners_and_requests": true
+  },
+  {
+    "native_find_ordinals_correct": true
+  },
+  {
+    "native_russian_shortcuts_cef_and_shell": true,
+    "error": ""
+  },
+  {
+    "native_address_menu_system_clipboard_copy_paste": true
+  },
+  {
+    "native_browser_import_chromium_and_live_firefox_wal": true,
+    "native_bookmark_toggle": true
+  },
+  {
+    "native_bookmark_bar_toggle": true
+  },
+  {
+    "native_download_name_correct": true
+  },
+  {
+    "native_download_file_and_history": true,
+    "download_keeps_source_document_url": true
+  },
+  {
+    "native_restore_recently_closed": true
+  },
+  {
+    "native_secondary_switches_supers_without_changing_main": true,
+    "super_profiles_isolated_between_windows": true
+  },
+  {
+    "secondary_full_shell_and_local_menu": true
+  },
+  {
+    "window_events_are_isolated": true
+  },
+  {
+    "ordinary_plus_from_private_uses_normal_context": true
+  },
+  {
+    "native_find_next": true,
+    "native_history_and_bookmarks_panels": true,
+    "second_exe_opens_shared_profile_window": true,
+    "closing_secondary_keeps_main": true,
+    "private_tab_storage_isolated_and_reset": true,
+    "private_urls_not_persisted": true
+  },
+  {
+    "new_private_super_uses_start_url": true
+  },
+  {
+    "private_window_stays_private": true,
+    "private_super_definition_saved": true,
+    "private_temp_directory_removed": true,
+    "closing_main_keeps_secondary": true,
+    "last_window_exits": true
+  },
+  {
+    "private_super_survives_restart_without_browsing_data": true
+  },
+  {
+    "success": true
+  }
+]

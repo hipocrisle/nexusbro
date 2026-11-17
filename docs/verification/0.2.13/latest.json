@@ -1,0 +1,23 @@
+{
+  "version": "0.2.13",
+  "notes": "NexusBro 0.2.13",
+  "pub_date": "2026-11-17T12:25:41Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MisyeDlxaHBZc04xU0s4UDFhOEFlTnBDWnVMdmpHbk05bWRzNXVVcko0UGNVZWg3Q2Q2UXJ0SmhrYlZRZG9MaXpWN1lKYXp1NkdGcVJITlVsWlk1TGcwPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTE4MTQ5CWZpbGU6TmV4dXNCcm9fMC4yLjEzX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIuMTMKay90V3VTOWR2M2ExOC9hSkFENjIvQ0plZHpTSloycjNyU0RDaEV1bkU2N2JpdlF1RlVKc2d6NlQ3bUoxWXZHYVpDM1l0WVpLVytrUXl1UW5nbDRBQ1E9PQo=",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.13/NexusBro_0.2.13_x64-setup.exe"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MjAxQys5S1U1NElZRkd5d3U0OEpyek5EcmgxVFc2TjhGcmtMSE1WdzU0SGZja2IxbEh3RDZiNXp3WXlIQ2VFWUZzTDk1M2ZFdnA2SFNlUE5DWU5mbkFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTE2OTg5CWZpbGU6TmV4dXNCcm9fMC4yLjEzX2FtZDY0LmRlYgl2ZXJzaW9uOjAuMi4xMwpGUklzVDRRQThUTjhSZEZXOHIrWlZVRWtiQys0UDkzcUFFdzRkRFBkOGRUUmZGSmZsSkx5L1VzKzlqWnE3QUFqMDdyWWNsdnlIZFY4YUlabW1Kb0dCdz09Cg==",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.13/NexusBro_0.2.13_amd64.deb"
+    },
+    "linux-x86_64-rpm": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MjRleXN1RWpOM29JNFJpUDJkTGdYNjJ5WGQ4ZE5RQVRNSjRVOUFDTFhjY1RNR0JLNnp1MlZ2RDhGNDBpVnpESjVCMHNIL0ZieVpmOUYxYlpYaElzd1FrPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTE2OTkwCWZpbGU6TmV4dXNCcm8tMC4yLjEzLTEueDg2XzY0LnJwbQl2ZXJzaW9uOjAuMi4xMwo5WE0zQ2cvQ3NJcmdiN3VyZlFSdUdNNkgyN2xmSVRFdms2dk43RmhyTlllV3JQQ2J6akFidGQvZVhORlY0SkdUSmZkdDdrWFp0cDhpbEtuaDZPcVBDZz09Cg==",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.13/NexusBro-0.2.13-1.x86_64.rpm"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MjAxQys5S1U1NElZRkd5d3U0OEpyek5EcmgxVFc2TjhGcmtMSE1WdzU0SGZja2IxbEh3RDZiNXp3WXlIQ2VFWUZzTDk1M2ZFdnA2SFNlUE5DWU5mbkFRPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTE2OTg5CWZpbGU6TmV4dXNCcm9fMC4yLjEzX2FtZDY0LmRlYgl2ZXJzaW9uOjAuMi4xMwpGUklzVDRRQThUTjhSZEZXOHIrWlZVRWtiQys0UDkzcUFFdzRkRFBkOGRUUmZGSmZsSkx5L1VzKzlqWnE3QUFqMDdyWWNsdnlIZFY4YUlabW1Kb0dCdz09Cg==",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.13/NexusBro_0.2.13_amd64.deb"
+    }
+  }
+}

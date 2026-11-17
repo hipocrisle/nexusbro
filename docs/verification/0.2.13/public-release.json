@@ -1,0 +1,10 @@
+{
+  "version": "0.2.13",
+  "tag": "v0.2.13",
+  "draft": false,
+  "published_at": "2026-11-17T12:26:00Z",
+  "all_package_sizes_and_github_sha256_match": true,
+  "public_signatures_match_manifest": true,
+  "release_ci": 44078261347,
+  "source": "c91458d589e87460bd6bf643bbdcada5064add2a"
+}

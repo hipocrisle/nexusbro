@@ -1,0 +1,16 @@
+{
+  "source_run": 44069661186,
+  "binary_modified": false,
+  "checks": [
+    {
+      "live_google_via_nexusbro_proxy_and_cef_dom": true,
+      "text": "Привет, мир. Это тест перевода браузера."
+    },
+    {
+      "original_restored": true
+    },
+    {
+      "two_window_full_super_switch_and_main_unchanged": true
+    }
+  ]
+}
