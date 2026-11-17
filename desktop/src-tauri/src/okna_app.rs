@@ -81,7 +81,7 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let url=format!("index.html?{}",query.query().unwrap_or(""));
     let title=s.vkladki.lock().unwrap().get(&id).map(|v|format!("NexusBro — {}{}",v.nastrojki.nazvanie,if privatnaya{" · приватное окно"}else{""})).unwrap_or_else(||"NexusBro".into());
     s.okna.0.lock().unwrap().insert(label.clone(),Okno{others:Default::default(),pending_close:Default::default(),super_id:id,engine:0,hwnd:None,mesto:None,sessiya:None,hidden:false,closing:false,privatnaya,generation:Default::default()});
-    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(1200.,800.).min_inner_size(900.,560.).build(){
+    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(1200.,800.).min_inner_size(900.,560.).disable_drag_drop_handler().enable_clipboard_access().build(){
         Ok(_)=>Ok(()),Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
     }
 }
