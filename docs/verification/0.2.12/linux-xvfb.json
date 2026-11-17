@@ -1,0 +1,26 @@
+{
+  "source_run": 43956979566,
+  "checks": [
+    {
+      "physical_create": "GuiA",
+      "id": "svmwkfhzwi"
+    },
+    {
+      "physical_create": "GuiB",
+      "id": "svmwkfi1in"
+    },
+    {
+      "physical_edit": true
+    },
+    {
+      "linux_native_docked_devtools": true
+    },
+    {
+      "linux_private_url_not_saved": true
+    },
+    {
+      "linux_shared_window_created": true
+    }
+  ],
+  "note": "Удаление второй Super проверено утверждением len(spisok)==1 перед проверкой DevTools."
+}

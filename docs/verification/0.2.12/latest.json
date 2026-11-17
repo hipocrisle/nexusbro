@@ -1,0 +1,23 @@
+{
+  "version": "0.2.12",
+  "notes": "NexusBro 0.2.12",
+  "pub_date": "2026-11-17T08:45:22Z",
+  "platforms": {
+    "windows-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0Mi9zZks2QmdPeXRDMysraXVvVTFOY3daaTFjSU1vWVlzYUQ0RVdsQjhCbGpKcXFlNG1FT1E2VnN1dWtjWXd4QXkzdGsrT1FzSmIwQ285SjI5Z3drZ3dBPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTA0OTMzCWZpbGU6TmV4dXNCcm9fMC4yLjEyX3g2NC1zZXR1cC5leGUJdmVyc2lvbjowLjIuMTIKZGhlQkRrYkt1ekpIa3pTWklmeG0zZ2k3cXBtczZ2ZW94TGc4WlhEWGRKekpDdkl2dmlnYlRPbGliMVdaUU00d01ZS0lGM0p2MFdENzM3c2JtNWQwQmc9PQo=",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.12/NexusBro_0.2.12_x64-setup.exe"
+    },
+    "linux-x86_64-deb": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MjFaT1VSeEczQVBPRGlsZEVDVWRma3J6MVBDcHoyN0h4cERDYmk5MC96T3RYRDFkaGlKN0I1aGc2anRET1dra3R5bGVaMVVEd2w2QVJjTlNtbWNaNHdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTA0MjkzCWZpbGU6TmV4dXNCcm9fMC4yLjEyX2FtZDY0LmRlYgl2ZXJzaW9uOjAuMi4xMgpnYWhOMHpBMUhxSHFYNWVtZUtNSkdYYnZMc0svMGFvZmhoUzRaVjFvVEN4MktxcXY3TTl0SnVNSForL3A3TmpqQ0FjUVczcFdHbWVjUHJ1RjVvSDNCZz09Cg==",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.12/NexusBro_0.2.12_amd64.deb"
+    },
+    "linux-x86_64-rpm": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MitkSEVkS3cvamxrOUd0MytNTVQrT0FoL1h6OGNDOG9wNlVqallENmUxSENIa2VkNmYrNU1pcFVLOUcrYUFDRHVGL25YczV3NlRzU1E4SUNmTGNuTFE0PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTA0Mjk0CWZpbGU6TmV4dXNCcm8tMC4yLjEyLTEueDg2XzY0LnJwbQl2ZXJzaW9uOjAuMi4xMgowSDdMb2E0THh2dFpVTFlZTG82b2o3bFZPSWF2NWRPOEozZlo4SWNSa3hHQzdoY0w0bjdISDBabUx3eTBEeE9lNG9UQzNJemgxSXlzZm1WRXFlbGtBZz09Cg==",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.12/NexusBro-0.2.12-1.x86_64.rpm"
+    },
+    "linux-x86_64": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTdVNFdktCWHQ0MjFaT1VSeEczQVBPRGlsZEVDVWRma3J6MVBDcHoyN0h4cERDYmk5MC96T3RYRDFkaGlKN0I1aGc2anRET1dra3R5bGVaMVVEd2w2QVJjTlNtbWNaNHdnPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzk0OTA0MjkzCWZpbGU6TmV4dXNCcm9fMC4yLjEyX2FtZDY0LmRlYgl2ZXJzaW9uOjAuMi4xMgpnYWhOMHpBMUhxSHFYNWVtZUtNSkdYYnZMc0svMGFvZmhoUzRaVjFvVEN4MktxcXY3TTl0SnVNSForL3A3TmpqQ0FjUVczcFdHbWVjUHJ1RjVvSDNCZz09Cg==",
+      "url": "https://github.com/hipocrisle/nexusbro/releases/download/v0.2.12/NexusBro_0.2.12_amd64.deb"
+    }
+  }
+}
