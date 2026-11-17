@@ -16,6 +16,10 @@ on:
         description: Run only Windows screen test from an existing build run (empty = build)
         required: false
         default: ""
+      publish_tag:
+        description: Publish existing tagged packages after successful runtime check (requires runtime_build)
+        required: false
+        default: ""
       runtime_baseline:
         description: Existing package predates NEXUSBRO_TEST_DATA (ephemeral runner only)
         type: boolean
@@ -427,3 +431,22 @@ jobs:
           python3 tests/release_signatures.py --directory /tmp/payloads --version "$VERSION"
           gh release upload "$TAG" latest.json /tmp/payloads/signature-verification.json --repo "$REPO" --clobber
           gh release edit "$TAG" --repo "$REPO" --notes-file "docs/RELEASE-$VERSION.md" --draft=false --latest
+
+  publish-tested:
+    name: Publish runtime-verified existing packages
+    needs: runtime
+    if: github.event_name == 'workflow_dispatch' && inputs.runtime_build != '' && inputs.publish_tag != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install cryptography
+      - name: Verify tag, Linux acceptance, signatures and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.publish_tag }}
+          BUILD_RUN: ${{ inputs.runtime_build }}
+        run: python3 tests/publish_tested_release.py
