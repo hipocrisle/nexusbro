@@ -7,7 +7,7 @@ pub async fn set_status(s:tauri::State<'_,crate::Sostoyanie>,id:String)->Result<
     let mode=if cfg.proxy.is_empty(){"Напрямую"}else if crate::vpn::eto_podpiska(&cfg.proxy){"VPN / подписка"}else{"Прокси"};
     let node=if !cfg.proxy_uzel.is_empty(){crate::vpn::imya_iz_ssylki(&cfg.proxy_uzel)}else if cfg.proxy.starts_with("vless://"){crate::vpn::imya_iz_ssylki(&cfg.proxy)}else if crate::vpn::eto_podpiska(&cfg.proxy){"Первый узел подписки / конфигурация".into()}else{String::new()};
     (mode.to_owned(),node,vk.proc.is_some(),vk.zapusk_idet,vk.tunnel.as_ref().is_some_and(|p|crate::okna::sistema::pid_zhiv(p.id())),vk.nash_proxy.as_ref().map(|p|p.port))};
-    let reachable=if let Some(port)=port{Some(proverit_marshrut(port).await)}else{None};
+    let reachable=if let Some(port)=port{Some(proverit_marshrut(port).await)}else if starting{None}else{Some(false)};
     Ok(json!({"mode":mode,"node":node,"running":running,"starting":starting,"tunnel_running":tunnel,"proxy_running":port.is_some(),"reachable":reachable}))
 }
 #[tauri::command]

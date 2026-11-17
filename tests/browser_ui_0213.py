@@ -13,7 +13,7 @@ window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
  if(cmd==='bufer_zapisat')return navigator.clipboard.writeText(args.text);
  if(cmd==='biblioteka_spisok'&&args.razdel==='zakladki')return window.__books;
  if(cmd==='zakladki_pereklyuchit'){let exists=window.__books.some(x=>x.adres===args.adres);window.__books=exists?[]:[{id:'bookmark',adres:args.adres,nazvanie:args.nazvanie}];return !exists;}
- if(cmd==='set_status')return {mode:'Прокси',node:'Fixture',reachable:true,running:true};
+ if(cmd==='set_status')return {mode:'Прокси',node:'Fixture',reachable:window.__health??true,running:true};
  if(cmd==='import_istochniki')return [{id:'chrome',browser:'Chrome',profile:'Default'},{id:'edge',browser:'Edge',profile:'Profile 1'}];
  if(cmd==='import_nachat')return 9;
  if(cmd==='import_status'){if(args.id===0)throw 'No tasks';return {id:9,status:'Готово',read:4,imported:3,skipped:1,error:null};}
@@ -33,6 +33,12 @@ try:
   page.get_by_role('tab',name='One',exact=True).wait_for()
   address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.fill('https://example.test/enter');address.press('Enter');expect(page.get_by_role('dialog',name='Сетевой выход',exact=True)).not_to_be_visible();assert page.evaluate("window.__args.some(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti')")
   assert page.locator('.library-shortcuts').count()==0
+  network=page.get_by_role('button',name='Сетевой выход супер-вкладки',exact=True);expect(network).to_have_class('network-button network-up')
+  buttons=[network,page.get_by_role('button',name='Защита супер-вкладки',exact=True),page.get_by_role('button',name='Меню NexusBro',exact=True)]
+  boxes=[b.bounding_box() for b in buttons];assert all(b['width']==30 and b['height']==30 for b in boxes),boxes;assert boxes[0]['x']<boxes[1]['x']<boxes[2]['x'],boxes
+  assert network.inner_text()==''
+  page.evaluate('window.__health=false');expect(network).to_have_class('network-button network-down');page.evaluate('window.__health=true')
+
   page.evaluate("""()=>window.__callbacks[window.__events['obychnye-izmenilis']]({payload:{id:'layout',sessiya:{aktivnaya:1,vkladki:[{id:1,adres:'https://example.test/word/next',zagolovok:'Fixture',privatnaya:true}]}}})""")
   page.get_by_role('tab',name='Fixture',exact=True).wait_for()
   page.get_by_role('button',name='Новая обычная вкладка',exact=True).click()
