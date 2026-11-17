@@ -529,7 +529,10 @@ try:
     def address_action(prefix):
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
-            matches=[x for x in win.descendants() if x.element_info.control_type in ['MenuItem','Button'] and x.element_info.name.startswith(prefix) and x.is_visible() and x.is_enabled()]
+            controls=list(win.descendants())
+            for popup in Desktop(backend='uia').windows(process=app.pid):
+                if popup.handle!=hwnd:controls.extend(popup.descendants())
+            matches=[x for x in controls if x.element_info.control_type in ['MenuItem','Button'] and x.element_info.name.startswith(prefix) and x.is_visible() and x.is_enabled()]
             if matches:matches[0].click_input();return
             time.sleep(.1)
         raise AssertionError('Address menu item missing: '+prefix)

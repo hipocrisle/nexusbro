@@ -7,6 +7,8 @@ mock=next(ast.literal_eval(n.value) for n in module.body if isinstance(n,ast.Ass
 mock+='''
 const originalInvoke=window.__TAURI_INTERNALS__.invoke;window.__books=[];
 window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
+ if(cmd==='plugin:menu|new'){window.__nativeMenu=args.options.items;return [111,'address'];}
+ if(cmd==='plugin:menu|popup'){window.__menuPopped=true;return null;}
  if(cmd==='bufer_chitat')return navigator.clipboard.readText();
  if(cmd==='bufer_zapisat')return navigator.clipboard.writeText(args.text);
  if(cmd==='biblioteka_spisok'&&args.razdel==='zakladki')return window.__books;
@@ -43,10 +45,16 @@ try:
   page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'а',code:'KeyF',ctrlKey:true,bubbles:true}))")
   expect(page.get_by_role('textbox',name='Найти на странице',exact=True)).to_be_visible();page.keyboard.press('Escape')
   print('stage: russian',flush=True)
+  hides_before=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
   address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.focus();address.evaluate('(e)=>e.setSelectionRange(21,25)');selected=address.evaluate('(e)=>e.value.slice(e.selectionStart,e.selectionEnd)');position=address.evaluate("e=>{const c=document.createElement('canvas').getContext('2d');c.font=getComputedStyle(e).font;const r=e.getBoundingClientRect();return {x:r.x+parseFloat(getComputedStyle(e).paddingLeft)+c.measureText(e.value.slice(0,23)).width,y:r.y+r.height/2};}");page.mouse.click(position['x'],position['y'],button='right')
   print('stage: address',flush=True)
-  menu=page.get_by_role('menu',name='Адресная строка',exact=True);expect(menu).to_be_visible();assert not any(s in menu.inner_text().lower() for s in ['эмодзи','парол','направлен','инструмент'])
-  menu.get_by_text('Копировать',exact=True).click();assert page.evaluate("Promise.race([navigator.clipboard.readText(),new Promise(r=>setTimeout(()=>r('TIMEOUT'),2500))])")==selected
+  page.wait_for_function('window.__menuPopped===true')
+  assert page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")==hides_before
+  items=page.evaluate('window.__nativeMenu.map(i=>({id:i.id.split("-").at(-1),text:i.text,enabled:i.enabled}))');assert [i['id'] for i in items]==['undo','redo','cut','copy','paste','delete','selectAll'],items
+  assert not any(s in str(items).lower() for s in ['эмодзи','парол','направлен','инструмент'])
+  assert next(i for i in items if i['id']=='copy')['enabled']
+  page.evaluate("window.__nativeMenu.find(i=>i.id.endsWith('-copy')).handler.onmessage('copy')");page.wait_for_timeout(100)
+  assert page.evaluate("Promise.race([navigator.clipboard.readText(),new Promise(r=>setTimeout(()=>r('TIMEOUT'),2500))])")==selected
   page.get_by_role('button',name='Меню NexusBro',exact=True).click();page.get_by_role('menuitem',name='Загрузки Ctrl+J',exact=True).click()
   expect(page.get_by_text('invoice.pdf',exact=True)).to_be_visible();assert 'THIS_TOKEN_MUST_NOT_RENDER' not in page.locator('.library-list').inner_text()
   page.get_by_role('button',name='Убрать из списка',exact=True).click();assert page.evaluate("window.__args.some(x=>x.cmd==='zagruzki_ochistit'&&x.args.id==='completed')")

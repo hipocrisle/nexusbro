@@ -22,6 +22,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; v: Vkladka } | null>(null);
   const addressPointer=useRef<AddressPointer>(null);
+  const addressMenuOpen=useRef(false);
   const pole = useRef<HTMLInputElement>(null);
   const findInput = useRef<HTMLInputElement>(null);
   const findTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -240,7 +241,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onMouseUp={e=>{if(addressUp(e.currentTarget,addressPointer.current,e.clientX,e.clientY,e.detail))e.preventDefault();addressPointer.current=null;}}
         onPointerCancel={()=>{addressPointer.current=null;}}
         onContextMenu={e=>e.stopPropagation()}
-        onBlur={()=>{addressPointer.current=null;setPravka(false);}}
+        onBlur={()=>{addressPointer.current=null;if(!addressMenuOpen.current)setPravka(false);}}
         onChange={e=>setAdres(e.target.value)} />
 
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
@@ -255,7 +256,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
     </form>
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
-    <AddressMenu input={pole} onChange={setAdres} onError={setOshibka}/>
+    <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
     {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
     {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();runFind(true,true);}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();runFind(false,true);}}}>

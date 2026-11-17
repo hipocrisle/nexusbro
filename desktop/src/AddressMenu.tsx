@@ -1,22 +1,32 @@
-import {useEffect,useState,type RefObject} from 'react';
-import {createPortal} from 'react-dom';
+import {useEffect,useRef,type RefObject} from 'react';
+import {Menu} from '@tauri-apps/api/menu';
+import {LogicalPosition} from '@tauri-apps/api/dpi';
+import {getCurrentWindow} from '@tauri-apps/api/window';
 import {invoke} from '@tauri-apps/api/core';
-type At={x:number;y:number;start:number;end:number};
-export default function AddressMenu({input,onChange,onError}:{input:RefObject<HTMLInputElement>;onChange:(s:string)=>void;onError:(s:string)=>void}){
- const [at,setAt]=useState<At|null>(null);
- async function close(){setAt(null);await invoke('pokazat_dvizhki',{vidno:true});}
- useEffect(()=>{const e=input.current;if(!e)return;const menu=(event:MouseEvent)=>{event.preventDefault();event.stopPropagation();const next={x:Math.min(event.clientX,innerWidth-245),y:Math.min(event.clientY,innerHeight-270),start:e.selectionStart??0,end:e.selectionEnd??0};void invoke('pokazat_dvizhki',{vidno:false}).then(()=>setAt(next));};e.addEventListener('contextmenu',menu);return()=>e.removeEventListener('contextmenu',menu);},[]);
- useEffect(()=>{if(!at)return;const key=(e:KeyboardEvent)=>{if(e.key==='Escape')void close();};window.addEventListener('keydown',key);return()=>window.removeEventListener('keydown',key);},[at]);
- async function edit(action:string){const e=input.current;if(!e||!at)return;
-  try{e.focus();e.setSelectionRange(at.start,at.end);
-   if(action==='selectAll'){e.select();}
-   else if(action==='paste'){const value=await Promise.race([invoke<string>('bufer_chitat'),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error("Clipboard timeout")),2500))]);document.execCommand('insertText',false,value);onChange(e.value);}
-   else if(action==='copy'||action==='cut'){await invoke('bufer_zapisat',{text:e.value.slice(at.start,at.end)});if(action==='cut'){document.execCommand('delete');onChange(e.value);}}
-   else if(action==='delete'){document.execCommand('delete');onChange(e.value);}
-   else{document.execCommand(action);onChange(e.value);}
-  }catch{onError('Не удалось выполнить действие с буфером обмена. Используйте Ctrl+C / Ctrl+V.');}
-  finally{await close();await invoke('fokus_obolochke');e.focus();}
- }
- if(!at)return null;
- return createPortal(<div className="zatemnenie-prozrachnoe" onMouseDown={()=>void close()}><div role="menu" aria-label="Адресная строка" className="vypadajka browser-menu address-menu" style={{left:Math.max(8,at.x),top:Math.max(8,at.y)}} onMouseDown={e=>{e.preventDefault();e.stopPropagation();}}>{([['undo','Отменить','Ctrl+Z'],['redo','Повторить','Ctrl+Shift+Z'],['cut','Вырезать','Ctrl+X'],['copy','Копировать','Ctrl+C'],['paste','Вставить','Ctrl+V'],['delete','Удалить','Del'],['selectAll','Выделить всё','Ctrl+A']] as const).map(([action,label,key])=><button type="button" role="menuitem" disabled={['cut','copy','delete'].includes(action)&&at.start===at.end} key={action} onClick={()=>void edit(action)}><span>{label}</span><kbd>{key}</kbd></button>)}</div></div>,document.body);
+type Selection={start:number;end:number;value:string};
+// Нативное меню рисуется поверх CEF: страницу не скрываем даже на мгновение.
+export default function AddressMenu({input,onChange,onError,onMenuState}:{input:RefObject<HTMLInputElement>;onChange:(s:string)=>void;onError:(s:string)=>void;onMenuState?:(open:boolean)=>void}){
+ const menu=useRef<Menu|null>(null);
+ useEffect(()=>{
+  const e=input.current;if(!e)return;
+  async function edit(action:string,selection:Selection){
+   try{await invoke('fokus_obolochke');e!.focus();if(e!.value!==selection.value){e!.value=selection.value;onChange(selection.value);}e!.setSelectionRange(selection.start,selection.end);
+    if(action==='selectAll'){e!.select();}
+    else if(action==='paste'){const value=await invoke<string>('bufer_chitat');document.execCommand('insertText',false,value);onChange(e!.value);}
+    else if(action==='copy'||action==='cut'){await invoke('bufer_zapisat',{text:selection.value.slice(selection.start,selection.end)});if(action==='cut'){document.execCommand('delete');onChange(e!.value);}}
+    else{document.execCommand(action);onChange(e!.value);}
+   }catch(err){onError(String(err));}
+   finally{onMenuState?.(false);}
+  }
+  const open=async(event:MouseEvent)=>{
+   event.preventDefault();event.stopPropagation();const selection={start:e.selectionStart??0,end:e.selectionEnd??0,value:e.value};const x=event.clientX,y=event.clientY;onMenuState?.(true);
+   try{if(menu.current){await menu.current.close();menu.current=null;}
+    const prefix='address-'+getCurrentWindow().label+'-'+Date.now();
+    menu.current=await Menu.new({items:([['undo','Отменить','Ctrl+Z'],['redo','Повторить','Ctrl+Shift+Z'],['cut','Вырезать','Ctrl+X'],['copy','Копировать','Ctrl+C'],['paste','Вставить','Ctrl+V'],['delete','Удалить','Delete'],['selectAll','Выделить всё','Ctrl+A']] as const).map(([id,text,accelerator])=>({id:prefix+'-'+id,text,accelerator,enabled:!['cut','copy','delete'].includes(id)||selection.start!==selection.end,action:()=>void edit(id,selection)}))});
+    await menu.current.popup(new LogicalPosition(x,y),getCurrentWindow());
+   }catch(err){onError(String(err));}finally{onMenuState?.(false);}
+  };
+  e.addEventListener('contextmenu',open);return()=>{e.removeEventListener('contextmenu',open);if(menu.current)void menu.current.close();};
+ },[]);
+ return null;
 }
