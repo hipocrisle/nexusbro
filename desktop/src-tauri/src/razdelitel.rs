@@ -15,7 +15,7 @@ pub fn shag(hwnd:u64,w:u32,h:u32,percent:u32)->Option<u32>{
  })
 }
 #[cfg(target_os="windows")]
-fn pointer(hwnd:u64)->Option<(i32,i32,bool,bool)>{use windows::Win32::{Foundation::*,UI::{WindowsAndMessaging::*,Input::KeyboardAndMouse::*}};unsafe{let mut p=POINT::default();GetCursorPos(&mut p).ok()?;let own=WindowFromPoint(p)==HWND(hwnd as usize as *mut _);windows::Win32::Graphics::Gdi::ScreenToClient(HWND(hwnd as usize as *mut _),&mut p).ok()?;Some((p.x,p.y,GetAsyncKeyState(VK_LBUTTON.0 as i32)<0,own))}}
+fn pointer(hwnd:u64)->Option<(i32,i32,bool,bool)>{use windows::Win32::{Foundation::*,UI::{WindowsAndMessaging::*,Input::KeyboardAndMouse::*}};unsafe{let mut p=POINT::default();GetCursorPos(&mut p).ok()?;let own=WindowFromPoint(p)==HWND(hwnd as usize as *mut _);windows::Win32::Graphics::Gdi::ScreenToClient(HWND(hwnd as usize as *mut _),&mut p).ok().ok()?;Some((p.x,p.y,GetAsyncKeyState(VK_LBUTTON.0 as i32)<0,own))}}
 #[cfg(target_os="windows")]
 fn capture(hwnd:u64,on:bool){use windows::Win32::{Foundation::HWND,UI::Input::KeyboardAndMouse::*};unsafe{if on{SetCapture(HWND(hwnd as usize as *mut _));}else{let _=ReleaseCapture();}}}
 #[cfg(target_os="windows")]

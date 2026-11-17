@@ -11,7 +11,7 @@ import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
 type Vkladka = { id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
-type Sessiya = { vkladki: Vkladka[]; aktivnaya: number };
+type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
 type Komanda = { deystvie: string; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
 export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta,panelZakladok=false,onToggleBookmarks=()=>{} }: {panelZakladok?:boolean;onToggleBookmarks?:()=>void; id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
@@ -256,7 +256,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </form>
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka}/>
-    {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал</button></div>}
+    {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
     {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();runFind(true,true);}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();runFind(false,true);}}}>
       <input ref={findInput} aria-label="Найти на странице" placeholder="Найти на странице…" value={findText} onChange={e=>setFindText(e.target.value)}/>
@@ -270,7 +270,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <div className="vypadajka menu-obychnyh" role="menu" aria-label="Действия с вкладкой" style={{ left: menu.x, top: menu.y, bottom: "auto" }} onClick={(e) => e.stopPropagation()}>
         <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya", adres: novayaStranica })}>Новая вкладка</button>
         <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya_privatnaya", adres: "about:blank" })}>Новая приватная вкладка</button>
-        <button role="menuitem" onClick={() => void zakrytMenu({deystvie:"vosstanovit_zakrytuyu"})}><span>Вернуть закрытую вкладку</span><kbd>Ctrl+Shift+T</kbd></button>
+        <button role="menuitem" disabled={!sessiya?.zakrytye?.length} onClick={() => void zakrytMenu({deystvie:"vosstanovit_zakrytuyu"})}><span>Вернуть закрытую вкладку</span><kbd>Ctrl+Shift+T</kbd></button>
         <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "obnovit", id: menu.v.id })}>Обновить</button>
         <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya", adres: menu.v.adres })}>Дублировать</button>
         <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "zakrepit", id: menu.v.id, zakreplena: !menu.v.zakreplena })}>{menu.v.zakreplena ? "Открепить" : "Закрепить"}</button>
