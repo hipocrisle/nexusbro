@@ -520,18 +520,18 @@ try:
         u.EnumChildWindows(hwnd,child,0)
         for target in targets:u.PostMessageW(target,0x0050,0,layout)
         time.sleep(.3)
-    input_layout('00000419');russian_shortcuts_ok=True;before_count=len(session()['vkladki'])
+    input_layout('00000419');russian_shortcuts_ok=True;ru_stage='cef_find';ru_error='';before_count=len(session()['vkladki'])
     try:
-        r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape')
-        gui.hotkey('ctrl','l');address=ui('Адрес страницы',['Edit']);deadline=time.monotonic()+3
+        r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape');time.sleep(.3)
+        ru_stage='address_focus';r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','l');address=ui('Адрес страницы',['Edit']);deadline=time.monotonic()+3
         while time.monotonic()<deadline and not address.has_keyboard_focus():time.sleep(.05)
         assert address.has_keyboard_focus(),'Ctrl+L did not focus the address input in Russian layout'
-        gui.hotkey('ctrl','t');wait_tabs(before_count+1);gui.hotkey('ctrl','w');wait_tabs(before_count)
-    except AssertionError:russian_shortcuts_ok=False
+        ru_stage='shell_new_tab';gui.hotkey('ctrl','t');wait_tabs(before_count+1);ru_stage='shell_close_tab';gui.hotkey('ctrl','w');wait_tabs(before_count)
+    except AssertionError as error:russian_shortcuts_ok=False;ru_error=ru_stage+': '+str(error)[:200]
     finally:input_layout('00000409')
     # Продолжаем независимые сценарии, но общий итог остаётся красным при провале RU.
     while len(session()['vkladki'])>before_count:gui.hotkey('ctrl','w');time.sleep(.15)
-    results.append({'native_russian_shortcuts_cef_and_shell':russian_shortcuts_ok})
+    results.append({'native_russian_shortcuts_cef_and_shell':russian_shortcuts_ok,'error':ru_error})
     # Собственное адресное меню обращается к системному clipboard, не WebView permissions.
     address=ui('Адрес страницы',['Edit']);address.click_input();gui.hotkey('ctrl','a');expected_address=address.iface_value.CurrentValue;address.click_input(button='right')
     def address_action(prefix):
@@ -604,6 +604,8 @@ try:
     gui.hotkey('ctrl','w');time.sleep(.3)
     results.append({'native_restore_recently_closed':True})
     # Во втором окне должны быть все Super, а выбор — локальным для окна.
+    # Ранее тест сворачивал панель; имя Super в UIA тогда скрыто за инициалом.
+    ui('Развернуть левую панель',['Button']).click_input();time.sleep(.4)
     assert storage('normal-loopback','normal-loopback-marker',origin=base)['seen']==['']
     ui('Новая супер-вкладка',['Button']).click_input();ui('Название',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('OtherSuperFixture',interval=.01)
     ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=other-super-start',interval=.001);ui('Создать',['Button']).click_input()
