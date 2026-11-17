@@ -1,11 +1,13 @@
 """Реальный CI-бинарник под Xvfb: процесс CEF, документ, два окна и две Super."""
-import argparse,http.server,json,os,pathlib,signal,subprocess,threading,time
+import argparse,http.server,json,os,pathlib,signal,subprocess,threading,time,urllib.parse
 from client import Client
 p=argparse.ArgumentParser();p.add_argument('--exe',required=True);p.add_argument('--cef',required=True);p.add_argument('--out',required=True);a=p.parse_args()
 root=pathlib.Path(a.out).resolve();root.mkdir(parents=True,exist_ok=False);exe=pathlib.Path(a.exe).resolve();cef=pathlib.Path(a.cef).resolve();checks=[]
+probes=[]
 class Page(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
-  body=b'<!doctype html><title>LinuxNativeSmoke</title><style>body{background:#185541}</style><p>CEF is alive</p>'
+  if self.path.startswith('/probe?'):probes.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True));self.send_response(204);self.end_headers();return
+  body=b"""<!doctype html><title>LinuxNativeSmoke</title><style>body{background:#185541}</style><p>CEF is alive</p><script>const q=new URLSearchParams(location.search);if(q.has('set'))document.cookie='smoke='+q.get('set')+';path=/;SameSite=Lax';fetch('/probe?'+new URLSearchParams({case:q.get('case')||'',cookie:document.cookie}));</script>"""
   self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(body)
  def log_message(self,*a):pass
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Page);threading.Thread(target=server.serve_forever,daemon=True).start();url=f'http://127.0.0.1:{server.server_port}/page'
@@ -35,6 +37,28 @@ try:
   raise AssertionError(('Document not loaded',session))
  for id,name in [('linux-a','LinuxA'),('linux-b','LinuxB')]:c.command('otkryt',nastrojki={'id':id,'nazvanie':name,'proxy':'','adres':url,'rezat_reklamu':True,'pustaya':False,'privatnaya':False});loaded(c,id)
  choose(c,'LinuxA');loaded(c,'linux-a');checks.append({'native_cef_document_loaded':True})
+ # Persisted color is cosmetic: changing it must not discard the running browser.
+ rows=c.command('spisok');meta=next(r for r in rows if r['id']=='linux-a');meta['cvet']='#5b9ee8';c.command('izmenit',nastrojki=meta)
+ c.wait('document.querySelector(".vkladka.aktivna").classList.contains("super-colored")')
+ assert next(r for r in c.command('spisok') if r['id']=='linux-a')['zapushchena']
+ assert next(r for r in json.loads((root/'data/vkladki.json').read_text()) if r['id']=='linux-a')['cvet']=='#5b9ee8'
+ checks.append({'native_color_persistence_without_browser_restart':True})
+ tab=c.command('obychnye_spisok',id='linux-a')['aktivnaya']
+ for suffix,case in [('?set=before-clear&case=set','set'),('?case=before','before')]:
+  c.command('obychnaya_komanda',id='linux-a',komanda={'deystvie':'pereyti','id':tab,'adres':url+suffix});loaded(c,'linux-a')
+  deadline=time.monotonic()+10
+  while time.monotonic()<deadline and not any(p.get('case')==[case] for p in probes):time.sleep(.1)
+ assert next(p for p in probes if p.get('case')==['before'])['cookie']==['smoke=before-clear'],probes
+ ack=c.command('ochistit_dannye_saytov',id='linux-a',cookies=True,cache=True);assert ack=={'cookies':True,'cache':True},ack
+ c.command('obychnaya_komanda',id='linux-a',komanda={'deystvie':'pereyti','id':tab,'adres':url+'?case=after'});loaded(c,'linux-a')
+ deadline=time.monotonic()+10
+ while time.monotonic()<deadline and not any(p.get('case')==['after'] for p in probes):time.sleep(.1)
+ assert next(p for p in probes if p.get('case')==['after'])['cookie']==[''],probes
+ suggestions=c.command('biblioteka_podskazki',query='127.0.0.1',limit=8);assert any(r['adres'].startswith(url) for r in suggestions),suggestions
+ receipt=c.command('dannye_ochistit',period='all',istoriya=True,zagruzki=False);assert receipt['istoriya']>0
+ assert c.command('biblioteka_spisok',razdel='istoriya')==[]
+ checks.append({'native_cookie_delete_observed_in_cef':True,'native_cache_completion_ack':True,'native_history_suggestions_and_cleanup':True})
+
  c.command('novoe_okno',id='linux-a',privatnaya=False);deadline=time.monotonic()+20
  while time.monotonic()<deadline:
   try:c2=Client(display=':96',port=9236,page_index=1);break

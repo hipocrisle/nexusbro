@@ -20,7 +20,7 @@ wrap_dev_tools_message_observer! {
                     }
                 }
             }
-            let _=self.tx.send(Sobytie::Sluzhebnoe(json!({"tip":"perevod","id":self.id,"error":"Не удалось прочитать текст страницы"})));
+            let _=self.tx.send(Sobytie::Sluzhebnoe(json!({"tip":"perevod","id":self.id,"token":self.token,"error":"Не удалось прочитать текст страницы"})));
         }
     }
 }
@@ -74,58 +74,127 @@ pub fn zapros(super_id:String,data:&Value,port:u16,kanal:SyncSender<Komanda>){
     let task=tauri::async_runtime::spawn(async move{
         let _cleanup=cleanup;
         let total=items.len() as u32;
-        let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).unwrap()).timeout(std::time::Duration::from_secs(20)).build();
+        let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).unwrap()).connect_timeout(std::time::Duration::from_secs(6)).timeout(std::time::Duration::from_secs(20)).build();
         let Ok(client)=client else{return};
-        // Один последовательный пакет вместо до тысячи одновременных q-запросов.
-        let mut batches:Vec<Vec<Tekst>>=Vec::new();let mut batch=Vec::new();let mut bytes=0;
-        for mut item in items {item.text=item.text.split_whitespace().collect::<Vec<_>>().join(" ");
-            if !batch.is_empty()&&(batch.len()>=12||bytes+item.text.len()>1400){batches.push(std::mem::take(&mut batch));bytes=0;}
-            bytes+=item.text.len();batch.push(item);
+        // Только RAM текущей страницы: одинаковый текст отправляется один раз,
+        // ответ разворачивается обратно на все исходные DOM IDs. Приватный текст
+        // не попадает в глобальный кэш, файлы или журнал.
+        let mut unique:Vec<Tekst>=Vec::new();
+        let mut by_text:HashMap<String,usize>=HashMap::new();
+        let mut aliases:HashMap<u32,Vec<u32>>=HashMap::new();
+        for item in items {
+            let text=item.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if let Some(index)=by_text.get(&text){aliases.entry(unique[*index].id).or_default().push(item.id);}
+            else{by_text.insert(text.clone(),unique.len());unique.push(Tekst{id:item.id,text});}
         }
-        if !batch.is_empty(){batches.push(batch);}
+        let mut batches=std::collections::VecDeque::new();let mut batch=Vec::new();let mut bytes=0;
+        for item in unique {
+            let size=item.text.len()+24;
+            if !batch.is_empty()&&(batch.len()>=24||bytes+size>2400){batches.push_back(std::mem::take(&mut batch));bytes=0;}
+            bytes+=size;batch.push(item);
+        }
+        if !batch.is_empty(){batches.push_back(batch);}
+        // Всего два сетевых запроса на страницу одновременно; не тысячи q и
+        // не искусственные паузы после каждого успешно переведённого пакета.
+        let mut active=tokio::task::JoinSet::new();
         let mut done=0;
-        for batch in batches {
-            let joined=batch.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join("\n");
-            let translated=perevesti(&client,&joined).await;
-            let mut result=Vec::new();let mut failure=None;
-            match translated {
-                Ok(text)=>{let lines:Vec<_>=text.split('\n').collect();
-                    if lines.len()==batch.len(){result=batch.iter().zip(lines).map(|(i,t)|(i.id,t.to_owned())).collect();}
-                    else{for item in &batch{match perevesti(&client,&item.text).await{Ok(t)=>result.push((item.id,t)),Err(e)=>{failure=Some(e);break;}}tokio::time::sleep(std::time::Duration::from_millis(200)).await;}}
-                },Err(e)=>failure=Some(e)
+        loop {
+            while active.len()<2 {
+                let Some(batch)=batches.pop_front() else{break};
+                let client=client.clone();
+                active.spawn(async move{perevesti_paket(&client,batch).await});
             }
-            done+=result.len() as u32;
+            let Some(answer)=active.join_next().await else{break};
+            let (mut result,failure)=match answer {
+                Ok(Ok(items))=>(items,None),
+                Ok(Err(error))=>(Vec::new(),Some(error)),
+                Err(_)=>(Vec::new(),Some("Не удалось завершить перевод пакета страницы".into())),
+            };
+            let extra=result.iter().flat_map(|(id,text)|aliases.get(id).into_iter().flatten().map(move |alias|(*alias,text.clone()))).collect::<Vec<_>>();
+            result.extend(extra);done+=result.len() as u32;
             if otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token:token.clone(),items:result,done,total,error:failure.clone()}).await.is_err(){return;}
-            if failure.is_some(){break;}
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+            if failure.is_some(){active.abort_all();break;}
         }
         if total==0{let _=otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token,items:Vec::new(),done:0,total:0,error:Some("На странице нет доступного текста для перевода".into())}).await;}
     });
     tasks.insert(key,(task_token,task.inner().abort_handle()));
 }
 async fn otpravit(tx:&SyncSender<Komanda>,label:&str,cmd:Komanda)->Result<(),()>{let mut cmd=if label.is_empty(){cmd}else{Komanda::OknoKomanda{label:label.into(),komanda:Box::new(cmd)}};loop{match tx.try_send(cmd){Ok(())=>return Ok(()),Err(std::sync::mpsc::TrySendError::Full(c))=>{cmd=c;tokio::time::sleep(std::time::Duration::from_millis(10)).await;},Err(_)=>return Err(())}}}
+// Разделители — private-use символы, не переводимые слова и не newline.
+// Обычные переносы Google вправе объединять: это вызывало до одного запроса
+// на каждый DOM-узел. При повреждённых границах текст не приклеивается не туда.
+fn marker(index:usize)->String{format!("\u{e000}{index}\u{e001}")}
+fn paket_text(items:&[Tekst])->String{
+    items.iter().enumerate().map(|(i,item)|format!("{}\n{}",marker(i),item.text)).collect::<Vec<_>>().join("\n")
+}
+fn razobrat_paket(text:&str,items:&[Tekst])->Result<Vec<(u32,String)>,String>{
+    let mut result=Vec::new();let mut rest=text;
+    for (index,item) in items.iter().enumerate(){
+        let current=marker(index);
+        let Some(tail)=rest.strip_prefix(current.as_str()) else{return Err("Сервис изменил границы текста. Перевод остановлен, оригинал сохранён.".into())};
+        let (translated,next)=if index+1<items.len(){
+            let next_marker=marker(index+1);
+            let Some((translated,_next))=tail.split_once(next_marker.as_str()) else{return Err("Сервис изменил границы текста. Перевод остановлен, оригинал сохранён.".into())};
+            (translated,&tail[translated.len()..])
+        }else{(tail,"")};
+        if translated.contains('\u{e000}')||translated.contains('\u{e001}') {return Err("Сервис вернул неожиданные границы текста".into());}
+        result.push((item.id,translated.trim().to_owned()));rest=next;
+    }
+    Ok(result)
+}
+async fn perevesti_paket(client:&reqwest::Client,items:Vec<Tekst>)->Result<Vec<(u32,String)>,String>{
+    if items.len()==1{return Ok(vec![(items[0].id,perevesti(client,&items[0].text).await?)]);}
+    // Не допускать неоднозначности, если исходный сайт сам содержит разделители.
+    if items.iter().any(|i|i.text.contains('\u{e000}')||i.text.contains('\u{e001}')){
+        return Err("Текст страницы содержит служебные разделители перевода".into());
+    }
+    razobrat_paket(&perevesti(client,&paket_text(&items)).await?,&items)
+}
 async fn perevesti(client:&reqwest::Client,text:&str)->Result<String,String>{
+    // Общий предел всех окон/страниц: auto-режим нескольких вкладок не
+    // превращается в шквал запросов. Permit освобождается и при abort.
+    static REQUESTS:OnceLock<tokio::sync::Semaphore>=OnceLock::new();
+    let _permit=REQUESTS.get_or_init(||tokio::sync::Semaphore::new(2)).acquire().await.map_err(|_|"Перевод остановлен".to_owned())?;
     let mut chunks=Vec::new();let mut chunk=String::new();
-    for c in text.chars(){if chunk.len()+c.len_utf8()>1800{chunks.push(std::mem::take(&mut chunk));}chunk.push(c);}
+    // Обычно пакет <2400 bytes. Отдельный длинный DOM-узел ограничен снимком
+    // 10k; режем безопасно по UTF-8, не превышая длину запроса сервиса.
+    for c in text.chars(){if chunk.len()+c.len_utf8()>4000{chunks.push(std::mem::take(&mut chunk));}chunk.push(c);}
     if !chunk.is_empty(){chunks.push(chunk);}
     let mut out=String::new();
     for chunk in chunks {
         let endpoint=if std::env::var_os("NEXUSBRO_TEST_DATA").is_some(){std::env::var("NEXUSBRO_TEST_TRANSLATE_URL").unwrap_or_else(|_|"https://translate.googleapis.com/translate_a/single".into())}else{"https://translate.googleapis.com/translate_a/single".into()};
         let mut answer=None;let mut last="Нет ответа от сервиса перевода через выбранный выход".to_owned();
-        for attempt in 0..3 {
-            let provider=if attempt==1{"gtx"}else{"dict-chrome-ex"};
-            match client.get(&endpoint).query(&[("client",provider),("sl","auto"),("tl","ru"),("dt","t"),("q",chunk.as_str())]).send().await{
+        for attempt in 0..2 {
+            match client.get(&endpoint).query(&[("client","dict-chrome-ex"),("sl","auto"),("tl","ru"),("dt","t"),("q",chunk.as_str())]).send().await{
                 Ok(r)=>{let status=r.status();if status.is_success(){
                     answer=Some(r.text().await.map_err(|_|"Не удалось прочитать ответ сервиса перевода".to_owned())?);break;
                 }last=if status.as_u16()==429{"Сервис ограничил частоту запросов (429). Повторите перевод позже.".into()}else{format!("Сервис перевода вернул HTTP {}. Оригинал можно восстановить.",status.as_u16())};
                 if status.as_u16()!=429&&!status.is_server_error(){break;}
+                // Не игнорировать Retry-After и не держать страницу в скрытых
+                // минутных повторах: при длинном cooldown нужен явный повтор.
+                if let Some(wait)=r.headers().get(reqwest::header::RETRY_AFTER).and_then(|h|h.to_str().ok()).and_then(|s|s.parse::<u64>().ok()){
+                    if wait>3{break;}
+                    if attempt==0{tokio::time::sleep(std::time::Duration::from_secs(wait.max(1))).await;continue;}
+                }
                 },Err(e)=>{last=if e.is_timeout(){"Истекло время ожидания перевода через выбранный выход".into()}else{"Не удалось подключиться к сервису перевода через выбранный выход".into()};}
             }
-            tokio::time::sleep(std::time::Duration::from_millis(700*(attempt+1))).await;
+            if attempt==0{tokio::time::sleep(std::time::Duration::from_millis(700)).await;}
         }
         let body=answer.ok_or(last)?;let v:Value=serde_json::from_str(&body).map_err(|_|"Сервис вернул некорректный ответ перевода".to_owned())?;
         let sentences=v[0].as_array().ok_or_else(||"Неизвестный формат ответа перевода".to_owned())?;
         for sentence in sentences {out.push_str(sentence[0].as_str().ok_or_else(||"В ответе перевода отсутствует текст".to_owned())?);}
     }
     Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn paket_preserves_dom_boundaries_even_without_newlines(){
+        let items=vec![Tekst{id:7,text:"Hello".into()},Tekst{id:9,text:"World".into()}];
+        assert_eq!(razobrat_paket("\u{e000}0\u{e001}Привет\u{e000}1\u{e001}Мир",&items).unwrap(),vec![(7,"Привет".into()),(9,"Мир".into())]);
+        assert!(razobrat_paket("Привет Мир",&items).is_err());
+        assert!(razobrat_paket("\u{e000}1\u{e001}Мир\u{e000}0\u{e001}Привет",&items).is_err());
+    }
 }

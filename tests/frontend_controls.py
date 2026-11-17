@@ -20,6 +20,7 @@ window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebvie
  if(cmd==='obychnye_spisok'){const v=window.__many?Array.from({length:window.__many},(_,i)=>({id:i+1,adres:'about:blank',zagolovok:'Tab number '+(i+1),zakreplena:false,otlozhena:false})):[{id:1,adres:'about:blank',zagolovok:'One',zakreplena:false,otlozhena:true},{id:2,adres:'about:blank',zagolovok:'Two',zakreplena:false,otlozhena:true}];return {aktivnaya:1,vkladki:v};}
  if(cmd==='aktivnaya')return window.__active;
  if(cmd==='dvizhok_est')return true;
+ if(cmd==='biblioteka_podskazki')return [];
  if(cmd==='biblioteka_spisok')return [{id:'history-test',adres:'https://example.test/history',nazvanie:'History fixture',vremya:1790000000,papka:''}];
  if(cmd==='zagruzki_spisok')return [{id:'download-test',super_id:'layout',name:'fixture.zip',url:'https://example.test/fixture.zip',path:'',percent:50,received:512,total:1024,speed:128,status:'Загружается',privatnaya:false}];
  if(cmd==='set_status')return {mode:'Напрямую',node:'',running:true,starting:false,tunnel_running:false,proxy_running:true};

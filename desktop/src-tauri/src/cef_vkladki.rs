@@ -200,7 +200,7 @@ impl Konteyner {
                     0,
                     WindowClass::INPUT_OUTPUT,
                     ekran.root_visual,
-                    &CreateWindowAux::new().colormap(ekran.default_colormap),
+                    &CreateWindowAux::new().colormap(ekran.default_colormap).background_pixel(0x171a24),
                 )?
                 .check()?;
             Ok(Self { okno, svyaz, private_context:std::rc::Rc::new(std::cell::RefCell::new(None)) })
@@ -225,6 +225,7 @@ impl Konteyner {
                     None,
                 )?
             };
+            crate::fon_konteynera::set(okno.0 as usize as u64,0x171a24);
             Ok(Self {
                 okno: okno.0 as usize as u32,
                 private_context:std::rc::Rc::new(std::cell::RefCell::new(None)),
@@ -235,6 +236,11 @@ impl Konteyner {
             let _ = (roditel, m);
             anyhow::bail!("система не поддерживается")
         }
+    }
+
+    fn fon(&self,rgb:u32){
+        crate::fon_konteynera::set(self.okno as u64,rgb);
+        #[cfg(target_os="linux")]{use x11rb::{connection::Connection,protocol::xproto::*};let _=self.svyaz.change_window_attributes(self.okno,&ChangeWindowAttributesAux::new().background_pixel(rgb));let _=self.svyaz.clear_area(false,self.okno,0,0,0,0);let _=self.svyaz.flush();}
     }
 
     fn razmer(&self) -> Option<(u32, u32)> {
@@ -387,7 +393,7 @@ pub fn rabotat(
         rx,
         brauzery,
         razmer,
-        devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40, ui_last:String::new(), perevody:HashMap::new(),
+        devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40,devtools_pixels:None, ui_last:String::new(), perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),
         label:String::new(), extras:HashMap::new(), closed_labels:Default::default(), closing:false, force_private:crate::privatnost::process_privatnyj(),
     };
     #[cfg(target_os = "windows")]
@@ -437,8 +443,12 @@ struct Rabota {
     devtools: HashMap<u64,u32>,
     devtools_pending:HashMap<u64,std::time::Instant>,
     devtools_procent: u32,
+    devtools_pixels:Option<u32>,
     ui_last: String,
     perevody: HashMap<u64,(String,Registration)>,
+    perevod_avto:HashMap<u64,String>,
+    perevod_due:HashMap<u64,std::time::Instant>,
+    perevod_ui:HashMap<u64,serde_json::Value>,
     label:String,
     extras:HashMap<String,Rabota>,
     closed_labels:std::collections::HashSet<String>,
@@ -470,7 +480,7 @@ impl Rabota {
             rx,
             brauzery,
             razmer,
-            devtools, devtools_pending, devtools_procent, ui_last, perevody, label, extras, closed_labels, closing, force_private,
+            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, force_private,
         } = self;
         let mut izmeneno = false;
         let mut layout_dirty=false;
@@ -510,7 +520,7 @@ impl Rabota {
                 Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
                 Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
                     Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
-                    Komanda::PerevodOtvet{..} | Komanda::Instrumenty{..} |
+                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::Instrumenty{..} |
                     Komanda::Issledovat{..} | Komanda::InstrumentyRazmer{..} |
                     Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
@@ -534,7 +544,7 @@ impl Rabota {
                     match sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya){Ok(b)=>{child_b.insert(tab.id,b);},Err(e)=>{eprintln!("cef: страница нового окна: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}}
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,ui_last:String::new(),perevody:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -740,20 +750,36 @@ impl Rabota {
                     devtools_pending.remove(&id);devtools.remove(&id);layout_dirty=true;
                     if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
                 }
-                Sobytie::Komanda(Komanda::ObnovitInterfeys)=>{ui_last.clear();}
-                Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(10,90);layout_dirty=true; }
+                Sobytie::Komanda(Komanda::FonKonteynera{rgb})=>{k.fon(rgb&0xffffff);}
+                Sobytie::Komanda(Komanda::OchistitDannye{token,cookies,cache})=>{
+                    let mut contexts=Vec::new();if let Some(c)=request_context_get_global_context(){contexts.push(c);}if let Some(c)=k.private_context.borrow().as_ref(){contexts.push(c.clone());}
+                    crate::dannye_saytov::ochistit(contexts,token,label.clone(),cookies,cache,tx.clone());
+                }
+                Sobytie::Komanda(Komanda::ObnovitInterfeys)=>{
+                    ui_last.clear();
+                    let mut status=perevod_ui.get(&s.aktivnaya).cloned().unwrap_or_else(||serde_json::json!({"tip":"perevod","id":s.aktivnaya,"original":true}));
+                    status["auto"]=serde_json::json!(s.vkladki.iter().find(|v|v.id==s.aktivnaya).is_some_and(|v|avto_dlya(perevod_avto,s.aktivnaya,&v.adres)));
+                    let _=tx.send(Sobytie::Sluzhebnoe(status));
+                }
+                Sobytie::Komanda(Komanda::PerevodAvto{id,enabled})=>{
+                    if enabled{if let Some(origin)=s.vkladki.iter().find(|v|v.id==id).and_then(|v|origin(&v.adres)){perevod_avto.insert(id,origin);if !perevody.contains_key(&id){perevod_due.insert(id,std::time::Instant::now());}}}
+                    else{perevod_avto.remove(&id);perevod_due.remove(&id);}
+                    let mut status=perevod_ui.get(&id).cloned().unwrap_or_else(||serde_json::json!({"tip":"perevod","id":id,"done":0,"total":0}));status["auto"]=serde_json::json!(enabled);perevod_ui.insert(id,status.clone());let _=tx.send(Sobytie::Sluzhebnoe(status));
+                }
+                Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(10,90);*devtools_pixels=None;layout_dirty=true; }
                 Sobytie::Komanda(Komanda::Perevesti{id}) => {
                     if let Some(b)=brauzery.get(&id){
                         let token=format!("{}-{}",id,std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
                         if let Some(registration)=crate::perevod::nachat(b,id,token.clone(),tx.clone()){
                             perevody.insert(id,(token,registration));
-                            let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"start":true,"done":0,"total":0})));
+                            let status=serde_json::json!({"tip":"perevod","id":id,"start":true,"done":0,"total":0,"auto":s.vkladki.iter().find(|v|v.id==id).is_some_and(|v|avto_dlya(perevod_avto,id,&v.adres))});perevod_ui.insert(id,status.clone());let _=tx.send(Sobytie::Sluzhebnoe(status));
                         } else {
                             let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"error":"Перевод доступен для загруженных веб-страниц. Попробуйте после загрузки."})));
                         }
                     }
                 }
                 Sobytie::Komanda(Komanda::PerevodOriginal{id}) => {
+                    perevod_avto.remove(&id);perevod_due.remove(&id);perevod_ui.remove(&id);
                     perevody.remove(&id);
                     if let Some(b)=brauzery.get(&id){crate::perevod::original(b);}
                     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));
@@ -762,7 +788,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::PerevodOtvet{id,token,items,done,total,error}) => {
                     if perevody.get(&id).is_some_and(|(t,_)|*t==token){
                         if let Some(b)=brauzery.get(&id){crate::perevod::primenit(b,&token,&items);}
-                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"done":done,"total":total,"error":error})));
+                        let status=serde_json::json!({"tip":"perevod","id":id,"done":done,"total":total,"error":error,"auto":s.vkladki.iter().find(|v|v.id==id).is_some_and(|v|avto_dlya(perevod_avto,id,&v.adres))});perevod_ui.insert(id,status.clone());let _=tx.send(Sobytie::Sluzhebnoe(status));
                     }
                 }
                 Sobytie::Komanda(Komanda::Nayti { id, text, vpered, dalshe }) => {
@@ -779,6 +805,8 @@ impl Rabota {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) { h.stop_finding(1);h.set_focus(1); }
                 }
                 Sobytie::Sluzhebnoe(mut data) => {
+                    if data["tip"]=="perevod"{if let Some(token)=data["token"].as_str(){let id=data["id"].as_u64().unwrap_or(0);if !perevody.get(&id).is_some_and(|(t,_)|t==token){continue;}data["auto"]=serde_json::json!(s.vkladki.iter().find(|v|v.id==id).is_some_and(|v|avto_dlya(perevod_avto,id,&v.adres)));perevod_ui.insert(id,data.clone());}}
+
                     if data["privatnaya"]==true{
                         let source=data["id"].as_u64().or_else(||data["tab_id"].as_u64());
                         if k.private_context.borrow().is_none()||!source.is_some_and(|id|PRIVATE_IDS.with(|ids|ids.borrow().contains(&id))){continue;}
@@ -819,9 +847,12 @@ impl Rabota {
                     }
                 }
                 Sobytie::Adres(id, u) => {
-                    if perevody.remove(&id).is_some(){
+                    let changed=s.vkladki.iter().find(|v|v.id==id).is_some_and(|v|bez_fragmenta(&v.adres)!=bez_fragmenta(&u));
+                    if changed{
+                        perevody.remove(&id);perevod_ui.remove(&id);perevod_due.remove(&id);
                         let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));
-                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"original":true})));
+                        if avto_dlya(perevod_avto,id,&u){perevod_due.insert(id,std::time::Instant::now()+std::time::Duration::from_millis(450));}
+                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod","id":id,"original":!avto_dlya(perevod_avto,id,&u),"auto":avto_dlya(perevod_avto,id,&u),"done":0,"total":0})));
                     }
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                         // CEF сообщает underlying URL даже для view-source. Режим
@@ -845,6 +876,8 @@ impl Rabota {
                         v.zagruzka = l;
                         v.nazad = n;
                         v.vpered = vp;
+                        if l{if perevody.remove(&id).is_some(){let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));}perevod_due.remove(&id);}
+                        else if avto_dlya(perevod_avto,id,&v.adres)&&!perevody.contains_key(&id){perevod_due.insert(id,std::time::Instant::now()+std::time::Duration::from_millis(250));}
                     }
                 }
             }
@@ -897,12 +930,16 @@ impl Rabota {
             }
         }
         devtools.retain(|id,_| brauzery.contains_key(id));
+        let now=std::time::Instant::now();
+        let due:Vec<u64>=perevod_due.iter().filter(|(_,at)|**at<=now).map(|(id,_)|*id).collect();
+        for id in due{if let Some(v)=s.vkladki.iter().find(|v|v.id==id){if v.zagruzka{continue;}if avto_dlya(perevod_avto,id,&v.adres){let _=tx.send(Sobytie::Komanda(Komanda::Perevesti{id}));}}perevod_due.remove(&id);}
+        perevod_avto.retain(|id,_|s.vkladki.iter().any(|v|v.id==*id));perevod_ui.retain(|id,_|brauzery.contains_key(id));perevod_due.retain(|id,_|brauzery.contains_key(id));
         perevody.retain(|id,_|{if brauzery.contains_key(id){true}else{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));false}});
         let has_tools=devtools.contains_key(&s.aktivnaya);
-        if has_tools {if let Some((w,h))=novyj {if let Some(p)=crate::razdelitel::shag(k.okno as u64,w,h,*devtools_procent){if p!=*devtools_procent{*devtools_procent=p;layout_dirty=true;}}}}
+        if has_tools {if let Some((w,h))=novyj {let panel=devtools_pixels.unwrap_or(w * *devtools_procent / 100);if let Some(p)=crate::razdelitel::shag(k.okno as u64,w,h,panel){if Some(p)!=*devtools_pixels{*devtools_pixels=Some(p);*devtools_procent=p.saturating_mul(100)/w.max(1);layout_dirty=true;}}}}
         if novyj!=*razmer||layout_dirty||izmeneno||fokus {
         if let Some((w,h))=novyj {
-            let panel=if has_tools { ((w * *devtools_procent / 100).max(280)).min(w.saturating_sub(280)) } else {0};
+            let panel=if has_tools { devtools_pixels.unwrap_or(w * *devtools_procent / 100).max(280).min(w.saturating_sub(280)) } else {0};
             for (id,b) in brauzery.iter() {
                 let width=if *id==s.aktivnaya && has_tools {w.saturating_sub(panel+6)} else {w};
                 let _=sistema::peremestit(handle(b),Mesto{x:0,y:0,w:width,h});
@@ -924,3 +961,7 @@ impl Rabota {
         Ok(())
     }
 }
+
+fn origin(url:&str)->Option<String>{reqwest::Url::parse(url).ok().filter(|u|matches!(u.scheme(),"http"|"https")).map(|u|u.origin().ascii_serialization())}
+fn avto_dlya(modes:&HashMap<u64,String>,id:u64,url:&str)->bool{origin(url).is_some_and(|value|modes.get(&id)==Some(&value))}
+fn bez_fragmenta(url:&str)->&str{url.split('#').next().unwrap_or(url)}

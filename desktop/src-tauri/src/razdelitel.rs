@@ -1,17 +1,17 @@
 //! Разделитель нативных CEF-панелей: указатель читается в потоке их UI.
 use std::{cell::RefCell,collections::HashMap};
-#[derive(Default)]struct Drag{down:bool,active:bool,hover:bool}
+#[derive(Default)]struct Drag{down:bool,active:bool,hover:bool,grab:i32}
 thread_local!{static DRAGS:RefCell<HashMap<u64,Drag>>=RefCell::new(HashMap::new());}
-pub fn shag(hwnd:u64,w:u32,h:u32,percent:u32)->Option<u32>{
+pub fn shag(hwnd:u64,w:u32,h:u32,panel:u32)->Option<u32>{
  let (x,y,down,own)=pointer(hwnd)?;
- let panel=((w*percent/100).max(280)).min(w.saturating_sub(280));
+ let panel=panel.max(280).min(w.saturating_sub(280));
  let border=w.saturating_sub(panel+6) as i32;
  let over=own&&x>=border&&x<border+6&&y>=0&&y<h as i32;
  DRAGS.with(|m|{let mut m=m.borrow_mut();let d=m.entry(hwnd).or_default();
-  if down&&!d.down&&over{d.active=true;capture(hwnd,true);}
+  if down&&!d.down&&over{d.active=true;d.grab=x-border;capture(hwnd,true);}
   if !down&&d.active{d.active=false;capture(hwnd,false);}
   d.down=down;let hover=over||d.active;if hover!=d.hover||(cfg!(target_os="windows")&&hover){cursor(hwnd,hover);d.hover=hover;}
-  if d.active&&w>560{Some((((w as i32-x).max(280) as u32).min(w-280)*100/w).clamp(10,90))}else{None}
+  if d.active&&w>560{Some(((w as i32-x+d.grab-6).max(280) as u32).min(w-280))}else{None}
  })
 }
 #[cfg(target_os="windows")]

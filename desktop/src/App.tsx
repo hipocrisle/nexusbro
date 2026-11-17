@@ -10,6 +10,10 @@ import {listenWindow as listen} from "./windowEvents";
 import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu, shrifty, Vyhod } from "./Nastrojki";
 import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";
+import "./superColors.css";
+
+const superColors = [{value:"",label:"Без цвета"},{value:"#5b9ee8",label:"Синий"},{value:"#56b6a2",label:"Бирюзовый"},{value:"#72b566",label:"Зелёный"},{value:"#d4ae55",label:"Золотой"},{value:"#dc9365",label:"Оранжевый"},{value:"#d77d8f",label:"Розовый"},{value:"#b48ad8",label:"Фиолетовый"}];
+function superColor(value?:string){return superColors.some(c=>c.value===value)?value:undefined;}
 
 type Nastrojki = {
   id: string;
@@ -21,6 +25,7 @@ type Nastrojki = {
   rezat_reklamu: boolean;
   pustaya: boolean;
   privatnaya?: boolean;
+  cvet?: string;
 };
 type Vidno = Nastrojki & { zapushchena: boolean; sohranena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
@@ -163,7 +168,7 @@ export default function App() {
     };
   }, [soobshchitMesto]);
 
-  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string, privatnaya=false) {
+  async function dobavit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string, privatnaya=false, cvet="") {
     setZanyat(true);
     setOshibka("");
     const id = (privatnaya?"pvt-":"sv") + Date.now().toString(36);
@@ -178,6 +183,7 @@ export default function App() {
           rezat_reklamu: rezat,
           pustaya,
           privatnaya,
+          cvet,
         },
       });
       if (!o.ok) {
@@ -224,14 +230,14 @@ export default function App() {
     setDialog(true);
   }
 
-  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string) {
+  async function pravit(nazvanie: string, proxy: string, adres: string, rezat: boolean, pustaya: boolean, proxy_uzel: string, _privatnaya=false, cvet="") {
     if (!pravka) return;
     setZanyat(true);
     setOshibka("");
     let success = false;
     try {
       const o = await invoke<Otvet>("izmenit", {
-        nastrojki: { ...pravka, nazvanie, proxy, proxy_uzel, adres: adres || "about:blank", rezat_reklamu: rezat, pustaya },
+        nastrojki: { ...pravka, nazvanie, proxy, proxy_uzel, cvet, adres: adres || "about:blank", rezat_reklamu: rezat, pustaya },
       });
       if (!o.ok) {
         setOshibka(o.soobshchenie);
@@ -351,7 +357,9 @@ export default function App() {
           {vkladki.map((v) => (
             <button
               key={v.id}
-              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "") + (dragSuper === v.id ? " drop-before" : "")}
+              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "") + (dragSuper === v.id ? " drop-before" : "") + (superColor(v.cvet) ? " super-colored" : "") + (v.privatnaya ? " super-private" : "")}
+              style={superColor(v.cvet) ? {"--super-color":v.cvet} as CSSProperties : undefined}
+              aria-label={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "")}
               draggable
               onDragStart={(e) => { e.dataTransfer.setData("application/nexusbro-super", v.id); e.dataTransfer.effectAllowed = "move"; void invoke("pokazat_dvizhki", { vidno: false }); }}
               onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) { e.preventDefault(); e.stopPropagation(); setDragSuper(v.id); } }}
@@ -365,13 +373,13 @@ export default function App() {
                 await invoke("pokazat_dvizhki", { vidno: false });
                 setMenyu(poziciya);
               }}
-              title={v.nazvanie + " — " + (v.proxy || "прямое соединение")}
+              title={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "") + " — " + (v.proxy || "прямое соединение")}
             >
               <span
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
-              <span className="imya">{v.privatnaya?"◐ ":""}{v.nazvanie}</span>{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
+              <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" title="Приватная супер-вкладка" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
@@ -663,7 +671,7 @@ function Dialog(props: {
   vyhody: Vyhod[];
   oshibka: string;
   onOtmena: () => void;
-  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string, privatnaya:boolean) => void;
+  onOk: (n: string, p: string, a: string, r: boolean, pu: boolean, uzel: string, privatnaya:boolean, cvet:string) => void;
 }) {
   const [nazvanie, setNazvanie] = useState(props.pravka?.nazvanie ?? "");
   const [proxy, setProxy] = useState(props.pravka?.proxy ?? "");
@@ -694,6 +702,7 @@ function Dialog(props: {
   const [adres, setAdres] = useState(props.pravka?.adres ?? "");
   const [rezat, setRezat] = useState(props.pravka?.rezat_reklamu ?? true);
   const [privatnaya,setPrivatnaya]=useState(props.pravka?.privatnaya??false);
+  const [cvet,setCvet]=useState(superColor(props.pravka?.cvet)??"");
   const [pustaya, setPustaya] = useState(props.pravka?.pustaya ?? false);
   return (
     <div className="zatemnenie" onClick={props.zanyat ? undefined : props.onOtmena}>
@@ -709,6 +718,14 @@ function Dialog(props: {
             placeholder="Работа"
           />
         </label>
+        <fieldset className="super-color-picker" disabled={props.zanyat}>
+          <legend>Цвет супер-вкладки</legend>
+          <div className="super-color-options">{superColors.map(c=><label key={c.value} title={c.label}>
+            <input type="radio" name="super-color" value={c.value} checked={cvet===c.value} onChange={()=>setCvet(c.value)} aria-label={c.label}/>
+            <span className={"super-color-swatch"+(c.value?"":" no-color")} style={c.value?{"--swatch-color":c.value} as CSSProperties:undefined}>{!c.value&&<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><path d="m4 14 10-10" stroke="currentColor" strokeWidth="1.5"/></svg>}</span>
+          </label>)}</div>
+          <small>Цветная метка видна и в свёрнутой панели. Замок обозначает приватную супер-вкладку независимо от цвета.</small>
+        </fieldset>
         {props.vyhody.length > 0 && <label>Сохранённое подключение<Vybor aria-label="Сохранённое подключение" value={!proxy ? "" : props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
           if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(""); setUzly([]); setZagruzka(false); }
         }}><option value="manual" disabled>Адрес введён вручную</option><option value="">Прямое соединение</option>{props.vyhody.map((v) => <option value={v.adres} key={v.id}>{v.nazvanie}</option>)}</Vybor></label>}
@@ -785,7 +802,7 @@ function Dialog(props: {
           <button
             className="glavnaya"
             disabled={props.zanyat || !nazvanie.trim()}
-            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya, uzel, privatnaya)}
+            onClick={() => props.onOk(nazvanie.trim(), proxy.trim(), adres.trim(), rezat, pustaya, uzel, privatnaya, cvet)}
           >
             {props.zanyat
               ? props.pravka

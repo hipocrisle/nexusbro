@@ -27,6 +27,7 @@ wrap_keyboard_handler! {
             if ctrl && e.modifiers & (1 << 3) != 0 {return 0;}
             let key=shortcut_code(e);
             let shift = e.modifiers & (1 << 1) != 0;
+            if ctrl&&shift&&key==46{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"ochistit-dannye","id":self.id})));return 1;}
             if ctrl&&key==78{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"novoe-okno","id":self.id,"privatnaya":shift})));return 1;}
             if ctrl&&shift&&key==66{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"panel-zakladok","id":self.id})));return 1;}
             if ctrl && matches!(key,72|74|66) {

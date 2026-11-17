@@ -6,6 +6,7 @@
 
 mod import_brauzera;
 mod razdelitel;
+mod fon_konteynera;
 mod okna_app;
 mod brauzer;
 mod sessiya;
@@ -25,6 +26,7 @@ mod devtools;
 mod perevod;
 mod privatnost;
 mod biblioteka;
+mod dannye_saytov;
 mod zagruzki;
 mod set_status;
 mod supervkladki;
@@ -49,6 +51,8 @@ pub struct Vidno {
 pub struct Nastrojki {
     pub id: String,
     pub nazvanie: String,
+    #[serde(default)]
+    pub cvet: String,
     #[serde(default)]
     pub poryadok: i64,
     /// Пусто = прямое соединение. Иначе вид `socks5://127.0.0.1:1080`.
@@ -332,6 +336,7 @@ async fn otkryt(
     s: State<'_, Sostoyanie>,
     mut nastrojki: Nastrojki,
 ) -> Result<Otvet, String> {
+    if !supervkladki::cvet_dopustim(&nastrojki.cvet){return Ok(net("Неизвестный цвет супер-вкладки"));}
     nastrojki.privatnaya|=privatnost::eto_id(&nastrojki.id);
     if nastrojki.privatnaya&&!privatnost::eto_id(&nastrojki.id){nastrojki.id=format!("pvt-{}",nastrojki.id);}
     let id = nastrojki.id.clone();
@@ -544,6 +549,7 @@ async fn podgotovit_dvizhok(
             // Поздние сообщения завершённого движка не должны менять новый сеанс.
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
+            if dannye_saytov::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
             let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");
             if data["tip"]=="novoe-okno"{let app=h_ui.clone();let id=id_ui.clone();let private=data["privatnaya"]==true;okna_app::zapros_okna(app,Some(id),private);return;}
@@ -766,6 +772,7 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
 /// остановленную просто перезаписываем.
 #[tauri::command]
 async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nastrojki) -> Result<Otvet, String> {
+    if !supervkladki::cvet_dopustim(&nastrojki.cvet){return Ok(net("Неизвестный цвет супер-вкладки"));}
     v_zhurnal_granica("izmenit", &nastrojki.id, "вход");
     let (staraya, aktivnaya_stranica) = {
         let v = s.vkladki.lock().unwrap();
@@ -773,6 +780,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
         (vk.nastrojki.clone(), vk.obychnye.as_ref().map(|s| s.aktivnaya))
     };
     if staraya.privatnaya!=nastrojki.privatnaya{return Ok(net("Приватный режим задаётся при создании супер-вкладки"));}
+    let nuzhen_restart=staraya.proxy!=nastrojki.proxy||staraya.proxy_uzel!=nastrojki.proxy_uzel||staraya.adres!=nastrojki.adres||staraya.rezat_reklamu!=nastrojki.rezat_reklamu||staraya.pustaya!=nastrojki.pustaya;
     let smena_seti = staraya.proxy != nastrojki.proxy || staraya.proxy_uzel != nastrojki.proxy_uzel;
     if smena_seti && vpn::eto_podpiska(&nastrojki.proxy) {
         let proverka = vpn::proverit_podklyuchenie(&nastrojki.proxy, &nastrojki.proxy_uzel).await;
@@ -799,7 +807,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
     tauri::async_runtime::spawn_blocking(move || supervkladki::obnovit_sohranennye(|list| {
         if let Some(n) = list.iter_mut().find(|n| n.id == archive.id) { *n = archive; }
     })).await.map_err(|e| e.to_string())??;
-    if rabotaet {
+    if rabotaet && nuzhen_restart {
         ostanovit_vnutri(&s, &nastrojki.id).await;
         let result = zapustit_vnutri(&app, &s, &nastrojki.id).await;
         if result.ok {
@@ -1201,7 +1209,7 @@ pub fn run() {
                     let s: tauri::State<Sostoyanie> = h.state();
                     let n = Nastrojki {
                         id: "proba".into(),
-                        nazvanie: "Проба".into(), poryadok: 0,
+                        nazvanie: "Проба".into(), cvet:String::new(), poryadok: 0,
                         proxy: String::new(),
                         proxy_uzel: String::new(),
                         adres: "about:blank".into(),
@@ -1220,7 +1228,7 @@ pub fn run() {
                         shag("создаю вторую…");
                         let n2 = Nastrojki {
                             id: "proba2".into(),
-                            nazvanie: "Проба2".into(), poryadok: 1,
+                            nazvanie: "Проба2".into(), cvet:String::new(), poryadok: 1,
                             proxy: String::new(),
                             proxy_uzel: String::new(),
                             adres: "about:blank".into(),
@@ -1315,6 +1323,7 @@ pub fn run() {
             set_status::set_status,set_status::set_proverit_ip,
             zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
             import_brauzera::import_istochniki,import_brauzera::import_nachat,import_brauzera::import_status,import_brauzera::import_otmenit,
+            dannye_saytov::ochistit_dannye_saytov,biblioteka::biblioteka_podskazki,biblioteka::dannye_ochistit,
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,

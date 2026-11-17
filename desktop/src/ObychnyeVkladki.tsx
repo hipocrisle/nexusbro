@@ -12,7 +12,7 @@ import { createPortal } from "react-dom";
 
 type Vkladka = { id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
-type Komanda = { deystvie: string; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
+type Komanda = { deystvie: string;enabled?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
 export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta,panelZakladok=false,onToggleBookmarks=()=>{} }: {panelZakladok?:boolean;onToggleBookmarks?:()=>void; id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
   const [receivedSession,setReceivedSession]=useState<{owner:string|null;data:Sessiya}|null>(null);
@@ -20,6 +20,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const setSessiya=(data:Sessiya|null)=>setReceivedSession(data?{owner:id,data}:null);
   const [adres, setAdres] = useState("");
   const [pravka, setPravka] = useState(false);
+  const [suggestions,setSuggestions]=useState<{adres:string;nazvanie:string;istochnik:string}[]>([]);
   const [oshibka, setOshibka] = useState("");
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; v: Vkladka } | null>(null);
@@ -29,7 +30,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const findInput = useRef<HTMLInputElement>(null);
   const findTimer = useRef<ReturnType<typeof setTimeout>>();
   const lastFind = useRef("");
-  const [translation,setTranslation]=useState<{done:number;total:number;error?:string|null}|null>(null);
+  const [translation,setTranslation]=useState<{done:number;total:number;auto?:boolean;error?:string|null}|null>(null);
   const [toolsOpen,setToolsOpen]=useState(false);
   const [findOpen, setFindOpen] = useState(false), [findText, setFindText] = useState("");
   const [matches, setMatches] = useState({count:0, active:0});
@@ -95,6 +96,20 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   useEffect(()=>{let live=true;const refresh=()=>invoke<{adres:string}[]>("biblioteka_spisok",{razdel:"zakladki"}).then(rows=>{if(live)setBookmarked(rows.some(x=>x.adres===aktivnaya?.adres));}).catch(()=>{});void refresh();const off=listen("zakladki-izmenilis",refresh);return()=>{live=false;void off.then(f=>f());};},[aktivnaya?.adres]);
   async function toggleBookmark(){if(!aktivnaya)return;try{const added=await invoke<boolean>("zakladki_pereklyuchit",{adres:aktivnaya.adres,nazvanie:aktivnaya.zagolovok});setBookmarked(added);setBookmarkMessage(added?"Закладка добавлена":"Закладка удалена");}catch(e){setOshibka(String(e));}}
   useEffect(() => { if (!pravka) setAdres(aktivnaya?.adres ?? ""); }, [aktivnaya?.adres, aktivnaya?.id, pravka]);
+  useEffect(()=>{
+    let live=true;setSuggestions([]);
+    if(!pravka||!adres.trim())return;
+    const timer=setTimeout(()=>{void invoke<{adres:string;nazvanie:string;istochnik:string}[]>("biblioteka_podskazki",{query:adres,limit:8}).then(rows=>{if(live)setSuggestions(Array.isArray(rows)?rows:[]);}).catch(()=>{if(live)setSuggestions([]);});},80);
+    return()=>{live=false;clearTimeout(timer);};
+  },[adres,pravka,id,aktivnaya?.id]);
+  useEffect(()=>{
+    if(!id||!sessiya)return;
+    const sync=()=>{const hex=getComputedStyle(document.documentElement).getPropertyValue("--fon2").trim();if(/^#[0-9a-f]{6}$/i.test(hex))void invoke("obychnaya_komanda",{id,komanda:{deystvie:"fon_konteynera",rgb:parseInt(hex.slice(1),16)}}).catch(()=>{});};
+    sync();const observer=new MutationObserver(sync);observer.observe(document.documentElement,{attributes:true,attributeFilter:["data-tema"]});
+    const media=matchMedia("(prefers-color-scheme: light)");media.addEventListener("change",sync);
+    return()=>{observer.disconnect();media.removeEventListener("change",sync);};
+  },[id,!!sessiya]);
+
   useEffect(() => {
     if (!aktivnaya || aktivnaya.adres !== "about:blank") return;
     let zhiv = true;
@@ -166,11 +181,11 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     setTranslation(null);setToolsOpen(false);setFindOpen(false);setFindText("");setMatches({count:0,active:0});
   }, [id,aktivnaya?.id,aktivnaya?.adres]);
   useEffect(() => {
-    const off=listen<{super_id:string;data:{tip:string;id:number;open?:boolean;count?:number;active?:number;procent?:number;start?:boolean;original?:boolean;done?:number;total?:number;error?:string|null}}>("stranica-ui",e=>{
+    const off=listen<{super_id:string;data:{tip:string;id:number;open?:boolean;auto?:boolean;count?:number;active?:number;procent?:number;start?:boolean;original?:boolean;done?:number;total?:number;error?:string|null}}>("stranica-ui",e=>{
       if(e.payload.super_id!==id||e.payload.data.id!==aktivnaya?.id)return;
       if(e.payload.data.tip==="panel-zakladok"){onToggleBookmarks();return;}
       if(e.payload.data.tip==="zakladka"){void toggleBookmark();return;}
-      if(e.payload.data.tip==="perevod"){const d=e.payload.data;setTranslation(d.original?null:{done:d.done??0,total:d.total??0,error:d.error});return;}
+      if(e.payload.data.tip==="perevod"){const d=e.payload.data;setTranslation(d.original&&!d.auto?null:{done:d.done??0,total:d.total??0,auto:!!d.auto,error:d.error});return;}
       if(e.payload.data.tip==="devtools-error"){setOshibka(e.payload.data.error||"Не удалось открыть инструменты разработчика");return;}
       if(e.payload.data.tip==="devtools"){setToolsOpen(!!e.payload.data.open);return;}
       if(e.payload.data.tip!=="poisk")return;
@@ -227,7 +242,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
             onClick={(e) => { e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); }}><Icon name="close" size={13} /></button>}
         </div>)}
       </div><button className="novaya-obychnaya" title="Новая обычная вкладка" aria-label="Новая обычная вкладка" disabled={!id}
-        onClick={() => void poslat({ deystvie: "novaya", adres: novayaStranica })}><Icon name="plus" size={18} /></button><BrowserMenu label="Варианты новой вкладки" className="new-tab-options" items={[{label:"Новая обычная вкладка",shortcut:"Ctrl+T",action:()=>poslat({deystvie:"novaya",adres:novayaStranica})},{label:"Новая приватная вкладка",action:()=>poslat({deystvie:"novaya_privatnaya",adres:novayaStranica})}]}><span aria-hidden="true">⌄</span></BrowserMenu>
+        onClick={() => void poslat({ deystvie: "novaya", adres: novayaStranica })}><Icon name="plus" size={18} /></button><BrowserMenu label="Варианты новой вкладки" className="new-tab-options" items={[{label:"Новая обычная вкладка",shortcut:"Ctrl+T",action:()=>poslat({deystvie:"novaya",adres:novayaStranica})},{label:"Новая приватная вкладка",action:()=>poslat({deystvie:"novaya_privatnaya",adres:novayaStranica})}]}><Icon name="chevronDown" size={14}/></BrowserMenu>
       </div>
     </div>
     {aktivnaya?.privatnaya&&<div className="private-notice">Приватная вкладка · История и cookies не сохраняются после закрытия приватных вкладок. Сетевой выход — этой супер-вкладки.</div>}
@@ -243,7 +258,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button type="button" title="Назад" disabled={!aktivnaya?.nazad} onClick={() => void poslat({ deystvie: "nazad", id: aktivnaya?.id })}><Icon name="back" size={17} /></button>
       <button type="button" title="Вперёд" disabled={!aktivnaya?.vpered} onClick={() => void poslat({ deystvie: "vpered", id: aktivnaya?.id })}><Icon name="forward" size={17} /></button>
       <button type="button" title="Обновить страницу" disabled={!aktivnaya} onClick={() => void poslat({ deystvie: "obnovit", id: aktivnaya?.id })}><Icon name="reload" size={17} /></button>
-      <input ref={pole} aria-label="Адрес страницы" placeholder="Введите адрес" disabled={!aktivnaya}
+      <input ref={pole} aria-label="Адрес страницы" placeholder="Введите адрес" disabled={!aktivnaya} list="address-history" autoComplete="off" spellCheck={false}
         value={adres}
         onPointerDown={e=>{addressPointer.current=addressDown(e.currentTarget,e.button,e.clientX,e.clientY);}}
         onFocus={()=>setPravka(true)}
@@ -253,8 +268,10 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onBlur={()=>{addressPointer.current=null;if(!addressMenuOpen.current)setPravka(false);}}
         onChange={e=>setAdres(e.target.value)} />
 
+      <datalist id="address-history">{suggestions.map(row=><option key={row.adres} value={row.adres} label={row.nazvanie||row.adres}/>)}</datalist>
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
       <SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
+       {label:"Удалить данные браузера…",shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
        {label:"Новое окно",shortcut:"Ctrl+N",action:()=>invoke("novoe_okno",{id,privatnaya:false})},
        {label:"Новое приватное окно",shortcut:"Ctrl+Shift+N",action:()=>invoke("novoe_okno",{id,privatnaya:true})},null,
        ...([['История','Ctrl+H','istoriya'],['Закладки','Ctrl+B','zakladki'],['Загрузки','Ctrl+J','zagruzki']] as const).map(([label,shortcut,section])=>({label,shortcut,keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:section}));}})),null,
@@ -266,7 +283,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </form>
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
-    {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал</button></div>}
+    {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<label className="translation-auto"><input type="checkbox" checked={!!translation.auto} onChange={e=>{if(aktivnaya)void poslat({deystvie:"perevod_avto",id:aktivnaya.id,enabled:e.target.checked});}}/>Автоперевод этого сайта</label><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал и выключить</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
     {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();runFind(true,true);}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();runFind(false,true);}}}>
       <input ref={findInput} aria-label="Найти на странице" placeholder="Найти на странице…" value={findText} onChange={e=>setFindText(e.target.value)}/>

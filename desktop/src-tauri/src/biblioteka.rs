@@ -62,3 +62,70 @@ pub async fn zakladki_pereklyuchit(app:tauri::AppHandle,adres:String,nazvanie:St
  zapisat("zakladki.json",&items)?;!exists};
  let _=app.emit("zakladki-izmenilis",());Ok(added)
 }
+
+#[derive(Clone,Serialize)]
+pub struct Podskazka{pub adres:String,pub nazvanie:String,pub istochnik:String,pub vremya:u64}
+fn adres_bez_shemy(value:&str)->&str{
+ let without_scheme=value.strip_prefix("https://").or_else(||value.strip_prefix("http://")).unwrap_or(value);
+ without_scheme.strip_prefix("www.").unwrap_or(without_scheme)
+}
+fn podskazki(history:Vec<Zapis>,bookmarks:Vec<Zapis>,query:&str,limit:usize)->Vec<Podskazka>{
+ let query=query.trim().to_lowercase();if query.is_empty()||query.chars().count()>512{return vec![];}
+ let needle=adres_bez_shemy(&query);
+ let mut unique:HashMap<String,Podskazka>=HashMap::new();
+ for (source,items) in [("istoriya",history),("zakladki",bookmarks)]{
+  for item in items{if !network(&item.adres){continue;}
+   match unique.get_mut(&item.adres){
+    Some(old)=>{old.vremya=old.vremya.max(item.vremya);if source=="zakladki"{old.istochnik=source.into();if !item.nazvanie.is_empty(){old.nazvanie=item.nazvanie;}}},
+    None=>{unique.insert(item.adres.clone(),Podskazka{adres:item.adres,nazvanie:item.nazvanie,istochnik:source.into(),vremya:item.vremya});}
+   }
+  }
+ }
+ let mut results=unique.into_values().filter_map(|item|{
+  let address=item.adres.to_lowercase();let address=adres_bez_shemy(&address);
+  let title=item.nazvanie.to_lowercase();
+  let rank=if address==needle{0}else if address.starts_with(needle){1}else if title.starts_with(&query){2}else if address.contains(needle)||title.contains(&query){3}else{return None;};
+  Some((rank,item))
+ }).collect::<Vec<_>>();
+ results.sort_by(|(ar,a),(br,b)|ar.cmp(br).then_with(||b.vremya.cmp(&a.vremya)).then_with(||a.adres.cmp(&b.adres)));
+ results.into_iter().take(limit.clamp(1,20)).map(|(_,i)|i).collect()
+}
+/// Suggestions are drawn exclusively from already persisted, non-private history/bookmarks.
+#[tauri::command]
+pub async fn biblioteka_podskazki(query:String,limit:Option<usize>)->Result<Vec<Podskazka>,String>{
+ let _lock=IO.lock().map_err(|e|e.to_string())?;
+ Ok(podskazki(chitat("istoriya.json"),chitat("zakladki.json"),&query,limit.unwrap_or(8)))
+}
+fn nachalo_perioda(period:&str,now:u64)->Result<Option<u64>,String>{
+ let seconds=match period{"hour"=>3600,"day"=>86400,"week"=>7*86400,"month"=>28*86400,"all"=>return Ok(None),_=>return Err("Неизвестный период очистки".into())};
+ Ok(Some(now.saturating_sub(seconds)))
+}
+#[derive(Serialize)]
+pub struct Ochistka{pub istoriya:usize,pub zagruzki:usize}
+#[tauri::command]
+pub async fn dannye_ochistit(app:tauri::AppHandle,period:String,istoriya:bool,zagruzki:bool)->Result<Ochistka,String>{
+ let since=nachalo_perioda(&period,vremya())?;
+ let removed=if istoriya{
+  let _lock=IO.lock().map_err(|e|e.to_string())?;let mut items=chitat("istoriya.json");let before=items.len();
+  items.retain(|i|since.is_some_and(|s|i.vremya<s));zapisat("istoriya.json",&items)?;before-items.len()
+ }else{0};
+ if istoriya{let _=app.emit("istoriya-izmenilas",());}
+ // Deleting download records deliberately leaves files and live downloads intact.
+ let downloads=if zagruzki{crate::zagruzki::zagruzki_ochistit(None).await?}else{0};
+ Ok(Ochistka{istoriya:removed,zagruzki:downloads})
+}
+
+#[cfg(test)]
+mod tests{
+ use super::*;
+ fn item(address:&str,title:&str,time:u64)->Zapis{Zapis{id:address.into(),adres:address.into(),nazvanie:title.into(),vremya:time,papka:String::new()}}
+ #[test]fn address_prefix_outweighs_recent_title_match_and_deduplicates(){
+  let result=podskazki(vec![item("https://example.test/path","Old",1),item("https://other.test/","example",99)],vec![item("https://example.test/path","Saved",2)],"exa",8);
+  assert_eq!(result.len(),2);assert_eq!(result[0].adres,"https://example.test/path");assert_eq!(result[0].istochnik,"zakladki");assert_eq!(result[0].nazvanie,"Saved");
+ }
+ #[test]fn suggestions_reject_non_web_and_empty_queries(){
+  assert!(podskazki(vec![item("file:///private","secret",1)],vec![],"secret",8).is_empty());
+  assert!(podskazki(vec![item("https://example.test/","example",1)],vec![]," ",8).is_empty());
+ }
+ #[test]fn cleanup_period_is_bounded_and_rejects_unknown(){assert_eq!(nachalo_perioda("hour",7200).unwrap(),Some(3600));assert_eq!(nachalo_perioda("all",7200).unwrap(),None);assert!(nachalo_perioda("unknown",7200).is_err());}
+}

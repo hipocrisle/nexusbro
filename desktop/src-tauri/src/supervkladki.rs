@@ -1,6 +1,10 @@
 //! Сохранённые профили и порядок супер-вкладок.
 use crate::*;
 pub static SOHRANENNYE: Mutex<()> = Mutex::new(());
+/// Только палитра интерфейса; произвольный CSS из профиля не принимается.
+pub fn cvet_dopustim(cvet: &str) -> bool {
+    ["", "#5b9ee8", "#56b6a2", "#72b566", "#d4ae55", "#dc9365", "#d77d8f", "#b48ad8"].contains(&cvet)
+}
 pub fn obnovit_sohranennye(f: impl FnOnce(&mut Vec<Nastrojki>)) -> Result<(), String> {
     let _lock = SOHRANENNYE.lock().map_err(|e| e.to_string())?;
     let mut list = zagruzit_sohranennye(); f(&mut list); sohranit_sohranennye(&list)

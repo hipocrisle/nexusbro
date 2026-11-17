@@ -1,6 +1,7 @@
 import { CSSProperties } from "react";
 const paths: Record<string, string> = {
   globe: "M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0ZM3 12h18M12 3c4 4 4 14 0 18-4-4-4-14 0-18Z",
+  chevronDown: "m7 10 5 5 5-5",
   plus: "M12 5v14M5 12h14", close: "m6 6 12 12M18 6 6 18", chevron: "m9 5 7 7-7 7",
   back: "m12 5-7 7 7 7M5 12h14", forward: "m12 5 7 7-7 7M5 12h14", reload: "M20 7v5h-5M20 12a8 8 0 1 0-2 5M20 7l-3-3",
   settings: "M9 3h6l1 3 3 1 2 5-2 5-3 1-1 3H9l-1-3-3-1-2-5 2-5 3-1 1-3ZM15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z",

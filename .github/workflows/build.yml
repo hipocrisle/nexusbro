@@ -39,6 +39,9 @@ jobs:
           python3 tests/browser_ui_0213.py
           python3 tests/address_selection.py
           python3 tests/translation_dom.py
+          python3 tests/library_state_0214.py
+          python3 tests/super_colors_0214.py
+          python3 tests/address_autocomplete_0214.py
   build:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
@@ -216,6 +219,9 @@ jobs:
           python3 tests/browser_ui_0213.py
           python3 tests/address_selection.py
           python3 tests/translation_dom.py
+          python3 tests/library_state_0214.py
+          python3 tests/super_colors_0214.py
+          python3 tests/address_autocomplete_0214.py
 
       - name: Проверить CEF и окна Linux под Xvfb
         if: matrix.os == 'ubuntu-24.04'

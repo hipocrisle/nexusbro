@@ -31,7 +31,7 @@ try:
   context=browser.new_context(permissions=['clipboard-read','clipboard-write'],viewport={'width':1280,'height':820})
   page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.add_init_script(mock);page.goto(f'http://127.0.0.1:{server.server_port}')
   page.get_by_role('tab',name='One',exact=True).wait_for()
-  address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.fill('https://example.test/enter');address.press('Enter');expect(page.get_by_role('dialog',name='Сетевой выход',exact=True)).not_to_be_visible();assert page.evaluate("window.__args.some(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti')")
+  address=page.get_by_label('Адрес страницы',exact=True);address.fill('https://example.test/enter');address.press('Enter');expect(page.get_by_role('dialog',name='Сетевой выход',exact=True)).not_to_be_visible();assert page.evaluate("window.__args.some(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti')")
   assert page.locator('.library-shortcuts').count()==0
   network=page.get_by_role('button',name='Сетевой выход супер-вкладки',exact=True);expect(network).to_have_class('network-button network-up')
   buttons=[network,page.get_by_role('button',name='Защита супер-вкладки',exact=True),page.get_by_role('button',name='Меню NexusBro',exact=True)]
@@ -54,7 +54,7 @@ try:
   page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'е',code:'Unidentified',ctrlKey:true,bubbles:true}))")
   assert page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda').at(-1).args.komanda.deystvie")=='novaya'
   hides_before=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
-  address=page.get_by_role('textbox',name='Адрес страницы',exact=True);address.focus();address.press('Control+a');selected=address.input_value();address.click(button='right')
+  address=page.get_by_label('Адрес страницы',exact=True);address.focus();address.press('Control+a');selected=address.input_value();address.click(button='right')
   print('stage: address',flush=True)
   page.wait_for_function('window.__menuPopped===true')
   assert page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")==hides_before

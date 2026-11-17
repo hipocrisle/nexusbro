@@ -29,5 +29,19 @@ with sync_playwright() as pw:
  assert page.locator('h1').inner_text()=='Hello world'
  page.evaluate("history.pushState({},'', '/changed');window.__nexusbroTranslation.apply('test-two',[{id:0,text:'Wrong'}])")
  assert page.locator('h1').inner_text()=='Hello world'
- print(json.dumps({'same_document':True,'original_restored':True,'forms_code_and_drafts_untouched':True,'site_edits_preserved':True,'stale_token_and_navigation_rejected':True}))
+ page.set_content('<main><p id="inline"> Lesen <a href="/book">dieses Buch</a> heute. </p><p id="hidden-teaser">Hidden private teaser</p></main>')
+ page.locator('#hidden-teaser').evaluate("el=>el.style.visibility='hidden'")
+ snapshot=page.evaluate(script.replace('__TOKEN__',json.dumps('spaces')))
+ assert not any('Hidden private' in i['text'] for i in snapshot['items']),snapshot
+ page.evaluate("items=>window.__nexusbroTranslation.apply('spaces',items)",[{'id':i['id'],'text':{'Lesen':'Читать','dieses Buch':'эту книгу','heute.':'сегодня.'}[i['text'].strip()]} for i in snapshot['items']])
+ assert page.locator('#inline').text_content()==' Читать эту книгу сегодня. ',repr(page.locator('#inline').text_content())
+ page.evaluate('window.__nexusbroTranslation.restore()')
+ assert page.locator('#inline').text_content()==' Lesen dieses Buch heute. '
+ # Даже при большом меню первый пакет содержит видимый текст основной статьи.
+ page.set_content('<nav>'+''.join('<span>Navigation menu '+str(i)+'</span>' for i in range(1100))+'</nav><main><h1>Important visible article</h1></main>')
+ page.locator('nav').evaluate("el=>el.style.cssText='position:absolute;top:3000px'")
+ snapshot=page.evaluate(script.replace('__TOKEN__',json.dumps('priority')))
+ assert snapshot['items'][0]['text']=='Important visible article',snapshot['items'][:3]
+ assert len(snapshot['items'])==1000
+ print(json.dumps({'same_document':True,'original_restored':True,'forms_code_and_drafts_untouched':True,'site_edits_preserved':True,'stale_token_and_navigation_rejected':True,'inline_whitespace_preserved':True,'hidden_text_excluded':True,'visible_article_prioritized':True}))
  browser.close()

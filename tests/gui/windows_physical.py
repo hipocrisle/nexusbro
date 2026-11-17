@@ -61,7 +61,8 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             self.send_response(200);self.send_header('Content-Type','application/octet-stream');self.send_header('Content-Disposition','attachment; filename="nexusbro-fixture.txt"');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
         if path=='/storage-result':storage_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True))
         if path=='/translate':
-            body=json.dumps([[["Переведённые новости","Regular news",None,None]]],ensure_ascii=False).encode()
+            q=urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query).get("q",[""])[0]
+            body=json.dumps([[[q.replace("Regular news","Переведённые новости"),q,None,None]]],ensure_ascii=False).encode()
             self.send_response(200);self.send_header('Content-Type','application/json');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body);return
         if path=='/translation-result':translation_reports.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query))
         if path=='/sub':
@@ -72,7 +73,7 @@ class Fixture(http.server.BaseHTTPRequestHandler):
             body=b'''<!doctype html><title>StorageFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style><p>Findneedle Findneedle</p><script>const q=new URLSearchParams(location.search);let seen=localStorage.getItem('marker')||'';let cookie=document.cookie;if(q.has('set')){localStorage.setItem('marker',q.get('set'));document.cookie='marker='+q.get('set')+';path=/;SameSite=Lax'}fetch('/storage-result?'+new URLSearchParams({case:q.get('case'),seen,cookie}));</script>'''
         elif path.startswith('/ad-fixture'):
             body=b'''<!doctype html><title>AdsFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}.browser-promo,.advert{position:fixed;top:0;width:100%;height:60px;background:red}</style><main id="news">Regular news</main><a id="sponsored" style="display:block"><span style="display:block">Lexus RX 2023, auto.ru sponsored product</span><span style="display:block">&#1056;&#1045;&#1050;&#1051;&#1040;&#1052;&#1040;</span></a><div id="browser-ad" class="browser-promo">Download: &#1057;&#1082;&#1072;&#1095;&#1072;&#1081; Chrome</div><aside id="yandex-ad" class="advert">Yandex ad</aside><img src="/ads/banner.png"><script>
-new MutationObserver(()=>fetch('/translation-result?text='+encodeURIComponent(document.getElementById('news').textContent))).observe(document.getElementById('news'),{subtree:true,characterData:true,childList:true});
+new MutationObserver(()=>fetch('/translation-result?text='+encodeURIComponent(document.getElementById('news').textContent)+'&path='+encodeURIComponent(location.pathname))).observe(document.getElementById('news'),{subtree:true,characterData:true,childList:true});
 setTimeout(async()=>{let blocked=false;try{await fetch('/ads/fetch-promo')}catch(e){blocked=true}await fetch('/control?utm_source=news');const p=new URLSearchParams({path:location.pathname,sponsored:String(!!document.getElementById('sponsored')),browser:String(!!document.getElementById('browser-ad')),ad:String(!!document.getElementById('yandex-ad')),news:String(!!document.getElementById('news')),blocked:String(blocked)});await fetch('/ad-result?'+p);document.title='AdsFixtureVerified'},1500)
 </script>'''
         else:
@@ -283,12 +284,18 @@ try:
     assert colors and len(colors)>80,'DevTools remained a blank panel'
     # Раздвигаем настоящую границу между HWND, а не меняем React range.
     before=rect(tools[0]);border=before.left-3;y=(before.top+before.bottom)//2
+    gutter_rgb=ImageGrab.grab().getpixel((border,y))[:3]
+    assert max(gutter_rgb)<180,('DevTools gutter flashes white in dark theme',gutter_rgb)
+    results.append({'native_devtools_dark_gutter':True,'rgb':gutter_rgb})
     gui.moveTo(border,y);gui.mouseDown();gui.moveTo(border-110,y,duration=.6);gui.mouseUp();time.sleep(.4)
     after=rect(tools[0]);splitter_drag_ok=after.left<before.left-60
     results.append({'native_devtools_boundary_drag':splitter_drag_ok,'before':before.left,'after':after.left})
     ImageGrab.grab().save(run/'devtools.png')
     gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
     results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
+    r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','shift','delete')
+    ui('Период очистки истории',['ComboBox']);ui('Отмена',['Button']).click_input()
+    results.append({'native_ctrl_shift_delete_dialog_from_cef':True})
     # Physical HTML5 reorder in WebView2 (native drag handler must be disabled).
     gui.hotkey('ctrl','t');focus_after_tools=True
     try:wait_tabs(2)
@@ -425,7 +432,7 @@ try:
     assert hits.get('/probe'),hits
     assert not consoles()-old_consoles,'Xray created a visible console'
     def vpn_page(path,host='vpn-fixture.test'):
-        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');time.sleep(.2);gui.write('http://'+host+'/'+path,interval=.002);gui.press('enter')
+        ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');time.sleep(.2);gui.write('http://'+host+'/'+path,interval=.002);gui.press('enter')
         deadline=time.monotonic()+15
         while time.monotonic()<deadline and not hits.get('/'+path):time.sleep(.1)
         assert hits.get('/'+path),hits
@@ -476,10 +483,22 @@ try:
     while time.monotonic()<deadline and not any(r.get('text')==['Переведённые новости'] for r in translation_reports):time.sleep(.1)
     assert any(r.get('text')==['Переведённые новости'] for r in translation_reports),translation_reports
     translated=session();assert len(translated['vkladki'])==old_count and next(t for t in translated['vkladki'] if t['id']==translated['aktivnaya'])['adres']=='http://yandex.ru/ad-fixture',translated
-    ui('Показать оригинал',['Button']).click_input()
+    ui('Автоперевод этого сайта',['CheckBox']).click_input()
+    ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write('http://yandex.ru/ad-fixture-next',interval=.002);gui.press('enter')
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline and not any(r.get('path')==['/ad-fixture-next'] and r.get('text')==['Переведённые новости'] for r in translation_reports):time.sleep(.1)
+    assert any(r.get('path')==['/ad-fixture-next'] and r.get('text')==['Переведённые новости'] for r in translation_reports),translation_reports
+    ui('Показать оригинал и выключить',['Button']).click_input()
     deadline=time.monotonic()+10
     while time.monotonic()<deadline and not any(r.get('text')==['Regular news'] for r in translation_reports):time.sleep(.1)
     assert any(r.get('text')==['Regular news'] for r in translation_reports),translation_reports
+    translates_before=hits.get('/translate',0)
+    ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write('http://yandex.ru/ad-fixture-after-cancel',interval=.002);gui.press('enter')
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline and not any(r.get('path')==['/ad-fixture-after-cancel'] for r in ad_reports):time.sleep(.1)
+    assert any(r.get('path')==['/ad-fixture-after-cancel'] for r in ad_reports),ad_reports
+    time.sleep(1);assert hits.get('/translate',0)==translates_before
+    results.append({'native_auto_translation_same_site_navigation':True,'native_original_disables_auto':True})
     results.append({'native_translation_same_document_and_original':True,'translation_uses_super_proxy':hits.get('/translate',0)>0,'cef_ad_resources_cancelled':True,'cef_browser_and_yandex_banners_removed':True,'regular_news_preserved':True})
     # Выключатель защиты должен отключать и ResourceRequestHandler, и DOM-скрипт.
     app.terminate();app.wait(timeout=10);time.sleep(.5)
@@ -489,7 +508,7 @@ try:
     app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
     container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     # При выключенной защите красная плашка ожидаема: проверяем DOM через ответ фикстуры.
-    ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://yandex.ru/ad-fixture-off',interval=.002);gui.press('enter')
+    ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write('http://yandex.ru/ad-fixture-off',interval=.002);gui.press('enter')
     deadline=time.monotonic()+20
     while time.monotonic()<deadline and not any(r.get('path')==['/ad-fixture-off'] for r in ad_reports):time.sleep(.1)
     off=[r for r in ad_reports if r.get('path')==['/ad-fixture-off']]
@@ -501,7 +520,7 @@ try:
     def storage(case,value=None,origin='http://vpn-fixture.test'):
         params={'case':case}
         if value is not None:params['set']=value
-        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(origin+'/storage?'+urllib.parse.urlencode(params),interval=.001);gui.press('enter')
+        ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write(origin+'/storage?'+urllib.parse.urlencode(params),interval=.001);gui.press('enter')
         deadline=time.monotonic()+15
         while time.monotonic()<deadline:
             report=next((r for r in storage_reports if r.get('case')==[case]),None)
@@ -509,6 +528,13 @@ try:
             time.sleep(.1)
         raise AssertionError(('No storage report',case,storage_reports))
     storage('normal-main','normal-marker')
+    # Подсказка должна выбираться клавишами в настоящем WebView2 над CEF.
+    ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write('vpn-fixture.test/storage?case=normal-m',interval=.01);time.sleep(.8)
+    ImageGrab.grab().save(run/'address-suggestions.png')
+    gui.press('down');gui.press('enter');gui.press('enter');time.sleep(.7)
+    active=session();actual=next(t['adres'] for t in active['vkladki'] if t['id']==active['aktivnaya'])
+    assert actual=='http://vpn-fixture.test/storage?case=normal-main&set=normal-marker',('Native history suggestion not selected',actual)
+    results.append({'native_address_history_keyboard_selection':True})
     r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','f')
     ui('Найти на странице',['Edit']).click_input();gui.write('Findneedle');time.sleep(.8)
     deadline=time.monotonic()+6
@@ -532,7 +558,7 @@ try:
     input_layout('00000419');russian_shortcuts_ok=True;ru_stage='cef_find';ru_error='';before_count=len(session()['vkladki'])
     try:
         r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','f');ui('Найти на странице',['Edit']);gui.press('escape');time.sleep(.3)
-        ru_stage='address_focus';r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','l');address=ui('Адрес страницы',['Edit']);deadline=time.monotonic()+3
+        ru_stage='address_focus';r=rect(container);gui.click(r.left+60,r.top+90);gui.hotkey('ctrl','l');address=ui('Адрес страницы',['Edit','ComboBox']);deadline=time.monotonic()+3
         while time.monotonic()<deadline and not address.has_keyboard_focus():time.sleep(.05)
         assert address.has_keyboard_focus(),'Ctrl+L did not focus the address input in Russian layout'
         ru_stage='shell_new_tab';gui.hotkey('ctrl','t');wait_tabs(before_count+1);ru_stage='shell_close_tab';gui.hotkey('ctrl','w');wait_tabs(before_count)
@@ -542,7 +568,7 @@ try:
     while len(session()['vkladki'])>before_count:gui.hotkey('ctrl','w');time.sleep(.15)
     results.append({'native_russian_shortcuts_cef_and_shell':russian_shortcuts_ok,'error':ru_error})
     # Собственное адресное меню обращается к системному clipboard, не WebView permissions.
-    address=ui('Адрес страницы',['Edit']);address.click_input();gui.hotkey('ctrl','a');expected_address=address.iface_value.CurrentValue;address.click_input(button='right')
+    address=ui('Адрес страницы',['Edit','ComboBox']);address.click_input();gui.hotkey('ctrl','a');expected_address=address.iface_value.CurrentValue;address.click_input(button='right')
     def address_action(prefix):
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
@@ -588,7 +614,7 @@ try:
     gui.hotkey('ctrl','shift','b');time.sleep(.3);assert not json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))['panel_zakladok']
     results.append({'native_bookmark_bar_toggle':True})
     gui.hotkey('ctrl','h');ui('Закрыть библиотеку',['Button']).click_input()
-    ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/download-fixture',interval=.001);gui.press('enter')
+    ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/download-fixture',interval=.001);gui.press('enter')
     deadline=time.monotonic()+15
     while time.monotonic()<deadline and not (run/'downloads/nexusbro-fixture.txt').exists():time.sleep(.1)
     assert (run/'downloads/nexusbro-fixture.txt').read_bytes()==b'NexusBro download fixture\n'*256
@@ -661,7 +687,7 @@ try:
         # Собираем остальные независимые результаты даже на старом бинарнике;
         # строгая проверка в конце всё равно запрещает зелёный итог.
         count=len(session()['vkladki']);r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','t');wait_tabs(count+1)
-        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','w');wait_tabs(count)
+        ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','w');wait_tabs(count)
 
     # A private ordinary tab shares the Super exit, but has neither normal cookies nor localStorage.
     r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
@@ -710,7 +736,7 @@ try:
     for path in data.rglob('*.json'):
         contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-super-canary' not in contents and 'private-super-marker' not in contents,path
     # Сочетание отправляем в браузер, а не в окно runner после запуска CEF.
-    ui('Адрес страницы',['Edit']).click_input()
+    ui('Адрес страницы',['Edit','ComboBox']).click_input()
     # Закрытие главного окна сохраняет дополнительное; последнее завершает приложение.
     gui.hotkey('ctrl','n');time.sleep(.8)
     deadline=time.monotonic()+20
