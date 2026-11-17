@@ -1161,7 +1161,7 @@ pub fn run() {
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_process::init())
         // Размер, позиция и монитор окна запоминаются сами.
-        .plugin(tauri_plugin_window_state::Builder::default().build())
+        .plugin(tauri_plugin_window_state::Builder::default().with_filter(|label|label=="main").build())
         .setup(|app| {
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {

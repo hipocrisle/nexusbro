@@ -640,7 +640,7 @@ try:
     assert session()['aktivnaya']==main_before_extra['aktivnaya']
     assert next(t for t in session()['vkladki'] if t['id']==session()['aktivnaya'])['adres']==next(t for t in main_before_extra['vkladki'] if t['id']==main_before_extra['aktivnaya'])['adres']
     results.append({'native_secondary_switches_supers_without_changing_main':True,'super_profiles_isolated_between_windows':True})
-    ui('Меню NexusBro',['Button']).click_input();ui('Настройки NexusBro',['MenuItem','Button']).click_input();ui('Закрыть настройки',['Button']).click_input()
+    ui('Меню NexusBro',['Button']).click_input();ui('Настройки NexusBro',['MenuItem']).click_input();ui('Закрыть настройки',['Button']).click_input()
     assert any(x.element_info.control_type=='Button' and 'Проба' in x.element_info.name for x in win.descendants()),'No Super sidebar in secondary window'
     results.append({'secondary_full_shell_and_local_menu':True})
     gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None

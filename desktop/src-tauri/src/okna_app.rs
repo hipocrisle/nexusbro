@@ -79,10 +79,15 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let mut query=reqwest::Url::parse("http://localhost/index.html").map_err(|e|e.to_string())?;
     query.query_pairs_mut().append_pair("okno",&label).append_pair("super",&id);
     let url=format!("index.html?{}",query.query().unwrap_or(""));
-    let title=s.vkladki.lock().unwrap().get(&id).map(|v|format!("NexusBro — {}{}",v.nastrojki.nazvanie,if privatnaya{" · приватное окно"}else{""})).unwrap_or_else(||"NexusBro".into());
+    let title=zagolovok(&s,&id,privatnaya);
+    let main=app.get_webview_window("main");let monitor=main.as_ref().and_then(|w|w.current_monitor().ok().flatten());
+    let (limit_w,limit_h)=monitor.as_ref().map(|m|{let k=m.scale_factor().max(0.1);let area=m.work_area();let w=if area.size.width>0{area.size.width}else{m.size().width};let h=if area.size.height>0{area.size.height}else{m.size().height};((w as f64/k-40.).max(320.),(h as f64/k-80.).max(240.))}).unwrap_or((1200.,800.));
+    let preferred=main.as_ref().and_then(|w|Some((w.inner_size().ok()?,w.scale_factor().ok()?))).map(|(size,k)|(size.width as f64/k,size.height as f64/k)).unwrap_or((1200.,800.));
+    let width=preferred.0.min(1200.).min(limit_w).max(900_f64.min(limit_w));let height=preferred.1.min(800.).min(limit_h).max(560_f64.min(limit_h));
+    let theme=main.as_ref().and_then(|w|w.theme().ok());let maximized=main.as_ref().is_some_and(|w|w.is_maximized().unwrap_or(false));
     s.okna.0.lock().unwrap().insert(label.clone(),Okno{others:Default::default(),pending_close:Default::default(),super_id:id,engine:0,hwnd:None,mesto:None,sessiya:None,hidden:false,closing:false,privatnaya,generation:Default::default()});
-    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(1200.,800.).min_inner_size(900.,560.).disable_drag_drop_handler().enable_clipboard_access().build(){
-        Ok(_)=>Ok(()),Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
+    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(width,height).min_inner_size(900_f64.min(limit_w),560_f64.min(limit_h)).theme(theme).disable_drag_drop_handler().enable_clipboard_access().build(){
+        Ok(window)=>{if let Some(m)=monitor{let area=m.work_area();let pos=if area.size.width>0{area.position}else{*m.position()};let _=window.set_position(tauri::PhysicalPosition::new(pos.x+20,pos.y+20));}if maximized{let _=window.maximize();}Ok(())},Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
     }
 }
 #[tauri::command]
@@ -156,5 +161,11 @@ pub async fn vybrat(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,window:ta
     };
     if cached{obolochka(&app,&s,&label);let session=s.okna.0.lock().unwrap().get(&label).and_then(|w|w.sessiya.clone());if let Some(session)=session{let _=app.emit_to(&label,"obychnye-izmenilis",serde_json::json!({"id":id,"sessiya":session}));}}
     else{podklyuchit(&app,&s,&label)?;}
+    let private=s.okna.0.lock().unwrap().get(&label).is_some_and(|w|w.privatnaya);let _=window.set_title(&zagolovok(&s,&id,private));
     Ok(crate::da())
+}
+
+fn zagolovok(s:&Sostoyanie,id:&str,private:bool)->String{
+ let (name,private)=s.vkladki.lock().unwrap().get(id).map(|v|(Some(v.nastrojki.nazvanie.clone()),private||v.nastrojki.privatnaya)).unwrap_or((None,private));
+ format!("NexusBro{}{}",name.map(|n|format!(" — {n}")).unwrap_or_default(),if private{" · приватное окно"}else{""})
 }
