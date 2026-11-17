@@ -171,9 +171,11 @@ try:
         while time.monotonic()<deadline:
             items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
             for x in items:
-                if x.is_visible() and x.is_enabled():return x
+                # WebView2 reports clipped form controls visible. Scroll BEFORE
+                # the coordinate click; otherwise its center can hit the backdrop.
                 try:x.iface_scroll_item.ScrollIntoView()
                 except Exception:pass
+                if x.is_visible() and x.is_enabled():return x
             if name in ['Отмена','Создать','Сохранить'] and scrolled<2 and time.monotonic()>deadline-28:
                 r=rect(hwnd);gui.moveTo((r.left+r.right)//2,r.bottom-150);gui.scroll(-4);scrolled+=1
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
