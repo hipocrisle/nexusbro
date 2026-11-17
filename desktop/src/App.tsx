@@ -26,6 +26,7 @@ type Vidno = Nastrojki & { zapushchena: boolean; sohranena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
 
 export default function App() {
+  useEffect(()=>{if(new URLSearchParams(location.search).has("okno"))void invoke("okno_gotovo").catch(e=>setOshibka(String(e)));},[]);
   const [versiya, setVersiya] = useState("");
   const [dragSuper, setDragSuper] = useState<string | null>(null);
   const [zashchita, setZashchita] = useState<Zhurnal | null>(null);
@@ -34,11 +35,13 @@ export default function App() {
     if (!zhurnalOtkryt) return;
     let active = true;
     const timer = setInterval(() => { const id = aktivnayaRef.current; if (id) void invoke<Zhurnal>("zhurnal_rezki", { id }).then((j) => { if (active) setZashchita(j); }).catch(() => {}); }, 1000);
-    return () => { active = false; clearInterval(timer); };
+  return () => { active = false; clearInterval(timer); };
   }, [zhurnalOtkryt]);
   const [nastrojki, setNastrojki] = useState<NastrojkiApp>(poUmolchaniyu);
   const nastrojkiRef = useRef(nastrojki);
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
+  useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setNastroykiOtkryty(true));};window.addEventListener("nexusbro-settings",open);return()=>window.removeEventListener("nexusbro-settings",open);},[]);
+  useEffect(()=>{const off=listen<NastrojkiApp>("nastrojki-izmenilis",e=>panel(e.payload));return()=>{void off.then(f=>f());};},[]);
   const [tyanem, setTyanem] = useState(false);
   const skrytiePriPeretaskivanii = useRef<Promise<unknown>>(Promise.resolve());
   const ocheredZapisi = useRef<Promise<unknown>>(Promise.resolve());
@@ -443,9 +446,9 @@ export default function App() {
       <div className="kolonka">
         {/* Тонкая полоса сверху: имя активной супер-вкладки и счётчики.
             Здесь же позже появятся обычные вкладки активной супер-вкладки. */}
-        <ObychnyeVkladki poleKontenta={mesto} novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
+        <ObychnyeVkladki panelZakladok={!!nastrojki.panel_zakladok} onToggleBookmarks={()=>{void sohranitNastrojki({...nastrojkiRef.current,panel_zakladok:!nastrojkiRef.current.panel_zakladok}).catch(e=>setOshibka(String(e)));}} poleKontenta={mesto} novayaStranica={nastrojki.novaya_stranica} poisk={nastrojki.poisk} id={aktivnaya} nazvanie={vkladki.find((v) => v.id === aktivnaya)?.nazvanie ?? ""}>
           {obnovlenie && <span className="schet" title="Обновление">{obnovlenie}</span>}
-          {aktivnaya && <button className="schet protection-button" title="Какие соединения заблокированы" aria-label="Защита супер-вкладки" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={16} /><span>Защита</span><b>{zarezano}</b></button>}
+          {aktivnaya && <button className="schet protection-button" title={"Защита · Заблокировано: "+zarezano} aria-label="Защита супер-вкладки" onClick={() => void otkrytZashchitu()}><Icon name="shield" size={18} /></button>}
         </ObychnyeVkladki>
         {progress && (
           <div className="polosa-progress">
@@ -776,7 +779,7 @@ function Dialog(props: {
             </small>
           </span>
         </label>
-        <label className="galka"><input type="checkbox" disabled={!!props.pravka||props.zanyat} checked={privatnaya} onChange={e=>setPrivatnaya(e.target.checked)}/><span>Приватная супер-вкладка<small>Cookies и вкладки не сохраняются после закрытия. Скачанные файлы остаются.</small></span></label>
+        <label className="galka"><input type="checkbox" disabled={!!props.pravka||props.zanyat} checked={privatnaya} onChange={e=>setPrivatnaya(e.target.checked)}/><span>Приватная супер-вкладка<small>Настройки супер-вкладки сохраняются. История, cookies и данные страниц — только до закрытия сеанса. Скачанные файлы остаются.</small></span></label>
         <div className="knopki">
           <button disabled={props.zanyat} onClick={props.onOtmena}>Отмена</button>
           <button

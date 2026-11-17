@@ -4,6 +4,8 @@
 //! выходом в сеть. Внутри неё человек открывает сколько угодно обычных
 //! вкладок, и весь сервис со всеми его адресами идёт через нужный выход.
 
+mod import_brauzera;
+mod razdelitel;
 mod okna_app;
 mod brauzer;
 mod sessiya;
@@ -110,7 +112,7 @@ fn sohranit_spisok(v: &[Nastrojki]) {
     if let Some(d) = f.parent() {
         let _ = std::fs::create_dir_all(d);
     }
-    if let Ok(s) = serde_json::to_string_pretty(&v.iter().filter(|n|!n.privatnaya).collect::<Vec<_>>()) {
+    if let Ok(s) = serde_json::to_string_pretty(&v) {
         let _ = std::fs::write(f, s);
     }
 }
@@ -120,7 +122,7 @@ fn sohranit_sohranennye(v: &[Nastrojki]) -> Result<(), String> {
     let d = f.parent().ok_or_else(|| "Нет каталога профилей".to_string())?;
     std::fs::create_dir_all(d).map_err(|e| e.to_string())?;
     let tmp = f.with_extension("tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(&v.iter().filter(|n|!n.privatnaya).collect::<Vec<_>>()).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+    std::fs::write(&tmp, serde_json::to_vec_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
     std::fs::rename(tmp, f).map_err(|e| e.to_string())
 }
 
@@ -279,7 +281,8 @@ fn zhurnal_rezki(s: State<Sostoyanie>, id: String) -> proxy::ZhurnalRezki {
 }
 
 #[tauri::command]
-fn aktivnaya(s: State<Sostoyanie>) -> Option<String> {
+fn aktivnaya(window:tauri::WebviewWindow,s: State<Sostoyanie>) -> Option<String> {
+    if window.label()!="main"{return s.okna.0.lock().unwrap().get(window.label()).filter(|w|!w.super_id.is_empty()).map(|w|w.super_id.clone());}
     s.aktivnaya.lock().unwrap().clone()
 }
 
@@ -325,6 +328,7 @@ async fn pokazat_dvizhki(app:tauri::AppHandle,window:tauri::WebviewWindow,s: Sta
 #[tauri::command]
 async fn otkryt(
     app: tauri::AppHandle,
+    window:tauri::WebviewWindow,
     s: State<'_, Sostoyanie>,
     mut nastrojki: Nastrojki,
 ) -> Result<Otvet, String> {
@@ -347,6 +351,7 @@ async fn otkryt(
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
+    if window.label()!="main"{return okna_app::vybrat(app,s,window,id).await;}
     Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
@@ -590,7 +595,8 @@ async fn podgotovit_dvizhok(
 }
 
 #[tauri::command]
-async fn pereklyuchit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+async fn pereklyuchit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+    if window.label()!="main"{return okna_app::vybrat(app,s,window,id).await;}
     v_zhurnal_granica("pereklyuchit", &id, "вход");
     let zapushchena = match s.vkladki.lock().unwrap().get_mut(&id) {
         Some(vk) => {
@@ -871,7 +877,6 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     };
     v_zhurnal_granica("zakryt", &id, "останавливаю движок");
     let nastrojki = vk.nastrojki;
-    let sohranit=sohranit && !nastrojki.privatnaya;
     let _ = tauri::async_runtime::spawn_blocking(move || {
         ostanovit_resursy(vk.proc, vk.nash_proxy, vk.tunnel);
     }).await;
@@ -918,8 +923,9 @@ fn sohranennye() -> Vec<Nastrojki> {
 /// Открыть сохранённую супер-вкладку заново: из списка сохранённых —
 /// в полосу, движок поднимается.
 #[tauri::command]
-async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
     if s.vkladki.lock().unwrap().contains_key(&id) {
+        if window.label()!="main"{return okna_app::vybrat(app,s,window,id).await;}
         return Ok(zapustit_vnutri(&app, &s, &id).await);
     }
     let saved_id = id.clone();
@@ -934,6 +940,7 @@ async fn vosstanovit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
+    if window.label()!="main"{return okna_app::vybrat(app,s,window,id).await;}
     Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
@@ -1185,7 +1192,7 @@ pub fn run() {
                         pustaya: true,
                         privatnaya: false,
                     };
-                    let o = tauri::async_runtime::block_on(otkryt(h.clone(), s, n))
+                    let o = tauri::async_runtime::block_on(otkryt(h.clone(), h.get_webview_window("main").expect("main"), s, n))
                         .unwrap_or_else(|e| net(e));
                     println!("САМОПРОВЕРКА: ok={} {}", o.ok, o.soobshchenie);
                     // СЦЕНАРИЙ 2: воспроизводим жалобы user'а — вторая
@@ -1205,7 +1212,7 @@ pub fn run() {
                             privatnaya: false,
                         };
                         let s2: tauri::State<Sostoyanie> = h.state();
-                        let o2 = tauri::async_runtime::block_on(otkryt(h.clone(), s2, n2))
+                        let o2 = tauri::async_runtime::block_on(otkryt(h.clone(), h.get_webview_window("main").expect("main"), s2, n2))
                             .unwrap_or_else(|e| net(e));
                         println!("СЦЕНАРИЙ: вторая ok={} {}", o2.ok, o2.soobshchenie);
                         std::thread::sleep(std::time::Duration::from_secs(4));
@@ -1289,8 +1296,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             okna_app::novoe_okno,okna_app::okno_gotovo,okna_app::pokazat_glavnoe,
             set_status::set_status,set_status::set_proverit_ip,
-            zagruzki::zagruzki_spisok,zagruzki::zagruzka_deystvie,
-            biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_import,
+            zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
+            import_brauzera::import_istochniki,import_brauzera::import_nachat,import_brauzera::import_status,import_brauzera::import_otmenit,
+            biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,

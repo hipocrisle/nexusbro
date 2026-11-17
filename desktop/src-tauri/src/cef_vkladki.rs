@@ -557,7 +557,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Novaya { adres }|Komanda::NovayaPrivatnaya { adres }) => {
                     if label.is_empty(){*closing=false;}
                     let mut novaya = s.clone();
-                    let private=private_command||*force_private||s.vkladki.iter().find(|v|v.id==s.aktivnaya).is_some_and(|v|v.privatnaya);
+                    let private=private_command||*force_private;
                     let id = novaya.dobavit(&adres);
                     novaya.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=private;
                     match sozdat_brauzer(&k, id, &adres, &tx, private) {
@@ -740,7 +740,7 @@ impl Rabota {
                     devtools_pending.remove(&id);devtools.remove(&id);layout_dirty=true;
                     if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
                 }
-                Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(25,65);layout_dirty=true; }
+                Sobytie::Komanda(Komanda::InstrumentyRazmer{procent}) => { *devtools_procent=procent.clamp(10,90);layout_dirty=true; }
                 Sobytie::Komanda(Komanda::Perevesti{id}) => {
                     if let Some(b)=brauzery.get(&id){
                         let token=format!("{}-{}",id,std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_nanos());
@@ -898,6 +898,7 @@ impl Rabota {
         devtools.retain(|id,_| brauzery.contains_key(id));
         perevody.retain(|id,_|{if brauzery.contains_key(id){true}else{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));false}});
         let has_tools=devtools.contains_key(&s.aktivnaya);
+        if has_tools {if let Some((w,h))=novyj {if let Some(p)=crate::razdelitel::shag(k.okno as u64,w,h,*devtools_procent){if p!=*devtools_procent{*devtools_procent=p;layout_dirty=true;}}}}
         if novyj!=*razmer||layout_dirty||izmeneno||fokus {
         if let Some((w,h))=novyj {
             let panel=if has_tools { ((w * *devtools_procent / 100).max(280)).min(w.saturating_sub(280)) } else {0};

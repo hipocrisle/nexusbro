@@ -7,11 +7,11 @@ import Icon from "./Icons";
 export type Vyhod = { id: string; nazvanie: string; adres: string; proxy_uzel?: string };
 export type NastrojkiApp = {
   tema: string; shrift: string; razmer_shrifta: number; plotnost: string; masshtab_stranic: number; vyhody: Vyhod[];
-  panel_shirina: number; panel_svernuta: boolean; novaya_stranica: string; poisk: string; avtoobnovleniya: boolean; apparatnoe_uskorenie: boolean;
+  panel_shirina: number; panel_svernuta: boolean; panel_zakladok: boolean; novaya_stranica: string; poisk: string; avtoobnovleniya: boolean; apparatnoe_uskorenie: boolean;
 };
 export const poUmolchaniyu: NastrojkiApp = {
   tema: "temnaya", shrift: "system", razmer_shrifta: 14, plotnost: "udobno", masshtab_stranic: 100, vyhody: [],
-  panel_shirina: 180, panel_svernuta: false, novaya_stranica: "about:blank", poisk: "duckduckgo", avtoobnovleniya: true, apparatnoe_uskorenie: false,
+  panel_shirina: 180, panel_svernuta: false, panel_zakladok: false, novaya_stranica: "about:blank", poisk: "duckduckgo", avtoobnovleniya: true, apparatnoe_uskorenie: false,
 };
 export const shrifty: Record<string, string> = { system: 'system-ui, "Segoe UI", sans-serif', segoe: '"Segoe UI", system-ui, sans-serif', arial: 'Arial, sans-serif', verdana: 'Verdana, sans-serif', georgia: 'Georgia, serif', consolas: 'Consolas, "Liberation Mono", monospace' };
 const temy = [{ id: "temnaya", name: "Полночь", color: "#4f9df8" }, { id: "svetlaya", name: "Светлая", color: "#ecf0f7" }, { id: "grafit", name: "Графит", color: "#8593a8" }, { id: "nexus", name: "Nexus", color: "#53d6a0" }, { id: "okean", name: "Океан", color: "#50bfe8" }, { id: "sliva", name: "Слива", color: "#bc91ec" }, { id: "pesok", name: "Песок", color: "#e5c291" }, { id: "sistemnaya", name: "Как в системе", color: "linear-gradient(135deg,#263040 50%,#ecf0f7 50%)" }];
@@ -44,6 +44,7 @@ export default function Nastrojki({ value, onSave, onClose }: { value: Nastrojki
         {section === "vkladki" && <><h3>Открывайте привычным способом</h3><label>Поисковая система<Vybor aria-label="Поисковая система" value={n.poisk} onChange={(e) => field("poisk", e.target.value)}><option value="duckduckgo">DuckDuckGo</option><option value="google">Google</option><option value="yandex">Яндекс</option></Vybor></label>
           <label>Страница новой вкладки<input aria-label="Страница новой вкладки" value={n.novaya_stranica} onChange={(e) => field("novaya_stranica", e.target.value)} placeholder="about:blank" /></label>
           <label>Масштаб страниц<Vybor aria-label="Масштаб страниц" value={n.masshtab_stranic} onChange={(e) => field("masshtab_stranic", Number(e.target.value))}>{[50,67,75,80,90,100,110,125,150,175,200].map((v) => <option key={v} value={v}>{v}%</option>)}</Vybor></label>
+          <label className="galka"><input type="checkbox" checked={!!n.panel_zakladok} onChange={e=>field("panel_zakladok",e.target.checked)}/><span>Показывать панель закладок<small>Также переключается через Ctrl+Shift+B.</small></span></label>
           <div className="shortcut-list"><span>Новая вкладка<kbd>Ctrl T</kbd></span><span>Закрыть вкладку<kbd>Ctrl W</kbd></span><span>Переключить вкладку<kbd>Ctrl Tab</kbd></span><span>Адресная строка<kbd>Ctrl L</kbd></span><span>Обновить страницу<kbd>F5</kbd></span><span>Обновить без кеша<kbd>Ctrl F5</kbd></span><span>Инструменты разработчика<kbd>F12</kbd></span><span>Исходный код<kbd>Ctrl U</kbd></span></div>
         </>}
         {section === "set" && <><h3>Подключения для супер-вкладок</h3><p className="muted">Сохраните свои подписки и прокси. У каждой супер-вкладки можно выбрать отдельное подключение и узел.</p>

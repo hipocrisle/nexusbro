@@ -74,40 +74,58 @@ pub fn zapros(super_id:String,data:&Value,port:u16,kanal:SyncSender<Komanda>){
     let task=tauri::async_runtime::spawn(async move{
         let _cleanup=cleanup;
         let total=items.len() as u32;
-        let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).unwrap()).timeout(std::time::Duration::from_secs(12)).build();
+        let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).unwrap()).timeout(std::time::Duration::from_secs(20)).build();
         let Ok(client)=client else{return};
-        let gate=std::sync::Arc::new(tokio::sync::Semaphore::new(4));
-        let mut jobs=tokio::task::JoinSet::new();
-        for item in items {let client=client.clone();let gate=gate.clone();jobs.spawn(async move{
-            let _permit=gate.acquire().await.map_err(|_|())?;
-            let text=perevesti(&client,&item.text).await.map_err(|_|())?;
-            Ok::<_,()>((item.id,text))
-        });}
-        let mut done=0;let mut buffer=Vec::new();let mut error=false;
-        while let Some(result)=jobs.join_next().await{
-            match result {Ok(Ok(item))=>{buffer.push(item);done+=1;},_=>{error=true;jobs.abort_all();}}
-            if !buffer.is_empty()&&(buffer.len()>=6||done==total||error){
-                if otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token:token.clone(),items:std::mem::take(&mut buffer),done,total,error:if error{Some("Сервис перевода недоступен. Можно вернуть оригинал и повторить.".into())}else{None}}).await.is_err(){jobs.abort_all();return;}
+        // Один последовательный пакет вместо до тысячи одновременных q-запросов.
+        let mut batches:Vec<Vec<Tekst>>=Vec::new();let mut batch=Vec::new();let mut bytes=0;
+        for mut item in items {item.text=item.text.split_whitespace().collect::<Vec<_>>().join(" ");
+            if !batch.is_empty()&&(batch.len()>=12||bytes+item.text.len()>1400){batches.push(std::mem::take(&mut batch));bytes=0;}
+            bytes+=item.text.len();batch.push(item);
+        }
+        if !batch.is_empty(){batches.push(batch);}
+        let mut done=0;
+        for batch in batches {
+            let joined=batch.iter().map(|i|i.text.as_str()).collect::<Vec<_>>().join("\n");
+            let translated=perevesti(&client,&joined).await;
+            let mut result=Vec::new();let mut failure=None;
+            match translated {
+                Ok(text)=>{let lines:Vec<_>=text.split('\n').collect();
+                    if lines.len()==batch.len(){result=batch.iter().zip(lines).map(|(i,t)|(i.id,t.to_owned())).collect();}
+                    else{for item in &batch{match perevesti(&client,&item.text).await{Ok(t)=>result.push((item.id,t)),Err(e)=>{failure=Some(e);break;}}tokio::time::sleep(std::time::Duration::from_millis(200)).await;}}
+                },Err(e)=>failure=Some(e)
             }
-            if error {let _=otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token:token.clone(),items:Vec::new(),done,total,error:Some("Сервис перевода недоступен. Можно вернуть оригинал и повторить.".into())}).await;break;}
+            done+=result.len() as u32;
+            if otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token:token.clone(),items:result,done,total,error:failure.clone()}).await.is_err(){return;}
+            if failure.is_some(){break;}
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
         if total==0{let _=otpravit(&kanal,&label,Komanda::PerevodOtvet{id,token,items:Vec::new(),done:0,total:0,error:Some("На странице нет доступного текста для перевода".into())}).await;}
     });
     tasks.insert(key,(task_token,task.inner().abort_handle()));
 }
 async fn otpravit(tx:&SyncSender<Komanda>,label:&str,cmd:Komanda)->Result<(),()>{let mut cmd=if label.is_empty(){cmd}else{Komanda::OknoKomanda{label:label.into(),komanda:Box::new(cmd)}};loop{match tx.try_send(cmd){Ok(())=>return Ok(()),Err(std::sync::mpsc::TrySendError::Full(c))=>{cmd=c;tokio::time::sleep(std::time::Duration::from_millis(10)).await;},Err(_)=>return Err(())}}}
-async fn perevesti(client:&reqwest::Client,text:&str)->Result<String,()>{
+async fn perevesti(client:&reqwest::Client,text:&str)->Result<String,String>{
     let mut chunks=Vec::new();let mut chunk=String::new();
-    for c in text.chars(){if chunk.len()+c.len_utf8()>900{chunks.push(std::mem::take(&mut chunk));}chunk.push(c);}
+    for c in text.chars(){if chunk.len()+c.len_utf8()>1800{chunks.push(std::mem::take(&mut chunk));}chunk.push(c);}
     if !chunk.is_empty(){chunks.push(chunk);}
     let mut out=String::new();
     for chunk in chunks {
         let endpoint=if std::env::var_os("NEXUSBRO_TEST_DATA").is_some(){std::env::var("NEXUSBRO_TEST_TRANSLATE_URL").unwrap_or_else(|_|"https://translate.googleapis.com/translate_a/single".into())}else{"https://translate.googleapis.com/translate_a/single".into()};
-        let r=client.get(endpoint).query(&[("client","gtx"),("sl","auto"),("tl","ru"),("dt","t"),("q",chunk.as_str())]).send().await.map_err(|_|())?;
-        if !r.status().is_success(){return Err(());}
-        let body=r.text().await.map_err(|_|())?;let v:Value=serde_json::from_str(&body).map_err(|_|())?;
-        let sentences=v[0].as_array().ok_or(())?;
-        for sentence in sentences {out.push_str(sentence[0].as_str().ok_or(())?);}
+        let mut answer=None;let mut last="Нет ответа от сервиса перевода через выбранный выход".to_owned();
+        for attempt in 0..3 {
+            let provider=if attempt==1{"gtx"}else{"dict-chrome-ex"};
+            match client.get(&endpoint).query(&[("client",provider),("sl","auto"),("tl","ru"),("dt","t"),("q",chunk.as_str())]).send().await{
+                Ok(r)=>{let status=r.status();if status.is_success(){
+                    answer=Some(r.text().await.map_err(|_|"Не удалось прочитать ответ сервиса перевода".to_owned())?);break;
+                }last=if status.as_u16()==429{"Сервис ограничил частоту запросов (429). Повторите перевод позже.".into()}else{format!("Сервис перевода вернул HTTP {}. Оригинал можно восстановить.",status.as_u16())};
+                if status.as_u16()!=429&&!status.is_server_error(){break;}
+                },Err(e)=>{last=if e.is_timeout(){"Истекло время ожидания перевода через выбранный выход".into()}else{"Не удалось подключиться к сервису перевода через выбранный выход".into()};}
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(700*(attempt+1))).await;
+        }
+        let body=answer.ok_or(last)?;let v:Value=serde_json::from_str(&body).map_err(|_|"Сервис вернул некорректный ответ перевода".to_owned())?;
+        let sentences=v[0].as_array().ok_or_else(||"Неизвестный формат ответа перевода".to_owned())?;
+        for sentence in sentences {out.push_str(sentence[0].as_str().ok_or_else(||"В ответе перевода отсутствует текст".to_owned())?);}
     }
     Ok(out)
 }

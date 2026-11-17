@@ -13,6 +13,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
+rusqlite = { version = "0.32", features = ["bundled"] }
 tauri = { version = "2", features = [] }
 tauri-plugin-updater = "2"
 tauri-plugin-dialog = "2"
@@ -25,7 +26,7 @@ anyhow = "1"
 base64 = "0.22"
 dirs = "5"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "gzip"] }
-tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "process"] }
+tokio = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "process", "sync"] }
 # CEF — движок рождается дочерним окном в нашем (ветка cef-migration).
 # Файлы движка: CEF_PATH на дев-машине или рядом с exe в сборке.
 cef = { version = "156.4", default-features = false }

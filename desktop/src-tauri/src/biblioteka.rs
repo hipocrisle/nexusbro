@@ -1,5 +1,6 @@
 //! История и закладки. Автоматическая запись приватных страниц запрещена.
 use serde::{Serialize,Deserialize};
+use tauri::Emitter;
 use std::sync::{Mutex,OnceLock};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -29,23 +30,35 @@ pub async fn biblioteka_spisok(razdel:String)->Result<Vec<Zapis>,String>{
     let _lock=IO.lock().unwrap();match razdel.as_str(){"istoriya"=>Ok(chitat("istoriya.json")),"zakladki"=>Ok(chitat("zakladki.json")),_=>Err("Неизвестный раздел".into())}
 }
 #[tauri::command]
-pub async fn biblioteka_udalit(razdel:String,id:Option<String>)->Result<(),String>{
+pub async fn biblioteka_udalit(app:tauri::AppHandle,razdel:String,id:Option<String>)->Result<(),String>{
     let name=match razdel.as_str(){"istoriya"=>"istoriya.json","zakladki"=>"zakladki.json",_=>return Err("Неизвестный раздел".into())};
     let _lock=IO.lock().unwrap();let mut items=chitat(name);
-    match id{Some(id)=>items.retain(|i|i.id!=id),None=>items.clear()};zapisat(name,&items)
+    match id{Some(id)=>items.retain(|i|i.id!=id),None=>items.clear()};zapisat(name,&items)?;if razdel=="zakladki"{let _=app.emit("zakladki-izmenilis",());}Ok(())
 }
 #[tauri::command]
-pub async fn zakladki_sohranit(adres:String,nazvanie:String,papka:Option<String>)->Result<(),String>{
+pub async fn zakladki_sohranit(app:tauri::AppHandle,adres:String,nazvanie:String,papka:Option<String>)->Result<(),String>{
     if !network(&adres){return Err("В закладки можно добавить HTTP(S)-страницу".into());}
     let _lock=IO.lock().unwrap();let mut items=chitat("zakladki.json");
     if let Some(i)=items.iter_mut().find(|i|i.adres==adres){i.nazvanie=nazvanie;i.papka=papka.unwrap_or_default();}
     else{items.push(Zapis{id:format!("b-{}-{}",vremya(),items.len()),adres,nazvanie,vremya:vremya(),papka:papka.unwrap_or_default()});}
-    zapisat("zakladki.json",&items)
+    zapisat("zakladki.json",&items)?;let _=app.emit("zakladki-izmenilis",());Ok(())
 }
 #[tauri::command]
-pub async fn zakladki_import(zapisi:Vec<Zapis>)->Result<usize,String>{
+pub async fn zakladki_import(app:tauri::AppHandle,zapisi:Vec<Zapis>)->Result<usize,String>{let n=import_zapisi(zapisi)?;let _=app.emit("zakladki-izmenilis",());Ok(n)}
+pub fn import_zapisi(zapisi:Vec<Zapis>)->Result<usize,String>{
     if zapisi.len()>20000{return Err("Слишком большой файл закладок".into());}
     let _lock=IO.lock().unwrap();let mut items=chitat("zakladki.json");let mut count=0;
     for mut i in zapisi{if network(&i.adres)&&!items.iter().any(|old|old.adres==i.adres){i.id=format!("b-{}-{}",vremya(),items.len());items.push(i);count+=1;}}
     zapisat("zakladki.json",&items)?;Ok(count)
+}
+
+#[tauri::command]
+pub async fn zakladki_pereklyuchit(app:tauri::AppHandle,adres:String,nazvanie:String)->Result<bool,String>{
+ use tauri::Emitter;
+ if !network(&adres){return Err("В закладки можно добавить HTTP(S)-страницу".into());}
+ let added={let _lock=IO.lock().map_err(|e|e.to_string())?;let mut items=chitat("zakladki.json");
+ let exists=items.iter().any(|i|i.adres==adres);
+ if exists{items.retain(|i|i.adres!=adres);}else{items.push(Zapis{id:format!("b-{}-{}",vremya(),items.len()),adres,nazvanie,vremya:vremya(),papka:String::new()});}
+ zapisat("zakladki.json",&items)?;!exists};
+ let _=app.emit("zakladki-izmenilis",());Ok(added)
 }

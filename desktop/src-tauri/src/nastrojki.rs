@@ -17,6 +17,7 @@ pub struct Nastrojki {
     pub vyhody: Vec<Vyhod>,
     pub panel_shirina: u32,
     pub panel_svernuta: bool,
+    pub panel_zakladok: bool,
     pub novaya_stranica: String,
     pub poisk: String,
     pub avtoobnovleniya: bool,
@@ -32,6 +33,7 @@ impl Default for Nastrojki {
             masshtab_stranic: 100, vyhody: Vec::new(),
             panel_shirina: 180,
             panel_svernuta: false,
+            panel_zakladok: false,
             novaya_stranica: "about:blank".into(),
             poisk: "duckduckgo".into(),
             avtoobnovleniya: true,
@@ -111,5 +113,6 @@ pub async fn nastrojki_sohranit(app: tauri::AppHandle, nastrojki: Nastrojki) -> 
     let state: tauri::State<crate::Sostoyanie> = app.state();
     let queues: Vec<_> = state.vkladki.lock().map_err(|e| e.to_string())?.values().filter_map(|v| v.kanal.clone()).collect();
     for q in queues { let _ = q.try_send(crate::sessiya::Komanda::Masshtab { procent: saved.masshtab_stranic }); }
+    use tauri::Emitter;let _=app.emit("nastrojki-izmenilis",&saved);
     Ok(saved)
 }

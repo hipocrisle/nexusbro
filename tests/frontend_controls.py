@@ -145,10 +145,11 @@ try:
   assert targets and all(t=={'kind':'Window','label':'main'} for t in targets),targets
   # Второе окно сохраняет доступ к настройкам и слушает только свой target.
   extra=browser.new_page(viewport={'width':1200,'height':800})
-  extra.add_init_script(mock+"window.__TAURI_INTERNALS__.metadata.currentWindow.label='browser-test';window.__TAURI_INTERNALS__.metadata.currentWebview.label='browser-test';")
+  extra.add_init_script(mock+"window.__tabs=[{id:'layout',nazvanie:'Layout fixture',proxy:'',adres:'about:blank',rezat_reklamu:true,pustaya:false}];window.__active='layout';window.__TAURI_INTERNALS__.metadata.currentWindow.label='browser-test';window.__TAURI_INTERNALS__.metadata.currentWebview.label='browser-test';")
   extra.goto(f'http://127.0.0.1:{server.server_port}/?okno=browser-test&super=layout')
-  extra.get_by_role('button',name='Супер-вкладки и настройки',exact=True).click()
-  assert extra.evaluate("window.__calls.includes('pokazat_glavnoe')")
+  extra.get_by_role('button',name='Меню NexusBro',exact=True).click()
+  extra.get_by_role('menuitem',name='Настройки NexusBro',exact=True).click()
+  expect(extra.get_by_role('heading',name='Настройки браузера',exact=True)).to_be_visible()
   targets_extra=extra.evaluate("window.__args.filter(x=>x.cmd==='plugin:event|listen').map(x=>x.args.target)")
   assert targets_extra and all(t=={'kind':'Window','label':'browser-test'} for t in targets_extra),targets_extra
   extra.close()

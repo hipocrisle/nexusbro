@@ -10,6 +10,12 @@ pub(crate) type NativeKeyEvent = cef::sys::MSG;
 #[cfg(not(target_os = "windows"))]
 pub(crate) type NativeKeyEvent = cef::sys::XEvent;
 
+fn shortcut_code(e:&KeyEvent)->i32{
+ #[cfg(target_os="windows")]let scan=(e.native_key_code>>16)&255;
+ #[cfg(not(target_os="windows"))]let scan=e.native_key_code-8;
+ match scan{16=>81,17=>87,18=>69,19=>82,20=>84,21=>89,22=>85,23=>73,24=>79,25=>80,30=>65,31=>83,32=>68,33=>70,34=>71,35=>72,36=>74,37=>75,38=>76,44=>90,45=>88,46=>67,47=>86,48=>66,49=>78,50=>77,_=>e.windows_key_code}
+}
+
 wrap_keyboard_handler! {
     struct Klaviatura { id: u64, tx: Sender<Sobytie> }
     impl KeyboardHandler {
@@ -18,18 +24,21 @@ wrap_keyboard_handler! {
             let Some(e) = event else { return 0 };
             if e.type_ != KeyEventType::RAWKEYDOWN && e.type_ != KeyEventType::KEYDOWN { return 0 }
             let ctrl = e.modifiers & (1 << 2) != 0;
+            if ctrl && e.modifiers & (1 << 3) != 0 {return 0;}
+            let key=shortcut_code(e);
             let shift = e.modifiers & (1 << 1) != 0;
-            if ctrl&&e.windows_key_code==78{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"novoe-okno","id":self.id,"privatnaya":shift})));return 1;}
-            if ctrl && matches!(e.windows_key_code,72|74|66) {
-                let razdel=match e.windows_key_code{72=>"istoriya",74=>"zagruzki",_=>"zakladki"};
+            if ctrl&&key==78{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"novoe-okno","id":self.id,"privatnaya":shift})));return 1;}
+            if ctrl&&shift&&key==66{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"panel-zakladok","id":self.id})));return 1;}
+            if ctrl && matches!(key,72|74|66) {
+                let razdel=match key{72=>"istoriya",74=>"zagruzki",_=>"zakladki"};
                 let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"panel","razdel":razdel,"id":self.id})));return 1;
             }
-            if e.windows_key_code==68&&ctrl{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"zakladka","id":self.id})));return 1;}
-            if e.windows_key_code == 70 && ctrl {
+            if key==68&&ctrl{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"zakladka","id":self.id})));return 1;}
+            if key == 70 && ctrl {
                 let _ = self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"poisk","id":self.id,"open":true})));
                 return 1;
             }
-            let cmd = match e.windows_key_code {
+            let cmd = match key {
                 116 => Some(if ctrl { Komanda::ObnovitBezKesha { id: self.id } } else { Komanda::Obnovit { id: self.id } }),
                 123 => Some(Komanda::Instrumenty { id: self.id }),
                 73 if ctrl && shift => Some(Komanda::Instrumenty { id: self.id }),

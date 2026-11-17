@@ -38,6 +38,14 @@ run.mkdir(parents=True)
 cef = pathlib.Path(a.cef).resolve()
 env = {**os.environ, 'CEF_PATH': str(cef), 'PATH': str(cef)+os.pathsep+os.environ['PATH'],
        'NEXUSBRO_TEST_DATA': str(run/'data'), 'WEBVIEW2_USER_DATA_FOLDER': str(run/'webview2'), 'NEXUSBRO_PROBA': '1','NEXUSBRO_TEST_DOWNLOAD_DIR':str(run/'downloads')}
+# Искусственные профили: приватные реальные браузерные данные runner не читаются.
+import sqlite3
+import_root=run/'import-profiles';env['NEXUSBRO_TEST_IMPORT_ROOT']=str(import_root)
+chrome_file=import_root/'Chrome/User Data/Default/Bookmarks';chrome_file.parent.mkdir(parents=True)
+chrome_file.write_text(json.dumps({'roots':{'bookmark_bar':{'name':'Bookmarks bar','type':'folder','children':[{'type':'url','name':'Imported Chrome','url':'https://import-fixture.test/chrome'},{'type':'folder','name':'Nested','children':[{'type':'url','name':'Вложенная','url':'https://import-fixture.test/nested'}]}]}}}),encoding='utf-8')
+chrome_original=chrome_file.read_bytes()
+firefox_file=import_root/'Firefox/Profiles/fixture.default/places.sqlite';firefox_file.parent.mkdir(parents=True)
+firefox_source=sqlite3.connect(firefox_file);firefox_source.execute('PRAGMA journal_mode=WAL');firefox_source.executescript("CREATE TABLE moz_places(id INTEGER PRIMARY KEY,url TEXT);CREATE TABLE moz_bookmarks(id INTEGER PRIMARY KEY,parent INTEGER,title TEXT,type INTEGER,fk INTEGER,guid TEXT,position INTEGER);INSERT INTO moz_places VALUES(1,'https://import-fixture.test/firefox');INSERT INTO moz_bookmarks VALUES(1,0,'Toolbar',2,NULL,'toolbar_____',0);INSERT INTO moz_bookmarks VALUES(2,1,'Imported Firefox',1,1,'fixture_____',0);");firefox_source.commit()
 results = []
 hits = {}
 subscription = b''
@@ -264,6 +272,11 @@ try:
         if colors and len(colors)>80:break
         time.sleep(.15)
     assert colors and len(colors)>80,'DevTools remained a blank panel'
+    # Раздвигаем настоящую границу между HWND, а не меняем React range.
+    before=rect(tools[0]);border=before.left-3;y=(before.top+before.bottom)//2
+    gui.moveTo(border,y);gui.mouseDown();gui.moveTo(border-110,y,duration=.6);gui.mouseUp();time.sleep(.4)
+    after=rect(tools[0]);assert after.left<before.left-60,(before.left,after.left)
+    results.append({'native_devtools_boundary_drag':True})
     ImageGrab.grab().save(run/'devtools.png')
     gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
     results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
@@ -476,10 +489,10 @@ try:
     results.append({'cef_ad_switch_off_preserves_banners_and_requests':True})
     # Find, history/bookmarks/downloads and multiwindow storage use native CEF.
     env['NEXUSBRO_TEST_DOWNLOAD_DIR']=str(run/'downloads')
-    def storage(case,value=None):
+    def storage(case,value=None,origin='http://vpn-fixture.test'):
         params={'case':case}
         if value is not None:params['set']=value
-        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/storage?'+urllib.parse.urlencode(params),interval=.001);gui.press('enter')
+        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(origin+'/storage?'+urllib.parse.urlencode(params),interval=.001);gui.press('enter')
         deadline=time.monotonic()+15
         while time.monotonic()<deadline:
             report=next((r for r in storage_reports if r.get('case')==[case]),None)
@@ -495,7 +508,26 @@ try:
     gui.press('enter');time.sleep(.5)
     find_ok=find_ok and any(x.element_info.name=='2 из 2' for x in win.descendants())
     results.append({'native_find_ordinals_correct':find_ok})
-    gui.press('escape');gui.hotkey('ctrl','d');gui.hotkey('ctrl','b');ui('Закрыть библиотеку',['Button']).click_input()
+    gui.press('escape');gui.hotkey('ctrl','d');ui('Удалить закладку',['Button']).click_input();ui('Добавить в закладки',['Button']).click_input()
+    # Живой импорт Chromium JSON и Firefox SQLite при открытом WAL writer.
+    gui.hotkey('ctrl','b');ui('Перенести закладки из другого браузера…',['Button']).click_input()
+    for source,url in [('Chrome Default','https://import-fixture.test/chrome'),('Firefox fixture.default','https://import-fixture.test/firefox')]:
+        ui(source,['RadioButton','Button']).click_input();ui('Начать перенос закладок',['Button']).click_input()
+        deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            books=json.loads((data/'zakladki.json').read_text(encoding='utf-8'))
+            if any(b['adres']==url for b in books):break
+            time.sleep(.1)
+        assert any(b['adres']==url for b in books),books
+        time.sleep(.6)
+    assert any(b['adres']=='https://import-fixture.test/nested' and b['papka']=='Nested' for b in books),books
+    assert chrome_file.read_bytes()==chrome_original
+    assert firefox_source.execute('SELECT count(*) FROM moz_bookmarks').fetchone()==(2,)
+    results.append({'native_browser_import_chromium_and_live_firefox_wal':True,'native_bookmark_toggle':True})
+    ui('Закрыть библиотеку',['Button']).click_input()
+    gui.hotkey('ctrl','shift','b');time.sleep(.3);assert json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))['panel_zakladok']
+    gui.hotkey('ctrl','shift','b');time.sleep(.3);assert not json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))['panel_zakladok']
+    results.append({'native_bookmark_bar_toggle':True})
     gui.hotkey('ctrl','h');ui('Закрыть библиотеку',['Button']).click_input()
     ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/download-fixture',interval=.001);gui.press('enter')
     deadline=time.monotonic()+15
@@ -537,6 +569,9 @@ try:
     windows=browser_windows();assert len(windows)==2 and app.poll() is None,windows
     hwnd=next(h for h in windows if h!=main_hwnd);u.SetForegroundWindow(hwnd);win=Desktop(backend='uia').window(handle=hwnd)
     assert storage('second-normal')['seen']==['normal-marker']
+    ui('Меню NexusBro',['Button']).click_input();ui('Настройки NexusBro',['MenuItem','Button']).click_input();ui('Закрыть настройки',['Button']).click_input()
+    assert any(x.element_info.control_type=='TabItem' and 'Проба' in x.element_info.name for x in win.descendants()),'No Super sidebar in secondary window'
+    results.append({'secondary_full_shell_and_local_menu':True})
     gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None
     hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
     main_tab_controls=[x for x in win.descendants() if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top]
@@ -551,6 +586,9 @@ try:
     # A private ordinary tab shares the Super exit, but has neither normal cookies nor localStorage.
     r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
     private=storage('private-canary','private-marker');assert private['seen']==[''] and not private['cookie'][0],private
+    ui('Новая обычная вкладка',['Button']).click_input();assert storage('ordinary-plus-from-private')['seen']==['normal-marker']
+    gui.hotkey('ctrl','w');time.sleep(.3);assert storage('private-still')['seen']==['private-marker']
+    results.append({'ordinary_plus_from_private_uses_normal_context':True})
     gui.hotkey('ctrl','w');time.sleep(.5)
     r=rect(container);gui.click(r.left+70,r.top-70,button='right');ui('Новая приватная вкладка',['MenuItem','Button']).click_input()
     private2=storage('private-again');assert private2['seen']==[''] and not private2['cookie'][0],private2
@@ -569,10 +607,10 @@ try:
     gui.hotkey('ctrl','w');time.sleep(.4)
     assert storage('private-window-still')['seen']==['private-window-marker']
     gui.hotkey('alt','f4');time.sleep(.5);hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
-    # Новая приватная Super живёт во временном каталоге и отсутствует в сохранённом списке.
+    # Определение приватной Super сохраняется, данные просмотра — только во временном каталоге.
     ui('Новая супер-вкладка',['Button']).click_input()
     ui('Название',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('PrivateSuperFixture',interval=.02)
-    ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-canary&set=private-super-marker',interval=.001)
+    ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-start',interval=.001)
     # Фокус браузера прокручивает форму к чекбоксу; не кликаем по его
     # исходным координатам за пределами viewport (там может быть taskbar).
     gui.press('tab',presses=3,interval=.1);gui.press('space')
@@ -580,20 +618,15 @@ try:
     assert boxes and boxes[0].iface_toggle.CurrentToggleState==1,'Private Super checkbox is not checked'
     ui('Создать',['Button']).click_input()
     deadline=time.monotonic()+25
-    while time.monotonic()<deadline and not any(r.get('case')==['private-super-canary'] for r in storage_reports):time.sleep(.1)
-    private_start_url=any(r.get('case')==['private-super-canary'] for r in storage_reports)
-    results.append({'new_private_super_uses_start_url':private_start_url})
-    if not private_start_url:
-        # Даём старым бинарникам пройти отдельную проверку очистки, но
-        # итог остаётся красным, если стартовый адрес проигнорирован.
-        ui('Адрес страницы',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-canary&set=private-super-marker',interval=.001);gui.press('enter')
-        deadline=time.monotonic()+15
-        while time.monotonic()<deadline and not any(r.get('case')==['private-super-canary'] for r in storage_reports):time.sleep(.1)
-    assert any(r.get('case')==['private-super-canary'] for r in storage_reports),storage_reports
+    while time.monotonic()<deadline and not any(r.get('case')==['private-super-start'] for r in storage_reports):time.sleep(.1)
+    private_start_url=any(r.get('case')==['private-super-start'] for r in storage_reports)
+    assert private_start_url,storage_reports
+    results.append({'new_private_super_uses_start_url':True})
+    assert storage('private-super-canary','private-super-marker',origin=base)['seen']==['']
     import tempfile
     private_root=pathlib.Path(tempfile.gettempdir())/f'NexusBro-private-{app.pid}'
     assert private_root.exists()
-    assert all(not r['id'].startswith('pvt-') for r in json.loads((data/'vkladki.json').read_text(encoding='utf-8')))
+    definitions=json.loads((data/'vkladki.json').read_text(encoding='utf-8'));private_definition=next(r for r in definitions if r['nazvanie']=='PrivateSuperFixture');assert private_definition['privatnaya']
     for path in data.rglob('*.json'):
         contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-super-canary' not in contents and 'private-super-marker' not in contents,path
     # Сочетание отправляем в браузер, а не в окно runner после запуска CEF.
@@ -608,7 +641,23 @@ try:
     deadline=time.monotonic()+5
     while time.monotonic()<deadline and private_root.exists():time.sleep(.1)
     assert not private_root.exists(),private_root
-    results.append({'private_window_stays_private':True,'private_super_not_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
+    results.append({'private_window_stays_private':True,'private_super_definition_saved':True,'private_temp_directory_removed':True,'closing_main_keeps_secondary':True,'last_window_exits':True})
+    app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
+    deadline=time.monotonic()+30
+    while time.monotonic()<deadline:
+        windows=browser_windows()
+        if windows:break
+        time.sleep(.1)
+    hwnd=windows[0];main_hwnd=hwnd;win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd)
+    # Название UIA включает приватный значок; ищем точную запись по содержимому.
+    deadline=time.monotonic()+20
+    while time.monotonic()<deadline:
+        candidates=[x for x in win.descendants() if x.element_info.control_type=='TabItem' and 'PrivateSuperFixture' in x.element_info.name]
+        if candidates:break
+        time.sleep(.1)
+    assert candidates,'Private Super definition disappeared after restart';candidates[0].click_input()
+    check=storage('private-super-after-restart',origin=base);assert check['seen']==[''] and not check['cookie'][0],check
+    results.append({'private_super_survives_restart_without_browsing_data':True})
     assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
     assert find_ok,'Find match ordinal did not update correctly'
     assert download_name_ok,'Completed download name was missing'
@@ -619,6 +668,7 @@ finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
     (run/'fixture-hits.json').write_text(json.dumps(hits,indent=2),encoding='utf-8')
     server.shutdown()
+    firefox_source.close()
     if vpn_server:
         vpn_server.terminate();vpn_server.wait(timeout=10)
     ImageGrab.grab().save(run/'final-screen.png')

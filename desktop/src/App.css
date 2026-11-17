@@ -420,3 +420,19 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 :root[data-tesno="da"] .network-button span{display:none}.network-button{flex-shrink:0}
 /* Действия диалога доступны и на невысоком экране, при длинном списке настроек. */
 .dialog>.knopki{position:sticky;bottom:0;z-index:2;flex-shrink:0;padding:12px 0 4px;background:var(--fon);border-top:1px solid var(--kraj)}
+
+/* Единая компактная панель и меню браузера. */
+.navigaciya .network-button,.navigaciya .protection-button,.navigaciya .browser-menu-button,.navigaciya .bookmark-star{width:30px;height:30px;min-width:30px;padding:5px;border:0;border-radius:6px;display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;background:transparent;color:var(--tiho)}
+.navigaciya button:hover{background:var(--fon2);color:var(--tekst)}.navigaciya .bookmark-star.selected{color:var(--akcent);font-size:22px}
+.browser-menu{width:280px;max-height:calc(100vh - 16px);overflow:auto;bottom:auto}.browser-menu button,.menu-obychnyh button{display:flex;align-items:center;justify-content:space-between;gap:16px;width:100%;min-height:34px;padding:7px 10px;border:0;border-radius:5px;background:transparent;color:var(--tekst);font:inherit;text-align:left;cursor:pointer}
+.browser-menu button:hover{background:var(--fon)}.browser-menu button:disabled{opacity:.45}.browser-menu kbd,.menu-obychnyh kbd{font:inherit;font-size:11px;color:var(--tiho);white-space:nowrap}.menu-obychnyh{width:310px}.browser-menu hr{border:0;border-top:1px solid var(--kraj)}
+.new-tab-options{width:24px;min-width:24px;height:28px;padding:0;background:transparent;color:var(--tiho);border:0;border-radius:5px;cursor:pointer}.private-mark{position:static;display:inline-flex;align-items:center;flex-shrink:0;line-height:16px;font-size:14px;margin-right:3px}.private-notice{display:none}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%)}
+
+.network-button{position:relative}.network-dot{position:absolute;right:1px;bottom:1px;width:6px;height:6px;border-radius:50%;background:#e0b551;border:1px solid var(--fon)}.network-up .network-dot{background:#48bf83}.network-down .network-dot{background:#ec6161}
+
+.library-list .download-row{display:grid;grid-template-columns:minmax(150px,1fr) auto;gap:4px 12px}.download-row>strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.download-row>.download-source{grid-column:1;color:var(--tiho);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.download-row>div{grid-column:1/-1;justify-content:flex-end}.download-row>progress{grid-column:1/-1;width:100%}.library-list:has(.download-row) article{padding:10px 0}
+
+.import-wizard{padding:12px;background:var(--fon2);border-radius:8px}.import-wizard p{font-size:12px;color:var(--tiho)}.import-sources{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}.import-sources button{display:flex;flex-direction:column;align-items:flex-start;gap:4px}.import-sources .selected{border-color:var(--akcent);color:var(--akcent)}.library-panel:has(.import-wizard){max-height:90vh;overflow:auto}
+
+.bookmark-bar{display:flex;align-items:center;gap:4px;height:34px;min-height:34px;padding:0 10px;border-bottom:1px solid var(--kraj);background:var(--fon2);overflow:hidden}.bookmark-bar>span{font-size:12px;color:var(--tiho)}.bookmark-bar>button{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:var(--tekst);font:inherit;font-size:12px;border-radius:5px;padding:5px 8px;min-width:0;max-width:152px;white-space:nowrap;cursor:pointer}.bookmark-bar>button>span:last-child{overflow:hidden;text-overflow:ellipsis}.bookmark-bar>button:hover{background:var(--fon)}
