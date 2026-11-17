@@ -196,7 +196,16 @@ try:
     pixels('after-sidebar-collapse')
     # All close gestures reach the same CEF lifecycle, including the last tab.
     def session():
-        return json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
+        # Windows может кратко блокировать файл во время записи CEF.
+        # Повторяем только чтение снимка; ошибки проверок не скрываем.
+        deadline = time.monotonic() + 2
+        while True:
+            try:
+                return json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
+            except (PermissionError, FileNotFoundError, json.JSONDecodeError):
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(.05)
     def wait_tabs(n):
         deadline=time.monotonic()+12
         while time.monotonic()<deadline:
