@@ -58,6 +58,12 @@ try:
         expect(options.first).to_have_attribute("value", "https://de.wikipedia.org/wiki/Berlin")
         expect(options.first).to_have_attribute("label", "Берлин — сохранённая страница")
         expect(address).to_have_attribute("list", "address-history")
+        expect(address).to_have_value("https://de.wikipedia.org/wiki/Berlin")
+        assert address.evaluate("e=>e.selectionStart<e.selectionEnd"), 'Completion suffix must be selected'
+        address.press("Backspace")
+        page.wait_for_timeout(180)
+        expect(address).to_have_value("https://de.wiki")  # Do not reinsert a deleted suffix.
+
 
         address.fill("slow.")
         page.wait_for_function("window.__suggestPending!==null")
@@ -69,8 +75,8 @@ try:
         expect(options).to_have_count(1)
         expect(options.first).to_have_attribute("value", "https://de.wikipedia.org/wiki/Berlin")
 
-        # Browser-native datalist selection can be unavailable in headless mode.
-        # Attempt real keys; never substitute a JS assignment for a successful selection.
+        # The app completes the address in-place; real keys must accept it even
+        # when this platform cannot display the optional native datalist popup.
         before = page.evaluate("window.__args.length")
         address.press("ArrowDown")
         address.press("Enter")
@@ -78,6 +84,7 @@ try:
         page.wait_for_timeout(100)
         navigations = page.evaluate("n=>window.__args.slice(n).filter(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti').map(x=>x.args.komanda.adres)", before)
         keyboard_selection = "https://de.wikipedia.org/wiki/Berlin" in navigations
+        assert keyboard_selection, navigations
 
         arrow = page.get_by_role("button", name="Варианты новой вкладки", exact=True)
         expect(arrow.locator("svg")).to_have_count(1)
@@ -105,7 +112,7 @@ try:
         expect(auto).not_to_be_visible()
         assert not errors, errors
         print(json.dumps({"debounced_history_ipc": True, "datalist_values_and_labels": True,
-                          "stale_response_discarded": True, "native_datalist_keyboard_selection": keyboard_selection,
+                          "stale_response_discarded": True, "keyboard_accepts_history_completion": keyboard_selection,
                           "arrow_svg_and_private_menu": True, "auto_translation_commands_and_ack": True,
                           "restore_command_and_hide_ack": True,
                           "native_cef_hwnd_popup_placement": "not_tested", "native_cef_auto_navigation": "not_tested"}))

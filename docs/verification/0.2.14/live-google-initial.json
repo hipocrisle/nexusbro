@@ -1,0 +1,20 @@
+{
+  "source": "271adb5750843fbe8ef9d93ec7a620a134d9fe70",
+  "binaryArtifactRun": 44097105042,
+  "checks": [
+    {
+      "real_google_through_native_super_proxy": true,
+      "initialSeconds": 6.879,
+      "status": "Перевод на русский\n3 из 3\nАвтоперевод этого сайта\nПоказать оригинал и выключить\n"
+    },
+    {
+      "auto_translation_after_real_cef_navigation": true,
+      "seconds": 3.608
+    },
+    {
+      "original_restored_and_auto_cancelled": true,
+      "synthetic_text_only": true,
+      "success": true
+    }
+  ]
+}

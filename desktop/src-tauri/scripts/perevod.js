@@ -1,7 +1,10 @@
 (() => {
   const token = __TOKEN__;
   if (window.__nexusbroTranslation) window.__nexusbroTranslation.restore();
-  const state = {token, url:location.href, nodes:new Map(), total:0};
+  // Якорь Wikipedia не меняет документ: незавершённый перевод должен
+  // продолжаться. Путь и query остаются частью защиты от устаревших ответов.
+  const pageUrl=()=>location.href.split('#',1)[0];
+  const state = {token, url:pageUrl(), nodes:new Map(), total:0};
   const skip='script,style,noscript,textarea,input,select,option,pre,code,kbd,samp,[contenteditable],[translate="no"],.notranslate';
   const walker=document.createTreeWalker(document.body,NodeFilter.SHOW_TEXT);
   const candidates=[];let node;
@@ -23,7 +26,7 @@
   }
   state.total=items.length;
   state.apply=(t,items)=>{
-    if(t!==state.token||location.href!==state.url)return;
+    if(t!==state.token||pageUrl()!==state.url)return;
     for(const {id,text} of items){const entry=state.nodes.get(id);if(entry&&entry.node.isConnected&&entry.node.nodeValue===entry.last){// Не склеивать слова вокруг ссылок/inline-элементов после нормализации
       // whitespace сетевым пакетом. Исходные отступы принадлежат DOM-узлу.
       const leading=entry.original.match(/^\s*/)[0],trailing=entry.original.match(/\s*$/)[0];

@@ -8,6 +8,8 @@ use crate::cef_vkladki::Sobytie;
 pub struct Otchet { pub cookies:bool,pub cache:bool }
 type Pending=HashMap<(String,String),tokio::sync::oneshot::Sender<Result<Otchet,String>>>;
 static PENDING:OnceLock<Mutex<Pending>>=OnceLock::new();
+struct Ozhidanie((String,String));
+impl Drop for Ozhidanie{fn drop(&mut self){if let Ok(mut pending)=PENDING.get_or_init(Default::default).lock(){pending.remove(&self.0);}}}
 
 pub fn otvet(super_id:&str,data:&serde_json::Value)->bool{
  if data["tip"]!="ochistka-zavershena"{return false;}
@@ -28,6 +30,7 @@ pub async fn ochistit_dannye_saytov(window:tauri::WebviewWindow,s:tauri::State<'
  let (send,recv)=tokio::sync::oneshot::channel();
  let key=(id.clone(),token.clone());
  PENDING.get_or_init(Default::default).lock().unwrap().insert(key.clone(),send);
+ let _ozhidanie=Ozhidanie(key.clone());
  let cmd=crate::sessiya::Komanda::OchistitDannye{token,cookies,cache};
  let cmd=if window.label()=="main"{cmd}else{crate::sessiya::Komanda::OknoKomanda{label:window.label().into(),komanda:Box::new(cmd)}};
  if kanal.try_send(cmd).is_err(){PENDING.get().unwrap().lock().unwrap().remove(&key);return Err("Движок недоступен. Данные сайтов не очищены.".into());}

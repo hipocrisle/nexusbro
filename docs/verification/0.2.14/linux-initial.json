@@ -1,0 +1,29 @@
+{
+  "source": "271adb5750843fbe8ef9d93ec7a620a134d9fe70",
+  "ci": "https://github.com/hipocrisle/nexusbro/actions/runs/44097105042",
+  "checks": [
+    {
+      "native_cef_document_loaded": true
+    },
+    {
+      "native_color_persistence_without_browser_restart": true
+    },
+    {
+      "native_cookie_delete_observed_in_cef": true,
+      "native_cache_completion_ack": true,
+      "native_history_suggestions_and_cleanup": true
+    },
+    {
+      "secondary_super_switch_and_main_unchanged": true
+    },
+    {
+      "secondary_local_settings_menu": true
+    },
+    {
+      "delete_other_super_keeps_windows": true
+    },
+    {
+      "success": true
+    }
+  ]
+}

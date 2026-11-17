@@ -27,7 +27,14 @@ with sync_playwright() as pw:
  page.evaluate(script.replace('__TOKEN__',json.dumps('test-two')))
  page.evaluate("window.__nexusbroTranslation.apply('test-one',[{id:0,text:'Wrong'}])")
  assert page.locator('h1').inner_text()=='Hello world'
- page.evaluate("history.pushState({},'', '/changed');window.__nexusbroTranslation.apply('test-two',[{id:0,text:'Wrong'}])")
+ page.evaluate("history.pushState({},'', '#section-two');window.__nexusbroTranslation.apply('test-two',[{id:0,text:'Перевод после якоря'}])")
+ assert page.locator('h1').inner_text()=='Перевод после якоря'
+ page.evaluate("history.pushState({},'', '/changed#section-two');window.__nexusbroTranslation.apply('test-two',[{id:1,text:'Wrong'}])")
+ assert page.locator('#dynamic').inner_text()=='Updated by site'
+ page.evaluate('window.__nexusbroTranslation.restore()')
+ assert page.locator('h1').inner_text()=='Hello world'
+ page.evaluate(script.replace('__TOKEN__',json.dumps('test-query')))
+ page.evaluate("history.pushState({},'', '?changed=1#section-two');window.__nexusbroTranslation.apply('test-query',[{id:0,text:'Wrong'}])")
  assert page.locator('h1').inner_text()=='Hello world'
  page.set_content('<main><p id="inline"> Lesen <a href="/book">dieses Buch</a> heute. </p><p id="hidden-teaser">Hidden private teaser</p></main>')
  page.locator('#hidden-teaser').evaluate("el=>el.style.visibility='hidden'")
@@ -43,5 +50,5 @@ with sync_playwright() as pw:
  snapshot=page.evaluate(script.replace('__TOKEN__',json.dumps('priority')))
  assert snapshot['items'][0]['text']=='Important visible article',snapshot['items'][:3]
  assert len(snapshot['items'])==1000
- print(json.dumps({'same_document':True,'original_restored':True,'forms_code_and_drafts_untouched':True,'site_edits_preserved':True,'stale_token_and_navigation_rejected':True,'inline_whitespace_preserved':True,'hidden_text_excluded':True,'visible_article_prioritized':True}))
+ print(json.dumps({'same_document':True,'original_restored':True,'forms_code_and_drafts_untouched':True,'site_edits_preserved':True,'stale_token_and_navigation_rejected':True,'fragment_navigation_keeps_translation':True,'path_and_query_navigation_reject_stale_translation':True,'inline_whitespace_preserved':True,'hidden_text_excluded':True,'visible_article_prioritized':True}))
  browser.close()

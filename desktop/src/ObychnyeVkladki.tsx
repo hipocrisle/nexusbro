@@ -3,6 +3,7 @@ import AddressMenu from "./AddressMenu";
 import BrowserMenu from "./BrowserMenu";
 import {shortcutKey} from "./shortcuts";
 import {addressDown,addressUp,type AddressPointer} from "./addressSelection";
+import {addressCompletion} from "./addressCompletion";
 import SetStatus from "./SetStatus";
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -21,6 +22,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [adres, setAdres] = useState("");
   const [pravka, setPravka] = useState(false);
   const [suggestions,setSuggestions]=useState<{adres:string;nazvanie:string;istochnik:string}[]>([]);
+  const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
   const [dragOver, setDragOver] = useState<number | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; v: Vkladka } | null>(null);
@@ -97,11 +99,22 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   async function toggleBookmark(){if(!aktivnaya)return;try{const added=await invoke<boolean>("zakladki_pereklyuchit",{adres:aktivnaya.adres,nazvanie:aktivnaya.zagolovok});setBookmarked(added);setBookmarkMessage(added?"Закладка добавлена":"Закладка удалена");}catch(e){setOshibka(String(e));}}
   useEffect(() => { if (!pravka) setAdres(aktivnaya?.adres ?? ""); }, [aktivnaya?.adres, aktivnaya?.id, pravka]);
   useEffect(()=>{
-    let live=true;setSuggestions([]);
-    if(!pravka||!adres.trim())return;
-    const timer=setTimeout(()=>{void invoke<{adres:string;nazvanie:string;istochnik:string}[]>("biblioteka_podskazki",{query:adres,limit:8}).then(rows=>{if(live)setSuggestions(Array.isArray(rows)?rows:[]);}).catch(()=>{if(live)setSuggestions([]);});},80);
+    let live=true;
+    if(!pravka||!adres.trim()){setSuggestions([]);completedValue.current=null;return;}
+    if(completedValue.current===adres)return;
+    setSuggestions([]);
+    const timer=setTimeout(()=>{void invoke<{adres:string;nazvanie:string;istochnik:string}[]>("biblioteka_podskazki",{query:adres,limit:8}).then(rows=>{
+      if(!live)return;
+      rows=Array.isArray(rows)?rows:[];setSuggestions(rows);
+      const input=pole.current;
+      if(completionAllowed.current&&input===document.activeElement&&input?.selectionStart===adres.length&&input.selectionEnd===adres.length){
+        const full=addressCompletion(adres,rows);completionAllowed.current=false;
+        if(full){completedValue.current=full.value;completionRange.current=full.from;setAdres(full.value);}
+      }
+    }).catch(()=>{if(live)setSuggestions([]);});},80);
     return()=>{live=false;clearTimeout(timer);};
   },[adres,pravka,id,aktivnaya?.id]);
+  useLayoutEffect(()=>{if(completionRange.current!==null){pole.current?.setSelectionRange(completionRange.current,adres.length);completionRange.current=null;}},[adres]);
   useEffect(()=>{
     if(!id||!sessiya)return;
     const sync=()=>{const hex=getComputedStyle(document.documentElement).getPropertyValue("--fon2").trim();if(/^#[0-9a-f]{6}$/i.test(hex))void invoke("obychnaya_komanda",{id,komanda:{deystvie:"fon_konteynera",rgb:parseInt(hex.slice(1),16)}}).catch(()=>{});};
@@ -266,7 +279,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onPointerCancel={()=>{addressPointer.current=null;}}
         onContextMenu={e=>e.stopPropagation()}
         onBlur={()=>{addressPointer.current=null;if(!addressMenuOpen.current)setPravka(false);}}
-        onChange={e=>setAdres(e.target.value)} />
+        onChange={e=>{completedValue.current=null;completionAllowed.current=(e.nativeEvent as InputEvent).inputType==='insertText';setAdres(e.target.value);}} />
 
       <datalist id="address-history">{suggestions.map(row=><option key={row.adres} value={row.adres} label={row.nazvanie||row.adres}/>)}</datalist>
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
@@ -283,7 +296,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </form>
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
-    {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<label className="translation-auto"><input type="checkbox" checked={!!translation.auto} onChange={e=>{if(aktivnaya)void poslat({deystvie:"perevod_avto",id:aktivnaya.id,enabled:e.target.checked});}}/>Автоперевод этого сайта</label><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал и выключить</button></div>}
+    {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<label className="translation-auto" title="Переводить страницы этого сайта в этой вкладке до выключения режима или закрытия вкладки"><input type="checkbox" checked={!!translation.auto} onChange={e=>{if(aktivnaya)void poslat({deystvie:"perevod_avto",id:aktivnaya.id,enabled:e.target.checked});}}/>Автоперевод этого сайта</label><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал и выключить</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
     {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();runFind(true,true);}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();runFind(false,true);}}}>
       <input ref={findInput} aria-label="Найти на странице" placeholder="Найти на странице…" value={findText} onChange={e=>setFindText(e.target.value)}/>
