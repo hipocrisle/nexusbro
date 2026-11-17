@@ -448,6 +448,18 @@ try:
     container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     def edit_super():
         pt=origin();gui.click(pt.x+26,pt.y+80,button='right');ui('Настройки').click_input()
+    def fill_start_url(url):
+        # Start URL and private controls are in the lower, scrollable half.
+        # Reach it physically instead of trusting WebView2's unclipped UIA bounds.
+        r=rect(hwnd);gui.moveTo((r.left+r.right)//2,(r.top+r.bottom)//2);gui.scroll(-14);time.sleep(.3)
+        field=ui('Открыть сразу',['Edit']);field.click_input();gui.hotkey('ctrl','a');gui.write(url,interval=.001)
+        deadline=time.monotonic()+3;actual=''
+        while time.monotonic()<deadline:
+            actual=ui('Открыть сразу',['Edit']).iface_value.CurrentValue
+            if actual==url:return
+            time.sleep(.1)
+        raise AssertionError(('Start URL was not entered before Create',actual,url))
+
     def choose_subscription_node(name):
         # UIA ScrollItem is unavailable for some WebView2 buttons. Use the same
         # physical wheel action a user needs for this deliberately scrollable form.
@@ -673,7 +685,7 @@ try:
     ui('Развернуть левую панель',['Button']).click_input();time.sleep(.4)
     assert storage('normal-loopback','normal-loopback-marker',origin=base)['seen']==['']
     ui('Новая супер-вкладка',['Button']).click_input();ui('Название',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('OtherSuperFixture',interval=.01)
-    ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=other-super-start',interval=.001);ui('Создать',['Button']).click_input()
+    fill_start_url(base+'/storage?case=other-super-start');ui('Создать',['Button']).click_input()
     deadline=time.monotonic()+20
     while time.monotonic()<deadline and not any(r.get('case')==['other-super-start'] for r in storage_reports):time.sleep(.1)
     assert any(r.get('case')==['other-super-start'] for r in storage_reports)
@@ -746,7 +758,7 @@ try:
     # Определение приватной Super сохраняется, данные просмотра — только во временном каталоге.
     ui('Новая супер-вкладка',['Button']).click_input()
     ui('Название',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write('PrivateSuperFixture',interval=.02)
-    ui('Открыть сразу',['Edit']).click_input();gui.hotkey('ctrl','a');gui.write(base+'/storage?case=private-super-start',interval=.001)
+    fill_start_url(base+'/storage?case=private-super-start')
     # Фокус браузера прокручивает форму к чекбоксу; не кликаем по его
     # исходным координатам за пределами viewport (там может быть taskbar).
     gui.press('tab',presses=3,interval=.1);gui.press('space')
