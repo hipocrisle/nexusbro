@@ -10,12 +10,12 @@ pub fn shag(hwnd:u64,w:u32,h:u32,percent:u32)->Option<u32>{
  DRAGS.with(|m|{let mut m=m.borrow_mut();let d=m.entry(hwnd).or_default();
   if down&&!d.down&&over{d.active=true;capture(hwnd,true);}
   if !down&&d.active{d.active=false;capture(hwnd,false);}
-  d.down=down;let hover=over||d.active;if hover!=d.hover{cursor(hwnd,hover);d.hover=hover;}
+  d.down=down;let hover=over||d.active;if hover!=d.hover||(cfg!(target_os="windows")&&hover){cursor(hwnd,hover);d.hover=hover;}
   if d.active&&w>560{Some((((w as i32-x).max(280) as u32).min(w-280)*100/w).clamp(10,90))}else{None}
  })
 }
 #[cfg(target_os="windows")]
-fn pointer(hwnd:u64)->Option<(i32,i32,bool,bool)>{use windows::Win32::{Foundation::*,UI::{WindowsAndMessaging::*,Input::KeyboardAndMouse::*}};unsafe{let mut p=POINT::default();GetCursorPos(&mut p).ok()?;let own=WindowFromPoint(p)==HWND(hwnd as usize as *mut _);windows::Win32::Graphics::Gdi::ScreenToClient(HWND(hwnd as usize as *mut _),&mut p).ok().ok()?;Some((p.x,p.y,GetAsyncKeyState(VK_LBUTTON.0 as i32)<0,own))}}
+fn pointer(hwnd:u64)->Option<(i32,i32,bool,bool)>{use windows::Win32::{Foundation::*,UI::{WindowsAndMessaging::*,Input::KeyboardAndMouse::*}};unsafe{let mut p=POINT::default();GetCursorPos(&mut p).ok()?;let target=HWND(hwnd as usize as *mut _);let hit=WindowFromPoint(p);/* STATIC без SS_NOTIFY пропускает hit-test к родителю. */let own=IsWindowVisible(target).as_bool()&&(hit==target||GetParent(target).ok()==Some(hit));windows::Win32::Graphics::Gdi::ScreenToClient(HWND(hwnd as usize as *mut _),&mut p).ok().ok()?;Some((p.x,p.y,GetAsyncKeyState(VK_LBUTTON.0 as i32)<0,own))}}
 #[cfg(target_os="windows")]
 fn capture(hwnd:u64,on:bool){use windows::Win32::{Foundation::HWND,UI::Input::KeyboardAndMouse::*};unsafe{if on{SetCapture(HWND(hwnd as usize as *mut _));}else{let _=ReleaseCapture();}}}
 #[cfg(target_os="windows")]

@@ -275,8 +275,8 @@ try:
     # Раздвигаем настоящую границу между HWND, а не меняем React range.
     before=rect(tools[0]);border=before.left-3;y=(before.top+before.bottom)//2
     gui.moveTo(border,y);gui.mouseDown();gui.moveTo(border-110,y,duration=.6);gui.mouseUp();time.sleep(.4)
-    after=rect(tools[0]);assert after.left<before.left-60,(before.left,after.left)
-    results.append({'native_devtools_boundary_drag':True})
+    after=rect(tools[0]);splitter_drag_ok=after.left<before.left-60
+    results.append({'native_devtools_boundary_drag':splitter_drag_ok,'before':before.left,'after':after.left})
     ImageGrab.grab().save(run/'devtools.png')
     gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
     results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
@@ -700,6 +700,7 @@ try:
     assert candidates,'Private Super definition disappeared after restart';candidates[0].click_input()
     check=storage('private-super-after-restart',origin=base);assert check['seen']==[''] and not check['cookie'][0],check
     results.append({'private_super_survives_restart_without_browsing_data':True})
+    assert splitter_drag_ok,'Native DevTools boundary did not move'
     assert focus_after_tools,'Keyboard focus was lost after closing DevTools'
     assert find_ok,'Find match ordinal did not update correctly'
     assert download_name_ok,'Completed download name was missing'
