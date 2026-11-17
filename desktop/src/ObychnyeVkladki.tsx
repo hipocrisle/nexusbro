@@ -15,7 +15,9 @@ type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
 type Komanda = { deystvie: string; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
 export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta,panelZakladok=false,onToggleBookmarks=()=>{} }: {panelZakladok?:boolean;onToggleBookmarks?:()=>void; id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
-  const [sessiya, setSessiya] = useState<Sessiya | null>(null);
+  const [receivedSession,setReceivedSession]=useState<{owner:string|null;data:Sessiya}|null>(null);
+  const sessiya=receivedSession?.owner===id?receivedSession.data:null;
+  const setSessiya=(data:Sessiya|null)=>setReceivedSession(data?{owner:id,data}:null);
   const [adres, setAdres] = useState("");
   const [pravka, setPravka] = useState(false);
   const [oshibka, setOshibka] = useState("");
