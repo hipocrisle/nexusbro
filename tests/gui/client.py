@@ -62,6 +62,10 @@ class Client:
         return r['r']
 
     def mouse(self, x, y, button=1):
+        label=self.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        origin=self.command('plugin:window|inner_position',label=label)
+        scale=self.js('devicePixelRatio||1')
+        x=round(origin['x']+x*scale);y=round(origin['y']+y*scale)
         subprocess.run(['xdotool','mousemove',str(x),str(y),'click',str(button)],
             env={**os.environ,'DISPLAY':self.display},check=True)
 
