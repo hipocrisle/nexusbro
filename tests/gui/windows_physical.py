@@ -644,7 +644,9 @@ try:
         if not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()):break
         time.sleep(.1)
     assert not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()),'Library did not close before download navigation'
-    address=ui('Адрес страницы',['Edit','ComboBox']);address.set_focus()
+    address=ui('Адрес страницы',['Edit','ComboBox']);address.click_input();address.set_focus()
+    deadline=time.monotonic()+3
+    while time.monotonic()<deadline and not address.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
     assert address.element_info.element.CurrentHasKeyboardFocus,'Download address did not receive focus'
     download_url='http://vpn-fixture.test/download-fixture'
     gui.hotkey('ctrl','a');gui.write(download_url,interval=.001)
