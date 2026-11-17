@@ -637,7 +637,19 @@ try:
     gui.hotkey('ctrl','shift','b');time.sleep(.3);assert not json.loads((data/'nastrojki.json').read_text(encoding='utf-8'))['panel_zakladok']
     results.append({'native_bookmark_bar_toggle':True})
     gui.hotkey('ctrl','h');ui('Закрыть библиотеку',['Button']).click_input()
-    ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write('http://vpn-fixture.test/download-fixture',interval=.001);gui.press('enter')
+    # UIA can retain the closing dialog. Wait for its disappearance before
+    # targeting a shell control behind it; verify real keyboard focus and text.
+    deadline=time.monotonic()+5
+    while time.monotonic()<deadline:
+        if not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()):break
+        time.sleep(.1)
+    assert not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()),'Library did not close before download navigation'
+    address=ui('Адрес страницы',['Edit','ComboBox']);address.set_focus()
+    assert address.element_info.element.CurrentHasKeyboardFocus,'Download address did not receive focus'
+    download_url='http://vpn-fixture.test/download-fixture'
+    gui.hotkey('ctrl','a');gui.write(download_url,interval=.001)
+    assert address.iface_value.CurrentValue==download_url,'Download URL was not entered'
+    gui.press('enter')
     deadline=time.monotonic()+15
     while time.monotonic()<deadline and not (run/'downloads/nexusbro-fixture.txt').exists():time.sleep(.1)
     assert (run/'downloads/nexusbro-fixture.txt').read_bytes()==b'NexusBro download fixture\n'*256
