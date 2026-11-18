@@ -1,0 +1,21 @@
+{
+  "checked_at": "2026-11-18T13:04:04.159488+00:00",
+  "endpoint": "https://nexusbro-sync.hipogas.org",
+  "client_source_commit": "e867843",
+  "client_build_ci": 44309134102,
+  "production_browser_client": true,
+  "https_validated": true,
+  "two_client_encrypted_roundtrip": true,
+  "conflict_preserved_resolved": true,
+  "totp_enrollment_verified_replay_rejected": true,
+  "recovery_rotates_password_preserves_items": true,
+  "password_rotation_and_relogin": true,
+  "synthetic_account_deleted": true,
+  "revocation_checked_by_second_client": true,
+  "new_service_database_counts_after_cleanup": {
+    "users": 0,
+    "items": 0,
+    "sessions": 0
+  },
+  "success": true
+}
