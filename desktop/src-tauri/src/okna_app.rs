@@ -29,7 +29,7 @@ pub fn kanal(s:&Sostoyanie,label:&str,id:&str)->Result<std::sync::mpsc::SyncSend
 pub fn obolochka(app:&tauri::AppHandle,s:&Sostoyanie,label:&str){
     let Some(window)=app.get_webview_window(label)else{return};
     let (hwnd,mesto,hidden,generation,ready)={let map=s.okna.0.lock().unwrap();let Some(w)=map.get(label)else{return};(w.hwnd,w.mesto,w.hidden,w.generation.clone(),w.sessiya.as_ref().is_some_and(crate::stranica_gotova))};
-    let show=!hidden&&ready&&mesto.is_some();
+    let show=!crate::browser_lock::locked_global()&&!hidden&&ready&&mesto.is_some();
     if let Some(hwnd)=hwnd{if show{if let Some(m)=mesto{let _=sistema::peremestit(hwnd,m);}}let _=sistema::pokazat(hwnd,show);}
     #[cfg(target_os="windows")]{let seq=generation.fetch_add(1,Ordering::SeqCst)+1;let ui=window.clone();let _=window.run_on_main_thread(move||{if generation.load(Ordering::SeqCst)!=seq{return;}if let Ok(h)=ui.hwnd(){let _=crate::win32_oblast::primenit(windows::Win32::Foundation::HWND(h.0),if show{mesto}else{None});}});}
     #[cfg(not(target_os="windows"))]let _=(window,generation);
@@ -94,6 +94,17 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
 pub async fn okno_gotovo(app:tauri::AppHandle,window:tauri::WebviewWindow,s:tauri::State<'_,Sostoyanie>,)->Result<(),String>{
     let label=window.label().to_owned();
     let id=s.okna.0.lock().unwrap().get(&label).map(|w|w.super_id.clone()).ok_or("Окно не найдено")?;
+    // BrowserGuard remounts the shell after a master-password unlock. Keep the
+    // existing native container/session: the utility already owns this label.
+    let existing = {
+        let map=s.okna.0.lock().unwrap();
+        map.get(&label).and_then(|w|w.hwnd.map(|_|w.engine))
+    };
+    let current=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id);
+    if existing.is_some() && existing==current {
+        obolochka(&app,&s,&label);
+        return Ok(());
+    }
     // Команда может прийти, пока CEF ещё запускается. Ждём канал без блокировки UI.
     let deadline=std::time::Instant::now()+std::time::Duration::from_secs(25);
     while kanal(&s,&label,&id).is_err(){if std::time::Instant::now()>=deadline{return Err("Движок не ответил при открытии окна".into());}tokio::time::sleep(std::time::Duration::from_millis(100)).await;}

@@ -13,11 +13,28 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 mock=r'''window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{},listen:async()=>()=>{},once:async()=>()=>{}};window.__saved=null;window.__calls=[];window.__args=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:(f)=>{window.__callbacks[++cb]=f;return cb;},unregisterCallback:()=>{},invoke:async(cmd,args)=>{
  window.__calls.push(cmd);window.__args.push({cmd,args});
- if(cmd==='plugin:menu|new'){window.__nativeMenus??={};const rid=1000+Object.keys(window.__nativeMenus).length;window.__nativeMenus[rid]=args.options.items;return [rid,'fixture-'+rid];}
- if(cmd==='plugin:menu|popup')return new Promise(resolve=>{
-  const menu=document.createElement('div');menu.className='vypadajka native-menu-fixture';menu.setAttribute('role','menu');Object.assign(menu.style,{position:'fixed',left:'220px',top:'120px',zIndex:999});
-  const close=()=>{menu.remove();document.removeEventListener('keydown',escape);resolve(null);};const escape=e=>{if(e.key==='Escape')close();};document.addEventListener('keydown',escape);
-  for(const item of window.__nativeMenus[args.rid]??[]){if(item.item){menu.append(document.createElement('hr'));continue;}const b=document.createElement('button');b.className='stroka-menyu';b.setAttribute('role','menuitem');b.textContent=item.text.replace('\t',' ');b.disabled=item.enabled===false;b.onclick=()=>{close();item.handler?.onmessage(item.id);};menu.append(b);}document.body.append(menu);
+ if(cmd==='browser_lock_status')return window.__browserLock||{locked:false,exists:false,revision:0};
+ if(cmd==='browser_lock'){window.__browserLock={locked:true,exists:true,revision:1};return window.__browserLock;}
+ if(cmd==='browser_unlock'){window.__browserLock={locked:false,exists:true,revision:2};return window.__browserLock;}
+ // Deterministic owner-document fixture only. Native popup layering/theme is
+ // separately verified with the built Tauri application on Windows/Linux.
+ if(cmd==='popup_menu_open')return new Promise(resolve=>{
+  const menu=document.createElement('div');menu.className='nexus-popup-menu themed-menu-fixture';menu.setAttribute('role','menu');menu.setAttribute('aria-label','Меню NexusBro');
+  const row=(args.theme?.font_size||14)+20,height=(args.items||[]).reduce((h,item)=>h+(item?row:9),14);
+  Object.assign(menu.style,{position:'fixed',left:Math.max(8,Math.min(args.x,innerWidth-368))+'px',top:Math.max(8,Math.min(args.y,innerHeight-Math.min(height,innerHeight-16)-8))+'px',width:'360px',height:'auto',maxHeight:'calc(100vh - 16px)',zIndex:999});
+  for(const [key,color] of Object.entries(args.theme?.colors||{}))menu.style.setProperty(key,'rgb('+color.join(',')+')');
+  menu.style.setProperty('--font-ui',args.theme?.font_family||'system-ui');menu.style.setProperty('--font-size-ui',(args.theme?.font_size||14)+'px');menu.style.setProperty('--popup-row',row+'px');
+  const close=(choice=null)=>{menu.remove();document.removeEventListener('keydown',keyboard,true);document.removeEventListener('pointerdown',outside,true);resolve(choice);};
+  const outside=e=>{if(!menu.contains(e.target))close();};
+  const keyboard=e=>{const buttons=[...menu.querySelectorAll('button:not(:disabled)')];const current=buttons.indexOf(document.activeElement);let next;
+   if(e.key==='Escape'||e.key==='Tab'){e.preventDefault();e.stopPropagation();close();return;}
+   if(e.key==='ArrowDown')next=(current+1)%buttons.length;else if(e.key==='ArrowUp')next=(current-1+buttons.length)%buttons.length;else if(e.key==='Home')next=0;else if(e.key==='End')next=buttons.length-1;
+   if(next!==undefined){e.preventDefault();e.stopPropagation();buttons[next]?.focus();}
+  };
+  for(const [index,item] of (args.items||[]).entries()){if(!item){const separator=document.createElement('div');separator.setAttribute('role','separator');separator.className='nexus-popup-separator';menu.append(separator);continue;}
+   const button=document.createElement('button');button.type='button';button.setAttribute('role','menuitem');button.disabled=item.enabled===false;const [label,...shortcut]=item.text.split('\t');button.setAttribute('aria-label',label);const text=document.createElement('span');text.textContent=label;button.append(text);if(shortcut.length){button.append(document.createTextNode(' '));const key=document.createElement('kbd');key.textContent=shortcut.join(' ');button.append(key);}button.onclick=()=>close(index);menu.append(button);
+  }
+  document.body.append(menu);document.addEventListener('keydown',keyboard,true);document.addEventListener('pointerdown',outside,true);menu.querySelector('button:not(:disabled)')?.focus();
  });
 
  if(cmd==='nastrojki_poluchit')return {tema:'temnaya',shrift:'system',razmer_shrifta:14,plotnost:'udobno',masshtab_stranic:100,vyhody:[{id:'local',nazvanie:'Test subscription',adres:'https://example.test/sub',proxy_uzel:''}],panel_shirina:180,panel_svernuta:false,novaya_stranica:'about:blank',poisk:'duckduckgo',avtoobnovleniya:false,apparatnoe_uskorenie:false};

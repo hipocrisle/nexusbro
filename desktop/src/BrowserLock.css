@@ -1,0 +1,16 @@
+.browser-lock-screen{position:fixed;inset:0;z-index:10000;display:flex;align-items:center;justify-content:center;padding:24px;background:var(--fon,#11131a);color:var(--tekst,#e6e9f2);overflow:auto}
+.browser-lock-card{width:min(100%,420px);padding:32px;background:var(--fon2,#171a24);border:1px solid var(--kraj,#272c3a);border-radius:18px;box-shadow:0 20px 64px #0005}
+.browser-lock-icon{display:block;width:56px;height:56px;border-radius:14px;margin-bottom:18px}
+.browser-lock-card h1{margin:0 0 18px;font-size:22px;font-weight:650;letter-spacing:.3px}
+.browser-lock-card h2{margin:0 0 10px;font-size:18px;font-weight:600}
+.browser-lock-card p{margin:0 0 20px;color:var(--tiho,#8b93a7);line-height:1.55}
+.browser-lock-card label{display:flex;flex-direction:column;gap:8px;font-size:13px}
+.browser-lock-card input{width:100%;box-sizing:border-box;padding:11px 12px;border:1px solid var(--kraj,#272c3a);border-radius:9px;background:var(--fon,#11131a);color:var(--tekst,#e6e9f2);font:inherit;outline:none}
+.browser-lock-card input:focus-visible{border-color:var(--akcent,#5ec8a0);box-shadow:0 0 0 2px #5ec8a026}
+.browser-lock-card button{width:100%;margin-top:16px;padding:11px 12px;border:0;border-radius:9px;background:var(--akcent,#5ec8a0);color:#10241d;font:inherit;font-weight:600;cursor:pointer}
+.browser-lock-card button:disabled{opacity:.55;cursor:default}
+.browser-lock-card .browser-lock-note{margin:20px 0 0;font-size:12px}
+.browser-lock-card .browser-lock-error{margin:12px 0 0;color:#ee9e9e;overflow-wrap:anywhere}
+.browser-lock-hint{position:fixed;right:18px;bottom:18px;z-index:9000;display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 36px));padding:14px 16px;background:var(--fon2,#171a24);color:var(--tekst,#e6e9f2);border:1px solid var(--kraj,#272c3a);border-radius:12px;box-shadow:0 12px 40px #0005}
+.browser-lock-hint button{flex-shrink:0;background:var(--fon,#11131a);color:var(--tekst,#e6e9f2);border:1px solid var(--kraj,#272c3a);border-radius:7px;padding:7px 10px;cursor:pointer}
+@media(max-width:520px){.browser-lock-card{padding:24px}.browser-lock-hint{flex-wrap:wrap}}

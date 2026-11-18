@@ -4,6 +4,8 @@
 //! выходом в сеть. Внутри неё человек открывает сколько угодно обычных
 //! вкладок, и весь сервис со всеми его адресами идёт через нужный выход.
 
+mod popup_menu;
+mod browser_lock;
 mod import_brauzera;
 mod razdelitel;
 mod fon_konteynera;
@@ -398,6 +400,7 @@ fn vstroit_vse_okna(
 
 /// Запустить движок для уже записанной вкладки.
 async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: &str) -> Otvet {
+    if browser_lock::locked_global() { return net("Браузер заблокирован. Введите мастер-пароль."); }
     static SLEDUYUSHCHIJ_ZAPUSK: std::sync::atomic::AtomicU64 =
         std::sync::atomic::AtomicU64::new(1);
     let (nastrojki, zapusk_id) = {
@@ -517,6 +520,7 @@ async fn podgotovit_dvizhok(
         match v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet) {
             Some(vk) => {
                 vk.proc = Some(ditya);
+                browser_lock::synchronize_engine(&kanal);
                 vk.kanal = Some(kanal);
                 vk.nash_proxy = Some(nash);
                 vk.tunnel = tunnel;
@@ -556,6 +560,7 @@ async fn podgotovit_dvizhok(
             // Поздние сообщения завершённого движка не должны менять новый сеанс.
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
+            if data["tip"]=="browser-lock"{browser_lock::request_lock(h_ui.clone());return;}
             if passwords::receive(&h_ui,&id_ui,&data){return;}
             if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
@@ -720,7 +725,7 @@ fn stranica_gotova(s: &sessiya::Sessiya) -> bool {
 fn primenit_vidimost(s: &State<Sostoyanie>) {
     let m = *s.mesto.lock().unwrap();
     let aktivnaya = s.aktivnaya.lock().unwrap().clone();
-    let skryty = s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst);
+    let skryty = s.dvizhki_skryty.load(std::sync::atomic::Ordering::SeqCst) || browser_lock::locked_global();
     let okna: Vec<_> = s.vkladki.lock().unwrap().iter()
         .filter_map(|(id, vk)| vk.okno.map(|o| (id.clone(), o, vk.obychnye.as_ref().is_some_and(stranica_gotova)))).collect();
     #[cfg(target_os = "windows")]
@@ -1183,6 +1188,8 @@ pub fn run() {
         .manage(std::sync::Arc::new(secure_vault::VaultState::default()))
         .manage(browser_account::AccountState::default())
         .manage(browser_sync::SyncState::default())
+        .manage(popup_menu::PopupMenuState::default())
+        .manage(browser_lock::BrowserLockState::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1191,6 +1198,7 @@ pub fn run() {
         .plugin(tauri_plugin_window_state::Builder::default().with_filter(|label|label=="main").build())
         .setup(|app| {
             passwords::setup(app.handle()).map_err(std::io::Error::other)?;
+            browser_lock::setup(app.handle());
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 let s: State<Sostoyanie> = app.state();
@@ -1335,7 +1343,26 @@ pub fn run() {
             }
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
+        .invoke_handler(move |invoke| {
+            let label = invoke.message.webview_ref().label();
+            let command = invoke.message.command();
+            if label.starts_with("menu-") && !matches!(command,
+                "popup_menu_data" | "popup_menu_ready" | "popup_menu_choose" | "popup_menu_dismiss" | "popup_menu_lock")
+            {
+                invoke.resolver.reject("Меню не имеет доступа к этой операции");
+                return true;
+            }
+            if browser_lock::locked_global() && !matches!(command,
+                "browser_lock_status" | "browser_lock" | "browser_unlock")
+            {
+                invoke.resolver.reject("Браузер заблокирован. Введите мастер-пароль.");
+                return true;
+            }
+            (tauri::generate_handler![
+                popup_menu::popup_menu_open,popup_menu::popup_menu_data,popup_menu::popup_menu_ready,
+                popup_menu::popup_menu_choose,popup_menu::popup_menu_dismiss,popup_menu::popup_menu_lock,
+                browser_lock::browser_lock_status,browser_lock::browser_lock,browser_lock::browser_unlock,
+
             okna_app::novoe_okno,okna_app::okno_gotovo,okna_app::pokazat_glavnoe,
             set_status::set_status,set_status::set_proverit_ip,
             zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
@@ -1348,7 +1375,9 @@ pub fn run() {
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
-        ])
+
+            ])(invoke)
+        })
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")
         .run(|app, sobytie| {
@@ -1364,9 +1393,9 @@ pub fn run() {
                         if let Some(w)=app.get_webview_window("main"){let _=w.hide();}
                     }
                 }
-                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label!="main"=>{if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
-                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label!="main"=>{okna_app::zakryt(app,label);}
-                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Focused(true)|tauri::WindowEvent::Resized(_),..} if label!="main"=>{
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label.starts_with("browser-")=>{if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label.starts_with("browser-")=>{okna_app::zakryt(app,label);}
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Focused(true)|tauri::WindowEvent::Resized(_),..} if label.starts_with("browser-")=>{
                     let s:State<Sostoyanie>=app.state();okna_app::obolochka(app,&s,label);
                 }
                 tauri::RunEvent::WindowEvent { label, event: tauri::WindowEvent::Resized(r), .. }
@@ -1402,7 +1431,7 @@ pub fn run() {
                     ..
                 } if label == "main"
             );
-            if okno_zhivo && !AVTOSTART_SDELAN.swap(true, std::sync::atomic::Ordering::SeqCst)
+            if okno_zhivo && !browser_lock::locked_global() && !AVTOSTART_SDELAN.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 // При запуске поднимается ТОЛЬКО вкладка, которая была
                 // активна при закрытии (10.11.2026, задал user). Остальные
@@ -1410,6 +1439,7 @@ pub fn run() {
                 let h = app.clone();
                 std::thread::spawn(move || {
                     std::thread::sleep(std::time::Duration::from_millis(600));
+                    if browser_lock::locked_global() { return; }
                     // ⛔ Окно могло сохраниться свёрнутым (видели
                     // WS_MINIMIZE на машине user'а) — разворачиваем,
                     // иначе движок стартует в минимизированное окно.

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "popup-menu",
+  "description": "Изолированное окно меню NexusBro; команды проверяются по владельцу в backend",
+  "windows": ["menu-*"],
+  "permissions": []
+}

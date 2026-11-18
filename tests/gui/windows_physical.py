@@ -77,7 +77,8 @@ new MutationObserver(()=>fetch('/translation-result?text='+encodeURIComponent(do
 setTimeout(async()=>{let blocked=false;try{await fetch('/ads/fetch-promo')}catch(e){blocked=true}await fetch('/control?utm_source=news');const p=new URLSearchParams({path:location.pathname,sponsored:String(!!document.getElementById('sponsored')),browser:String(!!document.getElementById('browser-ad')),ad:String(!!document.getElementById('yandex-ad')),news:String(!!document.getElementById('news')),blocked:String(blocked)});await fetch('/ad-result?'+p);document.title='AdsFixtureVerified'},1500)
 </script>'''
         else:
-            body=b'<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}</style>'
+            body=b'<!doctype html><title>RenderFixture</title><style>html,body{margin:0;background:#185541;width:100%;height:100%}a{position:absolute;left:40px;color:white;font:16px sans-serif}</style><a style="top:40px" href="/middle-target">Middle link fixture</a><a style="top:90px" href="/context-target">Context link fixture</a>'
+            if path in ['/middle-target','/context-target']:body=body.replace(b'RenderFixture',b'LinkTargetFixture')
         self.send_response(200);self.send_header('Content-Type','text/html');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
     def log_message(self,*_):pass
 server=http.server.ThreadingHTTPServer(('127.0.0.1',0),Fixture)
@@ -170,7 +171,7 @@ try:
         videno=set();scrolled=0
         while time.monotonic()<deadline:
             candidates=win.descendants()
-            for native_popup in Desktop(backend='uia').windows(class_name='#32768'):
+            for native_popup in Desktop(backend='uia').windows(title='NexusBro — меню'):
                 candidates.extend(native_popup.descendants())
             allowed=kinds+(['MenuItem'] if kinds and any(k in kinds for k in ['Button','ListItem']) else []) if kinds else None
             items=[x for x in candidates if x.element_info.name==name and (not allowed or x.element_info.control_type in allowed)]
@@ -185,15 +186,52 @@ try:
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
+    def themed_popup(stage):
+        menus=Desktop(backend='uia').windows(title='NexusBro — меню')
+        assert len(menus)==1,'Expected one owned HTML menu window'
+        box=menus[0].rectangle();screen=ImageGrab.grab()
+        colors=[screen.getpixel((box.left+3,y))[:3] for y in [box.top+3,(box.top+box.bottom)//2,box.bottom-4]]
+        assert all(max(rgb)<180 for rgb in colors),('Menu did not inherit dark NexusBro palette',colors)
+        assert not Desktop(backend='uia').windows(class_name='#32768'),'Unexpected system menu instead of themed popup'
+        screen.save(run/(stage+'-themed.png'))
+        results.append({'themed_menu':stage,'background_rgb':colors,'owned_html_popup':True})
     ui('Варианты новой вкладки',['Button']).click_input()
     ui('Новая приватная вкладка',['MenuItem'])
+    themed_popup('new-tab')
     pixels('new-tab-menu-keeps-document')
     gui.press('escape')
     ui('Проба',['Button']).click_input(button='right')
     ui('Настройки',['MenuItem'])
+    themed_popup('super-context')
     pixels('super-menu-keeps-document')
     gui.press('escape')
     results.append({'native_new_tab_and_super_menus_keep_cef_visible':True})
+    def link_session():
+        return json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
+    source_tab=link_session()['aktivnaya']
+    r=rect(container);gui.click(r.left+100,r.top+50,button='middle')
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        linked=link_session()
+        if any(t['adres'].endswith('/middle-target') and not t['zagruzka'] for t in linked['vkladki']):break
+        time.sleep(.1)
+    assert any(t['adres'].endswith('/middle-target') for t in linked['vkladki']),'Middle click did not create link tab'
+    assert linked['aktivnaya']==source_tab,'Middle click unexpectedly replaced or activated the source tab'
+    ui('LinkTargetFixture',['TabItem']).click_input();gui.hotkey('ctrl','w');time.sleep(.3)
+    r=rect(container);gui.click(r.left+100,r.top+100,button='right')
+    ui('Открыть ссылку в новой вкладке',['MenuItem'])
+    themed_popup('page-link-context')
+    ui('Открыть ссылку в новой вкладке',['MenuItem']).click_input()
+    deadline=time.monotonic()+15
+    while time.monotonic()<deadline:
+        linked=link_session()
+        if any(t['adres'].endswith('/context-target') and not t['zagruzka'] for t in linked['vkladki']):break
+        time.sleep(.1)
+    assert any(t['adres'].endswith('/context-target') for t in linked['vkladki']),'Context menu did not create link tab'
+    assert linked['aktivnaya']==source_tab,'Context open replaced or unexpectedly activated the source tab'
+    ui('LinkTargetFixture',['TabItem']).click_input();gui.hotkey('ctrl','w');time.sleep(.3)
+    results.append({'native_middle_link_and_themed_context_open_background_tabs':True})
+
     # Open a real shell dialog over the native engine and cancel with keyboard.
     pt = origin(); client = wintypes.RECT()
     assert u.GetClientRect(hwnd, ctypes.byref(client))
@@ -800,6 +838,27 @@ try:
         contents=path.read_text(encoding='utf-8',errors='ignore');assert 'private-super-canary' not in contents and 'private-super-marker' not in contents,path
     # Сочетание отправляем в браузер, а не в окно runner после запуска CEF.
     ui('Адрес страницы',['Edit','ComboBox']).click_input()
+    # Enable the real local vault, then lock from a focused CEF document.
+    ui('Меню NexusBro',['Button']).click_input()
+    ui('Пароли, аккаунт и синхронизация',['MenuItem','Button']).click_input()
+    browser_master='native-windows-master-2026'
+    for label in ['Мастер-пароль','Повторите мастер-пароль']:
+        ui(label,['Edit']).click_input();gui.write(browser_master,interval=.01)
+    ui('Создать хранилище',['Button']).click_input()
+    deadline=time.monotonic()+12
+    while time.monotonic()<deadline and not (data/'security/browser-vault.v1').is_file():time.sleep(.1)
+    assert (data/'security/browser-vault.v1').is_file(),'Vault was not created from the real settings form'
+    ui('Закрыть пароли и синхронизацию',['Button']).click_input()
+    box=rect(main_hwnd);gui.click(box.right-130,box.bottom-140)
+    gui.hotkey('ctrl','shift','l')
+    ui('Мастер-пароль для разблокировки браузера',['Edit'])
+    ImageGrab.grab().save(run/'browser-locked.png')
+    sample=ImageGrab.grab().getpixel((box.right-130,box.bottom-140))[:3]
+    assert sample!=(24,85,65),'CEF remained visible above the lock screen'
+    ui('Мастер-пароль для разблокировки браузера',['Edit']).click_input();gui.write(browser_master,interval=.01)
+    ui('Разблокировать браузер',['Button']).click_input()
+    ui('Адрес страницы',['Edit','ComboBox'])
+    results.append({'real_vault_create_and_cef_ctrl_shift_l_locks_browser':True,'master_unlock_restores_browser':True})
     # Закрытие главного окна сохраняет дополнительное; последнее завершает приложение.
     gui.hotkey('ctrl','n');time.sleep(.8)
     deadline=time.monotonic()+20
@@ -819,6 +878,12 @@ try:
         if windows:break
         time.sleep(.1)
     hwnd=windows[0];main_hwnd=hwnd;win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd)
+    ui('Мастер-пароль для разблокировки браузера',['Edit'])
+    time.sleep(.6)
+    assert len(storage_reports)==reports_before_restart,'Sites loaded before the startup master password'
+    ui('Мастер-пароль для разблокировки браузера',['Edit']).click_input();gui.write(browser_master,interval=.01)
+    ui('Разблокировать браузер',['Button']).click_input()
+    results.append({'startup_master_required_before_site_requests':True})
     # Название UIA включает приватный значок; ищем точную запись по содержимому.
     deadline=time.monotonic()+20
     while time.monotonic()<deadline:

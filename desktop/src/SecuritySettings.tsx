@@ -6,7 +6,8 @@ import {security,currentCredentialTarget,emptySelection,type VaultStatus,type Cr
 import './securitySettings.css';
 
 type Tab='passwords'|'account'|'sync';
-type AccountResult=AccountStatus&{recovery_key?:string;recovery_codes?:string[]};
+const DEFAULT_ACCOUNT_SERVER='https://nexusbro-sync.hipogas.org';
+type AccountResult=AccountStatus&{recovery_key?:string;recovery_codes?:string[];warning?:string};
 type Enrollment={secret:string;otpauth_uri:string};
 function errorText(e:unknown){
  const message=String(e instanceof Error?e.message:e).slice(0,500);
@@ -27,7 +28,8 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
  const [selection,setSelection]=useState<SyncSelection>(emptySelection),[dirty,setDirty]=useState(false),[report,setReport]=useState<SyncReport|null>(null);
  const [manual,setManual]=useState(false),[origin,setOrigin]=useState(''),[username,setUsername]=useState(''),[password,setPassword]=useState(''),[title,setTitle]=useState(''),[superId,setSuperId]=useState('');
  const [draft,setDraft]=useState<CredentialDraft|null>(null),[reveal,setReveal]=useState<{id:string;value:string}|null>(null);
- const [mode,setMode]=useState<'login'|'register'|'recover'>('login'),[server,setServer]=useState(''),[accountName,setAccountName]=useState(''),[accountPass,setAccountPass]=useState(''),[accountAgain,setAccountAgain]=useState(''),[code,setCode]=useState('');
+ const [mode,setMode]=useState<'login'|'register'|'recover'>('login'),[server,setServer]=useState(DEFAULT_ACCOUNT_SERVER),[accountName,setAccountName]=useState(''),[accountPass,setAccountPass]=useState(''),[accountAgain,setAccountAgain]=useState(''),[code,setCode]=useState('');
+ const [authStep,setAuthStep]=useState('');
  const [recovery,setRecovery]=useState(''),[recoveryKey,setRecoveryKey]=useState(''),[backupCodes,setBackupCodes]=useState<string[]>([]),[enrollment,setEnrollment]=useState<Enrollment|null>(null);
  const [changePass,setChangePass]=useState(false),[oldPass,setOldPass]=useState(''),[newPass,setNewPass]=useState(''),[newAgain,setNewAgain]=useState('');
  const [removeAccount,setRemoveAccount]=useState(false),[deleteConfirm,setDeleteConfirm]=useState('');
@@ -36,7 +38,7 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
   const token=++revision.current;const next=await security.vault('status');if(!alive.current||token!==revision.current)return;setVault(next);
   if(!next.unlocked){setCredentials([]);setAccount(null);setSync(null);setReveal(null);setEnrollment(null);setRecoveryKey('');setBackupCodes([]);return;}
   const rows=await security.passwords<CredentialSummary[]>('list');if(!alive.current||token!==revision.current)return;setCredentials(rows);
-  const state=await security.account('status');if(!alive.current||token!==revision.current)return;setAccount(state);setServer(state.server||'');
+  const state=await security.account('status');if(!alive.current||token!==revision.current)return;setAccount(state);setServer(state.server||DEFAULT_ACCOUNT_SERVER);
   const status=await security.sync('status');if(!alive.current||token!==revision.current)return;setSync(status);setSelection(status.selection||emptySelection());setDirty(false);setReport(status.report||null);return status;
  }
  useEffect(()=>{alive.current=true;void refresh().catch(e=>{if(alive.current)setError(errorText(e));});return()=>{alive.current=false;revision.current++;};},[]);
@@ -54,8 +56,14 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
   setDraft(null);setManual(false);setOrigin('');setUsername('');setTitle('');await refresh();setNotice('Логин и пароль сохранены в зашифрованном хранилище.');
  });}
  async function authenticate(e:FormEvent){e.preventDefault();const secret=accountPass,key=recovery;setAccountPass('');setAccountAgain('');setRecovery('');await run(async()=>{
-  const data=mode==='recover'?{username:accountName,recovery_key:key,new_password:secret}:{username:accountName,password:secret,...(code?{totp:code}:{})};
-  const result=await security.account<AccountResult>(mode,data);setCode('');await refresh();if(result.recovery_key)setRecoveryKey(result.recovery_key);if(result.recovery_codes)setBackupCodes(result.recovery_codes);setNotice(mode==='register'?'Аккаунт NexusBro создан. Сохраните ключ восстановления.':'Вход в аккаунт NexusBro выполнен.');
+  try{
+   if(!account?.configured){setAuthStep('Подключаю аккаунт NexusBro…');const standard=await security.account<{server:string}>('default_server');const selected=server.trim();await security.account('configure',{server:selected&&selected!==DEFAULT_ACCOUNT_SERVER?selected:standard.server});}
+   setAuthStep(mode==='register'?'Создаю аккаунт…':mode==='recover'?'Восстанавливаю доступ…':'Выполняю вход…');
+   const data=mode==='recover'?{username:accountName,recovery_key:key,new_password:secret}:{username:accountName,password:secret,...(code?{totp:code}:{})};
+   const result=await security.account<AccountResult>(mode,data);setCode('');await refresh();if(result.recovery_key)setRecoveryKey(result.recovery_key);if(result.recovery_codes)setBackupCodes(result.recovery_codes);
+   if(!result.logged_in){if(mode==='register'&&result.recovery_key){setNotice('Аккаунт создан. Сохраните ключ восстановления и выполните вход.');if(result.warning)setError(errorText(result.warning));setMode('login');return;}throw new Error(result.warning||'Вход не завершён. Повторите попытку.');}
+   setNotice(mode==='register'?'Аккаунт NexusBro создан. Сохраните ключ восстановления.':mode==='recover'?'Доступ к аккаунту NexusBro восстановлен.':'Вход в аккаунт NexusBro выполнен.');
+  }finally{setAuthStep('');}
  });}
  async function saveSelection(next=selection){await security.sync('configure',{selection:next});setDirty(false);setSync(v=>v?{...v,selection:next}:v);}
  function editSelection(next:SyncSelection){setSelection(next);setDirty(true);}
@@ -89,13 +97,16 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
  if(!vault)content=<p aria-live="polite">{error?'Хранилище недоступно. Повторите загрузку.':'Проверяю хранилище…'}</p>;
  else if(!vault.unlocked)content=<form className="security-unlock" onSubmit={unlock}>
   <h3>{vault.exists?'Разблокировать хранилище':'Создать защищённое хранилище'}</h3>
-  <p>Логины, пароли и ключи синхронизации NexusBro хранятся зашифрованными на этом устройстве. Мастер-пароль не отправляется на сервер.</p>
+  <p>{tab==='account'?'Сначала защитите данные на этом устройстве мастер-паролем. Затем здесь появятся регистрация и вход в аккаунт NexusBro.':tab==='sync'?'Для синхронизации сначала разблокируйте данные на этом устройстве. Затем войдите в аккаунт NexusBro и выберите нужные категории.':'Один раз создайте хранилище и придумайте мастер-пароль. Он защищает сохранённые логины и пароли на этом устройстве.'}</p>
+  <p className="security-hint">Аккаунт NexusBro для сохранения паролей на этом устройстве не нужен. Мастер-пароль не отправляется на сервер и отличается от пароля аккаунта. После создания хранилища он потребуется при запуске браузера. Ctrl+Shift+L блокирует браузер.</p>
+  <ol className="security-password-steps" aria-label="Как сохраняются пароли"><li>Создайте или разблокируйте хранилище.</li><li>Войдите на сайт в обычной вкладке.</li><li>Нажмите «Сохранить» в предложении браузера — логин и пароль попадут в хранилище.</li></ol>
   <Secret label="Мастер-пароль" value={master} onChange={setMaster} minLength={vault.exists?undefined:12} autoComplete={vault.exists?'current-password':'new-password'}/>
   {!vault.exists&&<><Secret label="Повторите мастер-пароль" value={masterAgain} onChange={setMasterAgain} minLength={12} autoComplete="new-password"/><small>Не менее 12 символов. Сохраните пароль: без него локальное хранилище не открыть.</small></>}
   <button className="security-primary" disabled={busy||!master||(!vault.exists&&(master.length<12||master!==masterAgain))}>{vault.exists?'Разблокировать':'Создать хранилище'}</button>
  </form>;
  else if(tab==='passwords')content=<>
-  <div className="security-section-heading"><div><h3>Сохранённые логины и пароли</h3><p>Заполнение — только по вашему действию и для точного адреса сайта. Приватные вкладки исключены.</p></div></div>
+  <div className="security-section-heading"><div><h3>Сохранённые логины и пароли</h3><p>Войдите на сайт в обычной вкладке. Браузер предложит сохранить логин и пароль — запись появится здесь после нажатия «Сохранить».</p></div></div>
+  <p className="security-hint">Хранилище разблокировано: предложения сохранения включены. Если предложения не было, откройте заполненную форму входа и нажмите «Сохранить с открытой страницы». При блокировке хранилища и в приватных вкладках пароли не сохраняются. Заполнение — по вашему выбору на исходном сайте.</p>
   <div className="security-actions"><button disabled={busy} onClick={()=>{setManual(v=>!v);setDraft(null);setPassword('');}}>Добавить вручную</button><button disabled={busy} onClick={()=>void capture()}>Сохранить с открытой страницы</button></div>
   {(manual||draft)&&<form className="security-card security-password-form" onSubmit={savePassword}>
    <h4>{draft?'Сохранить данные страницы':'Новый логин и пароль'}</h4>
@@ -110,9 +121,9 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
   {!credentials.length?<p className="security-empty">Сохранённых паролей пока нет.</p>:<ul className="security-password-list">{credentials.map(row=><li key={row.id} className="security-card"><div className="security-credential"><strong>{row.title||row.origin}</strong><span>{row.origin}</span><span>{row.username}</span></div><div className="security-actions"><button disabled={busy} onClick={()=>void run(async()=>{await security.passwords('fill',{id:row.id,...await currentCredentialTarget()});setNotice('Данные заполнены на текущей странице.');})}>Заполнить на странице</button><button disabled={busy} aria-label={'Показать пароль: '+(row.title||row.origin)} onClick={()=>{if(reveal?.id===row.id){setReveal(null);return;}void run(async()=>setReveal({id:row.id,value:await security.passwords<string>('reveal',{id:row.id})}));}}>{reveal?.id===row.id?'Скрыть пароль':'Показать пароль'}</button><button className="security-danger" disabled={busy} onClick={()=>{if(window.confirm('Удалить сохранённый пароль для '+row.origin+'?'))void run(async()=>{await security.passwords('delete',{id:row.id});setReveal(null);await refresh();setNotice('Запись удалена.');});}}>Удалить</button></div>{reveal?.id===row.id&&<div className="security-revealed"><input aria-label={'Пароль: '+(row.title||row.origin)} type="text" readOnly autoComplete="off" value={reveal.value}/><small>Скроется через 30 секунд.</small></div>}</li>)}</ul>}
  </>;
  else if(tab==='account')content=<>
-  <h3>Отдельный аккаунт NexusBro</h3><p>Аккаунт, сервер и ключи браузера изолированы от NexuSSH. Пароль аккаунта отличается от локального мастер-пароля.</p>
-  <form className="security-server" onSubmit={e=>{e.preventDefault();void run(async()=>{await security.account('configure',{server:server.trim()});await refresh();setNotice('Адрес сервера сохранён. Подключение проверяется при входе.');});}}><label>Сервер синхронизации NexusBro<input aria-label="Сервер синхронизации NexusBro" type="url" value={server} onChange={e=>setServer(e.target.value)} placeholder="https://…" required disabled={busy||!!account?.logged_in}/></label><button disabled={busy||!!account?.logged_in||!server.trim()}>Сохранить сервер</button></form>
-  {!account?.configured&&<p className="security-hint">Сервер ещё не настроен. Локальное сохранение паролей уже доступно; облачная синхронизация не подключена.</p>}
+  <h3>Отдельный аккаунт NexusBro</h3><p>Создайте аккаунт или войдите, чтобы синхронизировать выбранные данные между устройствами. Подключение NexusBro настроится автоматически. Пароль аккаунта отличается от мастер-пароля этого устройства.</p>
+  {account?.configured&&account.server!==DEFAULT_ACCOUNT_SERVER&&<p className="security-hint">Используется выбранный вами сервер: {account.server}</p>}
+  <details className="security-advanced-server"><summary>Другой сервер синхронизации</summary><p>Необязательно. Меняйте только для подключения к собственному сервису NexusBro. Для обычного входа ничего настраивать не нужно.</p><form className="security-server" onSubmit={e=>{e.preventDefault();void run(async()=>{await security.account('configure',{server:server.trim()});await refresh();setNotice('Сервер подключён. Теперь войдите или создайте аккаунт.');});}}><label>Сервер синхронизации NexusBro<input aria-label="Сервер синхронизации NexusBro" type="url" value={server} onChange={e=>setServer(e.target.value)} required disabled={busy||!!account?.logged_in}/></label><button disabled={busy||!!account?.logged_in||!server.trim()}>Сохранить сервер</button></form></details>
   {!account?.logged_in?<>
    <div className="security-segment" role="group" aria-label="Действие с аккаунтом">{([['login','Войти'],['register','Зарегистрироваться'],['recover','Восстановить доступ']] as const).map(([m,label])=><button key={m} className={mode===m?'selected':''} disabled={busy} onClick={()=>{setMode(m);setError('');setNotice('');}}>{label}</button>)}</div>
    <form className="security-account-form" onSubmit={authenticate}>
@@ -121,7 +132,8 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
     <Secret label={mode==='recover'?'Новый пароль аккаунта':'Пароль аккаунта NexusBro'} value={accountPass} onChange={setAccountPass} minLength={mode==='login'?undefined:12} autoComplete={mode==='login'?'current-password':'new-password'}/>
     {mode!=='login'&&<Secret label="Повторите пароль аккаунта" value={accountAgain} onChange={setAccountAgain} minLength={12} autoComplete="new-password"/>}
     {mode==='login'&&<label>Код двухфакторной аутентификации<input aria-label="Код 2FA для входа" value={code} onChange={e=>setCode(e.target.value)} autoComplete="one-time-code" placeholder="Если включена 2FA"/></label>}
-    <button className="security-primary" disabled={busy||!account?.configured||!accountName||!accountPass||(mode!=='login'&&(accountPass.length<12||accountPass!==accountAgain))||(mode==='recover'&&!recovery)}>{mode==='login'?'Войти в NexusBro':mode==='register'?'Создать аккаунт NexusBro':'Восстановить аккаунт'}</button>
+    <button className="security-primary" disabled={busy||!accountName||!accountPass||(mode!=='login'&&(accountPass.length<12||accountPass!==accountAgain))||(mode==='recover'&&!recovery)}>{authStep||(mode==='login'?'Войти в NexusBro':mode==='register'?'Создать аккаунт NexusBro':'Восстановить аккаунт')}</button>
+    {authStep&&<p className="security-connecting" aria-live="polite">{authStep}</p>}
    </form>
   </>:<>
    <div className="security-card security-account-status"><strong>Выполнен вход: {account.username}</strong><span>Двухфакторная аутентификация: {account.totp_enabled?'включена':'не включена'}</span><button disabled={busy} onClick={()=>void run(async()=>{await security.account('logout');setMode('login');setEnrollment(null);setRecoveryKey('');setBackupCodes([]);await refresh();setNotice('Вы вышли из аккаунта. Локальные пароли сохранены.');})}>Выйти из аккаунта</button></div>

@@ -90,7 +90,7 @@ struct Draft {
     credential: Credential,
 }
 static DRAFTS: OnceLock<Mutex<HashMap<String, Draft>>> = OnceLock::new();
-fn draft(super_id: &str, origin: String, value: &Value) -> Result<Value, String> {
+fn draft(vault: &VaultState, super_id: &str, origin: String, value: &Value) -> Result<Value, String> {
     let username = field(value, "username", 512)?;
     let password = field(value, "password", 4096)?;
     if password.is_empty() {
@@ -108,6 +108,7 @@ fn draft(super_id: &str, origin: String, value: &Value) -> Result<Value, String>
     };
     let result = json!({"draft_id":id,"origin":credential.origin,"username":credential.username});
     let mut items = DRAFTS.get_or_init(Default::default).lock().unwrap();
+    if !vault.status().unlocked { return Err("Хранилище заблокировано".into()); }
     items.retain(|_, d| d.created.elapsed() < Duration::from_secs(120));
     if items.len() >= 8 {
         items.clear();
@@ -143,7 +144,9 @@ pub fn receive(app: &tauri::AppHandle, super_id: &str, data: &Value) -> bool {
                 .unwrap()
                 .remove(&key)
             {
-                let result = if data.get("error").is_some() {
+                let result = if !app.state::<Arc<VaultState>>().status().unlocked {
+                    Err("Хранилище заблокировано".into())
+                } else if data.get("error").is_some() {
                     Err("Не удалось безопасно прочитать или заполнить форму".into())
                 } else {
                     Ok(data.clone())
@@ -172,7 +175,7 @@ pub fn receive(app: &tauri::AppHandle, super_id: &str, data: &Value) -> bool {
             }
             if let Ok(origin) = expected {
                 if data["origin"].as_str() == Some(origin.as_str()) {
-                    if let Ok(offer) = draft(super_id, origin, &data["value"]) {
+                    if let Ok(offer) = draft(&vault, super_id, origin, &data["value"]) {
                         let _=app.emit_to(label,"stranica-ui",json!({"super_id":super_id,"data":{"tip":"password-offer","id":id,"draft_id":offer["draft_id"],"origin":offer["origin"],"username":offer["username"]}}));
                     }
                 }
@@ -228,11 +231,11 @@ async fn site(
     let token = random_id();
     let key = (super_id.into(), token.clone());
     let (tx, rx) = tokio::sync::oneshot::channel();
-    PENDING
-        .get_or_init(Default::default)
-        .lock()
-        .unwrap()
-        .insert(key.clone(), tx);
+    {
+        let mut pending = PENDING.get_or_init(Default::default).lock().unwrap();
+        if !ENABLED.load(Ordering::SeqCst) { return Err("Хранилище заблокировано".into()); }
+        pending.insert(key.clone(), tx);
+    }
     let _guard = Wait(key);
     let command = crate::sessiya::Komanda::PasswordForm {
         id,
@@ -257,9 +260,12 @@ async fn site(
         .map_err(|_| "Страница закрыта".to_string())?
 }
 fn broadcast(app: &tauri::AppHandle, value: bool) {
-    if ENABLED.swap(value, Ordering::Relaxed) == value {
-        return;
+    let changed = ENABLED.swap(value, Ordering::SeqCst) != value;
+    if !value {
+        PENDING.get_or_init(Default::default).lock().unwrap().clear();
+        DRAFTS.get_or_init(Default::default).lock().unwrap().clear();
     }
+    if !changed { return; }
     let state = app.state::<crate::Sostoyanie>();
     let channels: HashMap<_, _> = state
         .vkladki
@@ -285,9 +291,6 @@ fn broadcast(app: &tauri::AppHandle, value: bool) {
                 komanda: Box::new(crate::sessiya::Komanda::PasswordsEnabled { enabled: value }),
             });
         }
-    }
-    if !value {
-        DRAFTS.get_or_init(Default::default).lock().unwrap().clear();
     }
 }
 fn vault_root(app: &tauri::AppHandle) -> Result<PathBuf, String> {
@@ -418,7 +421,7 @@ pub async fn security_passwords(
             let id = data["tab_id"].as_u64().ok_or("Не выбрана вкладка")?;
             let result = site(&window, &state, &super_id, id, None).await?;
             let origin = secure_origin(result["origin"].as_str().ok_or("Неизвестный сайт")?)?;
-            draft(&super_id, origin, &result["value"])
+            draft(&vault, &super_id, origin, &result["value"])
         }
         "save_draft" => {
             let id = field(&data, "draft_id", 128)?;

@@ -559,6 +559,22 @@ pub async fn security_account(
     action: String,
     data: Option<Value>,
 ) -> Result<Value, String> {
+    if action == "default_server" {
+        // Explicit isolated test mode only; normal installations always use the
+        // separate browser service, never a server inferred from another product.
+        if std::env::var_os("NEXUSBRO_TEST_DATA").is_some() {
+            if let Ok(candidate) = std::env::var("NEXUSBRO_TEST_SYNC_URL") {
+                let url = reqwest::Url::parse(&candidate).map_err(|_| "Неверный тестовый адрес")?;
+                if url.scheme() != "http"
+                    || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1"))
+                    || !url.username().is_empty() || url.password().is_some()
+                    || url.path() != "/" || url.query().is_some() || url.fragment().is_some()
+                { return Err("Тестовый сервер должен быть локальным".into()); }
+                return Ok(json!({"server":candidate.trim_end_matches('/')}));
+            }
+        }
+        return Ok(json!({"server":"https://nexusbro-sync.hipogas.org"}));
+    }
     let _guard = sync.serial.lock().await;
     account
         .dispatch(&vault, &action, data.unwrap_or_else(|| json!({})))

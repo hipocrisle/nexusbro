@@ -63,7 +63,7 @@ try:
         page.screenshot(path='/tmp/nexusbro-super-colors-collapsed.png')
         page.get_by_role('button', name='Развернуть левую панель', exact=True).click()
         normal.click(button='right')
-        page.locator('.stroka-menyu').filter(has_text='Настройки').click()
+        page.get_by_role('menuitem', name='Настройки', exact=True).click()
         expect(page.get_by_role('radio', name='Синий', exact=True)).to_be_checked()
         page.get_by_role('radio', name='Зелёный', exact=True).check()
         page.get_by_role('button', name='Сохранить', exact=True).click()
@@ -74,7 +74,7 @@ try:
         assert not page.evaluate("window.__args.some(x=>['zapustit','ostanovit'].includes(x.cmd))")
         assert page.evaluate('window.__lastProfile.privatnaya') is False
         normal.click(button='right')
-        page.locator('.stroka-menyu').filter(has_text='Настройки').click()
+        page.get_by_role('menuitem', name='Настройки', exact=True).click()
         expect(page.get_by_role('radio', name='Зелёный', exact=True)).to_be_checked()
         page.get_by_role('radio', name='Без цвета', exact=True).check()
         page.get_by_role('button', name='Сохранить', exact=True).click()
@@ -83,7 +83,7 @@ try:
         assert page.evaluate('window.__lastProfile.cvet') == ''
         # Навигация и сохранение цвета не меняют приватный признак соседней Super.
         private.click(button='right')
-        page.locator('.stroka-menyu').filter(has_text='Настройки').click()
+        page.get_by_role('menuitem', name='Настройки', exact=True).click()
         expect(page.get_by_role('radio', name='Фиолетовый', exact=True)).to_be_checked()
         expect(page.get_by_role('checkbox', name='Приватная супер-вкладка', exact=False)).to_be_checked()
         page.get_by_role('radio', name='Оранжевый', exact=True).check()

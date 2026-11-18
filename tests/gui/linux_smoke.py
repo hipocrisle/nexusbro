@@ -72,7 +72,20 @@ try:
   session=client.command('obychnye_spisok',id=id);client.command('obychnaya_komanda',id=id,komanda={'deystvie':'pereyti','id':session['aktivnaya'],'adres':url});loaded(client,id)
  choose(c2,'LinuxB');navigate(c2,'linux-b');choose(c2,'LinuxA');navigate(c2,'linux-a');choose(c2,'LinuxB');loaded(c2,'linux-b');assert c.command('aktivnaya')=='linux-a'
  checks.append({'secondary_super_switch_and_main_unchanged':True})
- c2.command('fokus_obolochke');c2.click('[aria-label="Меню NexusBro"]');time.sleep(.2);subprocess.run(['xdotool','key','End','Return'],env={**os.environ,'DISPLAY':':96'},check=True);c2.wait('!!document.querySelector(".nastrojki-okno")');c2.click('[aria-label="Закрыть настройки"]');checks.append({'secondary_local_settings_menu':True})
+ c2.command('fokus_obolochke');c2.click('[aria-label="Меню NexusBro"]')
+ deadline=time.monotonic()+10;popup_id=None
+ while time.monotonic()<deadline:
+  result=subprocess.run(['xdotool','search','--onlyvisible','--name','^NexusBro — меню$'],env={**os.environ,'DISPLAY':':96'},capture_output=True,text=True)
+  if result.returncode==0 and result.stdout.strip():popup_id=result.stdout.splitlines()[0];break
+  time.sleep(.1)
+ assert popup_id,'Owned themed menu did not become visible'
+ raw=subprocess.check_output(['xdotool','getwindowgeometry','--shell',popup_id],env={**os.environ,'DISPLAY':':96'},text=True)
+ geometry=dict(line.split('=',1) for line in raw.splitlines() if '=' in line)
+ from PIL import ImageGrab
+ screen=ImageGrab.grab(xdisplay=':96');color=screen.getpixel((int(geometry['X'])+3,int(geometry['Y'])+3))[:3]
+ assert max(color)<180,('Linux menu was white instead of NexusBro theme',color)
+ screen.save(root/'themed-menu.png');checks.append({'linux_owned_html_popup_inherits_dark_theme':True})
+ subprocess.run(['xdotool','key','End','Return'],env={**os.environ,'DISPLAY':':96'},check=True);c2.wait('!!document.querySelector(".nastrojki-okno")');c2.click('[aria-label="Закрыть настройки"]');checks.append({'secondary_local_settings_menu':True})
  c.command('zakryt',id='linux-b',sohranit=False);assert app.poll() is None;loaded(c,'linux-a');checks.append({'delete_other_super_keeps_windows':True})
  from PIL import ImageGrab
  ImageGrab.grab(xdisplay=':96').save(root/'windows.png')

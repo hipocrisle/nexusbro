@@ -7,8 +7,6 @@ mock=next(ast.literal_eval(n.value) for n in module.body if isinstance(n,ast.Ass
 mock+='''
 const originalInvoke=window.__TAURI_INTERNALS__.invoke;window.__books=[];
 window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
- if(cmd==='plugin:menu|new'&&args.options.items.every(i=>i.id?.startsWith('address-'))){window.__nativeMenu=args.options.items;return [111,'address'];}
- if(cmd==='plugin:menu|popup'&&args.rid===111){window.__menuPopped=true;return null;}
  if(cmd==='bufer_chitat')return navigator.clipboard.readText();
  if(cmd==='bufer_zapisat')return navigator.clipboard.writeText(args.text);
  if(cmd==='biblioteka_spisok'&&args.razdel==='zakladki')return window.__books;
@@ -43,7 +41,13 @@ try:
   page.get_by_role('tab',name='Fixture',exact=True).wait_for()
   page.get_by_role('button',name='Новая обычная вкладка',exact=True).click()
   assert page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda').at(-1).args.komanda.deystvie")=='novaya'
-  page.get_by_role('button',name='Варианты новой вкладки',exact=True).click();page.get_by_role('menuitem',name='Новая приватная вкладка',exact=True).click()
+  menu_hides=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
+  page.get_by_role('button',name='Варианты новой вкладки',exact=True).click()
+  expect(page.locator('.nexus-popup-menu[role=menu]')).to_be_visible()
+  assert page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")==menu_hides
+  assert page.evaluate("window.__args.some(x=>x.cmd==='popup_menu_open')")
+  assert not page.evaluate("window.__args.some(x=>x.cmd.startsWith('plugin:menu|'))")
+  page.get_by_role('menuitem',name='Новая приватная вкладка',exact=True).click()
   assert page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda').at(-1).args.komanda.deystvie")=='novaya_privatnaya'
   print('stage: dropdown',flush=True)
   star=page.locator('.bookmark-star');star.click();expect(star).to_have_attribute('aria-pressed','true');expect(star).to_have_text('★');star.click();expect(star).to_have_attribute('aria-pressed','false')
@@ -56,14 +60,16 @@ try:
   hides_before=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
   address=page.get_by_label('Адрес страницы',exact=True);address.focus();address.press('Control+a');selected=address.input_value();address.click(button='right')
   print('stage: address',flush=True)
-  page.wait_for_function('window.__menuPopped===true')
+  expect(page.locator('.nexus-popup-menu[role=menu]')).to_be_visible()
   assert page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")==hides_before
-  items=page.evaluate('window.__nativeMenu.map(i=>({id:i.id.split("-").at(-1),text:i.text,enabled:i.enabled}))');assert [i['id'] for i in items]==['undo','redo','cut','copy','paste','delete','selectAll'],items
+  items=page.evaluate("window.__args.filter(x=>x.cmd==='popup_menu_open').at(-1).args.items")
+  assert [i['text'].split('\t')[0] for i in items]==['Отменить','Повторить','Вырезать','Копировать','Вставить','Удалить','Выделить всё'],items
   assert not any(s in str(items).lower() for s in ['эмодзи','парол','направлен','инструмент'])
-  assert next(i for i in items if i['id']=='copy')['enabled']
-  page.evaluate("window.__nativeMenu.find(i=>i.id.endsWith('-copy')).handler.onmessage('copy')");page.wait_for_timeout(100)
+  assert items[3]['enabled']
+  assert not page.evaluate("window.__args.some(x=>x.cmd.startsWith('plugin:menu|'))")
+  page.get_by_role('menuitem',name='Копировать',exact=True).click();page.wait_for_timeout(100)
   assert page.evaluate("Promise.race([navigator.clipboard.readText(),new Promise(r=>setTimeout(()=>r('TIMEOUT'),2500))])")==selected
-  page.get_by_role('button',name='Меню NexusBro',exact=True).click();page.get_by_role('menuitem',name='Загрузки Ctrl+J',exact=True).click()
+  page.get_by_role('button',name='Меню NexusBro',exact=True).click();page.get_by_role('menuitem',name='Загрузки',exact=True).click()
   expect(page.get_by_text('invoice.pdf',exact=True)).to_be_visible();assert 'THIS_TOKEN_MUST_NOT_RENDER' not in page.locator('.library-list').inner_text()
   page.get_by_role('button',name='Убрать из списка',exact=True).click();assert page.evaluate("window.__args.some(x=>x.cmd==='zagruzki_ochistit'&&x.args.id==='completed')")
   page.get_by_role('button',name='Очистить список',exact=True).click();assert page.evaluate("window.__args.some(x=>x.cmd==='zagruzki_ochistit'&&x.args.id===null)")

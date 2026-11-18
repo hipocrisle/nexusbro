@@ -1,16 +1,19 @@
-import {Menu} from '@tauri-apps/api/menu';
-import {LogicalPosition} from '@tauri-apps/api/dpi';
-import {getCurrentWindow} from '@tauri-apps/api/window';
+import {invoke} from '@tauri-apps/api/core';
 export type NativeEntry={text:string;enabled?:boolean;action:()=>void|Promise<unknown>}|null;
-let sequence=0;
-const live=new Map<string,Menu>();
-// A native popup is composited over child CEF windows. Never hide the document.
+const colors=['--fon','--fon2','--fon3','--tekst','--tiho','--kraj','--akcent'] as const;
+function rgb(value:string):number[]{
+ const v=value.trim();
+ if(/^#[0-9a-f]{6}$/i.test(v))return [1,3,5].map(i=>parseInt(v.slice(i,i+2),16));
+ if(/^#[0-9a-f]{3}$/i.test(v))return [1,2,3].map(i=>parseInt(v[i]+v[i],16));
+ const match=v.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/i);
+ return match?match.slice(1,4).map(n=>Math.max(0,Math.min(255,Math.round(Number(n))))):[20,25,35];
+}
+// Only safe labels/theme cross IPC; executable actions stay in the owner window.
 export async function popupMenu(items:NativeEntry[],x:number,y:number,onError:(message:string)=>void){
- const label=getCurrentWindow().label;const previous=live.get(label);if(previous){live.delete(label);await previous.close();}
- const prefix='nb-menu-'+label+'-'+(++sequence);
- const menu=await Menu.new({items:items.map((item,i)=>item?{id:prefix+'-'+i,text:item.text,enabled:item.enabled,action:()=>{Promise.resolve().then(item.action).catch(e=>onError(String(e)));}}:{item:'Separator' as const})});
- live.set(label,menu);
- // popup() resolves after presentation on GTK, not necessarily after dismissal.
- // Keep its native resource/callbacks alive until the next popup or window teardown.
- try{await menu.popup(new LogicalPosition(x,y),getCurrentWindow());}catch(error){if(live.get(label)===menu)live.delete(label);await menu.close().catch(()=>{});throw error;}
+ const root=getComputedStyle(document.documentElement),body=getComputedStyle(document.body);
+ const theme={colors:Object.fromEntries(colors.map(k=>[k,rgb(root.getPropertyValue(k))])),font_family:body.fontFamily,font_size:Math.max(10,Math.min(24,parseFloat(body.fontSize)||14))};
+ const selected=await invoke<number|null>('popup_menu_open',{items:items.map(item=>item?{text:item.text,enabled:item.enabled!==false}:null),theme,x,y});
+ if(selected===null)return;
+ const item=items[selected];if(!item||item.enabled===false)return;
+ try{await item.action();}catch(error){onError(String(error));}
 }

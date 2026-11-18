@@ -95,6 +95,22 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   }, [id]);
   sessiyaRef.current = sessiya;
   const aktivnaya = sessiya?.vkladki.find((v) => v.id === sessiya.aktivnaya);
+  useEffect(()=>{
+    let alive=true;
+    type PageMenu={tip:string;id:number;token:string;x:number;y:number;items:({command_id:number;text:string;enabled:boolean}|null)[]};
+    const off=listen<{super_id:string;data:PageMenu}>('stranica-ui',event=>{
+      const data=event.payload.data;
+      if(event.payload.super_id!==id||data.tip!=='page-context-menu')return;
+      const reply=(command_id:number|null)=>invoke('obychnaya_komanda',{id,komanda:{deystvie:'page_context_choose',token:data.token,command_id}});
+      if(!alive||sessiyaRef.current?.aktivnaya!==data.id){void reply(null).catch(()=>{});return;}
+      const bounds=document.querySelector('.pole')?.getBoundingClientRect();
+      let chosen=false;
+      void popupMenu(data.items.map(item=>item?{text:item.text,enabled:item.enabled,action:async()=>{chosen=true;await reply(item.command_id);}}:null),(bounds?.left||0)+data.x,(bounds?.top||0)+data.y,message=>{if(alive)setOshibka(message);})
+        .catch(error=>{if(alive)setOshibka(String(error));})
+        .finally(()=>{if(!chosen)void reply(null).catch(()=>{});});
+    });
+    return()=>{alive=false;void off.then(stop=>stop());};
+  },[id]);
   useEffect(()=>{setPasswordOffer(null);const off=listen<{super_id:string;data:{tip:string;id:number;draft_id:string;origin:string;username:string}}>('stranica-ui',e=>{if(e.payload.super_id===id&&e.payload.data.id===aktivnaya?.id&&e.payload.data.tip==='password-offer')setPasswordOffer(e.payload.data);});return()=>{void off.then(f=>f());};},[id,aktivnaya?.id]);
   const [bookmarked,setBookmarked]=useState(false);
   const [bookmarkMessage,setBookmarkMessage]=useState("");

@@ -134,6 +134,8 @@ class Device:
                'XDG_CACHE_HOME': str(self.root / 'cache'),
                'NO_PROXY': '127.0.0.1,localhost,::1', 'no_proxy': '127.0.0.1,localhost,::1'}
         env.pop('NEXUSBRO_TEST_TRANSLATE_URL', None)
+        if hasattr(self, 'sync_url'):
+            env['NEXUSBRO_TEST_SYNC_URL'] = self.sync_url
         self.app = subprocess.Popen(['dbus-run-session', '--', str(self.exe)], env=env,
                                     stdout=self.log('app-' + str(self.launches) + '.log'),
                                     stderr=subprocess.STDOUT, start_new_session=True)
@@ -330,7 +332,7 @@ def run(args):
  report('ready',false);'''.replace('CASE', json.dumps(case)).replace('LOGIN', json.dumps(username)).replace('PASSWORD', json.dumps(password))
             body = ('''<!doctype html><meta charset="utf-8"><title>SecurityNativeFixture</title>
 <style>body{margin:0;background:#185541;color:white}form{position:absolute;left:40px;top:40px;width:320px}input{display:block;box-sizing:border-box;width:320px;height:36px;margin:0 0 14px;padding:4px;font-size:16px}button{display:block;box-sizing:border-box;width:320px;height:40px;padding:0;font-size:16px}</style>
-<form><input id="login" type="text" autocomplete="username"><input id="password" type="password" autocomplete="current-password"><button type="submit">Synthetic sign in</button></form><script>''' + script + '</script>').encode()
+<form><input id="login" type="text" autocomplete="username"><input id="password" type="password" autocomplete="current-password"><button type="submit">Synthetic sign in</button></form><a href="/form?case=private-link-opened&amp;mode=empty" style="position:absolute;left:40px;top:250px;color:white">Middle link fixture</a><script>''' + script + '</script>').encode()
             self.send_response(200)
             self.send_header('Content-Type', 'text/html;charset=utf-8')
             self.send_header('Cache-Control', 'no-store')
@@ -404,6 +406,7 @@ def run(args):
         a = Device('A', root / 'device-a', exe, cef)
         b = Device('B', root / 'device-b', exe, cef)
         devices.extend((a, b))
+        a.sync_url = b.sync_url = sync_url
         for device, theme, marker in [(a, 'grafit', 'only-device-a'), (b, 'svetlaya', 'only-device-b')]:
             (device.data / 'nastrojki.json').write_text(json.dumps(settings(theme, marker)))
         # Same saved record on two devices has different portable metadata and
@@ -501,13 +504,24 @@ def run(args):
         wait_for(lambda: seen('private-only'), 'Private fixture did not initialize')
         call(ca, 'security_passwords', action='capture', data={'super_id': normal_id, 'tab_id': private_tab}, error=True)
         call(ca, 'security_passwords', action='fill', data={'id': credential_id, 'super_id': normal_id, 'tab_id': private_tab}, error=True)
+        point=js_wait(ca, '(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r?[r.x+100,r.y+260]:null})()', 'Private link viewport missing')
+        ca.mouse(*point,button=2)
+        def private_middle():
+            session=call(ca,'obychnye_spisok',id=normal_id)
+            target=next((tab for tab in session['vkladki'] if 'private-link-opened' in tab['adres']),None)
+            if not target:return None
+            require(target.get('privatnaya') and session['aktivnaya']==private_tab,'Middle link lost private mode or opener tab')
+            return target
+        linked=wait_for(private_middle,'Private middle click did not open a background private tab')
+        call(ca,'obychnaya_komanda',id=normal_id,komanda={'deystvie':'zakryt','id':linked['id']})
+        checkpoint('private_middle_link_opens_background_same_super_without_losing_privacy')
         a.submit()
         wait_for(lambda: any(p.get('trusted') for p in seen('private-only', 'submit')), 'Private submit fixture did not execute')
         require(all(p.get('username') == forms['private'][0] and p.get('password') == forms['private'][1] for p in seen('private-only', 'submit')), 'Rejected private fill changed actual form values')
         time.sleep(.3)
         require(not ca.js('!!document.querySelector(".password-offer")'), 'Private submit exposed a password offer')
         require(len(call(ca, 'security_passwords', action='list')) == 2, 'Private page saved a credential')
-        require(not any('private-only' in row['adres'] for row in call(ca, 'biblioteka_spisok', razdel='istoriya')), 'Private URL entered history')
+        require(not any('private-only' in row['adres'] or 'private-link-opened' in row['adres'] for row in call(ca, 'biblioteka_spisok', razdel='istoriya')), 'Private URL entered history')
         saved_session = a.data / 'profili' / normal_id / 'obychnye.json'
         require(saved_session.is_file() and 'private-only' not in saved_session.read_text(), 'Private URL entered persisted session')
         call(ca, 'obychnaya_komanda', id=normal_id, komanda={'deystvie': 'vybrat', 'id': normal_tab})
@@ -516,15 +530,25 @@ def run(args):
         phase = 'isolated-account'
         call(ca, 'security_account', action='configure', data={'server': base}, error=True)
         require(not call(ca, 'security_account', action='status')['configured'], 'Wrong health marker was accepted as an account service')
-        for client in (ca, cb):
-            status = call(client, 'security_account', action='configure', data={'server': sync_url})
-            require(status['configured'] and not status['logged_in'], 'New account endpoint is not independently configured')
         username = 'native-browser-' + suffix
-        registered = call(ca, 'security_account', action='register', data={'username': username, 'password': account_password})
-        require(registered.get('logged_in') and registered.get('recovery_key'), 'Real browser-only registration did not complete')
-        sensitive.add(registered['recovery_key'])
-        require(call(cb, 'security_account', action='login', data={'username': username, 'password': account_password})['logged_in'], 'Second native app did not log in')
-        checkpoint('native_register_login_separate_browser_account_real_server')
+        for client, register in [(ca, True), (cb, False)]:
+            require(not call(client, 'security_account', action='status')['configured'], 'Fresh client silently selected an endpoint before consent')
+            client.js('window.dispatchEvent(new Event("nexusbro-security"));true')
+            js_wait(client, '!!document.querySelector(".security-panel")', 'Security settings did not open')
+            client.text_button('Аккаунт')
+            # The user never opens advanced settings or enters a server URL.
+            require(not client.js('(()=>{const e=document.querySelector(`[aria-label="Сервер синхронизации NexusBro"]`);return e&&e.getClientRects().length>0})()'), 'Server URL is still required in the ordinary account flow')
+            if register:client.text_button('Зарегистрироваться')
+            client.fill('[aria-label="Имя аккаунта NexusBro"]', username)
+            client.fill('[aria-label="Пароль аккаунта NexusBro"]', account_password)
+            if register:client.fill('[aria-label="Повторите пароль аккаунта"]', account_password)
+            client.text_button('Создать аккаунт NexusBro' if register else 'Войти в NexusBro')
+            wait_for(lambda: call(client, 'security_account', action='status')['logged_in'], 'Account UI did not complete registration/login without server entry', 45)
+            if register:
+                key=js_wait(client, 'document.querySelector(`[aria-label="Ключ восстановления аккаунта"] .security-emergency`)?.innerText', 'Registration did not present recovery material')
+                sensitive.add(key)
+            client.click('[aria-label="Закрыть пароли и синхронизацию"]')
+        checkpoint('native_ui_register_login_without_server_field_real_service')
         phase = 'first-selected-sync'
         call(ca, 'zakladki_sohranit', adres='https://selected-bookmark.fixture.invalid/', nazvanie='Selected encrypted bookmark', papka='')
         selection_a = {'settings': True, 'bookmarks': True, 'supers': [normal_id, 'retained-super'], 'passwords': [credential_id]}
@@ -624,12 +648,61 @@ def run(args):
         report_ok(call(cb, 'security_sync', action='run', timeout=90))
         require(call(cb, 'security_passwords', action='list') == [], 'Authenticated selected password tombstone did not apply')
         checkpoint('authenticated_tombstone_applies_only_to_selected_category')
+        phase = 'whole-browser-lock-all-windows'
+        call(ca,'novoe_okno',id=normal_id,privatnaya=False)
+        extra=None
+        deadline=time.monotonic()+20
+        while time.monotonic()<deadline:
+            try:extra=Client(display=a.display,port=a.inspector,page_index=1);break
+            except (OSError,ConnectionError,websocket.WebSocketException):time.sleep(.2)
+        require(extra is not None,'Additional browser window did not create inspector')
+        try:
+            js_wait(extra,'!!document.querySelector(".okno")','Additional browser window did not initialize')
+            main_xid=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^NexusBro$'],env={**os.environ,'DISPLAY':a.display},text=True).splitlines()[0]
+            subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
+            a.submit()
+            subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
+            js_wait(ca,'!!document.querySelector(".browser-lock-screen")','CEF CtrlShiftL did not lock main browser')
+            js_wait(extra,'!!document.querySelector(".browser-lock-screen")','CEF CtrlShiftL did not lock additional window')
+            call(ca,'spisok',error=True)
+            call(extra,'biblioteka_spisok',razdel='istoriya',error=True)
+            require(not call(cb,'browser_lock_status')['locked'],'Lock leaked to an independent browser instance')
+            from PIL import ImageGrab
+            ImageGrab.grab(xdisplay=a.display).save(root/'browser-locked-all-windows.png')
+            subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
+            ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
+            ca.text_button('Разблокировать браузер')
+            js_wait(extra,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Unlock did not restore additional browser window')
+            call(extra,'plugin:window|close',label=extra.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label'))
+        finally:extra.close()
+        checkpoint('native_cef_ctrl_shift_l_locks_all_windows_blocks_data_ipc_and_unlock_restores')
+        # Lock from the shell keyboard path too; the existing encrypted master is used.
+        call(ca,'fokus_obolochke')
+        ca.click('[aria-label="Адрес страницы"]')
+        subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
+        js_wait(ca,'!!document.querySelector(".browser-lock-screen")','Shell CtrlShiftL did not lock browser')
+        ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
+        ca.text_button('Разблокировать браузер')
+        js_wait(ca,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Shell lock did not unlock')
+        checkpoint('shell_ctrl_shift_l_uses_same_master_gate')
         phase = 'restart-persistence'
         a.stop_app()
         ca = a.start()
-        require(call(ca, 'security_vault', action='status') == {'exists': True, 'unlocked': False}, 'Vault key survived app restart in unlocked state')
+        require(call(ca, 'browser_lock_status')['locked'], 'Existing vault did not require master password on restart')
+        js_wait(ca, '!!document.querySelector(".browser-lock-screen")', 'Startup did not show browser lock screen')
+        call(ca, 'spisok', error=True)
         call(ca, 'security_passwords', action='list', error=True)
-        call(ca, 'security_vault', action='unlock', password=master_a)
+        before_unlock = {p.name: hashlib.sha256(p.read_bytes()).digest() for p in a.cipher_files()}
+        ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]', wrong_master)
+        ca.text_button('Разблокировать браузер')
+        js_wait(ca, '!!document.querySelector(".browser-lock-error")', 'Wrong startup master did not report an error')
+        require(call(ca, 'browser_lock_status')['locked'], 'Wrong master unlocked browser')
+        require(before_unlock == {p.name: hashlib.sha256(p.read_bytes()).digest() for p in a.cipher_files()}, 'Wrong browser unlock changed vault files')
+        ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]', master_a)
+        ca.text_button('Разблокировать браузер')
+        js_wait(ca, '!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")', 'Correct master did not open browser')
+        require(call(ca, 'security_vault', action='status')['unlocked'], 'Browser unlock did not unlock password vault')
+        checkpoint('startup_browser_master_gate_wrong_password_preserves_ciphertext_correct_unlock_opens_sites')
         require(call(ca, 'security_account', action='status')['logged_in'], 'Encrypted account session did not survive restart')
         remaining = call(ca, 'security_passwords', action='list')
         require(len(remaining) == 1 and remaining[0]['username'] == offer_login, 'Local-only credential did not persist independently')

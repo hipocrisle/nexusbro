@@ -86,13 +86,12 @@ wrap_life_span_handler! {
     struct ZhiznStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl LifeSpanHandler {
         fn on_before_popup(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: i32,
-            target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, _target_disposition: WindowOpenDisposition,
+            target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, target_disposition: WindowOpenDisposition,
             _user_gesture: i32, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>,
             _client: Option<&mut Option<Client>>, _settings: Option<&mut BrowserSettings>,
             _extra_info: Option<&mut Option<DictionaryValue>>, _no_javascript_access: Option<&mut i32>) -> i32 {
             if let Some(u) = target_url {
-                let cmd=if self.privatnaya{Komanda::NovayaPrivatnaya{adres:u.to_string()}}else{Komanda::Novaya{adres:u.to_string()}};
-                let _ = self.tx.send(Sobytie::Komanda(cmd));
+                crate::cef_interfeys::open_link(self.id,&u.to_string(),self.privatnaya||target_disposition==WindowOpenDisposition::OFF_THE_RECORD,target_disposition==WindowOpenDisposition::NEW_BACKGROUND_TAB,&self.tx);
             }
             1
         }
@@ -108,7 +107,8 @@ wrap_life_span_handler! {
             #[cfg(not(target_os = "windows"))]
             { 0 }
         }
-        fn on_before_close(&self, _browser: Option<&mut Browser>) {
+        fn on_before_close(&self, browser: Option<&mut Browser>) {
+            if let Some(browser)=browser{crate::cef_interfeys::cancel_context(browser.identifier());}
             crate::password_cef::closed(self.id);
             let _ = self.tx.send(Sobytie::Zakryta(self.id));
         }
@@ -129,6 +129,16 @@ wrap_focus_handler! {
 wrap_request_handler! {
     struct SboyStranicy { id: u64, privatnaya:bool, tx:Sender<Sobytie> }
     impl RequestHandler {
+        fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,_request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
+            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{crate::cef_interfeys::cancel_context(browser.identifier());}}
+            0
+        }
+        fn on_open_urlfrom_tab(&self,_browser:Option<&mut Browser>,_frame:Option<&mut Frame>,target_url:Option<&CefString>,target_disposition:WindowOpenDisposition,_user_gesture:i32)->i32{
+            let new_tab=matches!(target_disposition,WindowOpenDisposition::NEW_BACKGROUND_TAB|WindowOpenDisposition::NEW_FOREGROUND_TAB|WindowOpenDisposition::NEW_WINDOW|WindowOpenDisposition::NEW_POPUP|WindowOpenDisposition::OFF_THE_RECORD);
+            if !new_tab{return 0;}
+            if let Some(url)=target_url{crate::cef_interfeys::open_link(self.id,&url.to_string(),self.privatnaya||target_disposition==WindowOpenDisposition::OFF_THE_RECORD,target_disposition==WindowOpenDisposition::NEW_BACKGROUND_TAB,&self.tx);}
+            1
+        }
         fn on_render_process_terminated(&self, _browser: Option<&mut Browser>, status: TerminationStatus,
             error_code: i32, error_string: Option<&CefString>) {
             if self.privatnaya {return;}
@@ -354,14 +364,17 @@ pub fn rabotat(
     start: Option<&str>,
 ) -> anyhow::Result<()> {
     let k = Konteyner::sozdat(roditel, mesto)?;
+    let initially_locked=std::env::args().any(|arg|arg=="--nb-browser-locked");
+    let initial_lock_generation=std::env::args().find_map(|arg|arg.strip_prefix("--nb-lock-generation=").and_then(|value|value.parse::<u64>().ok())).unwrap_or(0);
     let mut s = start
         .map(Sessiya::novaya)
         .unwrap_or_else(|| Sessiya::zagruzit(profil));
     if crate::privatnost::process_privatnyj(){for v in &mut s.vkladki{v.privatnaya=true;}}
     let (tx, rx) = channel();
     let mut brauzery = HashMap::new();
+    if initially_locked{for tab in &mut s.vkladki{tab.otlozhena=true;}let _=sistema::pokazat(k.okno,false);}
     for v in &s.vkladki {
-        if !v.otlozhena {
+        if !initially_locked && !v.otlozhena {
             brauzery.insert(v.id, sozdat_brauzer(&k, v.id, &v.adres, &tx, v.privatnaya)?);
         }
     }
@@ -396,7 +409,7 @@ pub fn rabotat(
         brauzery,
         razmer,
         devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40,devtools_pixels:None, ui_last:String::new(), perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),
-        label:String::new(), extras:HashMap::new(), closed_labels:Default::default(), closing:false, force_private:crate::privatnost::process_privatnyj(),
+        label:String::new(), extras:HashMap::new(), closed_labels:Default::default(), closing:false, browser_locked:initially_locked, browser_lock_generation:initial_lock_generation, force_private:crate::privatnost::process_privatnyj(),
     };
     #[cfg(target_os = "windows")]
     {
@@ -455,11 +468,30 @@ struct Rabota {
     extras:HashMap<String,Rabota>,
     closed_labels:std::collections::HashSet<String>,
     closing:bool,
+    browser_locked:bool,
+    browser_lock_generation:u64,
     force_private:bool,
 }
 
 impl Rabota {
+    fn set_browser_locked(&mut self, locked:bool, generation:u64){
+        if generation<self.browser_lock_generation{return;}
+        self.browser_lock_generation=generation;
+        self.browser_locked=locked;
+        for extra in self.extras.values_mut(){extra.set_browser_locked(locked,generation);}
+        if locked{
+            for browser in self.brauzery.values(){crate::cef_interfeys::cancel_context(browser.identifier());}
+            for browser in self.brauzery.values(){
+                if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}
+                let _=sistema::pokazat(handle(browser),false);
+            }
+            for hwnd in self.devtools.values(){let _=sistema::pokazat(*hwnd,false);}
+            self.devtools_pending.clear();self.devtools.clear();
+            let _=sistema::pokazat(self.k.okno,false);
+        }
+    }
     fn shag(&mut self) -> anyhow::Result<()> {
+        crate::cef_interfeys::prune_contexts();
         for extra in self.extras.values_mut(){
             if let Err(e)=extra.shag(){
                 // Ошибка одного дополнительного окна не останавливает Super.
@@ -482,7 +514,7 @@ impl Rabota {
             rx,
             brauzery,
             razmer,
-            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, force_private,
+            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private,
         } = self;
         let mut izmeneno = false;
         let mut layout_dirty=false;
@@ -490,6 +522,12 @@ impl Rabota {
         let mut fokus_klaviatury = false;
         let mut fokus_posle_devtools=false;
         for sobytie in rx.try_iter().take(128) {
+            // A lock covers queued/in-flight UI actions too. Lifecycle events
+            // still complete, while no key, popup or stale command can reopen a page.
+            if *browser_locked && matches!(&sobytie,Sobytie::Komanda(command) if !matches!(command,
+                Komanda::BrowserLocked{..}|Komanda::PasswordsEnabled{..}|Komanda::OknoKomanda{..}|
+                Komanda::OknoZakryt{..}|Komanda::GlavnoeSkryto|Komanda::GlavnoePokazat)) {continue;}
+
             let budit = match &sobytie {
                 Sobytie::Komanda(
                     Komanda::Pereyti { id, .. }
@@ -522,7 +560,7 @@ impl Rabota {
                 Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
                 Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
                     Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
-                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::DannyeStatistika{..} | Komanda::PasswordForm{..} | Komanda::PasswordsEnabled{..} | Komanda::Instrumenty{..} |
+                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::DannyeStatistika{..} | Komanda::PasswordForm{..} | Komanda::PasswordsEnabled{..} | Komanda::BrowserLocked{..} | Komanda::PageContextChoose{..} | Komanda::Instrumenty{..} |
                     Komanda::Issledovat{..} | Komanda::InstrumentyRazmer{..} |
                     Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
@@ -546,7 +584,7 @@ impl Rabota {
                     match sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya){Ok(b)=>{child_b.insert(tab.id,b);},Err(e)=>{eprintln!("cef: страница нового окна: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}}
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -564,6 +602,19 @@ impl Rabota {
                         for tab in s.vkladki.iter().filter(|v|v.privatnaya){
                             if let Some(h)=brauzery.get(&tab.id).and_then(|b|b.host()){h.close_browser(1);}else{let _=tx.send(Sobytie::Zakryta(tab.id));}
                         }
+                    }
+                }
+                Sobytie::Komanda(Komanda::PageContextChoose{token,command_id})=>{let ids=brauzery.values().map(|b|b.identifier()).collect::<Vec<_>>();crate::cef_interfeys::choose_context(&token,command_id,&ids);}
+                Sobytie::Komanda(Komanda::OpenLink{opener_id,adres,privatnaya,background})=>{
+                    let Some(opener)=s.vkladki.iter().find(|v|v.id==opener_id&&brauzery.contains_key(&opener_id))else{continue;};
+                    let private=privatnaya||opener.privatnaya||*force_private;
+                    let active=s.aktivnaya;
+                    let mut next=s.clone();let id=next.dobavit(&adres);
+                    next.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=private;
+                    if background{next.aktivnaya=active;}
+                    match sozdat_brauzer(k,id,&adres,tx,private){
+                        Ok(browser)=>{brauzery.insert(id,browser);*s=next;fokus=true;if !background{fokus_klaviatury=true;}}
+                        Err(_)=>eprintln!("cef: не удалось открыть ссылку в новой вкладке"),
                     }
                 }
                 Sobytie::Komanda(Komanda::Novaya { adres }|Komanda::NovayaPrivatnaya { adres }) => {
@@ -740,7 +791,7 @@ impl Rabota {
                         }
                     }
                 }
-                Sobytie::DevtoolsGotovy(id) => {if brauzery.contains_key(&id){devtools_pending.insert(id,std::time::Instant::now());}}
+                Sobytie::DevtoolsGotovy(id) => {if *browser_locked{if let Some(host)=brauzery.get(&id).and_then(|b|b.host()){host.close_dev_tools();}}else if brauzery.contains_key(&id){devtools_pending.insert(id,std::time::Instant::now());}}
                 #[cfg(target_os="windows")]
                 Sobytie::DevtoolsZakrytOkno(_id,hwnd)=>{
                     use windows::Win32::{Foundation::HWND,System::Threading::{GetCurrentProcessId,GetCurrentThreadId},UI::WindowsAndMessaging::*};
@@ -753,6 +804,19 @@ impl Rabota {
                     if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
                 }
                 Sobytie::Komanda(Komanda::FonKonteynera{rgb})=>{k.fon(rgb&0xffffff);}
+                Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=>{
+                    if generation<*browser_lock_generation{continue;}
+                    *browser_lock_generation=generation;
+                    *browser_locked=locked;
+                    for extra in extras.values_mut(){extra.set_browser_locked(locked,generation);}
+                    if locked{
+                        for browser in brauzery.values(){crate::cef_interfeys::cancel_context(browser.identifier());}
+                        for browser in brauzery.values(){if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}let _=sistema::pokazat(handle(browser),false);}
+                        for hwnd in devtools.values(){let _=sistema::pokazat(*hwnd,false);}
+                        devtools_pending.clear();devtools.clear();
+                        let _=sistema::pokazat(k.okno,false);
+                    }else{fokus=true;fokus_klaviatury=!brauzery.contains_key(&s.aktivnaya);layout_dirty=true;}
+                }
                 Sobytie::Komanda(Komanda::PasswordsEnabled{enabled})=>{
                     crate::password_cef::enabled(enabled);
                     if enabled{for tab in &s.vkladki{if let Some(b)=brauzery.get(&tab.id){crate::password_cef::install(b,tab.id,tab.privatnaya,tx.clone());}}}
@@ -899,7 +963,7 @@ impl Rabota {
             }
             izmeneno |= session_dirty;
         }
-        if s.vkladki.is_empty() && !*closing {
+        if s.vkladki.is_empty() && !*closing && !*browser_locked {
             let id = s.dobavit("about:blank");
             let private=*force_private;s.vkladki.iter_mut().find(|v|v.id==id).unwrap().privatnaya=private;
             brauzery.insert(id, sozdat_brauzer(&k, id, "about:blank", &tx, private)?);
@@ -910,7 +974,7 @@ impl Rabota {
             s.aktivnaya = s.vkladki[0].id;
             fokus = true;
         }
-        if fokus {
+        if fokus && !*browser_locked {
             // Восстановленные страницы не создаются до явного выбора. Закрытие
             // соседней вкладки тоже не должно будить спящую автоматически.
             if fokus_klaviatury && !brauzery.contains_key(&s.aktivnaya) {
@@ -921,7 +985,7 @@ impl Rabota {
             }
             pokazat(&s, &brauzery);
         }
-        if fokus_klaviatury
+        if fokus_klaviatury && !*browser_locked
             && (fokus_posle_devtools||s.vkladki
                 .iter()
                 .any(|v| v.id == s.aktivnaya && v.adres != "about:blank"))
@@ -961,7 +1025,7 @@ impl Rabota {
                 let _=sistema::peremestit(handle(b),Mesto{x:0,y:0,w:width,h});
             }
             for (id,okno) in devtools.iter() {
-                let active=*id==s.aktivnaya;
+                let active=!*browser_locked&&*id==s.aktivnaya;
                 if active { let _=sistema::peremestit(*okno,Mesto{x:w.saturating_sub(panel) as i32,y:0,w:panel,h}); }
                 let _=sistema::pokazat(*okno,active);
             }

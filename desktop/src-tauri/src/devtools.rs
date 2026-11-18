@@ -32,6 +32,9 @@ wrap_keyboard_handler! {
         fn on_pre_key_event(&self,_browser:Option<&mut Browser>,event:Option<&KeyEvent>,_os_event:Option<&mut crate::cef_interfeys::NativeKeyEvent>,_is_keyboard_shortcut:Option<&mut i32>)->i32{
             if let Some(e)=event {
                 if e.type_==KeyEventType::RAWKEYDOWN||e.type_==KeyEventType::KEYDOWN {
+                    if e.modifiers&(1<<2)!=0&&e.modifiers&(1<<1)!=0&&crate::cef_interfeys::shortcut_code(e)==76 {
+                        let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"browser-lock","id":self.id})));return 1;
+                    }
                     if e.windows_key_code==123||(e.windows_key_code==73&&e.modifiers&(1<<2)!=0&&e.modifiers&(1<<1)!=0){let _=self.tx.send(Sobytie::Komanda(crate::sessiya::Komanda::Instrumenty{id:self.id}));return 1;}
                 }
             }

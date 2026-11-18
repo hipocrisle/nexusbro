@@ -216,6 +216,9 @@ pub fn zapustit_cep(
         .stderr(stderr);
     if crate::privatnost::eto_id(id){cmd.arg("--nb-private-profile");}
     if crate::passwords::enabled(){cmd.arg("--nb-passwords");}
+    let (browser_locked,lock_generation)=crate::browser_lock::engine_state();
+    if browser_locked{cmd.arg("--nb-browser-locked");}
+    cmd.arg(format!("--nb-lock-generation={lock_generation}"));
     if rezat_reklamu { cmd.arg("--nb-rezat-reklamu"); }
     if crate::nastrojki::zagruzit().apparatnoe_uskorenie {
         cmd.arg("--nb-gpu");

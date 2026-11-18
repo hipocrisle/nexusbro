@@ -40,8 +40,9 @@ window.__TAURI_INTERNALS__={invoke:async(cmd,args)=>{
   if(a.action==='fill')return {};
  }
  if(cmd==='security_account'){
-  if(a.action==='configure'){if(!a.data.server.startsWith('https://'))throw 'Требуется HTTPS';window.__account.server=a.data.server;window.__account.configured=true;}
-  if(['register','login','recover'].includes(a.action)){if(window.__offline)throw 'Сервер недоступен';window.__account.logged_in=true;window.__account.username=a.data.username;if(a.action==='register')return {...window.__account,recovery_key:'RECOVERY-FIXTURE-ONLY'};}
+  if(a.action==='default_server')return {server:'https://nexusbro-sync.hipogas.org'};
+  if(a.action==='configure'){if(window.__configureOffline)throw 'Сервис аккаунтов временно недоступен';if(!a.data.server.startsWith('https://'))throw 'Требуется HTTPS';window.__account.server=a.data.server;window.__account.configured=true;}
+  if(['register','login','recover'].includes(a.action)){if(window.__offline)throw 'Сервер недоступен';window.__account.logged_in=true;window.__account.username=a.data.username;if(a.action==='register'){if(window.__authPartial){window.__account.logged_in=false;return {...window.__account,recovery_key:'RECOVERY-FIXTURE-ONLY',warning:'Автоматический вход не завершён'};}return {...window.__account,recovery_key:'RECOVERY-FIXTURE-ONLY'};}}
   if(a.action==='logout')window.__account.logged_in=false;
   if(a.action==='totp_enroll')return {secret:'JBSWY3DPEHPK3PXP',otpauth_uri:'otpauth://totp/NexusBro:fixture?secret=JBSWY3DPEHPK3PXP&issuer=NexusBro'};
   if(a.action==='totp_verify'){if(a.data.code!=='123456')throw 'Неверный код 2FA';window.__account.totp_enabled=true;return {...window.__account,recovery_codes:['BACKUP-ONE','BACKUP-TWO']};}
@@ -87,6 +88,8 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    page.goto(f'http://127.0.0.1:{server.server_port}')
    dialog=page.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro')
    expect(dialog.get_by_role('heading',name='Создать защищённое хранилище')).to_be_visible()
+   expect(dialog.get_by_role('list',name='Как сохраняются пароли')).to_be_visible()
+   expect(dialog.get_by_text('Аккаунт NexusBro для сохранения паролей на этом устройстве не нужен.',exact=False)).to_be_visible()
    assert page.evaluate("window.__calls.every(x=>x.cmd==='security_vault')")
    dialog.get_by_label('Мастер-пароль',exact=True).fill('master-fixture-strong')
    dialog.get_by_label('Повторите мастер-пароль',exact=True).fill('different-password')
@@ -109,10 +112,9 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    expect(dialog.get_by_label('Пароль: Fixture login',exact=True)).to_have_value('site-fixture-password')
    dialog.get_by_role('button',name='Аккаунт',exact=True).click()
    expect(dialog.get_by_label('Пароль: Fixture login',exact=True)).not_to_be_visible()
-   expect(dialog.get_by_text('Сервер ещё не настроен.',exact=False)).to_be_visible()
-   dialog.get_by_label('Сервер синхронизации NexusBro',exact=True).fill('https://browser-sync.fixture.invalid')
-   dialog.get_by_role('button',name='Сохранить сервер',exact=True).click()
-   expect(dialog.get_by_role('status')).to_contain_text('Подключение проверяется при входе')
+   expect(dialog.get_by_text('Подключение NexusBro настроится автоматически.',exact=False)).to_be_visible()
+   expect(dialog.get_by_label('Сервер синхронизации NexusBro',exact=True)).not_to_be_visible()
+   assert not page.evaluate("window.__calls.some(x=>x.cmd==='security_account'&&x.action==='configure')")
    dialog.get_by_role('button',name='Зарегистрироваться',exact=True).click()
    dialog.get_by_label('Имя аккаунта NexusBro',exact=True).fill('browser-fixture')
    dialog.get_by_label('Пароль аккаунта NexusBro',exact=True).fill('account-fixture-strong')
@@ -120,6 +122,11 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    dialog.get_by_role('button',name='Создать аккаунт NexusBro',exact=True).click()
    region=dialog.get_by_role('region',name='Ключ восстановления аккаунта',exact=True)
    expect(region).to_contain_text('RECOVERY-FIXTURE-ONLY')
+   account_calls=page.evaluate("window.__calls.filter(x=>x.cmd==='security_account'&&['configure','register'].includes(x.action))")
+   assert [x['action'] for x in account_calls]==['configure','register'],account_calls
+   assert account_calls[0]['data']=={'server':'https://nexusbro-sync.hipogas.org'},account_calls
+   assert page.evaluate("window.__calls.filter(x=>x.cmd==='security_account'&&x.action==='default_server').length")==1
+   assert page.evaluate('window.__account.logged_in')
    region.get_by_role('button',name='Ключ сохранён',exact=True).click();expect(region).not_to_be_visible()
    dialog.get_by_role('button',name='Настроить двухфакторную аутентификацию',exact=True).click()
    expect(dialog.get_by_text('До подтверждения 2FA не включена.',exact=False)).to_be_visible()
@@ -231,7 +238,7 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    dialog.get_by_label('Новый пароль аккаунта',exact=True).fill('recovered-account-fixture')
    dialog.get_by_label('Повторите пароль аккаунта',exact=True).fill('recovered-account-fixture')
    dialog.get_by_role('button',name='Восстановить аккаунт',exact=True).click()
-   expect(dialog.get_by_role('status')).to_contain_text('Вход в аккаунт NexusBro выполнен')
+   expect(dialog.get_by_role('status')).to_contain_text('Доступ к аккаунту NexusBro восстановлен')
    dialog.locator('summary').filter(has_text='Удаление аккаунта').click()
    dialog.get_by_label('Подтверждение удаления аккаунта',exact=True).fill('browser-fixture')
    dialog.get_by_label('Пароль для удаления аккаунта',exact=True).fill('recovered-account-fixture')
@@ -270,7 +277,46 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    expect(dialog.get_by_label('Мастер-пароль',exact=True)).to_have_value('')
    assert page.locator('select').count()==0
    assert page.evaluate('localStorage.length')==0
+   # A previously selected custom endpoint is never replaced by the default.
+   custom=browser.new_page(viewport={'width':1100,'height':820});custom.on('pageerror',lambda e:errors.append(str(e)))
+   custom.add_init_script(mock+"window.__vault={exists:true,unlocked:true};window.__account={configured:true,logged_in:false,username:'',server:'https://owner-server.fixture.invalid',totp_enabled:false};")
+   custom.goto(f'http://127.0.0.1:{server.server_port}')
+   cd=custom.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro')
+   cd.get_by_role('button',name='Аккаунт',exact=True).click()
+   expect(cd.get_by_text('Используется выбранный вами сервер:',exact=False)).to_be_visible()
+   cd.get_by_label('Имя аккаунта NexusBro',exact=True).fill('custom-fixture')
+   cd.get_by_label('Пароль аккаунта NexusBro',exact=True).fill('custom-password-fixture')
+   cd.get_by_role('button',name='Войти в NexusBro',exact=True).click()
+   expect(cd.get_by_role('status')).to_contain_text('Вход в аккаунт NexusBro выполнен')
+   assert custom.evaluate('window.__account.server')=='https://owner-server.fixture.invalid'
+   assert not custom.evaluate("window.__calls.some(x=>x.cmd==='security_account'&&['configure','default_server'].includes(x.action))")
+   custom.close()
+   # Connection errors block registration and do not leave a success/pending state.
+   offline=browser.new_page(viewport={'width':1100,'height':820});offline.on('pageerror',lambda e:errors.append(str(e)))
+   offline.add_init_script(mock+"window.__vault={exists:true,unlocked:true};window.__configureOffline=true;")
+   offline.goto(f'http://127.0.0.1:{server.server_port}')
+   od=offline.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro')
+   od.get_by_role('button',name='Аккаунт',exact=True).click();od.get_by_role('button',name='Зарегистрироваться',exact=True).click()
+   def registration_fields():
+    od.get_by_label('Имя аккаунта NexusBro',exact=True).fill('offline-fixture')
+    od.get_by_label('Пароль аккаунта NexusBro',exact=True).fill('offline-password-fixture')
+    od.get_by_label('Повторите пароль аккаунта',exact=True).fill('offline-password-fixture')
+   registration_fields();od.get_by_role('button',name='Создать аккаунт NexusBro',exact=True).click()
+   expect(od.get_by_role('alert')).to_contain_text('Сервис аккаунтов временно недоступен')
+   expect(od.get_by_role('button',name='Создать аккаунт NexusBro',exact=True)).to_be_visible()
+   assert not offline.evaluate("window.__calls.some(x=>x.cmd==='security_account'&&x.action==='register')")
+   assert not offline.evaluate('window.__account.logged_in')
+   assert 'Аккаунт NexusBro создан' not in od.inner_text()
+   # An account created without a successful login must not claim an active session.
+   offline.evaluate('window.__configureOffline=false;window.__authPartial=true')
+   registration_fields();od.get_by_role('button',name='Создать аккаунт NexusBro',exact=True).click()
+   expect(od.get_by_role('region',name='Ключ восстановления аккаунта',exact=True)).to_be_visible()
+   expect(od.get_by_role('status')).to_contain_text('Аккаунт создан. Сохраните ключ восстановления и выполните вход.')
+   expect(od.get_by_role('alert')).to_contain_text('Автоматический вход не завершён')
+   expect(od.get_by_role('button',name='Войти в NexusBro',exact=True)).to_be_visible()
+   assert not offline.evaluate('window.__account.logged_in')
+   offline.close()
    assert not errors,errors
-   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
+   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'default_account_without_manual_server':True,'custom_endpoint_preserved':True,'connection_failure_blocks_registration':True,'partial_registration_never_claims_login':True,'password_saving_onboarding':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
    browser.close()
  finally:server.shutdown()
