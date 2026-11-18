@@ -11,3 +11,9 @@
 После этой сборки внесено только ограничение overflow-x у внешнего диалога и соответствующая Chromium-проверка (726ca7f); финальные npm build и library_state_0214 прошли. Первый CI44267814064: Windows ошибка преобразования CEF userfree string, исправлена cf03381; оставшийся Linux-job отменён как устаревший. Его не считаем успешным.
 
 Релизные проверки и публичный манифест фиксируются после публикации отдельно. Сохранены прежние области очистки: история общая, завершённые загрузки за всё время, cookies/HTTP-кэш текущей Super. Файлы, закладки и localStorage остаются.
+
+## Выпуск подтверждён
+
+**0.2.15 опубликована через штатное автообновление.** Тег v0.2.15 → 6f1977d. Релизный [CI44271981849](https://github.com/hipocrisle/nexusbro/actions/runs/44271981849) SUCCESS Windows/Linux и update-manifest, без повторных попыток. Windows:48 записи, success; Linux:8 записей, success. Все новые проверки повторились на итоговом исходнике. JSON: windows-release.json, linux-release.json.
+
+Публичный releases/latest/download/latest.json отдаёт 0.2.15. Релиз не draft; NSIS/DEB/RPM URL HTTP200, размеры совпадают с assets. Ed25519 payload и trusted comment проверены в CI до публикации; публичные .sig совпадают с manifest, SHA256 assets совпадают с криптографически проверенными пакетами. Доказательства: verification/0.2.15/release-public.json. Установка обновления на ПК владельца в этот прогон не входила.
