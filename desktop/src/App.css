@@ -456,6 +456,7 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .clear-data-panel footer button:last-child{background:var(--akcent);color:var(--fon);border-color:var(--akcent);font-weight:600}
 
 /* Long titles and URLs must wrap inside the list, never widen its scroll box. */
+.library-panel{overflow-x:hidden;min-width:0}
 .library-list{overflow-x:hidden;overflow-y:auto;min-width:0}
 .library-list article,.library-open,.download-row{min-width:0;max-width:100%;box-sizing:border-box}
 .library-open strong,.library-open small{max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:break-word}

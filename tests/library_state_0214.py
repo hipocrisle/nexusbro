@@ -64,6 +64,7 @@ try:
         page.evaluate("window.__history[0].adres='https://history.example.test/'+('long-address'*200)")
         expect(first_history.get_by_text("History only", exact=True)).to_be_visible()
         assert first_history.locator('.library-list').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
+        assert first_history.evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
         page.evaluate("window.__hidePending(null)")
         page.wait_for_timeout(100)
         expect(page.get_by_role("dialog", name="Закладки", exact=True)).not_to_be_visible()
