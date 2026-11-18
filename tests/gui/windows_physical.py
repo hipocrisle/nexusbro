@@ -165,6 +165,17 @@ try:
     from pywinauto import Desktop
     from comtypes import COMError
     win=Desktop(backend="uia").window(handle=hwnd)
+    def uia_descendants(control):
+        # WebView2 can expose a node with no control type while removing a
+        # dialog. pywinauto 0.6.9 raises KeyError(None) for this transient node.
+        # Never substitute an empty tree: every required control still must exist.
+        for attempt in range(5):
+            try:return control.descendants()
+            except (COMError,KeyError) as error:
+                if isinstance(error,KeyError) and error.args!=(None,):raise
+                if attempt==4:raise
+                time.sleep(.15)
+
     def ui(name, kinds=None, timeout=30):
         # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
         # после нашей же перерисовки дерево может ещё показывать прошлое
@@ -173,9 +184,9 @@ try:
         deadline=time.monotonic()+timeout
         videno=set();scrolled=0
         while time.monotonic()<deadline:
-            candidates=win.descendants()
+            candidates=uia_descendants(win)
             for native_popup in Desktop(backend='uia').windows(title='NexusBro — меню'):
-                candidates.extend(native_popup.descendants())
+                candidates.extend(uia_descendants(native_popup))
             allowed=kinds+(['MenuItem'] if kinds and any(k in kinds for k in ['Button','ListItem']) else []) if kinds else None
             items=[x for x in candidates if x.element_info.name==name and (not allowed or x.element_info.control_type in allowed)]
             for x in items:
@@ -191,7 +202,7 @@ try:
                     continue
             if name in ['Отмена','Создать','Сохранить'] and scrolled<2 and time.monotonic()>deadline-28:
                 r=rect(hwnd);gui.moveTo((r.left+r.right)//2,r.bottom-150);gui.scroll(-4);scrolled+=1
-            videno={x.element_info.name for x in win.descendants() if x.element_info.name}
+            videno={x.element_info.name for x in uia_descendants(win) if x.element_info.name}
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
     def focus_ui(name, kinds):
@@ -396,7 +407,7 @@ try:
     results.append({'native_focus_after_devtools':focus_after_tools})
     gui.hotkey('ctrl','t');current=wait_tabs(3);time.sleep(.3)
     order=[t['id'] for t in current['vkladki']]
-    tab_controls=sorted([x for x in win.descendants() if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top],key=lambda x:x.rectangle().left)
+    tab_controls=sorted([x for x in uia_descendants(win) if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top],key=lambda x:x.rectangle().left)
     assert len(tab_controls)==3,[(x.element_info.name,str(x.rectangle())) for x in tab_controls]
     source_rect=tab_controls[2].rectangle();target_rect=tab_controls[0].rectangle()
     gui.moveTo((source_rect.left+source_rect.right)//2,(source_rect.top+source_rect.bottom)//2);gui.mouseDown()
@@ -410,7 +421,7 @@ try:
     results.append({'physical_ordinary_drag_reorders':True})
 
     deadline=time.monotonic()+10
-    while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
+    while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in uia_descendants(win)):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
     for dropdown_attempt in range(3):
         ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
@@ -427,7 +438,7 @@ try:
         time.sleep(.1)
     assert cfg['shrift']=='arial',cfg
     deadline=time.monotonic()+10
-    while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
+    while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in uia_descendants(win)):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
     ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
     ui('Системный',['ListItem','Button']).click_input()
@@ -514,7 +525,7 @@ try:
                 matches=re.findall(r'proba: запуск ок, окно (\d+)',journal.read_text(encoding='utf-8'))
                 if matches and int(matches[-1])!=previous:return int(matches[-1])
             time.sleep(.2)
-        (run/'vpn-diagnostic.json').write_text(json.dumps({'hits':hits,'server_exit':vpn_server.poll(),'uia':[x.element_info.name for x in win.descendants()]},ensure_ascii=False,indent=2),encoding='utf-8')
+        (run/'vpn-diagnostic.json').write_text(json.dumps({'hits':hits,'server_exit':vpn_server.poll(),'uia':[x.element_info.name for x in uia_descendants(win)]},ensure_ascii=False,indent=2),encoding='utf-8')
         raise AssertionError('CEF did not restart')
     container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     def edit_super():
@@ -522,7 +533,7 @@ try:
     def fill_start_url(url):
         # Focus the actual native edit control, then type real keys and read back.
         # WebView2 ScrollItem/IsOffscreen ignore the sticky footer's occlusion.
-        fields=[x for x in win.descendants() if x.element_info.name=='Открыть сразу' and x.element_info.control_type=='Edit' and x.is_enabled()]
+        fields=[x for x in uia_descendants(win) if x.element_info.name=='Открыть сразу' and x.element_info.control_type=='Edit' and x.is_enabled()]
         assert fields,'No start URL edit control'
         field=fields[0];field.set_focus();deadline=time.monotonic()+3
         while time.monotonic()<deadline and not field.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
@@ -561,7 +572,7 @@ try:
     deadline=time.monotonic()+20
     message='Выбранный узел не прошёл проверку HTTP(S). Прежние настройки и подключение сохранены. Выберите другой узел или повторите проверку.'
     while time.monotonic()<deadline:
-        if any(x.element_info.name==message for x in win.descendants()):break
+        if any(x.element_info.name==message for x in uia_descendants(win)):break
         time.sleep(.2)
     else:raise AssertionError('Failed node did not produce the expected error')
     assert json.loads((data/'vkladki.json').read_text(encoding='utf-8'))==old_records
@@ -654,10 +665,10 @@ try:
     r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','f')
     ui('Найти на странице',['Edit']).click_input();gui.write('Findneedle');time.sleep(.8)
     deadline=time.monotonic()+6
-    while time.monotonic()<deadline and not any(x.element_info.name=='1 из 2' for x in win.descendants()):time.sleep(.1)
-    find_ok=any(x.element_info.name=='1 из 2' for x in win.descendants())
+    while time.monotonic()<deadline and not any(x.element_info.name=='1 из 2' for x in uia_descendants(win)):time.sleep(.1)
+    find_ok=any(x.element_info.name=='1 из 2' for x in uia_descendants(win))
     gui.press('enter');time.sleep(.5)
-    find_ok=find_ok and any(x.element_info.name=='2 из 2' for x in win.descendants())
+    find_ok=find_ok and any(x.element_info.name=='2 из 2' for x in uia_descendants(win))
     results.append({'native_find_ordinals_correct':find_ok})
     gui.press('escape')
     # Настоящая русская раскладка в потоках WebView2 и CEF, не синтетический key='а'.
@@ -688,9 +699,9 @@ try:
     def address_action(prefix):
         deadline=time.monotonic()+10
         while time.monotonic()<deadline:
-            controls=list(win.descendants())
+            controls=list(uia_descendants(win))
             for popup in Desktop(backend='uia').windows(process=app.pid):
-                if popup.handle!=hwnd:controls.extend(popup.descendants())
+                if popup.handle!=hwnd:controls.extend(uia_descendants(popup))
             matches=[x for x in controls if x.element_info.control_type in ['MenuItem','Button'] and x.element_info.name.startswith(prefix) and x.is_visible() and x.is_enabled()]
             if matches:matches[0].click_input();return
             time.sleep(.1)
@@ -738,9 +749,9 @@ try:
     # targeting a shell control behind it; verify real keyboard focus and text.
     deadline=time.monotonic()+5
     while time.monotonic()<deadline:
-        if not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()):break
+        if not any(x.element_info.name=='Закрыть библиотеку' for x in uia_descendants(win)):break
         time.sleep(.1)
-    assert not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()),'Library did not close before download navigation'
+    assert not any(x.element_info.name=='Закрыть библиотеку' for x in uia_descendants(win)),'Library did not close before download navigation'
     address=focus_ui('Адрес страницы',['Edit','ComboBox'])
     download_url='http://vpn-fixture.test/download-fixture'
     for input_attempt in range(3):
@@ -786,7 +797,7 @@ try:
     def choose_super(name):
         deadline=time.monotonic()+15
         while time.monotonic()<deadline:
-            matches=[x for x in win.descendants() if x.element_info.control_type=='Button' and name in x.element_info.name and x.is_visible()]
+            matches=[x for x in uia_descendants(win) if x.element_info.control_type=='Button' and name in x.element_info.name and x.is_visible()]
             if matches:matches[0].click_input();time.sleep(.4);return
             time.sleep(.1)
         raise AssertionError('Super button missing: '+name)
@@ -812,11 +823,11 @@ try:
     assert next(t for t in session()['vkladki'] if t['id']==session()['aktivnaya'])['adres']==next(t for t in main_before_extra['vkladki'] if t['id']==main_before_extra['aktivnaya'])['adres']
     results.append({'native_secondary_switches_supers_without_changing_main':True,'super_profiles_isolated_between_windows':True})
     ui('Меню NexusBro',['Button']).click_input();ui('Настройки NexusBro',['MenuItem']).click_input();ui('Закрыть настройки',['Button']).click_input()
-    assert any(x.element_info.control_type=='Button' and 'Проба' in x.element_info.name for x in win.descendants()),'No Super sidebar in secondary window'
+    assert any(x.element_info.control_type=='Button' and 'Проба' in x.element_info.name for x in uia_descendants(win)),'No Super sidebar in secondary window'
     results.append({'secondary_full_shell_and_local_menu':True})
     gui.hotkey('alt','f4');time.sleep(.7);assert app.poll() is None
     hwnd=main_hwnd;win=main_win;u.SetForegroundWindow(hwnd)
-    main_tab_controls=[x for x in win.descendants() if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top]
+    main_tab_controls=[x for x in uia_descendants(win) if x.element_info.control_type=='TabItem' and x.is_visible() and x.rectangle().top<rect(container).top]
     window_events_scoped=len(main_tab_controls)==len(session()['vkladki'])
     results.append({'window_events_are_isolated':window_events_scoped})
     if not window_events_scoped:
@@ -856,7 +867,7 @@ try:
     # Фокус браузера прокручивает форму к чекбоксу; не кликаем по его
     # исходным координатам за пределами viewport (там может быть taskbar).
     gui.press('tab',presses=3,interval=.1);gui.press('space')
-    boxes=[x for x in win.descendants() if x.element_info.control_type=='CheckBox' and x.element_info.name.startswith('Приватная супер-вкладка')]
+    boxes=[x for x in uia_descendants(win) if x.element_info.control_type=='CheckBox' and x.element_info.name.startswith('Приватная супер-вкладка')]
     assert boxes and boxes[0].iface_toggle.CurrentToggleState==1,'Private Super checkbox is not checked'
     ui('Создать',['Button']).click_input()
     deadline=time.monotonic()+25
@@ -946,7 +957,7 @@ try:
     # Название UIA включает приватный значок; ищем точную запись по содержимому.
     deadline=time.monotonic()+20
     while time.monotonic()<deadline:
-        candidates=[x for x in win.descendants() if x.element_info.control_type=='Button' and 'PrivateSuperFixture' in x.element_info.name]
+        candidates=[x for x in uia_descendants(win) if x.element_info.control_type=='Button' and 'PrivateSuperFixture' in x.element_info.name]
         if candidates:break
         time.sleep(.1)
     assert candidates,'Private Super definition disappeared after restart';candidates[0].click_input()
