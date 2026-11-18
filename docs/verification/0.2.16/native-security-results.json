@@ -1,0 +1,65 @@
+[
+  {
+    "isolated_real_sync_server_health": true
+  },
+  {
+    "two_real_apps_independent_dbus_display_inspector_data": true
+  },
+  {
+    "real_local_vault_create_both_devices": true
+  },
+  {
+    "native_cef_capture_draft_explicit_consent_encrypted_store": true
+  },
+  {
+    "existing_isolated_context_reused_after_lock_unlock_without_navigation": true
+  },
+  {
+    "wrong_password_and_recreate_preserve_main_backup_locked_reads_fail": true
+  },
+  {
+    "real_same_origin_fill_and_actual_dom_input_change_events": true
+  },
+  {
+    "other_origin_native_fill_rejected_without_disclosure": true
+  },
+  {
+    "trusted_submit_native_offer_no_autosave_physical_consent": true
+  },
+  {
+    "private_capture_fill_auto_offer_and_history_excluded": true
+  },
+  {
+    "native_register_login_separate_browser_account_real_server": true
+  },
+  {
+    "selected_settings_bookmarks_supers_password_really_encrypted_uploaded": true
+  },
+  {
+    "new_native_device_all_off_no_upload_or_apply": true
+  },
+  {
+    "wildcard_new_record_import_explicit_conflicts_proxy_and_history_exclusion": true
+  },
+  {
+    "synced_password_decrypts_in_second_real_cef_cookie_profiles_isolated": true
+  },
+  {
+    "native_conflict_stale_resolution_rejected_local_choice_propagates": true
+  },
+  {
+    "disabling_categories_never_deletes_other_device_or_applies_remote": true
+  },
+  {
+    "authenticated_tombstone_applies_only_to_selected_category": true
+  },
+  {
+    "restart_locks_key_persists_encrypted_session_selection_local_only_password": true
+  },
+  {
+    "vault_main_backup_runtime_logs_server_database_have_no_plaintext_credentials": true
+  },
+  {
+    "success": true
+  }
+]
