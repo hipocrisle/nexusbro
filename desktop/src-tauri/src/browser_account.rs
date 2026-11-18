@@ -732,7 +732,7 @@ impl AccountState {
     ) -> Result<SyncExchange, String> {
         let _guard = self.serial.lock().await;
         let mut cfg = load(vault)?;
-        let result:Result<SyncExchange,String>=async {
+        let result:Result<SyncExchange,String>=tokio::time::timeout(std::time::Duration::from_secs(120),async {
         let session = cfg.session.as_ref().ok_or("Войдите в аккаунт")?;
         let uk = key(session)?;
         if items.len() > 20000 {
@@ -751,6 +751,7 @@ impl AccountState {
         let mut remote = BTreeMap::new();
         let mut total = 0usize;
         for _ in 0..2501 {
+            if !vault.status().unlocked{return Err("Хранилище заблокировано; синхронизация остановлена".into());}
             let page = http(
                 &cfg.server,
                 reqwest::Method::GET,
@@ -836,6 +837,7 @@ impl AccountState {
         }
         let mut pushed = 0;
         for batch in uploads.chunks(8) {
+            if !vault.status().unlocked{return Err("Хранилище заблокировано; синхронизация остановлена".into());}
             let mut changes = Vec::new();
             for (item, base, _) in batch {
                 let clear =
@@ -917,7 +919,7 @@ impl AccountState {
             pushed,
             conflicts,
         })
-        }.await;
+        }).await.unwrap_or_else(|_|Err("Синхронизация превысила 120 секунд. Локальные данные сохранены; часть записей могла отправиться".into()));
         if result
             .as_ref()
             .err()
@@ -955,7 +957,10 @@ fn validate_item(item: &SyncItem) -> Result<(), String> {
                     | "password"
             )
         )
-        || parts.next().is_none()
+        || parts
+            .next()
+            .is_none_or(|s| s.is_empty() || matches!(s, "." | "..") || s.contains('\\'))
+        || parts.next().is_some()
         || item.id.len() > 256
         || item.id.chars().any(char::is_control)
         || item.value.len() > ITEM_LIMIT
@@ -990,4 +995,28 @@ fn open_item(w: &WireItem, key: &[u8; 32], uid: &str) -> Result<SyncItem, String
         return Err("Подменены метаданные элемента синхронизации".into());
     }
     Ok(item)
+}
+
+#[cfg(test)]
+mod boundary_tests {
+    use super::*;
+    #[test]
+    fn non_browser_or_ambiguous_ids_never_enter_sync() {
+        for id in [
+            "host.ssh",
+            "nexusbro.v1/password/",
+            "nexusbro.v1/password/..",
+            "nexusbro.v1/super/a/../../b",
+            "nexusbro.v1/password/a\\b",
+            "nexusbro.v1/history/private",
+        ] {
+            let item = SyncItem {
+                id: id.into(),
+                value: "opaque".into(),
+                modified: 1,
+                deleted: false,
+            };
+            assert!(validate_item(&item).is_err(), "accepted {id}");
+        }
+    }
 }

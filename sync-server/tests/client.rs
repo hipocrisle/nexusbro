@@ -330,3 +330,110 @@ fn browser_kdf_domain_is_distinct_from_ssh() {
     assert_ne!(browser, ssh);
     assert_eq!(sha2::Sha256::digest(b"fixture").len(), 32);
 }
+
+#[tokio::test]
+async fn conflict_resolution_is_two_phase_and_preserves_intended_choice() {
+    let (url, _state, task) = server().await;
+    let (_da, va) = vault();
+    let (_db, vb) = vault();
+    let a = AccountState::default();
+    let b = AccountState::default();
+    configure(&a, &va, &url).await;
+    configure(&b, &vb, &url).await;
+    a.dispatch(
+        &va,
+        "register",
+        json!({"username":"browser-owner","password":PASSWORD}),
+    )
+    .await
+    .unwrap();
+    login(&b, &vb, PASSWORD).await;
+    let original = item("initial", 1000);
+    a.exchange(&va, vec![original.clone()]).await.unwrap();
+    b.exchange(&vb, vec![original]).await.unwrap();
+    let edit_a = item("server-device-edit", 1001);
+    let edit_b = item("this-device-edit", 1002);
+    a.exchange(&va, vec![edit_a.clone()]).await.unwrap();
+    let r = b.exchange(&vb, vec![edit_b.clone()]).await.unwrap();
+    assert_eq!(r.conflicts, vec![edit_b.id.clone()]);
+    let chosen = b
+        .prepare_resolution(&vb, &edit_b.id, "local")
+        .await
+        .unwrap();
+    assert_eq!(chosen.value, edit_b.value);
+    assert!(vb
+        .get(&format!("account.conflict.{}", edit_b.id))
+        .unwrap()
+        .is_some());
+    assert!(b
+        .commit_resolution(&vb, &edit_b.id, "remote")
+        .await
+        .is_err());
+    // Native apply is represented by retaining the returned item as device B's state.
+    b.commit_resolution(&vb, &edit_b.id, "local").await.unwrap();
+    let out = b.exchange(&vb, vec![chosen.clone()]).await.unwrap();
+    assert_eq!(out.pushed, 1);
+    assert!(out.conflicts.is_empty());
+    let pulled = a
+        .exchange(&va, vec![edit_a])
+        .await
+        .unwrap()
+        .remote
+        .remove(0);
+    assert_eq!(pulled.value, edit_b.value);
+    a.exchange(&va, vec![pulled]).await.unwrap();
+    let next_a = item("choose-this-remote", chosen.modified + 1);
+    let next_b = item("preserve-before-commit", chosen.modified + 2);
+    a.exchange(&va, vec![next_a.clone()]).await.unwrap();
+    assert_eq!(
+        b.exchange(&vb, vec![next_b.clone()])
+            .await
+            .unwrap()
+            .conflicts
+            .len(),
+        1
+    );
+    let remote = b
+        .prepare_resolution(&vb, &next_b.id, "remote")
+        .await
+        .unwrap();
+    assert_eq!(remote.value, next_a.value);
+    // Merely preparing cannot remove the preserved local copy.
+    assert!(vb
+        .get(&format!("account.conflict.{}", next_b.id))
+        .unwrap()
+        .unwrap()
+        .contains("preserve-before-commit"));
+    b.commit_resolution(&vb, &next_b.id, "remote")
+        .await
+        .unwrap();
+    let out = b.exchange(&vb, vec![remote]).await.unwrap();
+    assert_eq!(out.pushed, 0);
+    assert!(out.conflicts.is_empty());
+    task.abort();
+}
+
+#[tokio::test]
+async fn legacy_ssh_health_marker_cannot_configure_browser_account() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("http://{}", listener.local_addr().unwrap());
+    let task = tokio::spawn(async move {
+        let router = axum::Router::new().route(
+            "/v1/health",
+            axum::routing::get(|| async { axum::Json(json!({"status":"ok"})) }),
+        );
+        axum::serve(listener, router).await.unwrap();
+    });
+    let (_dir, vault) = vault();
+    let state = AccountState::default();
+    assert!(state
+        .dispatch(&vault, "configure", json!({"server":url}))
+        .await
+        .unwrap_err()
+        .contains("не отдельный сервер"));
+    assert_eq!(
+        state.dispatch(&vault, "status", json!({})).await.unwrap()["configured"],
+        false
+    );
+    task.abort();
+}

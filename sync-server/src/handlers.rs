@@ -316,6 +316,12 @@ pub async fn prelogin(
     if username.is_empty() || username.len() > 128 {
         return Err(ApiError::new(StatusCode::BAD_REQUEST, "invalid username"));
     }
+    if !state
+        .ratelimit
+        .check(&format!("prelogin-ip|{}", client_ip(&headers, &addr)))
+    {
+        return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate limited"));
+    }
     let rl_key = format!("prelogin|{}|{}", username, client_ip(&headers, &addr));
     if !state.ratelimit.check(&rl_key) {
         return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate limited"));
@@ -858,6 +864,12 @@ pub async fn recovery_login(
             "invalid recovery fields",
         ));
     }
+    if !state
+        .ratelimit
+        .check(&format!("recovery-ip|{}", client_ip(&headers, &addr)))
+    {
+        return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate limited"));
+    }
     let rl_key = format!("recovery|{}|{}", username, client_ip(&headers, &addr));
     if !state.ratelimit.check(&rl_key) {
         return Err(ApiError::new(StatusCode::TOO_MANY_REQUESTS, "rate limited"));
@@ -879,6 +891,7 @@ pub async fn recovery_login(
     let Some((user_id, account_salt, kdf_params, Some(recovery_hash), Some(recovery_wrapped))) =
         row
     else {
+        crypto::dummy_verify(&req.recovery_auth_hash);
         return Err(ApiError::new(
             StatusCode::UNAUTHORIZED,
             "invalid recovery key",

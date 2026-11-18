@@ -18,7 +18,7 @@ from playwright.sync_api import sync_playwright, expect
 root=pathlib.Path(__file__).resolve().parents[1]
 mock=r'''
 window.__vault={exists:false,unlocked:false};window.__rows=[];window.__stored={};window.__calls=[];window.__offline=false;window.__conflict=false;window.__private=false;
-window.__account={configured:false,logged_in:false,username:'',server:'',totp_enabled:false};window.__selection={settings:false,bookmarks:false,supers:[],passwords:[]};window.__report=null;
+window.__account={configured:false,logged_in:false,username:'',server:'',totp_enabled:false};window.__selection={settings:false,bookmarks:false,supers:[],passwords:[]};window.__report=null;window.__statusConflict=false;window.__importData=false;window.__supers=[{id:'normal-super',name:'Рабочая Super'},{id:'other-super',name:'Личная Super'}];
 window.__TAURI_INTERNALS__={invoke:async(cmd,args)=>{
  const a=args||{};window.__calls.push({cmd,action:a.action,data:a.data?structuredClone(a.data):undefined});
  if(cmd==='security_vault'){
@@ -51,8 +51,13 @@ window.__TAURI_INTERNALS__={invoke:async(cmd,args)=>{
  }
  if(cmd==='security_sync'){
   if(a.action==='configure')window.__selection=structuredClone(a.data.selection);
-  if(a.action==='run'){if(window.__offline)throw 'Сервер недоступен';window.__report={pushed:3,pulled:1,conflicts:window.__conflict?['nexusbro.v1/password/conflict']:[]};return structuredClone(window.__report);}
-  return {selection:structuredClone(window.__selection),available_supers:[{id:'normal-super',name:'Рабочая Super'},{id:'other-super',name:'Личная Super'}],last_sync:window.__report?1795000000000:null,report:window.__report};
+  if(a.action==='resolve'){
+   if(window.__offline)throw 'Сервер недоступен';
+   if(!window.__report||!window.__report.conflicts.includes(a.data.id)||!['local','remote'].includes(a.data.choice))throw 'Недопустимое разрешение конфликта';
+   window.__report.conflicts=window.__report.conflicts.filter(v=>v!==a.data.id);if(!window.__report.conflicts.length)window.__conflict=false;
+  }
+  if(a.action==='run'){if(window.__offline)throw 'Сервер недоступен';if(window.__importData){if(window.__selection.supers.includes('*')&&!window.__supers.length)window.__supers.push({id:'remote-super',name:'Облачная Super'});if(window.__selection.passwords.includes('*')&&!window.__rows.length)window.__rows.push({id:'remote-credential',origin:'https://remote.fixture.test',username:'remote-login',title:'Облачный пароль',super_id:'remote-super',updated_at:1795000000000});}window.__report={pushed:window.__importData?0:3,pulled:window.__importData?2:1,conflicts:window.__conflict?['nexusbro.v1/password/cred-1','nexusbro.v1/super/normal-super']:[]};return structuredClone(window.__report);}
+  return {selection:structuredClone(window.__selection),available_supers:structuredClone(window.__supers),last_sync:window.__report?1795000000000:null,report:window.__statusConflict&&window.__report?{...structuredClone(window.__report),conflicts:['nexusbro.v1/password/cred-1']}:window.__report};
  }
  throw 'Неизвестная тестовая команда '+cmd;
 }};
@@ -78,7 +83,7 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
  try:
   with sync_playwright() as p:
    browser=p.chromium.launch(channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome') or None,headless=True,args=['--no-sandbox'])
-   page=browser.new_page(viewport={'width':1100,'height':820});errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:d.accept());page.add_init_script(mock)
+   page=browser.new_page(viewport={'width':1100,'height':820});errors=[];confirm_accept={'value':True};confirmations=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:(confirmations.append(d.message),d.accept() if confirm_accept['value'] else d.dismiss()));page.add_init_script(mock)
    page.goto(f'http://127.0.0.1:{server.server_port}')
    dialog=page.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro')
    expect(dialog.get_by_role('heading',name='Создать защищённое хранилище')).to_be_visible()
@@ -129,9 +134,15 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    codes.get_by_role('button',name='Резервные коды сохранены',exact=True).click();expect(codes).not_to_be_visible()
    dialog.get_by_role('button',name='Синхронизация',exact=True).click()
    for box in dialog.get_by_role('checkbox').all():expect(box).not_to_be_checked()
+   all_supers=dialog.get_by_role('checkbox',name='Все супер-вкладки, включая новые',exact=False)
+   all_passwords=dialog.get_by_role('checkbox',name='Все пароли, включая новые',exact=False)
+   all_supers.check();expect(dialog.get_by_role('checkbox',name='Рабочая Super',exact=True)).to_be_disabled();expect(dialog.get_by_role('checkbox',name='Рабочая Super',exact=True)).to_be_checked()
+   all_supers.uncheck();expect(dialog.get_by_role('checkbox',name='Рабочая Super',exact=True)).to_be_enabled();expect(dialog.get_by_role('checkbox',name='Рабочая Super',exact=True)).not_to_be_checked()
+   all_passwords.check();expect(dialog.get_by_role('group',name='Пароли',exact=True).get_by_role('checkbox',name='Fixture login',exact=False)).to_be_disabled()
+   all_passwords.uncheck();expect(dialog.get_by_role('group',name='Пароли',exact=True).get_by_role('checkbox',name='Fixture login',exact=False)).to_be_enabled()
    dialog.get_by_role('checkbox',name='Настройки интерфейса',exact=False).check()
    dialog.get_by_role('group',name='Супер-вкладки',exact=True).get_by_role('checkbox',name='Рабочая Super',exact=True).check()
-   dialog.get_by_role('group',name='Пароли',exact=True).get_by_role('checkbox').first.check()
+   dialog.get_by_role('group',name='Пароли',exact=True).get_by_role('checkbox',name='Fixture login',exact=False).check()
    dialog.get_by_role('button',name='Сохранить выбор',exact=True).click()
    expect(dialog.get_by_role('status')).to_contain_text('Синхронизация ещё не запускалась')
    selected=page.evaluate('window.__selection');assert selected=={'settings':True,'bookmarks':False,'supers':['normal-super'],'passwords':['cred-1']},selected
@@ -143,9 +154,65 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    dialog.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
    expect(dialog.get_by_text('Обнаружены конфликты.',exact=False)).to_be_visible()
    assert 'Синхронизация завершена' not in dialog.inner_text()
-   page.evaluate('window.__conflict=false')
+   password_conflict=dialog.get_by_role('group',name='Конфликт: Пароль — Fixture login',exact=True)
+   super_conflict=dialog.get_by_role('group',name='Конфликт: Супер-вкладка — Рабочая Super',exact=True)
+   expect(password_conflict).to_be_visible();expect(super_conflict).to_be_visible()
+   assert 'nexusbro.v1/password/cred-1' not in dialog.inner_text()
+   page.evaluate('window.__offline=true')
+   password_conflict.get_by_role('button',name='Оставить на этом устройстве',exact=True).click()
+   expect(dialog.get_by_role('alert')).to_contain_text('Сервер недоступен')
+   expect(password_conflict).to_be_visible()
+   assert 'Синхронизация завершена' not in dialog.inner_text()
+   page.evaluate('window.__offline=false')
+   password_conflict.get_by_role('button',name='Оставить на этом устройстве',exact=True).click()
+   expect(password_conflict).not_to_be_visible();expect(super_conflict).to_be_visible()
+   expect(dialog.get_by_role('status')).to_contain_text('Остальные конфликты требуют решения')
+   assert 'Синхронизация завершена' not in dialog.inner_text()
+   before_resolve=page.evaluate("window.__calls.filter(x=>x.cmd==='security_sync'&&x.action==='resolve').length")
+   confirm_accept['value']=False
+   super_conflict.get_by_role('button',name='Взять из облака',exact=True).click()
+   expect(super_conflict).to_be_visible()
+   assert page.evaluate("window.__calls.filter(x=>x.cmd==='security_sync'&&x.action==='resolve').length")==before_resolve
+   assert 'Локальная версия будет заменена' in confirmations[-1]
+   confirm_accept['value']=True
+   page.evaluate("window.__report.errors=['Не удалось синхронизировать другую запись']")
+   super_conflict.get_by_role('button',name='Взять из облака',exact=True).click()
+   expect(super_conflict).not_to_be_visible()
+   expect(dialog.get_by_role('status')).to_contain_text('Проверьте оставшиеся ошибки')
+   assert 'Синхронизация завершена' not in dialog.inner_text()
+   choices=page.evaluate("window.__calls.filter(x=>x.cmd==='security_sync'&&x.action==='resolve').map(x=>x.data)")
+   assert choices[-2:]==[{'id':'nexusbro.v1/password/cred-1','choice':'local'},{'id':'nexusbro.v1/super/normal-super','choice':'remote'}],choices
+   page.evaluate('window.__statusConflict=true')
+   dialog.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
+   expect(dialog.get_by_text('Обнаружены конфликты.',exact=False)).to_be_visible()
+   assert 'Синхронизация завершена' not in dialog.inner_text()
+   page.evaluate('window.__statusConflict=false')
    dialog.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
    expect(dialog.get_by_role('status')).to_contain_text('Синхронизация завершена')
+   # A second device starts with an empty local list and must explicitly opt in
+   # to receiving newly encountered remote records. This remains an IPC fixture.
+   new_device=browser.new_page(viewport={'width':1100,'height':820});new_device.on('pageerror',lambda e:errors.append(str(e)))
+   new_device.add_init_script(mock+"window.__vault={exists:true,unlocked:true};window.__account={configured:true,logged_in:true,username:'browser-fixture',server:'https://browser-sync.fixture.invalid',totp_enabled:true};window.__supers=[];window.__rows=[];window.__importData=true;")
+   new_device.goto(f'http://127.0.0.1:{server.server_port}')
+   fresh=new_device.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro')
+   fresh.get_by_role('button',name='Синхронизация',exact=True).click()
+   expect(fresh.get_by_text('Нет доступных обычных супер-вкладок.',exact=True)).to_be_visible()
+   expect(fresh.get_by_text('Сначала сохраните пароль.',exact=True)).to_be_visible()
+   expect(fresh.get_by_role('checkbox',name='Все супер-вкладки, включая новые',exact=False)).not_to_be_checked()
+   expect(fresh.get_by_role('checkbox',name='Все пароли, включая новые',exact=False)).not_to_be_checked()
+   fresh.get_by_role('checkbox',name='Все супер-вкладки, включая новые',exact=False).check()
+   fresh.get_by_role('checkbox',name='Все пароли, включая новые',exact=False).check()
+   fresh.get_by_role('button',name='Сохранить выбор',exact=True).click()
+   expect(fresh.get_by_role('status')).to_contain_text('Выбор данных сохранён')
+   assert new_device.evaluate('window.__selection')=={'settings':False,'bookmarks':False,'supers':['*'],'passwords':['*']}
+   fresh.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
+   expect(fresh.get_by_role('status')).to_contain_text('Синхронизация завершена')
+   expect(fresh.get_by_text('Отправлено: 0 · Получено: 2',exact=True)).to_be_visible()
+   expect(fresh.get_by_role('checkbox',name='Облачная Super',exact=True)).to_be_checked()
+   expect(fresh.get_by_role('checkbox',name='Облачная Super',exact=True)).to_be_disabled()
+   expect(fresh.get_by_role('checkbox',name='Облачный пароль',exact=False)).to_be_checked()
+   expect(fresh.get_by_role('checkbox',name='Облачный пароль',exact=False)).to_be_disabled()
+   new_device.close()
    dialog.get_by_role('button',name='Аккаунт',exact=True).click()
    dialog.get_by_role('button',name='Изменить пароль аккаунта',exact=True).click()
    dialog.get_by_label('Текущий пароль аккаунта',exact=True).fill('account-fixture-strong')
@@ -204,6 +271,6 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    assert page.locator('select').count()==0
    assert page.evaluate('localStorage.length')==0
    assert not errors,errors
-   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'offline_and_conflicts_never_success':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
+   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
    browser.close()
  finally:server.shutdown()
