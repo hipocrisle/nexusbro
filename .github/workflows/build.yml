@@ -134,6 +134,11 @@ jobs:
         with:
           targets: ${{ matrix.target }}
 
+      - name: Identify runner image for the native compiler cache
+        id: build_image
+        shell: bash
+        run: echo "key=${ImageOS:-$RUNNER_OS}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
       - name: Запомнить сборочный кэш
         id: rust_cache
         uses: actions/cache/restore@v4
@@ -144,13 +149,20 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ steps.build_image.outputs.key }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-${{ steps.build_image.outputs.key }}-
 
       - name: Зависимости Linux
         timeout-minutes: 12
         if: matrix.os == 'ubuntu-24.04'
         run: |
+          # Hosted Ubuntu images select package mirrors through these files.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
+          if [ -f /etc/apt/apt-security-mirrors.txt ]; then
+            printf '%s\n' 'https://security.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-security-mirrors.txt >/dev/null
+          fi
           # Regional EC2 mirrors stalled small packages for many minutes.
           # Runner-only change; package signatures remain enforced by apt.
           if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
@@ -531,6 +543,13 @@ jobs:
         timeout-minutes: 10
         run: |
           set -euo pipefail
+          # Hosted Ubuntu images select package mirrors through these files.
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
+          fi
+          if [ -f /etc/apt/apt-security-mirrors.txt ]; then
+            printf '%s\n' 'https://security.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-security-mirrors.txt >/dev/null
+          fi
           # Regional EC2 mirrors stalled small packages for many minutes.
           # Runner-only change; package signatures remain enforced by apt.
           if [ -f /etc/apt/sources.list.d/ubuntu.sources ]; then
