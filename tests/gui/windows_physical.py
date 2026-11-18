@@ -723,8 +723,16 @@ try:
     while time.monotonic()<deadline and not address.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
     assert address.element_info.element.CurrentHasKeyboardFocus,'Download address did not receive focus'
     download_url='http://vpn-fixture.test/download-fixture'
-    gui.hotkey('ctrl','a');gui.write(download_url,interval=.001)
-    assert address.iface_value.CurrentValue==download_url,'Download URL was not entered'
+    for input_attempt in range(3):
+        address.click_input();address.set_focus()
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline and not address.element_info.element.CurrentHasKeyboardFocus:time.sleep(.05)
+        assert address.element_info.element.CurrentHasKeyboardFocus,'Download address did not retain focus'
+        gui.hotkey('ctrl','a');gui.write(download_url,interval=.003)
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline and address.iface_value.CurrentValue!=download_url:time.sleep(.05)
+        if address.iface_value.CurrentValue==download_url:break
+    assert address.iface_value.CurrentValue==download_url,('Download URL was not entered',address.iface_value.CurrentValue)
     gui.press('enter')
     deadline=time.monotonic()+15
     while time.monotonic()<deadline and not (run/'downloads/nexusbro-fixture.txt').exists():time.sleep(.1)
