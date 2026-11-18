@@ -695,8 +695,19 @@ def run(args):
         js_wait(ca,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Unlock did not restore main browser window')
         js_wait(ca,'(()=>{const e=document.querySelector(`[aria-label="Адрес страницы"]`);return e&&!e.disabled&&e.getBoundingClientRect().width>100})()','Main address input did not become available after unlock')
         painted(ca)
-        ca.click('[aria-label="Адрес страницы"]')
-        js_wait(ca,'document.hasFocus()&&document.activeElement?.getAttribute("aria-label")==="Адрес страницы"','Physical click did not focus main address input')
+        focused = False
+        for focus_attempt in range(3):
+            subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
+            call(ca,'fokus_obolochke')
+            ca.click('[aria-label="Адрес страницы"]')
+            until=time.monotonic()+1
+            while time.monotonic()<until:
+                focused=ca.js('document.hasFocus()&&document.activeElement?.getAttribute("aria-label")==="Адрес страницы"')
+                if focused:break
+                time.sleep(.05)
+            if focused:break
+        checks.append({'shell_physical_focus_attempts':focus_attempt+1})
+        require(focused,'Physical click did not focus main address input')
         subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
         js_wait(ca,'!!document.querySelector(".browser-lock-screen")','Shell CtrlShiftL did not lock browser')
         ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
@@ -746,6 +757,12 @@ def run(args):
                 checks.append({'shell_focus_diagnostic':focus})
                 focus_id=subprocess.check_output(['xdotool','getwindowfocus'],env={**os.environ,'DISPLAY':a.display},text=True).strip()
                 checks.append({'native_focus_window':focus_id,'expected_main_window':main_xid})
+                for xid in [focus_id,main_xid]:
+                    details={}
+                    for command in [['xdotool','getwindowname',xid],['xdotool','getwindowpid',xid],['xwininfo','-id',xid,'-tree']]:
+                        r=subprocess.run(command,env={**os.environ,'DISPLAY':a.display},capture_output=True,text=True)
+                        details[' '.join(command[:2])]=r.stdout[:5000]
+                    checks.append({'native_window_diagnostic':{'xid':xid,'details':details}})
                 from PIL import ImageGrab
                 ImageGrab.grab(xdisplay=a.display).save(root/'shell-focus-failure.png')
             except Exception:
