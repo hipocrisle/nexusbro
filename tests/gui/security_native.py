@@ -708,7 +708,15 @@ def run(args):
             if focused:break
         checks.append({'shell_physical_focus_attempts':focus_attempt+1})
         require(focused,'Physical click did not focus main address input')
+        js_wait(ca,'!!document.querySelector(".address-suggestions")','Themed address suggestions did not appear')
+        painted(ca)
+        from PIL import ImageGrab
+        ImageGrab.grab(xdisplay=a.display).save(root/'address-themed-suggestions.png')
+        ca.js('window.__nativeKeyEvents=[];window.__nativeKeyProbe=e=>window.__nativeKeyEvents.push({type:e.type,key:e.key,code:e.code,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey,meta:e.metaKey,trusted:e.isTrusted});window.addEventListener("keydown",window.__nativeKeyProbe,true);window.addEventListener("keyup",window.__nativeKeyProbe,true);true')
         subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
+        time.sleep(.1)
+        keys=ca.js('window.removeEventListener("keydown",window.__nativeKeyProbe,true);window.removeEventListener("keyup",window.__nativeKeyProbe,true);window.__nativeKeyEvents')
+        checks.append({'physical_shell_shortcut_events':keys})
         js_wait(ca,'!!document.querySelector(".browser-lock-screen")','Shell CtrlShiftL did not lock browser')
         ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
         ca.text_button('Разблокировать браузер')
@@ -759,7 +767,7 @@ def run(args):
                 checks.append({'native_focus_window':focus_id,'expected_main_window':main_xid})
                 for xid in [focus_id,main_xid]:
                     details={}
-                    for command in [['xdotool','getwindowname',xid],['xdotool','getwindowpid',xid],['xwininfo','-id',xid,'-tree']]:
+                    for command in [['xdotool','getwindowname',xid],['xdotool','getwindowpid',xid],['xdotool','getwindowgeometry','--shell',xid]]:
                         r=subprocess.run(command,env={**os.environ,'DISPLAY':a.display},capture_output=True,text=True)
                         details[' '.join(command[:2])]=r.stdout[:5000]
                     checks.append({'native_window_diagnostic':{'xid':xid,'details':details}})
