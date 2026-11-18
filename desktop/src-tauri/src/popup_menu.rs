@@ -251,6 +251,7 @@ pub async fn popup_menu_open(
         finish(&app, &label, None, false);
         return Err("Не удалось разместить меню".into());
     }
+    crate::browser_lock::install_shortcut(&popup);
     crate::zapisat_v_zhurnal(format!(
         "NEXUSBRO_POPUP stage=created requested_width={} requested_height={}",
         width.round() as u32,

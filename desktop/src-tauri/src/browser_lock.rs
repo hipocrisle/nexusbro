@@ -26,6 +26,8 @@ pub fn generation() -> u64 {
 #[derive(Default)]
 pub struct BrowserLockState {
     serial: tokio::sync::Mutex<()>,
+    #[cfg(target_os = "linux")]
+    shortcuts: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 #[derive(Clone, Serialize)]
 pub struct LockStatus {
@@ -73,8 +75,71 @@ fn publish(app: &tauri::AppHandle) -> LockStatus {
     }
     result
 }
+/// Handle the security shortcut before a focused GTK/WebKit widget consumes it.
+/// This is installed only by trusted Rust window constructors, never by page IPC.
+#[cfg(target_os = "linux")]
+pub fn install_shortcut(window: &tauri::WebviewWindow) {
+    let shell = window.clone();
+    let app = window.app_handle().clone();
+    if window
+        .run_on_main_thread(move || {
+            use gtk::{gdk::ModifierType, glib::Propagation, prelude::*};
+            let Ok(native) = shell.gtk_window() else {
+                crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=gtk-unavailable".into());
+                return;
+            };
+            let label = shell.label().to_owned();
+            if !app
+                .state::<BrowserLockState>()
+                .shortcuts
+                .lock()
+                .unwrap()
+                .insert(label.clone())
+            {
+                return;
+            }
+            let target = app.clone();
+            native.connect_key_press_event(move |_, event| {
+                let modifiers = event.state();
+                let required = ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK;
+                let excluded =
+                    ModifierType::MOD1_MASK | ModifierType::META_MASK | ModifierType::SUPER_MASK;
+                let key = event.hardware_keycode() == 46
+                    || event
+                        .keyval()
+                        .to_unicode()
+                        .is_some_and(|key| matches!(key, 'l' | 'L' | 'д' | 'Д'));
+                if !modifiers.contains(required) || modifiers.intersects(excluded) || !key {
+                    return Propagation::Proceed;
+                }
+                crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=gtk-key".into());
+                if !locked_global() {
+                    request_lock(target.clone());
+                }
+                Propagation::Stop
+            });
+            native.connect_destroy(move |_| {
+                if let Some(state) = app.try_state::<BrowserLockState>() {
+                    state.shortcuts.lock().unwrap().remove(&label);
+                }
+            });
+            crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=gtk-installed".into());
+        })
+        .is_err()
+    {
+        crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=gtk-schedule-failed".into());
+    }
+}
+#[cfg(not(target_os = "linux"))]
+pub fn install_shortcut(_window: &tauri::WebviewWindow) {}
+
 pub fn setup(app: &tauri::AppHandle) {
     transition(app.state::<Arc<VaultState>>().status().exists);
+    for (label, window) in app.webview_windows() {
+        if trusted(app, &label) {
+            install_shortcut(&window);
+        }
+    }
     if locked_global() {
         hide_all(app);
     }
