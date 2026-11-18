@@ -51,7 +51,7 @@ fn disk_bytes(root:&std::path::Path)->Result<u64,()>{
  while let Some(path)=pending.pop(){
   if std::time::Instant::now()>deadline||files>200000{return Err(());}
   let entries=match std::fs::read_dir(path){Ok(v)=>v,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>continue,Err(_)=>return Err(())};
-  for entry in entries{let entry=entry.map_err(|_|())?;let kind=entry.file_type().map_err(|_|())?;files+=1;
+  for entry in entries{if files>200000||std::time::Instant::now()>deadline{return Err(());}let entry=entry.map_err(|_|())?;let kind=entry.file_type().map_err(|_|())?;files+=1;
    if kind.is_dir(){pending.push(entry.path());}else if kind.is_file(){match entry.metadata(){Ok(m)=>bytes=bytes.saturating_add(m.len()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>{},Err(_)=>return Err(())}}
   }
  }Ok(bytes)
@@ -69,7 +69,7 @@ pub fn izmerit(contexts:Vec<RequestContext>,token:String,label:String,tx:Sender<
   }else{state.failed.store(true,Ordering::Relaxed);}
   // Visitor destruction is completion even for an empty store (no visit callbacks).
   drop(state);
-  let path=context.cache_path().to_string();let job=job.clone();
+  let path=CefString::from(&context.cache_path()).to_string();let job=job.clone();
   if path.is_empty(){job.lock().unwrap().done(None,Some((Some(0),true)));}
   else{std::thread::spawn(move||{let bytes=disk_bytes(&std::path::Path::new(&path).join("Cache")).ok();job.lock().unwrap().done(None,Some((bytes,false)));});}
  }
