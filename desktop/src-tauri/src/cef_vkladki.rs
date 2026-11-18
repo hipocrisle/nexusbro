@@ -807,6 +807,7 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=>{
                     if generation<*browser_lock_generation{continue;}
                     *browser_lock_generation=generation;
+                    let was_locked=*browser_locked;
                     *browser_locked=locked;
                     for extra in extras.values_mut(){extra.set_browser_locked(locked,generation);}
                     if locked{
@@ -815,7 +816,11 @@ impl Rabota {
                         for hwnd in devtools.values(){let _=sistema::pokazat(*hwnd,false);}
                         devtools_pending.clear();devtools.clear();
                         let _=sistema::pokazat(k.okno,false);
-                    }else{fokus=true;fokus_klaviatury=!brauzery.contains_key(&s.aktivnaya);layout_dirty=true;}
+                    }else{
+                        // Initial unlocked-state synchronization must not wake
+                        // restored lazy tabs. A real unlock may resume them.
+                        fokus=true;fokus_klaviatury=was_locked&&!brauzery.contains_key(&s.aktivnaya);layout_dirty=true;
+                    }
                 }
                 Sobytie::Komanda(Komanda::PasswordsEnabled{enabled})=>{
                     crate::password_cef::enabled(enabled);

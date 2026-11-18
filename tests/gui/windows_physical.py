@@ -227,7 +227,7 @@ try:
         time.sleep(.1)
     assert any(t['adres'].endswith('/middle-target') for t in linked['vkladki']),'Middle click did not create link tab'
     assert linked['aktivnaya']==source_tab,'Middle click unexpectedly replaced or activated the source tab'
-    ui('LinkTargetFixture',['TabItem']).click_input();gui.hotkey('ctrl','w');time.sleep(.3)
+    ui('LinkTargetFixture',['TabItem']).click_input(button='middle');time.sleep(.3)
     r=rect(container);gui.click(r.left+100,r.top+100,button='right')
     ui('Открыть ссылку в новой вкладке',['MenuItem'])
     themed_popup('page-link-context')
@@ -239,7 +239,7 @@ try:
         time.sleep(.1)
     assert any(t['adres'].endswith('/context-target') for t in linked['vkladki']),'Context menu did not create link tab'
     assert linked['aktivnaya']==source_tab,'Context open replaced or unexpectedly activated the source tab'
-    ui('LinkTargetFixture',['TabItem']).click_input();gui.hotkey('ctrl','w');time.sleep(.3)
+    ui('LinkTargetFixture',['TabItem']).click_input(button='middle');time.sleep(.3)
     results.append({'native_middle_link_and_themed_context_open_background_tabs':True})
 
     # Open a real shell dialog over the native engine and cancel with keyboard.

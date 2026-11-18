@@ -209,6 +209,10 @@ pub async fn popup_menu_open(
         tauri::WebviewUrl::App("index.html?popup=menu".into()),
     )
     .title("NexusBro — меню")
+    // GTK realizes a non-resizable window using its initial size request.
+    // A post-build resize before mapping can leave the default 800x600 child.
+    .inner_size(width / monitor_scale, height / monitor_scale)
+    .position(left / monitor_scale, top / monitor_scale)
     .decorations(false)
     .resizable(false)
     .minimizable(false)
@@ -247,10 +251,16 @@ pub async fn popup_menu_open(
         finish(&app, &label, None, false);
         return Err("Не удалось разместить меню".into());
     }
+    eprintln!(
+        "NEXUSBRO_POPUP stage=created requested_width={} requested_height={}",
+        width.round() as u32,
+        height.round() as u32
+    );
     let events_app = app.clone();
     let events_label = label.clone();
     popup.on_window_event(move |event| match event {
         WindowEvent::Focused(true) => {
+            eprintln!("NEXUSBRO_POPUP stage=focus focused=true");
             if let Some(pending) = events_app
                 .state::<PopupMenuState>()
                 .menus
@@ -262,6 +272,7 @@ pub async fn popup_menu_open(
             }
         }
         WindowEvent::Focused(false) => {
+            eprintln!("NEXUSBRO_POPUP stage=focus focused=false");
             let ready = events_app
                 .state::<PopupMenuState>()
                 .menus
@@ -308,7 +319,7 @@ pub fn popup_menu_data(app: tauri::AppHandle, window: WebviewWindow) -> Result<M
 }
 
 #[tauri::command]
-pub fn popup_menu_ready(app: tauri::AppHandle, window: WebviewWindow) -> Result<(), String> {
+pub async fn popup_menu_ready(app: tauri::AppHandle, window: WebviewWindow) -> Result<(), String> {
     {
         let state = app.state::<PopupMenuState>();
         let mut menus = state.menus.lock().unwrap();
@@ -318,11 +329,78 @@ pub fn popup_menu_ready(app: tauri::AppHandle, window: WebviewWindow) -> Result<
         }
         pending.ready = true;
     }
+    let (sender, receiver) = oneshot::channel();
+    let ui = window.clone();
+    let ui_app = app.clone();
+    let generation = crate::browser_lock::generation();
     window
-        .show()
-        .and_then(|_| window.set_focus())
-        .map_err(|_| "Не удалось показать меню".into())
+        .run_on_main_thread(move || {
+            if crate::browser_lock::locked_global()
+                || crate::browser_lock::generation() != generation
+                || !ui_app
+                    .state::<PopupMenuState>()
+                    .menus
+                    .lock()
+                    .unwrap()
+                    .contains_key(ui.label())
+            {
+                let _ = sender.send(Err("Меню уже закрыто".to_string()));
+                return;
+            }
+            let shown = (|| -> tauri::Result<()> {
+                ui.show()?;
+                #[cfg(target_os = "linux")]
+                {
+                    use gtk::prelude::*;
+                    // Tao's show/focus are separate GLib requests, and focus ignores
+                    // a still-hidden GTK window. Map children now before requesting
+                    // focus, rather than relying on timing or a hidden-frame RAF.
+                    let gtk = ui.gtk_window()?;
+                    gtk.show_all();
+                    gtk.check_resize();
+                    gtk.present();
+                    gtk.queue_resize();
+                    gtk.queue_draw();
+                    gtk.display().sync();
+                    if let Some(handle) = crate::nash_descriptor(&ui) {
+                        if crate::okna::sistema::fokus_obolochke(handle).is_err() {
+                            eprintln!("NEXUSBRO_POPUP stage=x11-focus accepted=false");
+                        }
+                    }
+                    ui.with_webview(|platform| {
+                        let view = platform.inner();
+                        view.show_all();
+                        view.queue_resize();
+                        view.queue_draw();
+                        view.grab_focus();
+                        let bounds = view.allocation();
+                        eprintln!(
+                            "NEXUSBRO_POPUP stage=gtk-content width={} height={}",
+                            bounds.width(),
+                            bounds.height()
+                        );
+                    })?;
+                }
+                ui.set_focus()?;
+                let webview: &tauri::Webview = ui.as_ref();
+                webview.set_focus()?;
+                if let Ok(size) = ui.inner_size() {
+                    eprintln!(
+                        "NEXUSBRO_POPUP stage=ready width={} height={}",
+                        size.width, size.height
+                    );
+                }
+                Ok(())
+            })();
+            let _ = sender.send(shown.map_err(|_| "Не удалось показать меню".to_string()));
+        })
+        .map_err(|_| "Не удалось показать меню")?;
+    tokio::time::timeout(Duration::from_secs(5), receiver)
+        .await
+        .map_err(|_| "Окно меню не ответило")?
+        .map_err(|_| "Окно меню закрыто")?
 }
+
 #[tauri::command]
 pub fn popup_menu_choose(
     app: tauri::AppHandle,
@@ -382,8 +460,14 @@ pub fn dismiss_all(app: &tauri::AppHandle) {
 
 /// The popup may request the same global lock, but has no general browser IPC.
 #[tauri::command]
-pub fn popup_menu_lock(app: tauri::AppHandle, window: WebviewWindow) -> Result<(),String> {
-    if !app.state::<PopupMenuState>().menus.lock().unwrap().contains_key(window.label()) {
+pub fn popup_menu_lock(app: tauri::AppHandle, window: WebviewWindow) -> Result<(), String> {
+    if !app
+        .state::<PopupMenuState>()
+        .menus
+        .lock()
+        .unwrap()
+        .contains_key(window.label())
+    {
         return Err("Меню уже закрыто".into());
     }
     crate::browser_lock::request_lock(app);
