@@ -738,6 +738,16 @@ def run(args):
         checkpoint('vault_main_backup_runtime_logs_server_database_have_no_plaintext_credentials')
         checkpoint('success')
     except Exception as error:
+        if phase == 'whole-browser-lock-all-windows':
+            try:
+                focus = ca.js('(()=>{const e=document.activeElement,r=document.querySelector(`[aria-label="Адрес страницы"]`)?.getBoundingClientRect();return {has_focus:document.hasFocus(),label:window.__TAURI_INTERNALS__.metadata.currentWindow.label,active_tag:e?.tagName,active_label:e?.getAttribute("aria-label"),address_rect:r?{x:r.x,y:r.y,width:r.width,height:r.height}:null,locked:!!document.querySelector(".browser-lock-screen")}})()')
+                checks.append({'shell_focus_diagnostic':focus})
+                focus_id=subprocess.check_output(['xdotool','getwindowfocus'],env={**os.environ,'DISPLAY':a.display},text=True).strip()
+                checks.append({'native_focus_window':focus_id,'expected_main_window':main_xid})
+                from PIL import ImageGrab
+                ImageGrab.grab(xdisplay=a.display).save(root/'shell-focus-failure.png')
+            except Exception:
+                checks.append({'shell_focus_diagnostic_unavailable':True})
         message = str(error)
         for secret in sensitive:
             message = message.replace(secret, '[synthetic credential redacted]')

@@ -16,6 +16,10 @@ on:
         description: Run only Windows screen test from an existing build run (empty = build)
         required: false
         default: ""
+      linux_runtime_build:
+        description: Repeat native Linux security tests from an existing matching app build
+        required: false
+        default: ""
       publish_tag:
         description: Publish existing tagged packages after successful runtime check (requires runtime_build)
         required: false
@@ -29,7 +33,7 @@ on:
 jobs:
   security:
     if: >-
-      !inputs.runtime_build &&
+      !inputs.runtime_build && !inputs.linux_runtime_build &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-22.04
     steps:
@@ -78,7 +82,7 @@ jobs:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
-      !inputs.frontend_only && !inputs.runtime_build &&
+      !inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
@@ -485,6 +489,65 @@ jobs:
           python3 tests/release_signatures.py --directory /tmp/payloads --version "$VERSION"
           gh release upload "$TAG" latest.json /tmp/payloads/signature-verification.json --repo "$REPO" --clobber
           gh release edit "$TAG" --repo "$REPO" --notes-file "docs/RELEASE-$VERSION.md" --draft=false --latest
+
+  linux-runtime:
+    name: Native Linux from existing matching binary
+    if: github.event_name == 'workflow_dispatch' && inputs.linux_runtime_build != ''
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify app sources match the binary run
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN: ${{ inputs.linux_runtime_build }}
+        run: |
+          set -euo pipefail
+          SOURCE=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" --jq .head_sha)
+          git fetch --no-tags origin "$SOURCE"
+          git diff --exit-code "$SOURCE" HEAD -- desktop
+          echo "Native binary source: $SOURCE; test source: $GITHUB_SHA"
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexusbro-linux-runtime
+          path: .dev-check/native-binary
+          run-id: ${{ inputs.linux_runtime_build }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexusbro-sync-backend
+          path: .dev-check/backend-package
+          run-id: ${{ inputs.linux_runtime_build }}
+          github-token: ${{ github.token }}
+      - name: Runtime dependencies and verified CEF
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev xvfb xdotool
+          python3 -m pip install --break-system-packages websocket-client psutil Pillow
+          curl -fSL --retry 3 -o /tmp/cef.tar.bz2 'https://cef-builds.spotifycdn.com/cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88_linux64_minimal.tar.bz2'
+          echo 'cacfbb7d7261fea682fb67c108de7e4347519ff7 /tmp/cef.tar.bz2' | sha1sum -c -
+          mkdir -p .dev-check/cef
+          tar -xjf /tmp/cef.tar.bz2 -C .dev-check/cef --strip-components=1
+          mv .dev-check/cef/Release/* .dev-check/cef/
+          mv .dev-check/cef/Resources/* .dev-check/cef/
+          chmod +x .dev-check/native-binary/nexusbro .dev-check/backend-package/nexusbro-sync-server
+          (cd .dev-check/backend-package && sha256sum -c SHA256SUMS)
+      - name: Native encrypted vault, UI lock and two-device sync
+        timeout-minutes: 10
+        run: python3 tests/gui/security_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --server .dev-check/backend-package/nexusbro-sync-server --out .dev-check/security-native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-security-verification
+          path: |
+            .dev-check/security-native/results.json
+            .dev-check/security-native/*.png
+            .dev-check/security-native/*.log
+            .dev-check/security-native/*/*.log
+          retention-days: 14
 
   publish-tested:
     name: Publish runtime-verified existing packages
