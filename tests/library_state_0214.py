@@ -96,7 +96,7 @@ try:
         books.get_by_role("button", name="Закрыть библиотеку", exact=True).click()
 
         page.keyboard.press("Control+Shift+Delete")
-        clear = page.get_by_role("dialog", name="Удаление данных браузера", exact=True)
+        clear = page.get_by_role("dialog", name="Удаление данных супер-вкладки", exact=True)
         clear.wait_for()
         clear.get_by_role("combobox", name="Период очистки истории", exact=True).click()
         page.get_by_role("option",name="За всё время",exact=True).click()
@@ -107,7 +107,7 @@ try:
         expect(clear.get_by_test_id("cache-size")).to_contain_text("1,5 МБ")
         clear.get_by_role("combobox",name="Период очистки истории").click()
         page.get_by_role("option",name="Последние 7 дней",exact=True).click()
-        clear.get_by_role("checkbox", name="Список завершённых загрузок — за всё время", exact=True).check()
+        clear.get_by_role("checkbox", name="Список завершённых загрузок текущей супер-вкладки — за всё время", exact=True).check()
         clear.get_by_role("checkbox", name="Cookies текущей супер-вкладки — за всё время", exact=True).check()
         clear.get_by_role("button", name="Удалить данные", exact=True).click()
         page.wait_for_function("window.__sitePending!==null")

@@ -7,8 +7,8 @@ mock=next(ast.literal_eval(n.value) for n in module.body if isinstance(n,ast.Ass
 mock+='''
 const originalInvoke=window.__TAURI_INTERNALS__.invoke;window.__books=[];
 window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
- if(cmd==='plugin:menu|new'){window.__nativeMenu=args.options.items;return [111,'address'];}
- if(cmd==='plugin:menu|popup'){window.__menuPopped=true;return null;}
+ if(cmd==='plugin:menu|new'&&args.options.items.every(i=>i.id?.startsWith('address-'))){window.__nativeMenu=args.options.items;return [111,'address'];}
+ if(cmd==='plugin:menu|popup'&&args.rid===111){window.__menuPopped=true;return null;}
  if(cmd==='bufer_chitat')return navigator.clipboard.readText();
  if(cmd==='bufer_zapisat')return navigator.clipboard.writeText(args.text);
  if(cmd==='biblioteka_spisok'&&args.razdel==='zakladki')return window.__books;

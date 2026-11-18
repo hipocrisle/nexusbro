@@ -19,6 +19,23 @@ pub struct Db {
 
 impl Db {
     pub fn open(path: &str) -> rusqlite::Result<Self> {
+        const APPLICATION_ID: i32 = 0x4e425359; // NBSY: NexusBro Sync, not NexuSSH.
+        if path != ":memory:" && std::fs::metadata(path).is_ok_and(|m| m.len() > 0) {
+            // Read-only probe BEFORE changing permissions, journal mode or schema.
+            // Inspect only the file header: even a SQLite READONLY connection
+            // can participate in WAL shared-memory locks of a foreign service.
+            use std::io::Read;
+            let mut header = [0u8; 72];
+            std::fs::File::open(path)
+                .and_then(|mut f| f.read_exact(&mut header))
+                .map_err(|_| rusqlite::Error::InvalidPath(path.into()))?;
+            let id = i32::from_be_bytes(header[68..72].try_into().unwrap());
+            if &header[..16] != b"SQLite format 3\0" || id != APPLICATION_ID {
+                return Err(rusqlite::Error::InvalidParameterName(
+                    "Refusing non-NexusBro database".into(),
+                ));
+            }
+        }
         #[cfg(unix)]
         if path != ":memory:" {
             use std::os::unix::fs::OpenOptionsExt;
@@ -37,6 +54,7 @@ impl Db {
         } else {
             Connection::open(path)?
         };
+        conn.pragma_update(None, "application_id", APPLICATION_ID)?;
         conn.pragma_update(None, "journal_mode", "WAL").ok();
         conn.pragma_update(None, "foreign_keys", "ON").ok();
         let db = Db {

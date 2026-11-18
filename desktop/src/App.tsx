@@ -1,4 +1,6 @@
 import {editableTarget} from "./addressSelection";
+import {popupMenu} from "./nativeMenu";
+import SecuritySettings from "./SecuritySettings";
 import Biblioteka from "./Biblioteka";
 import Vybor from "./Vybor";
 import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
@@ -45,6 +47,8 @@ export default function App() {
   const [nastrojki, setNastrojki] = useState<NastrojkiApp>(poUmolchaniyu);
   const nastrojkiRef = useRef(nastrojki);
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
+  const [securityOpen,setSecurityOpen]=useState(false);
+  useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>{setNastroykiOtkryty(false);setSecurityOpen(true);}).catch(e=>setOshibka(String(e)));};window.addEventListener("nexusbro-security",open);return()=>window.removeEventListener("nexusbro-security",open);},[]);
   useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setNastroykiOtkryty(true));};window.addEventListener("nexusbro-settings",open);return()=>window.removeEventListener("nexusbro-settings",open);},[]);
   useEffect(()=>{const off=listen<NastrojkiApp>("nastrojki-izmenilis",e=>panel(e.payload));return()=>{void off.then(f=>f());};},[]);
   const [tyanem, setTyanem] = useState(false);
@@ -111,7 +115,6 @@ export default function App() {
   // Текст диагностики — для копирования и отправки разработчику.
   const [diagnostika, setDiagnostika] = useState<string | null>(null);
   // Контекстное меню супервкладки (правый клик).
-  const [menyu, setMenyu] = useState<{ x: number; y: number; vkladka: Vidno } | null>(null);
   // Прогресс скачивания обновления: байты и общий размер (0 = неизвестен).
   const [progress, setProgress] = useState<{ polucheno: number; vsego: number } | null>(null);
   const [oshibka, setOshibka] = useState("");
@@ -212,7 +215,6 @@ export default function App() {
   }
 
   async function zakrytMenyu() {
-    setMenyu(null);
     setMenuSohranennyh(null);
     await invoke("pokazat_dvizhki", { vidno: true });
   }
@@ -351,7 +353,7 @@ export default function App() {
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
           горизонтальная полоса съедала высоту широкоформатников. */}
       <div className="reika">
-        <div className="zagolovok"><span className="brand"><Icon name="globe" size={23} />NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
+        <div className="zagolovok"><span className="brand"><img src="/nexusbro.png" width="23" height="23" alt=""/>NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
           onClick={() => { void sohranitNastrojki({ ...nastrojkiRef.current, panel_svernuta: !nastrojkiRef.current.panel_svernuta }).catch((e) => setOshibka(String(e))); }}>{nastrojki.panel_svernuta ? "»" : "«"}</button></div>
         <div className="spisok" onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) e.preventDefault(); }} onDrop={(e) => void perenestiSuper(null, e)}>
           {vkladki.map((v) => (
@@ -369,9 +371,13 @@ export default function App() {
               onContextMenu={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                const poziciya = { x: e.clientX, y: e.clientY, vkladka: v };
-                await invoke("pokazat_dvizhki", { vidno: false });
-                setMenyu(poziciya);
+                void popupMenu([
+                  {text:"Настройки",action:()=>nachatPravku(v)},
+                  {text:"Сохранить",action:async()=>{await invoke("sohranit_vkladku",{id:v.id});setVkladki(await invoke<Vidno[]>("spisok"));}},
+                  {text:"Сохранить и закрыть",action:async()=>{await invoke("zakryt",{id:v.id,sohranit:true});setVkladki(await invoke<Vidno[]>("spisok"));setAktivnaya(await invoke<string|null>("aktivnaya"));}},
+                  {text:"Закрыть…",action:()=>zakrytVkladku(v.id,v.nazvanie)},
+                  {text:"Перезагрузить",action:async()=>{const o=await invoke<Otvet>("perezagruzit",{id:v.id});if(!o.ok)setOshibka(o.soobshchenie);setVkladki(await invoke<Vidno[]>("spisok"));}}
+                ],e.clientX,e.clientY,setOshibka).catch(err=>setOshibka(String(err)));
               }}
               title={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "") + " — " + (v.proxy || "прямое соединение")}
             >
@@ -447,7 +453,7 @@ export default function App() {
             await invoke("pokazat_dvizhki", { vidno: false }); setNastroykiOtkryty(true);
           }}><Icon name="settings" /></button>
         </div>
-        <Biblioteka superId={aktivnaya}/>
+        <Biblioteka superId={aktivnaya} superName={vkladki.find(v=>v.id===aktivnaya)?.nazvanie??aktivnaya??""}/>
         <div className="versiya-app" title={"NexusBro " + (versiya || "…")}>v{versiya || "…"}</div>
       </div>
 
@@ -504,6 +510,7 @@ export default function App() {
         </div>
       </div>
 
+      {securityOpen&&<SecuritySettings onClose={()=>{setSecurityOpen(false);void invoke("pokazat_dvizhki",{vidno:true});}}/>}
       {nastroykiOtkryty && <NastrojkiOkno value={nastrojki} onSave={sohranitNastrojki} onClose={() => {
         setNastroykiOtkryty(false); void invoke("pokazat_dvizhki", { vidno: true });
       }} />}
@@ -537,85 +544,7 @@ export default function App() {
           </div>
         </div>
       )}
-      {menyu && (
-        <div
-          className="zatemnenie-prozrachnoe"
-          onClick={() => zakrytMenyu()}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            void zakrytMenyu();
-          }}
-        >
-          <div
-            className="vypadajka"
-            style={{ left: menyu.x, top: menyu.y, right: "auto" }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div
-              className="stroka-menyu"
-              onClick={async () => {
-                const v = menyu.vkladka;
-                setMenyu(null);
-                await nachatPravku(v);
-              }}
-            >
-              Настройки
-            </div>
-            <div className="stroka-menyu" onClick={async () => {
-              const id = menyu.vkladka.id; setMenyu(null);
-              try { await invoke("sohranit_vkladku", { id }); setVkladki(await invoke<Vidno[]>("spisok")); }
-              catch (e) { setOshibka(String(e)); }
-              finally { await invoke("pokazat_dvizhki", { vidno: true }); }
-            }}>Сохранить</div>
-            <div
-              className="stroka-menyu"
-              onClick={async () => {
-                const v = menyu.vkladka;
-                setMenyu(null);
-                try {
-                  await invoke<Otvet>("zakryt", { id: v.id, sohranit: true });
-                  setVkladki(await invoke<Vidno[]>("spisok"));
-                  setAktivnaya(await invoke<string | null>("aktivnaya"));
-                } finally {
-                  await invoke("pokazat_dvizhki", { vidno: true });
-                }
-              }}
-            >
-              Сохранить и закрыть
-            </div>
-            <div
-              className="stroka-menyu"
-              onClick={async () => {
-                const v = menyu.vkladka;
-                setMenyu(null);
-                try {
-                  await zakrytVkladku(v.id, v.nazvanie);
-                } finally {
-                  await invoke("pokazat_dvizhki", { vidno: true });
-                }
-              }}
-            >
-              Закрыть…
-            </div>
-            <div
-              className="stroka-menyu"
-              onClick={async () => {
-                const v = menyu.vkladka;
-                setMenyu(null);
-                try {
-                  const o = await invoke<Otvet>("perezagruzit", { id: v.id });
-                  if (!o.ok) setOshibka(o.soobshchenie);
-                  setVkladki(await invoke<Vidno[]>("spisok"));
-                } finally {
-                  await invoke("pokazat_dvizhki", { vidno: true });
-                }
-              }}
-            >
-              Перезагрузить
-            </div>
-          </div>
-        </div>
-      )}
+
       {vopros && (
         <div className="zatemnenie" onClick={() => vopros.razreshit(null)}>
           <div className="dialog" onClick={(e) => e.stopPropagation()}>

@@ -470,6 +470,43 @@ impl VaultState {
             items.remove(key);
         })
     }
+    /// Compare, write and commit under the same vault mutex. A stale caller
+    /// cannot replace a credential edited since the sync/capture snapshot.
+    pub fn compare_and_set(
+        &self,
+        key: &str,
+        expected: Option<&str>,
+        value: Option<&str>,
+    ) -> Result<()> {
+        if key.is_empty()
+            || key.len() > 512
+            || expected.is_some_and(|v| v.len() > MAX_VALUE)
+            || value.is_some_and(|v| v.len() > MAX_VALUE)
+        {
+            return Err("Недопустимый размер записи хранилища".into());
+        }
+        let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
+        expire(&mut inner);
+        let root = inner.root.clone().ok_or_else(|| LOCKED.to_string())?;
+        let vault = inner.unlocked.as_mut().ok_or_else(|| LOCKED.to_string())?;
+        if vault.secrets.get(key).map(|v| v.as_str()) != expected {
+            return Err("Запись изменилась; повторите действие".into());
+        }
+        let mut next = vault.secrets.clone();
+        match value {
+            Some(value) => {
+                next.insert(key.into(), Zeroizing::new(value.into()));
+            }
+            None => {
+                next.remove(key);
+            }
+        }
+        let bytes = encode(vault, &next)?;
+        persist(&root, &bytes, false)?;
+        vault.secrets = next;
+        vault.touched = Instant::now();
+        Ok(())
+    }
     fn mutate(&self, change: impl FnOnce(&mut Secrets)) -> Result<()> {
         let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
         expire(&mut inner);
@@ -605,6 +642,79 @@ mod tests {
         assert!(vault.unlock(&root.0, PASSWORD).is_err());
         assert!(!vault.status().unlocked);
         assert_eq!(bytes, fs::read(root.0.join(FILE_NAME)).unwrap());
+    }
+    #[test]
+    fn compare_and_set_create_update_delete_and_stale_disk_unchanged() {
+        let root = Directory::new();
+        let vault = VaultState::default();
+        vault.create(&root.0, PASSWORD).unwrap();
+        vault.put("unrelated", "preserved").unwrap();
+        vault.compare_and_set("item", None, Some("first")).unwrap();
+        let disk = || {
+            (
+                fs::read(root.0.join(FILE_NAME)).unwrap(),
+                fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap(),
+            )
+        };
+        let before = disk();
+        assert!(vault
+            .compare_and_set("item", None, Some("clobber"))
+            .is_err());
+        assert_eq!(before, disk());
+        assert_eq!(vault.get("item").unwrap().unwrap().as_str(), "first");
+        vault
+            .compare_and_set("item", Some("first"), Some("second"))
+            .unwrap();
+        let before = disk();
+        assert!(vault.compare_and_set("item", Some("first"), None).is_err());
+        assert_eq!(before, disk());
+        assert_eq!(vault.get("item").unwrap().unwrap().as_str(), "second");
+        vault.compare_and_set("item", Some("second"), None).unwrap();
+        let before = disk();
+        assert!(vault.compare_and_set("item", Some("second"), None).is_err());
+        assert_eq!(before, disk());
+        vault.lock();
+        assert!(vault
+            .compare_and_set("item", None, Some("locked write"))
+            .is_err());
+        assert_eq!(before, disk());
+        vault.unlock(&root.0, PASSWORD).unwrap();
+        assert!(vault.get("item").unwrap().is_none());
+        assert_eq!(
+            vault.get("unrelated").unwrap().unwrap().as_str(),
+            "preserved"
+        );
+    }
+    #[test]
+    fn concurrent_compare_and_set_has_one_winner_and_persists_it() {
+        let root = Directory::new();
+        let vault = Arc::new(VaultState::default());
+        vault.create(&root.0, PASSWORD).unwrap();
+        vault.put("item", "snapshot").unwrap();
+        let barrier = Arc::new(std::sync::Barrier::new(3));
+        let mut handles = Vec::new();
+        for value in ["left", "right"] {
+            let vault = Arc::clone(&vault);
+            let barrier = Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                vault
+                    .compare_and_set("item", Some("snapshot"), Some(value))
+                    .is_ok()
+            }));
+        }
+        barrier.wait();
+        let winners = handles
+            .into_iter()
+            .map(|h| h.join().unwrap())
+            .filter(|won| *won)
+            .count();
+        assert_eq!(winners, 1);
+        let saved = vault.get("item").unwrap().unwrap();
+        assert!(matches!(saved.as_str(), "left" | "right"));
+        vault.lock();
+        vault.unlock(&root.0, PASSWORD).unwrap();
+        assert_eq!(vault.get("item").unwrap().unwrap().as_str(), saved.as_str());
     }
     #[cfg(unix)]
     #[test]

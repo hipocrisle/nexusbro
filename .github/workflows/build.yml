@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       frontend_only:
-        description: Only build and test frontend controls (no Rust)
+        description: Build frontend and isolated security tests (no CEF)
         type: boolean
         default: false
       runtime_build:
@@ -28,8 +28,10 @@ on:
 
 jobs:
   security:
-    if: github.event_name == 'workflow_dispatch' && inputs.frontend_only
-    runs-on: ubuntu-24.04
+    if: >-
+      !inputs.runtime_build &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -37,6 +39,18 @@ jobs:
         run: |
           cargo test --manifest-path tests/security_vault_harness/Cargo.toml
           cargo test --manifest-path sync-server/Cargo.toml
+          cargo build --release --locked --manifest-path sync-server/Cargo.toml
+          mkdir -p .dev-check/backend-package
+          cp sync-server/target/release/nexusbro-sync-server .dev-check/backend-package/
+          cp sync-server/README.md .dev-check/backend-package/
+          cp -r sync-server/deploy .dev-check/backend-package/
+          cd .dev-check/backend-package
+          sha256sum nexusbro-sync-server > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nexusbro-sync-backend
+          path: .dev-check/backend-package/
+          retention-days: 14
   frontend:
     if: github.event_name == 'workflow_dispatch' && inputs.frontend_only
     runs-on: ubuntu-24.04
@@ -58,6 +72,7 @@ jobs:
           python3 tests/address_autocomplete_0214.py
           python3 tests/security_ui_browser.py
   build:
+    needs: security
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
@@ -246,6 +261,32 @@ jobs:
           readelf --dyn-syms --wide "$BIN" | awk '$5=="GLOBAL" && $6=="DEFAULT" && $7!="UND" && $8 ~ /^sqlite3_/ {bad=1} END {exit bad}'
           python3 tests/gui/linux_smoke.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/linux-runtime
 
+      - uses: actions/download-artifact@v4
+        if: matrix.os == 'ubuntu-24.04'
+        with:
+          name: nexusbro-sync-backend
+          path: .dev-check/backend-package
+      - name: Verify backend artifact
+        if: matrix.os == 'ubuntu-24.04'
+        working-directory: .dev-check/backend-package
+        run: |
+          sha256sum -c SHA256SUMS
+          chmod +x nexusbro-sync-server
+      - name: Native encrypted vault, CEF credentials and two-device sync
+        if: matrix.os == 'ubuntu-24.04'
+        timeout-minutes: 10
+        run: |
+          python3 tests/gui/security_native.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --server .dev-check/backend-package/nexusbro-sync-server --out .dev-check/security-native
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.os == 'ubuntu-24.04'
+        with:
+          name: native-security-verification
+          path: |
+            .dev-check/security-native/results.json
+            .dev-check/security-native/*.png
+            .dev-check/security-native/*.log
+            .dev-check/security-native/*/*.log
+          retention-days: 14
       - name: Сохранить Linux runtime диагностику
         if: always() && matrix.os == 'ubuntu-24.04'
         uses: actions/upload-artifact@v4
@@ -392,7 +433,7 @@ jobs:
   # релиз публикуется. Паттерн — как в NexusSSH.
   update-manifest:
     name: Манифест автообновления
-    needs: build
+    needs: [build, security]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

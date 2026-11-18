@@ -58,7 +58,8 @@ wrap_display_handler! {
 wrap_load_handler! {
     struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl LoadHandler {
-        fn on_load_end(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
+        fn on_load_end(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
+            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());}}
             if !crate::borba_s_reklamoy::vklyuchena() { return; }
             if let Some(f) = frame {
                 if f.is_main() != 0 {
@@ -108,6 +109,7 @@ wrap_life_span_handler! {
             { 0 }
         }
         fn on_before_close(&self, _browser: Option<&mut Browser>) {
+            crate::password_cef::closed(self.id);
             let _ = self.tx.send(Sobytie::Zakryta(self.id));
         }
     }
@@ -520,7 +522,7 @@ impl Rabota {
                 Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
                 Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
                     Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
-                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::DannyeStatistika{..} | Komanda::Instrumenty{..} |
+                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::DannyeStatistika{..} | Komanda::PasswordForm{..} | Komanda::PasswordsEnabled{..} | Komanda::Instrumenty{..} |
                     Komanda::Issledovat{..} | Komanda::InstrumentyRazmer{..} |
                     Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
@@ -751,6 +753,15 @@ impl Rabota {
                     if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
                 }
                 Sobytie::Komanda(Komanda::FonKonteynera{rgb})=>{k.fon(rgb&0xffffff);}
+                Sobytie::Komanda(Komanda::PasswordsEnabled{enabled})=>{
+                    crate::password_cef::enabled(enabled);
+                    if enabled{for tab in &s.vkladki{if let Some(b)=brauzery.get(&tab.id){crate::password_cef::install(b,tab.id,tab.privatnaya,tx.clone());}}}
+                }
+                Sobytie::Komanda(Komanda::PasswordForm{id,token,origin,payload})=>{
+                    let allowed=s.vkladki.iter().any(|v|v.id==id&&s.aktivnaya==id&&!v.privatnaya&&!v.otlozhena)&&!crate::privatnost::process_privatnyj();
+                    let ok=allowed&&brauzery.get(&id).is_some_and(|b|crate::password_cef::request(b,id,token.clone(),origin,payload,tx.clone()));
+                    if !ok{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"credential-result","token":token,"error":"Форма недоступна"})));}
+                }
                 Sobytie::Komanda(Komanda::DannyeStatistika{token})=>{
                     let mut contexts=Vec::new();if let Some(c)=request_context_get_global_context(){contexts.push(c);}if let Some(c)=k.private_context.borrow().as_ref(){contexts.push(c.clone());}
                     crate::dannye_statistika::izmerit(contexts,token,label.clone(),tx.clone());
@@ -809,6 +820,7 @@ impl Rabota {
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) { h.stop_finding(1);h.set_focus(1); }
                 }
                 Sobytie::Sluzhebnoe(mut data) => {
+                    crate::password_cef::completed(&data);
                     if data["tip"]=="perevod"||data["tip"]=="perevod-zapros"{if let Some(token)=data["token"].as_str(){let id=data["id"].as_u64().unwrap_or(0);if !perevody.get(&id).is_some_and(|(t,_)|t==token){continue;}if data["tip"]=="perevod"{data["auto"]=serde_json::json!(s.vkladki.iter().find(|v|v.id==id).is_some_and(|v|avto_dlya(perevod_avto,id,&v.adres)));perevod_ui.insert(id,data.clone());}}}
 
                     if data["privatnaya"]==true{

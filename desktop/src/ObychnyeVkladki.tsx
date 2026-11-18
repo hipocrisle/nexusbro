@@ -1,5 +1,6 @@
 import BookmarkBar from "./BookmarkBar";
 import AddressMenu from "./AddressMenu";
+import {popupMenu} from "./nativeMenu";
 import BrowserMenu from "./BrowserMenu";
 import {shortcutKey} from "./shortcuts";
 import {addressDown,addressUp,type AddressPointer} from "./addressSelection";
@@ -25,7 +26,6 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
   const [dragOver, setDragOver] = useState<number | null>(null);
-  const [menu, setMenu] = useState<{ x: number; y: number; v: Vkladka } | null>(null);
   const addressPointer=useRef<AddressPointer>(null);
   const addressMenuOpen=useRef(false);
   const pole = useRef<HTMLInputElement>(null);
@@ -33,6 +33,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const findTimer = useRef<ReturnType<typeof setTimeout>>();
   const lastFind = useRef("");
   const [translation,setTranslation]=useState<{done:number;total:number;auto?:boolean;error?:string|null}|null>(null);
+  const [passwordOffer,setPasswordOffer]=useState<{draft_id:string;origin:string;username:string}|null>(null);
+  const [savingPassword,setSavingPassword]=useState(false);
   const [toolsOpen,setToolsOpen]=useState(false);
   const [findOpen, setFindOpen] = useState(false), [findText, setFindText] = useState("");
   const [matches, setMatches] = useState({count:0, active:0});
@@ -93,6 +95,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   }, [id]);
   sessiyaRef.current = sessiya;
   const aktivnaya = sessiya?.vkladki.find((v) => v.id === sessiya.aktivnaya);
+  useEffect(()=>{setPasswordOffer(null);const off=listen<{super_id:string;data:{tip:string;id:number;draft_id:string;origin:string;username:string}}>('stranica-ui',e=>{if(e.payload.super_id===id&&e.payload.data.id===aktivnaya?.id&&e.payload.data.tip==='password-offer')setPasswordOffer(e.payload.data);});return()=>{void off.then(f=>f());};},[id,aktivnaya?.id]);
   const [bookmarked,setBookmarked]=useState(false);
   const [bookmarkMessage,setBookmarkMessage]=useState("");
   useEffect(()=>{let live=true;const refresh=()=>invoke<{adres:string}[]>("biblioteka_spisok",{razdel:"zakladki"}).then(rows=>{if(live)setBookmarked(rows.some(x=>x.adres===aktivnaya?.adres));}).catch(()=>{});void refresh();const off=listen("zakladki-izmenilis",refresh);return()=>{live=false;void off.then(f=>f());};},[aktivnaya?.adres]);
@@ -132,17 +135,22 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     });
     return () => { zhiv = false; };
   }, [id, aktivnaya?.id]);
-  async function zakrytMenu(komanda?: Komanda) {
-    setMenu(null);
-    try { if (komanda) await poslat(komanda); }
-    finally { await invoke("pokazat_dvizhki", { vidno: true }); }
+  function tabMenu(v:Vkladka,x:number,y:number){
+    const action=(komanda:Komanda)=>()=>poslat(komanda);
+    void popupMenu([
+      {text:"Новая вкладка",action:action({deystvie:"novaya",adres:novayaStranica})},
+      {text:"Новая приватная вкладка",action:action({deystvie:"novaya_privatnaya",adres:"about:blank"})},
+      {text:"Вернуть закрытую вкладку",enabled:!!sessiya?.zakrytye?.length,action:action({deystvie:"vosstanovit_zakrytuyu"})},
+      {text:"Обновить",action:action({deystvie:"obnovit",id:v.id})},
+      {text:"Дублировать",action:action({deystvie:"novaya",adres:v.adres})},
+      {text:v.zakreplena?"Открепить":"Закрепить",action:action({deystvie:"zakrepit",id:v.id,zakreplena:!v.zakreplena})},
+      {text:"Исходный код страницы",action:action({deystvie:"iskhodnik",id:v.id})},
+      {text:"Инструменты разработчика",action:action({deystvie:"instrumenty",id:v.id})},null,
+      {text:"Закрыть вкладку",action:action({deystvie:"zakryt",id:v.id})},
+      {text:"Закрыть другие вкладки",enabled:!!sessiya?.vkladki.some(t=>t.id!==v.id&&!t.zakreplena),action:action({deystvie:"zakryt_drugie",id:v.id,sprava:false})},
+      {text:"Закрыть вкладки справа",enabled:!!sessiya?.vkladki.slice(sessiya.vkladki.findIndex(t=>t.id===v.id)+1).some(t=>!t.zakreplena),action:action({deystvie:"zakryt_drugie",id:v.id,sprava:true})}
+    ],x,y,setOshibka).catch(e=>setOshibka(String(e)));
   }
-  useEffect(() => {
-    if (!menu) return;
-    const key = (e: KeyboardEvent) => { if (e.key === "Escape") void zakrytMenu(); };
-    document.addEventListener("keydown", key);
-    return () => document.removeEventListener("keydown", key);
-  }, [menu]);
   async function poslat(komanda: Komanda) {
     if (!id) return;
     setOshibka("");
@@ -246,7 +254,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
           onDrop={(e) => void finishDrag(v.id, e)} onDragEnd={() => { setDragOver(null); void invoke("pokazat_dvizhki", { vidno: true }); }}
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); } }}
-          onContextMenu={async (e) => { e.preventDefault(); e.stopPropagation(); const m = { x: Math.max(8, Math.min(e.clientX, window.innerWidth - 260)), y: Math.max(8, Math.min(e.clientY, window.innerHeight - 350)), v }; await invoke("pokazat_dvizhki", { vidno: false }); setMenu(m); }}
+          onContextMenu={e=>{e.preventDefault();e.stopPropagation();tabMenu(v,e.clientX,e.clientY);}}
           title={(v.otlozhena ? "Спит — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
           onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void poslat({ deystvie: "vybrat", id: v.id }); } }}>
           {v.privatnaya&&<span title="Приватная вкладка" aria-label="Приватная вкладка" className="private-mark">◐</span>}<span className={"favicon" + (v.zagruzka ? " loading" : "")}>{v.zagruzka ? <span className="spinner" /> : v.ikonka?.startsWith("data:image/png;base64,") ? <img src={v.ikonka} alt="" draggable={false} /> : <Icon name="globe" size={16} />}</span>
@@ -284,11 +292,12 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <datalist id="address-history">{suggestions.map(row=><option key={row.adres} value={row.adres} label={row.nazvanie||row.adres}/>)}</datalist>
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
       <SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
-       {label:"Удалить данные браузера…",shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
+       {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
        {label:"Новое окно",shortcut:"Ctrl+N",action:()=>invoke("novoe_okno",{id,privatnaya:false})},
        {label:"Новое приватное окно",shortcut:"Ctrl+Shift+N",action:()=>invoke("novoe_okno",{id,privatnaya:true})},null,
        ...([['История','Ctrl+H','istoriya'],['Закладки','Ctrl+B','zakladki'],['Загрузки','Ctrl+J','zagruzki']] as const).map(([label,shortcut,section])=>({label,shortcut,keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:section}));}})),null,
        {label:panelZakladok?"Скрыть панель закладок":"Показать панель закладок",shortcut:"Ctrl+Shift+B",action:()=>onToggleBookmarks()},
+       {label:"Пароли, аккаунт и синхронизация",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-security"))},
        {label:"Настройки NexusBro",keepsHidden:true,action:()=>{window.dispatchEvent(new Event('nexusbro-settings'));}}
       ]}><Icon name="menu" size={18}/></BrowserMenu>
       {bookmarkMessage&&<span className="sr-only" role="status">{bookmarkMessage}</span>}
@@ -296,6 +305,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </form>
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
+    {passwordOffer&&<div className="password-offer" role="status"><span>Сохранить логин <strong>{passwordOffer.username}</strong> для {passwordOffer.origin}?</span><button disabled={savingPassword} onClick={async()=>{setSavingPassword(true);try{await invoke('security_passwords',{action:'save_draft',data:{draft_id:passwordOffer.draft_id,username:passwordOffer.username}});setPasswordOffer(null);}catch(e){setOshibka(String(e));}finally{setSavingPassword(false);}}}>Сохранить пароль</button><button onClick={()=>{void invoke('security_passwords',{action:'discard_draft',data:{draft_id:passwordOffer.draft_id}}).catch(()=>{});setPasswordOffer(null);}}>Не сейчас</button></div>}
     {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<label className="translation-auto" title="Переводить страницы этого сайта в этой вкладке до выключения режима или закрытия вкладки"><input type="checkbox" checked={!!translation.auto} onChange={e=>{if(aktivnaya)void poslat({deystvie:"perevod_avto",id:aktivnaya.id,enabled:e.target.checked});}}/>Автоперевод этого сайта</label><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал и выключить</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
     {findOpen && <form className="find-bar" role="search" aria-label="Поиск на странице" onSubmit={e=>{e.preventDefault();runFind(true,true);}} onKeyDown={e=>{if(e.key==="Escape"){e.preventDefault();closeFind();}else if(e.key==="Enter"&&e.shiftKey){e.preventDefault();runFind(false,true);}}}>
@@ -306,21 +316,6 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button type="button" aria-label="Закрыть поиск" onClick={closeFind}>×</button>
     </form>}
     {aktivnaya?.otlozhena && poleKontenta.current && createPortal(<div className="pusto"><Icon name="tabs" size={36} /><h1>Вкладка ждёт открытия</h1><p>Страница не загружалась после запуска. Нажмите вкладку или кнопку ниже, когда она понадобится.</p><button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button></div>, poleKontenta.current)}
-    {menu && <div className="zatemnenie-prozrachnoe" onClick={() => void zakrytMenu()} onContextMenu={(e) => { e.preventDefault(); void zakrytMenu(); }}>
-      <div className="vypadajka menu-obychnyh" role="menu" aria-label="Действия с вкладкой" style={{ left: menu.x, top: menu.y, bottom: "auto" }} onClick={(e) => e.stopPropagation()}>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya", adres: novayaStranica })}>Новая вкладка</button>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya_privatnaya", adres: "about:blank" })}>Новая приватная вкладка</button>
-        <button role="menuitem" disabled={!sessiya?.zakrytye?.length} onClick={() => void zakrytMenu({deystvie:"vosstanovit_zakrytuyu"})}><span>Вернуть закрытую вкладку</span><kbd>Ctrl+Shift+T</kbd></button>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "obnovit", id: menu.v.id })}>Обновить</button>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "novaya", adres: menu.v.adres })}>Дублировать</button>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "zakrepit", id: menu.v.id, zakreplena: !menu.v.zakreplena })}>{menu.v.zakreplena ? "Открепить" : "Закрепить"}</button>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "iskhodnik", id: menu.v.id })}>Исходный код страницы</button>
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "instrumenty", id: menu.v.id })}>Инструменты разработчика</button>
-        <hr />
-        <button role="menuitem" onClick={() => void zakrytMenu({ deystvie: "zakryt", id: menu.v.id })}>Закрыть вкладку</button>
-        <button role="menuitem" disabled={!sessiya?.vkladki.some((v) => v.id !== menu.v.id && !v.zakreplena)} onClick={() => void zakrytMenu({ deystvie: "zakryt_drugie", id: menu.v.id, sprava: false })}>Закрыть другие вкладки</button>
-        <button role="menuitem" disabled={!sessiya?.vkladki.slice(sessiya.vkladki.findIndex((v) => v.id === menu.v.id) + 1).some((v) => !v.zakreplena)} onClick={() => void zakrytMenu({ deystvie: "zakryt_drugie", id: menu.v.id, sprava: true })}>Закрыть вкладки справа</button>
-      </div>
-    </div>}
+
   </>;
 }

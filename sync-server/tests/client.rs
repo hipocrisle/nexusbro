@@ -437,3 +437,48 @@ async fn legacy_ssh_health_marker_cannot_configure_browser_account() {
     );
     task.abort();
 }
+
+#[test]
+fn server_refuses_foreign_database_without_modifying_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("foreign.db");
+    {
+        let db = rusqlite::Connection::open(&path).unwrap();
+        db.execute_batch(
+            "CREATE TABLE users(id TEXT);INSERT INTO users VALUES('existing-ssh-owner');",
+        )
+        .unwrap();
+    }
+    let before = std::fs::read(&path).unwrap();
+    assert!(nexusbro_sync_server::db::Db::open(path.to_str().unwrap()).is_err());
+    assert_eq!(std::fs::read(path).unwrap(), before);
+}
+
+#[test]
+fn server_database_reopens_its_own_marker_and_records() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("browser.db");
+    {
+        let db = nexusbro_sync_server::db::Db::open(path.to_str().unwrap()).unwrap();
+        db.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO user_rev(user_id,rev)VALUES('browser-owner',7)",
+                [],
+            )
+            .unwrap();
+    }
+    let db = nexusbro_sync_server::db::Db::open(path.to_str().unwrap()).unwrap();
+    let rev: i64 = db
+        .conn
+        .lock()
+        .unwrap()
+        .query_row(
+            "SELECT rev FROM user_rev WHERE user_id='browser-owner'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(rev, 7);
+}

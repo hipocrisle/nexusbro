@@ -1,0 +1,10 @@
+{
+  "selected": "09",
+  "name": "Связь N",
+  "owner_approved": true,
+  "source": "desktop/app-icon.png",
+  "sha256": "00c98d591197b59e503c59055b69e7d8159bbecc0e9661654f5b84664e09d685",
+  "generation": "builtin image_gen",
+  "prompt": "Use case: logo-brand. Asset type: a single square desktop browser app icon for NexusBro. Subject: two broad softly rounded interlocking chain-link shapes combine into a clearly legible capital N: upper left link purple, lower right link bright mint, with large open counters and clean ivory negative space. Connection between workspaces, friendly and bold, absolutely no fine lines. Place on a very dark plum rounded-square tile, transparent outside tile. Flat vector-like raster, minimal professional product branding, crisp contour, fills90% of square canvas, 16/32px legibility. Only the single monogram N allowed, no additional words, no numbers, no labels, no watermark, no mockup, no resemblance to known browser logos.",
+  "export": "official Tauri CLI icon; PNG32/128 + ICO; frontend public/nexusbro.png"
+}

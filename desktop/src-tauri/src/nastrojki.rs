@@ -54,7 +54,7 @@ pub fn zagruzit() -> Nastrojki {
         .and_then(|b| serde_json::from_slice(&b).ok())
         .unwrap_or_default()
 }
-pub fn sohranit(mut n: Nastrojki) -> Result<Nastrojki, String> {
+fn proverit(mut n: Nastrojki) -> Result<Nastrojki, String> {
     if !["temnaya", "svetlaya", "sistemnaya", "grafit", "nexus", "okean", "sliva", "pesok"].contains(&n.tema.as_str()) {
         return Err("Неизвестная тема".into());
     }
@@ -85,7 +85,10 @@ pub fn sohranit(mut n: Nastrojki) -> Result<Nastrojki, String> {
         return Err("Для новой вкладки укажите http://, https:// или about:blank".into());
     }
     n.novaya_stranica = a.into();
-    let _zapis = ZAPIS.lock().map_err(|e| e.to_string())?;
+    Ok(n)
+}
+pub fn sohranit(n:Nastrojki)->Result<Nastrojki,String>{let n=proverit(n)?;let _guard=ZAPIS.lock().map_err(|_|"Настройки заняты")?;zapisat(n)}
+fn zapisat(n:Nastrojki)->Result<Nastrojki,String>{
     let p = fajl();
     std::fs::create_dir_all(p.parent().unwrap()).map_err(|e| e.to_string())?;
     let tmp = p.with_extension("tmp");
@@ -115,4 +118,16 @@ pub async fn nastrojki_sohranit(app: tauri::AppHandle, nastrojki: Nastrojki) -> 
     for q in queues { let _ = q.try_send(crate::sessiya::Komanda::Masshtab { procent: saved.masshtab_stranic }); }
     use tauri::Emitter;let _=app.emit("nastrojki-izmenilis",&saved);
     Ok(saved)
+}
+
+/// Strict reads for sync: missing is a new device; corrupt/unreadable is NOT defaults.
+pub fn zagruzit_sync()->Result<Option<Nastrojki>,String>{match std::fs::read(fajl()){Ok(raw)=>serde_json::from_slice(&raw).map(Some).map_err(|_|"Повреждены настройки; синхронизация остановлена".into()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(None),Err(_)=>Err("Не удалось прочитать настройки".into())}}
+pub fn patch_portable(patch:serde_json::Value,expected:Option<String>)->Result<Nastrojki,String>{
+ const FIELDS:&[&str]=&["tema","shrift","razmer_shrifta","plotnost","masshtab_stranic","panel_zakladok","novaya_stranica","poisk","yazyk_perevoda"];
+ let _guard=ZAPIS.lock().map_err(|_|"Настройки заняты")?;let current=zagruzit_sync()?;
+ let portable=current.as_ref().map(|n|{let all=serde_json::to_value(n).unwrap();let fields:serde_json::Map<_,_>=FIELDS.iter().filter_map(|k|all.get(*k).map(|v|((*k).into(),v.clone()))).collect();serde_json::Value::Object(fields).to_string()});
+ if portable!=expected{return Err("Настройки изменились во время синхронизации; повторите попытку".into());}
+ let mut all=serde_json::to_value(current.unwrap_or_default()).map_err(|_|"Ошибка настроек")?;
+ for field in FIELDS{if let Some(value)=patch.get(*field){all[*field]=value.clone();}}
+ let n=serde_json::from_value(all).map_err(|_|"Некорректные настройки")?;zapisat(proverit(n)?)
 }

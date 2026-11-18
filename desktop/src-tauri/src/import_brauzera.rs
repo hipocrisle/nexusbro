@@ -42,7 +42,7 @@ fn read(source:&Istochnik,cancel:&AtomicBool,id:u64)->Result<Vec<Zapis>,String>{
  }
  Ok(out)
 }
-fn add(out:&mut Vec<Zapis>,url:&str,name:&str,folder:&str)->Result<(),String>{if out.len()>=20000{return Err("В профиле больше 20000 закладок: перенос остановлен без изменений".into());}out.push(Zapis{id:String::new(),adres:url.into(),nazvanie:name.into(),papka:folder.into(),vremya:crate::biblioteka::vremya()});Ok(())}
+fn add(out:&mut Vec<Zapis>,url:&str,name:&str,folder:&str)->Result<(),String>{if out.len()>=20000{return Err("В профиле больше 20000 закладок: перенос остановлен без изменений".into());}out.push(Zapis{super_id:None,id:String::new(),adres:url.into(),nazvanie:name.into(),papka:folder.into(),vremya:crate::biblioteka::vremya()});Ok(())}
 fn chrome(v:&serde_json::Value,parent:&str,depth:usize,cancel:&AtomicBool,id:u64,out:&mut Vec<Zapis>)->Result<(),String>{
  if cancel.load(Ordering::Relaxed){return Err("Перенос отменён".into());}if depth>64{return Err("Слишком глубокая структура папок".into());}
  let name=v["name"].as_str().unwrap_or("");if v["type"]=="url"{add(out,v["url"].as_str().unwrap_or(""),name,parent)?;progress(id,out.len());}

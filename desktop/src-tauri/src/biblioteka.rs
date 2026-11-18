@@ -7,7 +7,7 @@ use std::path::PathBuf;
 static IO:Mutex<()>=Mutex::new(());
 static SEEN:OnceLock<Mutex<HashMap<(String,u64),String>>>=OnceLock::new();
 #[derive(Clone,Serialize,Deserialize)]
-pub struct Zapis {pub id:String,pub adres:String,pub nazvanie:String,pub vremya:u64,#[serde(default)]pub papka:String}
+pub struct Zapis {#[serde(default,skip_serializing_if="Option::is_none")]pub super_id:Option<String>,pub id:String,pub adres:String,pub nazvanie:String,pub vremya:u64,#[serde(default)]pub papka:String}
 fn fajl(name:&str)->PathBuf{crate::brauzer::papka_profilej().parent().unwrap().join(name)}
 fn chitat(name:&str)->Vec<Zapis>{std::fs::read(fajl(name)).ok().and_then(|s|serde_json::from_slice(&s).ok()).unwrap_or_default()}
 fn zapisat(name:&str,items:&[Zapis])->Result<(),String>{
@@ -21,8 +21,8 @@ pub fn poseshchenie(super_id:&str,tab:&crate::sessiya::Obychnaya){
     if crate::privatnost::eto_id(super_id)||tab.privatnaya||tab.otlozhena||tab.zagruzka||!network(&tab.adres){return;}
     let mut seen=SEEN.get_or_init(Default::default).lock().unwrap();let key=(super_id.into(),tab.id);
     if seen.get(&key)==Some(&tab.adres){return;}seen.insert(key,tab.adres.clone());drop(seen);
-    let _lock=IO.lock().unwrap();let mut items=chitat("istoriya.json");items.retain(|i|i.adres!=tab.adres);
-    items.insert(0,Zapis{id:format!("{}-{}",vremya(),tab.id),adres:tab.adres.clone(),nazvanie:tab.zagolovok.clone(),vremya:vremya(),papka:String::new()});items.truncate(5000);
+    let _lock=IO.lock().unwrap();let mut items=chitat("istoriya.json");items.retain(|i|i.adres!=tab.adres||i.super_id.as_deref()!=Some(super_id));
+    items.insert(0,Zapis{super_id:Some(super_id.into()),id:format!("{}-{}",vremya(),tab.id),adres:tab.adres.clone(),nazvanie:tab.zagolovok.clone(),vremya:vremya(),papka:String::new()});items.truncate(5000);
     let _=zapisat("istoriya.json",&items);
 }
 #[tauri::command]
@@ -33,6 +33,7 @@ pub async fn biblioteka_spisok(razdel:String)->Result<Vec<Zapis>,String>{
 pub async fn biblioteka_udalit(app:tauri::AppHandle,razdel:String,id:Option<String>)->Result<(),String>{
     let name=match razdel.as_str(){"istoriya"=>"istoriya.json","zakladki"=>"zakladki.json",_=>return Err("Неизвестный раздел".into())};
     let _lock=IO.lock().unwrap();let mut items=chitat(name);
+    if razdel=="zakladki"{for item in items.iter().filter(|i|id.as_ref().is_none_or(|id|&i.id==id)){crate::browser_sync::record_delete("bookmark",&item.id)?;}}
     match id{Some(id)=>items.retain(|i|i.id!=id),None=>items.clear()};zapisat(name,&items)?;if razdel=="zakladki"{let _=app.emit("zakladki-izmenilis",());}Ok(())
 }
 #[tauri::command]
@@ -40,7 +41,7 @@ pub async fn zakladki_sohranit(app:tauri::AppHandle,adres:String,nazvanie:String
     if !network(&adres){return Err("В закладки можно добавить HTTP(S)-страницу".into());}
     let _lock=IO.lock().unwrap();let mut items=chitat("zakladki.json");
     if let Some(i)=items.iter_mut().find(|i|i.adres==adres){i.nazvanie=nazvanie;i.papka=papka.unwrap_or_default();}
-    else{items.push(Zapis{id:format!("b-{}-{}",vremya(),items.len()),adres,nazvanie,vremya:vremya(),papka:papka.unwrap_or_default()});}
+    else{items.push(Zapis{super_id:None,id:format!("b-{}-{}",vremya(),items.len()),adres,nazvanie,vremya:vremya(),papka:papka.unwrap_or_default()});}
     zapisat("zakladki.json",&items)?;let _=app.emit("zakladki-izmenilis",());Ok(())
 }
 #[tauri::command]
@@ -58,7 +59,7 @@ pub async fn zakladki_pereklyuchit(app:tauri::AppHandle,adres:String,nazvanie:St
  if !network(&adres){return Err("В закладки можно добавить HTTP(S)-страницу".into());}
  let added={let _lock=IO.lock().map_err(|e|e.to_string())?;let mut items=chitat("zakladki.json");
  let exists=items.iter().any(|i|i.adres==adres);
- if exists{items.retain(|i|i.adres!=adres);}else{items.push(Zapis{id:format!("b-{}-{}",vremya(),items.len()),adres,nazvanie,vremya:vremya(),papka:String::new()});}
+ if exists{for item in items.iter().filter(|i|i.adres==adres){crate::browser_sync::record_delete("bookmark",&item.id)?;}items.retain(|i|i.adres!=adres);}else{items.push(Zapis{super_id:None,id:format!("b-{}-{}",vremya(),items.len()),adres,nazvanie,vremya:vremya(),papka:String::new()});}
  zapisat("zakladki.json",&items)?;!exists};
  let _=app.emit("zakladki-izmenilis",());Ok(added)
 }
@@ -101,33 +102,33 @@ fn nachalo_perioda(period:&str,now:u64)->Result<Option<u64>,String>{
  Ok(Some(now.saturating_sub(seconds)))
 }
 #[derive(Serialize)]
-pub struct Obem{pub istoriya:usize,pub istoriya_vsego:usize,pub zagruzki:usize}
+pub struct Obem{pub istoriya:usize,pub istoriya_vsego:usize,pub zagruzki:usize,pub legacy:usize}
 #[tauri::command]
-pub async fn dannye_obem(period:String)->Result<Obem,String>{
+pub async fn dannye_obem(period:String,super_id:Option<String>)->Result<Obem,String>{
  let since=nachalo_perioda(&period,vremya())?;
- let (selected,total)={let _lock=IO.lock().map_err(|e|e.to_string())?;let items=chitat("istoriya.json");(items.iter().filter(|i|since.is_none_or(|s|i.vremya>=s)).count(),items.len())};
- let downloads=crate::zagruzki::zagruzki_spisok().await.into_iter().filter(|d|!["Загружается","Приостановлена"].contains(&d.status.as_str())).count();
- Ok(Obem{istoriya:selected,istoriya_vsego:total,zagruzki:downloads})
+ let (selected,total,legacy)={let _lock=IO.lock().map_err(|e|e.to_string())?;let items=chitat("istoriya.json");let scoped=items.iter().filter(|i|super_id.as_ref().is_none_or(|id|i.super_id.as_ref()==Some(id))).collect::<Vec<_>>();(scoped.iter().filter(|i|since.is_none_or(|s|i.vremya>=s)).count(),scoped.len(),items.iter().filter(|i|i.super_id.is_none()).count())};
+ let downloads=crate::zagruzki::zagruzki_spisok().await.into_iter().filter(|d|super_id.as_ref().is_none_or(|id|&d.super_id==id)&&!["Загружается","Приостановлена"].contains(&d.status.as_str())).count();
+ Ok(Obem{istoriya:selected,istoriya_vsego:total,zagruzki:downloads,legacy})
 }
 #[derive(Serialize)]
 pub struct Ochistka{pub istoriya:usize,pub zagruzki:usize}
 #[tauri::command]
-pub async fn dannye_ochistit(app:tauri::AppHandle,period:String,istoriya:bool,zagruzki:bool)->Result<Ochistka,String>{
+pub async fn dannye_ochistit(app:tauri::AppHandle,period:String,istoriya:bool,zagruzki:bool,super_id:Option<String>,legacy_history:Option<bool>)->Result<Ochistka,String>{
  let since=nachalo_perioda(&period,vremya())?;
  let removed=if istoriya{
   let _lock=IO.lock().map_err(|e|e.to_string())?;let mut items=chitat("istoriya.json");let before=items.len();
-  items.retain(|i|since.is_some_and(|s|i.vremya<s));zapisat("istoriya.json",&items)?;before-items.len()
+  items.retain(|i|!(super_id.as_ref().is_none_or(|id|i.super_id.as_ref()==Some(id))||(legacy_history==Some(true)&&i.super_id.is_none()))||since.is_some_and(|s|i.vremya<s));zapisat("istoriya.json",&items)?;before-items.len()
  }else{0};
  if istoriya{let _=app.emit("istoriya-izmenilas",());}
  // Deleting download records deliberately leaves files and live downloads intact.
- let downloads=if zagruzki{crate::zagruzki::zagruzki_ochistit(None).await?}else{0};
+ let downloads=if zagruzki{crate::zagruzki::ochistit_scope(None,super_id.as_deref())?}else{0};
  Ok(Ochistka{istoriya:removed,zagruzki:downloads})
 }
 
 #[cfg(test)]
 mod tests{
  use super::*;
- fn item(address:&str,title:&str,time:u64)->Zapis{Zapis{id:address.into(),adres:address.into(),nazvanie:title.into(),vremya:time,papka:String::new()}}
+ fn item(address:&str,title:&str,time:u64)->Zapis{Zapis{super_id:None,id:address.into(),adres:address.into(),nazvanie:title.into(),vremya:time,papka:String::new()}}
  #[test]fn address_prefix_outweighs_recent_title_match_and_deduplicates(){
   let result=podskazki(vec![item("https://example.test/path","Old",1),item("https://other.test/","example",99)],vec![item("https://example.test/path","Saved",2)],"exa",8);
   assert_eq!(result.len(),2);assert_eq!(result[0].adres,"https://example.test/path");assert_eq!(result[0].istochnik,"zakladki");assert_eq!(result[0].nazvanie,"Saved");
@@ -137,4 +138,14 @@ mod tests{
   assert!(podskazki(vec![item("https://example.test/","example",1)],vec![]," ",8).is_empty());
  }
  #[test]fn cleanup_period_is_bounded_and_rejects_unknown(){assert_eq!(nachalo_perioda("hour",7200).unwrap(),Some(3600));assert_eq!(nachalo_perioda("all",7200).unwrap(),None);assert!(nachalo_perioda("unknown",7200).is_err());}
+}
+
+/// Sync touches only bookmark records, never the history/profile files.
+pub fn sync_bookmarks()->Result<Vec<Zapis>,String>{let _lock=IO.lock().map_err(|_|"История занята")?;match std::fs::read(fajl("zakladki.json")){Ok(raw)=>serde_json::from_slice(&raw).map_err(|_|"Повреждены закладки; синхронизация остановлена".into()),Err(e) if e.kind()==std::io::ErrorKind::NotFound=>Ok(vec![]),Err(_)=>Err("Не удалось прочитать закладки".into())}}
+pub fn sync_apply_bookmark(app:&tauri::AppHandle,id:&str,value:Option<Zapis>,expected:Option<&str>)->Result<(),String>{
+ let _lock=IO.lock().map_err(|_|"Закладки заняты")?;
+ let mut items=match std::fs::read(fajl("zakladki.json")){Ok(raw)=>serde_json::from_slice::<Vec<Zapis>>(&raw).map_err(|_|"Повреждены закладки")?,Err(e) if e.kind()==std::io::ErrorKind::NotFound=>vec![],Err(_)=>return Err("Не удалось прочитать закладки".into())};
+ let current=items.iter().find(|i|i.id==id).map(serde_json::to_string).transpose().map_err(|_|"Некорректная закладка")?;
+ if current.as_deref()!=expected{return Err("Закладка изменилась во время синхронизации".into());}
+ items.retain(|i|i.id!=id);if let Some(mut item)=value{item.super_id=None;items.push(item);}zapisat("zakladki.json",&items)?;let _=app.emit("zakladki-izmenilis",());Ok(())
 }

@@ -169,7 +169,11 @@ try:
         deadline=time.monotonic()+30
         videno=set();scrolled=0
         while time.monotonic()<deadline:
-            items=[x for x in win.descendants() if x.element_info.name==name and (not kinds or x.element_info.control_type in kinds)]
+            candidates=win.descendants()
+            for native_popup in Desktop(backend='uia').windows(class_name='#32768'):
+                candidates.extend(native_popup.descendants())
+            allowed=kinds+(['MenuItem'] if kinds and any(k in kinds for k in ['Button','ListItem']) else []) if kinds else None
+            items=[x for x in candidates if x.element_info.name==name and (not allowed or x.element_info.control_type in allowed)]
             for x in items:
                 # WebView2 reports clipped form controls visible. Scroll BEFORE
                 # the coordinate click; otherwise its center can hit the backdrop.
@@ -181,6 +185,15 @@ try:
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
+    ui('Варианты новой вкладки',['Button']).click_input()
+    ui('Новая приватная вкладка',['MenuItem'])
+    pixels('new-tab-menu-keeps-document')
+    gui.press('escape')
+    ui('Проба',['Button']).click_input(button='right')
+    ui('Настройки',['MenuItem'])
+    pixels('super-menu-keeps-document')
+    gui.press('escape')
+    results.append({'native_new_tab_and_super_menus_keep_cef_visible':True})
     # Open a real shell dialog over the native engine and cancel with keyboard.
     pt = origin(); client = wintypes.RECT()
     assert u.GetClientRect(hwnd, ctypes.byref(client))

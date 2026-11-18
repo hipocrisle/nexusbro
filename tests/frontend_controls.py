@@ -13,6 +13,13 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 mock=r'''window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener:()=>{},listen:async()=>()=>{},once:async()=>()=>{}};window.__saved=null;window.__calls=[];window.__args=[];window.__tabs=[];window.__active=null;window.__callbacks={};window.__events={};let cb=0;
 window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:'main'},currentWebview:{label:'main'}},transformCallback:(f)=>{window.__callbacks[++cb]=f;return cb;},unregisterCallback:()=>{},invoke:async(cmd,args)=>{
  window.__calls.push(cmd);window.__args.push({cmd,args});
+ if(cmd==='plugin:menu|new'){window.__nativeMenus??={};const rid=1000+Object.keys(window.__nativeMenus).length;window.__nativeMenus[rid]=args.options.items;return [rid,'fixture-'+rid];}
+ if(cmd==='plugin:menu|popup')return new Promise(resolve=>{
+  const menu=document.createElement('div');menu.className='vypadajka native-menu-fixture';menu.setAttribute('role','menu');Object.assign(menu.style,{position:'fixed',left:'220px',top:'120px',zIndex:999});
+  const close=()=>{menu.remove();document.removeEventListener('keydown',escape);resolve(null);};const escape=e=>{if(e.key==='Escape')close();};document.addEventListener('keydown',escape);
+  for(const item of window.__nativeMenus[args.rid]??[]){if(item.item){menu.append(document.createElement('hr'));continue;}const b=document.createElement('button');b.className='stroka-menyu';b.setAttribute('role','menuitem');b.textContent=item.text.replace('\t',' ');b.disabled=item.enabled===false;b.onclick=()=>{close();item.handler?.onmessage(item.id);};menu.append(b);}document.body.append(menu);
+ });
+
  if(cmd==='nastrojki_poluchit')return {tema:'temnaya',shrift:'system',razmer_shrifta:14,plotnost:'udobno',masshtab_stranic:100,vyhody:[{id:'local',nazvanie:'Test subscription',adres:'https://example.test/sub',proxy_uzel:''}],panel_shirina:180,panel_svernuta:false,novaya_stranica:'about:blank',poisk:'duckduckgo',avtoobnovleniya:false,apparatnoe_uskorenie:false};
  if(cmd==='nastrojki_sohranit'){window.__saved=args.nastrojki;return args.nastrojki;}
  if(cmd==='spisok')return window.__tabs;

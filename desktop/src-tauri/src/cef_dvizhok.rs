@@ -34,6 +34,7 @@ pub fn process_vhod() -> i32 {
         let kod = execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
         return if kod >= 0 { kod } else { 0 };
     }
+    crate::password_cef::enabled(std::env::args().any(|a|a=="--nb-passwords"));
     // Процесс супер-вкладки.
     process_supertab(args.as_main_args(), &komandnaya_stroka)
 }
@@ -214,6 +215,7 @@ pub fn zapustit_cep(
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
     if crate::privatnost::eto_id(id){cmd.arg("--nb-private-profile");}
+    if crate::passwords::enabled(){cmd.arg("--nb-passwords");}
     if rezat_reklamu { cmd.arg("--nb-rezat-reklamu"); }
     if crate::nastrojki::zagruzit().apparatnoe_uskorenie {
         cmd.arg("--nb-gpu");

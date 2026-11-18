@@ -1,5 +1,6 @@
 import { Children, isValidElement, CSSProperties, ReactNode, useEffect, useId, useRef, useState } from "react";
 
+import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
 type Props = { value: string | number; onChange: (e: { target: { value: string } }) => void; children: ReactNode; disabled?: boolean; className?: string; "aria-label"?: string };
@@ -41,7 +42,7 @@ export default function Vybor(p: Props) {
     else if (e.key === "Enter" && open) { e.preventDefault(); choose(index); }
     else if (e.key === "Tab") close();
   }}>
-    <button type="button" ref={button} role="combobox" aria-label={p["aria-label"]} aria-expanded={open} aria-controls={id} aria-haspopup="listbox" disabled={p.disabled} onClick={() => { if (open) close(); else { setIndex(Math.max(0,options.findIndex((o) => o.value === String(p.value)))); setOpen(true); } }}>{selected?.label ?? "Выберите…"}<span aria-hidden="true">⌄</span></button>
+    <button type="button" ref={button} role="combobox" aria-label={p["aria-label"]} aria-expanded={open} aria-controls={id} aria-haspopup="listbox" disabled={p.disabled} onClick={() => { if (open) close(); else { setIndex(Math.max(0,options.findIndex((o) => o.value === String(p.value)))); setOpen(true); } }}>{selected?.label ?? "Выберите…"}<Icon name="chevronDown" size={16}/></button>
     {open && position && createPortal(<div className="vybor-popup" ref={popup} style={position}><input aria-label="Поиск в списке" placeholder="Найти…" value={search} onChange={(e) => { setSearch(e.target.value); setIndex(0); }} /><div role="listbox" id={id} aria-label={p["aria-label"]}>{visible.map((o,i) => <button type="button" role="option" aria-selected={o.value === String(p.value)} disabled={o.disabled} data-highlight={i === index} key={o.value + i} onPointerMove={() => setIndex(i)} onClick={() => choose(i)}>{o.label}</button>)}{!visible.length && <small>Ничего не найдено</small>}</div></div>,document.body)}
   </div>;
 }

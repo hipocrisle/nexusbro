@@ -9,7 +9,7 @@ type Download={id:string;super_id:string;name:string;url:string;path:string;perc
 type Razdel='istoriya'|'zakladki'|'zagruzki';
 function sourceHost(url:string){try{return new URL(url).hostname;}catch{return 'Источник неизвестен';}}
 const titles={istoriya:'История',zakladki:'Закладки',zagruzki:'Загрузки'};
-export default function Biblioteka({superId}:{superId:string|null}){
+export default function Biblioteka({superId,superName}:{superId:string|null;superName:string}){
  const [open,setOpen]=useState<Razdel|null>(null),[items,setItems]=useState<Zapis[]>([]),[downloads,setDownloads]=useState<Download[]>([]);
  const [importOpen,setImportOpen]=useState(false),[clearOpen,setClearOpen]=useState(false);
  const [query,setQuery]=useState(''),[error,setError]=useState(''),[info,setInfo]=useState('');
@@ -69,7 +69,7 @@ export default function Biblioteka({superId}:{superId:string|null}){
  }
  async function downloadAction(d:Download,action:string){try{await invoke('zagruzka_deystvie',{superId:d.super_id,id:d.id,action});await refresh();}catch(e){setError(String(e));}}
  return <>
-  {clearOpen&&<ClearBrowsingData superId={superId} onClose={()=>void closeClear()}/>}
+  {clearOpen&&<ClearBrowsingData superId={superId} superName={superName} onClose={()=>void closeClear()}/>}
 
   {open&&<div className="zatemnenie" onClick={()=>void close()}><section className="dialog library-panel" role="dialog" aria-label={titles[open]} onClick={e=>e.stopPropagation()} onKeyDown={e=>{if(e.key==='Escape')void close();}}>
    <header><h2>{titles[open]}</h2><button aria-label="Закрыть библиотеку" onClick={()=>void close()}>×</button></header>

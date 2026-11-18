@@ -66,6 +66,8 @@ pub enum Komanda {
     PerevodOriginal { id:u64 },
     PerevodAvto { id:u64, enabled:bool },
     FonKonteynera { rgb:u32 },
+    PasswordForm { id:u64,token:String,origin:String,payload:Option<crate::password_cef::Secret> },
+    PasswordsEnabled { enabled:bool },
     DannyeStatistika { token:String },
     OchistitDannye { token:String,cookies:bool,cache:bool },
     PerevodOtvet { id:u64, token:String, items:Vec<(u32,String)>, done:u32, total:u32, error:Option<String> },

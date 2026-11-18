@@ -28,6 +28,12 @@ mod privatnost;
 mod biblioteka;
 mod dannye_saytov;
 mod dannye_statistika;
+mod secure_vault;
+mod browser_crypto;
+mod browser_account;
+mod browser_sync;
+mod password_cef;
+mod passwords;
 mod zagruzki;
 mod set_status;
 mod supervkladki;
@@ -550,6 +556,7 @@ async fn podgotovit_dvizhok(
             // Поздние сообщения завершённого движка не должны менять новый сеанс.
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
+            if passwords::receive(&h_ui,&id_ui,&data){return;}
             if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
             let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");
@@ -875,6 +882,7 @@ fn steret_profil(id: &str) {
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
+    let _sync_mutation=browser_sync::mutation("super",&id);
     okna_app::zakryt_super(&app,&s,&id);
     perevod::otmenit_super(&id);
     let udalena = {
@@ -901,6 +909,7 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
         if sohranit { list.push(nastrojki); }
     })).await.map_err(|e| e.to_string())??;
     if !sohranit {
+        if !privatnost::eto_id(&id){browser_sync::record_delete("super",&id)?;}
         let id_profilya = id.clone();
         let _ = tauri::async_runtime::spawn_blocking(move || steret_profil(&id_profilya)).await;
     }
@@ -933,6 +942,7 @@ fn sohranennye() -> Vec<Nastrojki> {
 /// в полосу, движок поднимается.
 #[tauri::command]
 async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+    let _sync_mutation=browser_sync::mutation("super",&id);
     if s.vkladki.lock().unwrap().contains_key(&id) {
         if window.label()!="main"{return okna_app::vybrat(app,s,window,id).await;}
         return Ok(zapustit_vnutri(&app, &s, &id).await);
@@ -957,7 +967,9 @@ async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State
 /// со всеми входами. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn udalit_sohranennuyu(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+    let _sync_mutation=browser_sync::mutation("super",&id);
     let otkryta = s.vkladki.lock().map_err(|e| e.to_string())?.contains_key(&id);
+    if !otkryta&&!privatnost::eto_id(&id){browser_sync::record_delete("super",&id)?;}
     tauri::async_runtime::spawn_blocking(move || {
         supervkladki::obnovit_sohranennye(|list| list.retain(|n| n.id != id))?;
         // Открытую вкладку удаляем из библиотеки, её живой профиль не трогаем.
@@ -1168,6 +1180,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app,_args,_cwd|{okna_app::zapros_okna(app.clone(),None,false);}))
         .manage(Sostoyanie::default())
+        .manage(std::sync::Arc::new(secure_vault::VaultState::default()))
+        .manage(browser_account::AccountState::default())
+        .manage(browser_sync::SyncState::default())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -1175,6 +1190,7 @@ pub fn run() {
         // Размер, позиция и монитор окна запоминаются сами.
         .plugin(tauri_plugin_window_state::Builder::default().with_filter(|label|label=="main").build())
         .setup(|app| {
+            passwords::setup(app.handle()).map_err(std::io::Error::other)?;
             #[cfg(target_os = "windows")]
             if let Some(w) = app.get_webview_window("main") {
                 let s: State<Sostoyanie> = app.state();
@@ -1324,6 +1340,7 @@ pub fn run() {
             set_status::set_status,set_status::set_proverit_ip,
             zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
             import_brauzera::import_istochniki,import_brauzera::import_nachat,import_brauzera::import_status,import_brauzera::import_otmenit,
+            passwords::security_vault,passwords::security_passwords,browser_sync::security_account,browser_sync::security_sync,
             dannye_statistika::dannye_saytov_statistika,biblioteka::dannye_obem,dannye_saytov::ochistit_dannye_saytov,biblioteka::biblioteka_podskazki,biblioteka::dannye_ochistit,
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,

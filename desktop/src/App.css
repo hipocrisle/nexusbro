@@ -463,3 +463,6 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .clear-data-panel .vybor{flex:1;min-width:0}.clear-data-panel .vybor>button{width:100%;display:flex;justify-content:space-between;gap:12px}
 .clear-data-option{display:flex;flex-direction:column;gap:3px;min-width:0}.clear-data-option small{font-size:12px;color:var(--tiho)}
 .clear-data-options label{color:var(--tekst)}
+
+.password-offer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:var(--fon2);border-bottom:1px solid var(--kraj)}
+.password-offer>span{flex:1;min-width:180px;overflow-wrap:anywhere}.password-offer button{border:1px solid var(--kraj);border-radius:7px;background:var(--fon);color:var(--tekst);padding:6px 10px;cursor:pointer}.password-offer button:first-of-type{border-color:var(--akcent)}

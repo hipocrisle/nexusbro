@@ -103,9 +103,10 @@ pub async fn zagruzka_deystvie(app:tauri::AppHandle,window:tauri::WebviewWindow,
 
 /// Удаляется только запись списка: файл и активная загрузка остаются.
 #[tauri::command]
-pub async fn zagruzki_ochistit(id:Option<String>)->Result<usize,String>{
+pub async fn zagruzki_ochistit(id:Option<String>)->Result<usize,String>{ochistit_scope(id,None)}
+pub fn ochistit_scope(id:Option<String>,super_id:Option<&str>)->Result<usize,String>{
  let mut items=spisok().lock().map_err(|e|e.to_string())?;
  if let Some(ref id)=id{if items.get(id).is_some_and(|i|["Загружается","Приостановлена"].contains(&i.status.as_str())){return Err("Сначала завершите или отмените загрузку".into());}}
- let before=items.len();items.retain(|key,i|id.as_ref().is_some_and(|wanted|wanted!=key)||["Загружается","Приостановлена"].contains(&i.status.as_str()));
+ let before=items.len();items.retain(|key,i|super_id.is_some_and(|scope|i.super_id!=scope)||id.as_ref().is_some_and(|wanted|wanted!=key)||["Загружается","Приостановлена"].contains(&i.status.as_str()));
  zapisat(&items);Ok(before-items.len())
 }
