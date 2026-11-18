@@ -32,6 +32,8 @@ u.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 u.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
 u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
 u.SetForegroundWindow.argtypes = [wintypes.HWND]
+u.GetWindow.argtypes = [wintypes.HWND,wintypes.UINT]
+u.GetWindow.restype = wintypes.HWND
 run = pathlib.Path(a.out).resolve()
 assert not run.exists(), 'Use a fresh output directory'
 run.mkdir(parents=True)
@@ -187,9 +189,17 @@ try:
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
     def themed_popup(stage):
-        menus=Desktop(backend='uia').windows(title='NexusBro — меню')
-        assert len(menus)==1,'Expected one owned HTML menu window'
-        box=menus[0].rectangle();screen=ImageGrab.grab()
+        # UIA may merge an owned WebView popup into the owner's accessible
+        # tree; enumerate actual HWND ownership rather than top-level UIA roots.
+        menus=[]
+        @ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+        def collect_menu(h,_):
+            pid=wintypes.DWORD();u.GetWindowThreadProcessId(h,ctypes.byref(pid))
+            if pid.value==app.pid and u.IsWindowVisible(h) and int(h)!=int(hwnd) and u.GetWindow(h,4)==hwnd:menus.append(int(h))
+            return True
+        u.EnumWindows(collect_menu,0)
+        assert len(menus)==1,('Expected one actual owned popup HWND',menus)
+        box=rect(menus[0]);screen=ImageGrab.grab()
         colors=[screen.getpixel((box.left+3,y))[:3] for y in [box.top+3,(box.top+box.bottom)//2,box.bottom-4]]
         assert all(max(rgb)<180 for rgb in colors),('Menu did not inherit dark NexusBro palette',colors)
         assert not Desktop(backend='uia').windows(class_name='#32768'),'Unexpected system menu instead of themed popup'
