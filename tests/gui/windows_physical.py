@@ -298,7 +298,9 @@ try:
     r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','shift','delete')
     ui('Период очистки истории',['ComboBox']).click_input()
     ui('За всё время',['ListItem','Button']).click_input()
-    assert 'За всё время' in ui('Период очистки истории',['ComboBox']).window_text()
+    ui('Период очистки истории',['ComboBox']).click_input()
+    assert ui('За всё время',['ListItem','Button']).is_selected(),'Clear period option was not selected'
+    gui.press('escape')
     results.append({'native_clear_period_dropdown_mouse_selection':True})
     ui('Отмена',['Button']).click_input()
     results.append({'native_ctrl_shift_delete_dialog_from_cef':True})
