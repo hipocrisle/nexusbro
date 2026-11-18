@@ -712,6 +712,12 @@ def run(args):
         painted(ca)
         from PIL import ImageGrab
         ImageGrab.grab(xdisplay=a.display).save(root/'address-themed-suggestions.png')
+        # Bare Xvfb has no window manager to activate the owning shell after
+        # foreign CEF child mapping. Select the real native input target, not
+        # merely document.activeElement (which can remain set in WebKit).
+        subprocess.run(['xdotool','windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
+        native_target=subprocess.check_output(['xdotool','getwindowfocus'],env={**os.environ,'DISPLAY':a.display},text=True).strip()
+        require(native_target==main_xid,'Physical keyboard target is not the owning browser shell')
         ca.js('window.__nativeKeyEvents=[];window.__nativeKeyProbe=e=>window.__nativeKeyEvents.push({type:e.type,key:e.key,code:e.code,ctrl:e.ctrlKey,shift:e.shiftKey,alt:e.altKey,meta:e.metaKey,trusted:e.isTrusted});window.addEventListener("keydown",window.__nativeKeyProbe,true);window.addEventListener("keyup",window.__nativeKeyProbe,true);true')
         subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
         time.sleep(.1)
