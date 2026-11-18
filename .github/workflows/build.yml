@@ -40,12 +40,14 @@ jobs:
           cargo test --manifest-path tests/security_vault_harness/Cargo.toml
           cargo test --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml
+          cargo build --release --locked --manifest-path sync-server/Cargo.toml --example live_acceptance
           mkdir -p .dev-check/backend-package
           cp sync-server/target/release/nexusbro-sync-server .dev-check/backend-package/
+          cp sync-server/target/release/examples/live_acceptance .dev-check/backend-package/
           cp sync-server/README.md .dev-check/backend-package/
           cp -r sync-server/deploy .dev-check/backend-package/
           cd .dev-check/backend-package
-          sha256sum nexusbro-sync-server > SHA256SUMS
+          sha256sum nexusbro-sync-server live_acceptance > SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
           name: nexusbro-sync-backend
