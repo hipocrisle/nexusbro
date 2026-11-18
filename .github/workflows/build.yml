@@ -27,6 +27,16 @@ on:
         default: false
 
 jobs:
+  security:
+    if: github.event_name == 'workflow_dispatch' && inputs.frontend_only
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Test encrypted vault and independent account server
+        run: |
+          cargo test --manifest-path tests/security_vault_harness/Cargo.toml
+          cargo test --manifest-path sync-server/Cargo.toml
   frontend:
     if: github.event_name == 'workflow_dispatch' && inputs.frontend_only
     runs-on: ubuntu-24.04

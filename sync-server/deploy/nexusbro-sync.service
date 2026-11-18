@@ -1,0 +1,37 @@
+[Unit]
+Description=NexusBro isolated encrypted account sync
+After=network.target
+
+[Service]
+Type=simple
+DynamicUser=yes
+User=nexusbro-sync
+StateDirectory=nexusbro-sync
+StateDirectoryMode=0700
+WorkingDirectory=/var/lib/nexusbro-sync
+UMask=0077
+Environment=NEXUSBRO_SYNC_BIND=127.0.0.1:8796
+Environment=NEXUSBRO_SYNC_DB=/var/lib/nexusbro-sync/nexusbro-sync.db
+LoadCredentialEncrypted=totp-key:/etc/credstore.encrypted/nexusbro-sync-totp-key.cred
+ExecStart=/usr/bin/python3 /opt/nexusbro-sync/run-with-credential.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=yes
+ProtectProc=invisible
+ProcSubset=pid
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+MemoryMax=256M
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target
