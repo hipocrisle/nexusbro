@@ -1,0 +1,17 @@
+{
+  "version": "0.2.17",
+  "application_source": "fd3a1105315bf138c7ae5a246464334728de0cd8",
+  "package_build_run": 44365273812,
+  "initial_build_workflow_conclusion": "failure",
+  "initial_failure": "Windows UI Automation client KeyError(None) during tree update; identical installer subsequently passed native acceptance",
+  "security_job": "success",
+  "linux_native_job": "success",
+  "linux_native_records": 32,
+  "windows_recheck_run": 44369991526,
+  "windows_test_source": "bf51272",
+  "windows_native": "success",
+  "windows_native_records": 59,
+  "windows_native_webview2_lock_event_verified": true,
+  "linux_green_native_views_and_trusted_input_after_unlock": true,
+  "published": false
+}
