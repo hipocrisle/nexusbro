@@ -163,6 +163,7 @@ try:
     assert any(t['zagolovok']=='RenderFixture' for t in session['vkladki']), session
     # UI Automation locates controls; actual input is mouse clicks in WebView2.
     from pywinauto import Desktop
+    from comtypes import COMError
     win=Desktop(backend="uia").window(handle=hwnd)
     def ui(name, kinds=None, timeout=30):
         # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
@@ -182,7 +183,12 @@ try:
                 # the coordinate click; otherwise its center can hit the backdrop.
                 try:x.iface_scroll_item.ScrollIntoView()
                 except Exception:pass
-                if x.is_visible() and x.is_enabled():return x
+                try:
+                    if x.is_visible() and x.is_enabled():
+                        first=x.rectangle();time.sleep(.1)
+                        if first==x.rectangle():return x
+                except COMError:
+                    continue
             if name in ['Отмена','Создать','Сохранить'] and scrolled<2 and time.monotonic()>deadline-28:
                 r=rect(hwnd);gui.moveTo((r.left+r.right)//2,r.bottom-150);gui.scroll(-4);scrolled+=1
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
@@ -406,8 +412,13 @@ try:
     deadline=time.monotonic()+10
     while time.monotonic()<deadline and any(x.element_info.name=='Настройки браузера' for x in win.descendants()):time.sleep(.1)
     ui('Настройки NexusBro',['Button']).click_input()
-    ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
-    ui('Arial',['ListItem','Button']).click_input()
+    for dropdown_attempt in range(3):
+        ui('Шрифт интерфейса',['ComboBox','Button']).click_input()
+        try:
+            ui('Arial',['ListItem','Button'],timeout=3).click_input()
+            break
+        except AssertionError:
+            if dropdown_attempt==2:raise
     ui('Сохранить',['Button']).click_input()
     deadline=time.monotonic()+10
     while time.monotonic()<deadline:
