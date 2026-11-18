@@ -203,6 +203,42 @@ fn engine_lock(app: &tauri::AppHandle, locked: bool) {
         }
     }
 }
+#[cfg(target_os = "linux")]
+fn outermost_x11_handles(handles: Vec<u32>) -> Vec<u32> {
+    use x11rb::protocol::xproto::ConnectionExt;
+    let Ok((connection, _)) = x11rb::connect(None) else {
+        return handles;
+    };
+    let selected = handles
+        .iter()
+        .copied()
+        .collect::<std::collections::HashSet<_>>();
+    handles
+        .into_iter()
+        .filter(|handle| {
+            let mut current = *handle;
+            for _ in 0..128 {
+                let Ok(cookie) = connection.query_tree(current) else {
+                    return true;
+                };
+                let Ok(tree) = cookie.reply() else {
+                    return true;
+                };
+                if selected.contains(&tree.parent) && tree.parent != current {
+                    // The selected ancestor hides the whole subtree. Preserve the
+                    // renderer's own mapped state so restoring its host paints it.
+                    return false;
+                }
+                if tree.parent == 0 || tree.parent == tree.root || tree.parent == current {
+                    return true;
+                }
+                current = tree.parent;
+            }
+            // Unknown ancestry stays hidden rather than risking exposed content.
+            true
+        })
+        .collect()
+}
 fn hide_all(app: &tauri::AppHandle) {
     let state = app.state::<Sostoyanie>();
     let _windows = state.izmenenie_okon.lock().unwrap();
@@ -228,6 +264,8 @@ fn hide_all(app: &tauri::AppHandle) {
     handles.extend(crate::okna::sistema::vse_okna(&pids));
     handles.sort_unstable();
     handles.dedup();
+    #[cfg(target_os = "linux")]
+    let handles = outermost_x11_handles(handles);
     for handle in handles {
         let _ = crate::okna::sistema::pokazat(handle, false);
     }

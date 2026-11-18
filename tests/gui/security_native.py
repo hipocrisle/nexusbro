@@ -12,6 +12,7 @@ import http.server
 import json
 import os
 import pathlib
+import re
 import secrets
 import select
 import shutil
@@ -374,6 +375,29 @@ def run(args):
                 require(secret.encode() not in base64.b64decode(value['payload']), 'Plaintext credential found in decoded payload')
             require(path.stat().st_mode & 0o777 == 0o600, 'Vault file permissions are not private')
 
+    def visible_cef(client, device, stage):
+        from PIL import ImageGrab
+        label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        title=client.command('plugin:window|title',label=label)
+        native=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^'+re.escape(title)+'$'],env={**os.environ,'DISPLAY':device.display},text=True).splitlines()[0]
+        origin=client.command('plugin:window|inner_position',label=label)
+        deadline=time.monotonic()+12
+        colors=[]
+        while time.monotonic()<deadline:
+            subprocess.run(['xdotool','windowraise',native],env={**os.environ,'DISPLAY':device.display},check=True)
+            area=client.js('(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r&&{x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1}})()')
+            require(area and area['w']>400 and area['h']>200,'Native CEF viewport is missing: '+stage)
+            frame=ImageGrab.grab(xdisplay=device.display)
+            points=[(round(origin['x']+(area['x']+area['w']*x)*area['k']),round(origin['y']+(area['y']+area['h']*y)*area['k'])) for x,y in [(.55,.55),(.7,.7),(.85,.8)]]
+            colors=[frame.getpixel(point)[:3] for point in points]
+            if all(color==(24,85,65) for color in colors):
+                frame.save(root/(stage+'.png'))
+                checks.append({stage:True,'native_cef_rgb':colors})
+                return
+            time.sleep(.1)
+        frame.save(root/(stage+'-failure.png'))
+        raise NativeFailure('Native CEF page did not repaint: '+stage+' '+str(colors))
+
     previous_alarm = signal.getsignal(signal.SIGALRM)
     def runtime_expired(_signal, _frame):
         raise NativeFailure('Native acceptance exceeded its eight-minute runtime budget')
@@ -668,6 +692,8 @@ def run(args):
         require(extra is not None,'Additional browser window did not create inspector')
         try:
             js_wait(extra,'!!document.querySelector(".okno")','Additional browser window did not initialize')
+            visible_cef(ca,a,'main-page-before-browser-lock')
+            visible_cef(extra,a,'extra-page-before-browser-lock')
             main_xid=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^NexusBro$'],env={**os.environ,'DISPLAY':a.display},text=True).splitlines()[0]
             subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
             a.submit()
@@ -685,6 +711,21 @@ def run(args):
             ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
             ca.text_button('Разблокировать браузер')
             js_wait(extra,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Unlock did not restore additional browser window')
+            visible_cef(ca,a,'main-page-after-browser-unlock')
+            visible_cef(extra,a,'extra-page-after-browser-unlock')
+            for restored_client in [ca,extra]:
+                session=call(restored_client,'obychnye_spisok',id=normal_id)
+                address=next(tab['adres'] for tab in session['vkladki'] if tab['id']==session['aktivnaya'])
+                marker=urllib.parse.parse_qs(urllib.parse.urlsplit(address).query)['case'][0]
+                previous=len(seen(marker,'submit'))
+                label=restored_client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+                title=restored_client.command('plugin:window|title',label=label)
+                native=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^'+re.escape(title)+'$'],env={**os.environ,'DISPLAY':a.display},text=True).splitlines()[0]
+                subprocess.run(['xdotool','windowraise',native],env={**os.environ,'DISPLAY':a.display},check=True)
+                point=restored_client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x+200,r.y+160]})()')
+                restored_client.mouse(*point)
+                wait_for(lambda:len(seen(marker,'submit'))>previous,'Restored CEF renderer did not handle a physical form submit')
+            checkpoint('all_native_cef_views_repaint_and_accept_trusted_input_after_browser_unlock')
             # Keep the additional window alive for the shell-lock pass too;
             # the owned app process cleanup below closes it at restart.
         finally:extra.close()
