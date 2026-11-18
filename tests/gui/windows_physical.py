@@ -883,6 +883,14 @@ try:
     ui('Разблокировать браузер',['Button']).click_input()
     ui('Адрес страницы',['Edit','ComboBox'])
     results.append({'real_vault_create_and_cef_ctrl_shift_l_locks_browser':True,'master_unlock_restores_browser':True})
+    focus_ui('Адрес страницы',['Edit','ComboBox'])
+    gui.hotkey('ctrl','shift','l')
+    ui('Мастер-пароль для разблокировки браузера',['Edit'])
+    ImageGrab.grab().save(run/'browser-shell-locked.png')
+    ui('Мастер-пароль для разблокировки браузера',['Edit']).click_input();gui.write(browser_master,interval=.01)
+    ui('Разблокировать браузер',['Button']).click_input()
+    ui('Адрес страницы',['Edit','ComboBox'])
+    results.append({'native_shell_ctrl_shift_l_locks_browser':True})
     # Закрытие главного окна сохраняет дополнительное; последнее завершает приложение.
     gui.hotkey('ctrl','n');time.sleep(.8)
     deadline=time.monotonic()+20
