@@ -72,7 +72,7 @@ try:
   session=client.command('obychnye_spisok',id=id);client.command('obychnaya_komanda',id=id,komanda={'deystvie':'pereyti','id':session['aktivnaya'],'adres':url});loaded(client,id)
  choose(c2,'LinuxB');navigate(c2,'linux-b');choose(c2,'LinuxA');navigate(c2,'linux-a');choose(c2,'LinuxB');loaded(c2,'linux-b');assert c.command('aktivnaya')=='linux-a'
  checks.append({'secondary_super_switch_and_main_unchanged':True})
- c2.command('fokus_obolochke');c2.click('[aria-label="Меню NexusBro"]');c2.text_button('Настройки NexusBro');c2.wait('!!document.querySelector(".nastrojki-okno")');c2.click('[aria-label="Закрыть настройки"]');checks.append({'secondary_local_settings_menu':True})
+ c2.command('fokus_obolochke');c2.click('[aria-label="Меню NexusBro"]');time.sleep(.2);subprocess.run(['xdotool','key','End','Return'],env={**os.environ,'DISPLAY':':96'},check=True);c2.wait('!!document.querySelector(".nastrojki-okno")');c2.click('[aria-label="Закрыть настройки"]');checks.append({'secondary_local_settings_menu':True})
  c.command('zakryt',id='linux-b',sohranit=False);assert app.poll() is None;loaded(c,'linux-a');checks.append({'delete_other_super_keeps_windows':True})
  from PIL import ImageGrab
  ImageGrab.grab(xdisplay=':96').save(root/'windows.png')
