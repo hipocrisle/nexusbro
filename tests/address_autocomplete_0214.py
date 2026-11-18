@@ -1,4 +1,4 @@
-"""Chromium UI regression: address datalist, stale IPC and auto-translation controls.
+"""Chromium UI regression: themed address suggestions, stale IPC and auto-translation controls.
 
 Tauri IPC uses a fixture. This does not prove popup placement above a native CEF HWND,
 actual history ranking/IO, translation throughput or automatic CEF navigation behavior.
@@ -53,11 +53,13 @@ try:
         address.press_sequentially("de.wiki", delay=5)
         page.wait_for_function("window.__suggestQueries.length===1")
         assert page.evaluate("window.__suggestQueries")==[{"query": "de.wiki", "limit": 8}]
-        options = page.locator("#address-history option")
+        options = page.get_by_role("option")
         expect(options).to_have_count(1)
-        expect(options.first).to_have_attribute("value", "https://de.wikipedia.org/wiki/Berlin")
-        expect(options.first).to_have_attribute("label", "Берлин — сохранённая страница")
-        expect(address).to_have_attribute("list", "address-history")
+        expect(options.first).to_contain_text("https://de.wikipedia.org/wiki/Berlin")
+        expect(options.first).to_contain_text("Берлин — сохранённая страница")
+        expect(address).to_have_attribute("aria-controls", "address-history")
+        assert address.get_attribute("list") is None
+        assert address.evaluate("e=>document.hasFocus()&&document.activeElement===e")
         expect(address).to_have_value("https://de.wikipedia.org/wiki/Berlin")
         assert address.evaluate("e=>e.selectionStart<e.selectionEnd"), 'Completion suffix must be selected'
         address.press("Backspace")
@@ -73,10 +75,9 @@ try:
         page.evaluate("window.__suggestPending([{adres:'https://stale.example.test/',nazvanie:'STALE',istochnik:'istoriya'}])")
         page.wait_for_timeout(100)
         expect(options).to_have_count(1)
-        expect(options.first).to_have_attribute("value", "https://de.wikipedia.org/wiki/Berlin")
+        expect(options.first).to_contain_text("https://de.wikipedia.org/wiki/Berlin")
 
-        # The app completes the address in-place; real keys must accept it even
-        # when this platform cannot display the optional native datalist popup.
+        # The themed list keeps keyboard focus in the address field.
         before = page.evaluate("window.__args.length")
         address.press("ArrowDown")
         address.press("Enter")
@@ -85,6 +86,16 @@ try:
         navigations = page.evaluate("n=>window.__args.slice(n).filter(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti').map(x=>x.args.komanda.adres)", before)
         keyboard_selection = "https://de.wikipedia.org/wiki/Berlin" in navigations
         assert keyboard_selection, navigations
+
+        address.fill("de.wiki")
+        expect(page.get_by_role("listbox",name="Подсказки адреса")).to_be_visible()
+        address.press("Escape")
+        expect(page.get_by_role("listbox",name="Подсказки адреса")).to_have_count(0)
+        address.fill("de.wiki")
+        expect(options).to_have_count(1)
+        assert address.evaluate("e=>document.hasFocus()&&document.activeElement===e")
+        options.first.click()
+        expect(page.get_by_role("listbox",name="Подсказки адреса")).to_have_count(0)
 
         arrow = page.get_by_role("button", name="Варианты новой вкладки", exact=True)
         expect(arrow.locator("svg")).to_have_count(1)
@@ -111,7 +122,7 @@ try:
         page.evaluate("window.__emitTranslation({original:true,auto:false})")
         expect(auto).not_to_be_visible()
         assert not errors, errors
-        print(json.dumps({"debounced_history_ipc": True, "datalist_values_and_labels": True,
+        print(json.dumps({"debounced_history_ipc": True, "themed_suggestions_values_and_labels": True,
                           "stale_response_discarded": True, "keyboard_accepts_history_completion": keyboard_selection,
                           "arrow_svg_and_private_menu": True, "auto_translation_commands_and_ack": True,
                           "restore_command_and_hide_ack": True,

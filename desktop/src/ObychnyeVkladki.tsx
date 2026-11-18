@@ -1,4 +1,5 @@
 import BookmarkBar from "./BookmarkBar";
+import "./addressSuggestions.css";
 import AddressMenu from "./AddressMenu";
 import {popupMenu} from "./nativeMenu";
 import BrowserMenu from "./BrowserMenu";
@@ -23,6 +24,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [adres, setAdres] = useState("");
   const [pravka, setPravka] = useState(false);
   const [suggestions,setSuggestions]=useState<{adres:string;nazvanie:string;istochnik:string}[]>([]);
+  const [suggestionIndex,setSuggestionIndex]=useState(-1);
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
   const [dragOver, setDragOver] = useState<number | null>(null);
@@ -121,7 +123,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     let live=true;
     if(!pravka||!adres.trim()){setSuggestions([]);completedValue.current=null;return;}
     if(completedValue.current===adres)return;
-    setSuggestions([]);
+    setSuggestions([]);setSuggestionIndex(-1);
     const timer=setTimeout(()=>{void invoke<{adres:string;nazvanie:string;istochnik:string}[]>("biblioteka_podskazki",{query:adres,limit:8}).then(rows=>{
       if(!live)return;
       rows=Array.isArray(rows)?rows:[];setSuggestions(rows);
@@ -133,6 +135,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     }).catch(()=>{if(live)setSuggestions([]);});},80);
     return()=>{live=false;clearTimeout(timer);};
   },[adres,pravka,id,aktivnaya?.id]);
+  useEffect(()=>{if(suggestionIndex>=0)document.getElementById(`address-option-${suggestionIndex}`)?.scrollIntoView({block:'nearest'});},[suggestionIndex]);
   useLayoutEffect(()=>{if(completionRange.current!==null){pole.current?.setSelectionRange(completionRange.current,adres.length);completionRange.current=null;}},[adres]);
   useEffect(()=>{
     if(!id||!sessiya)return;
@@ -286,7 +289,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     <form className="navigaciya" onSubmit={(e) => {
       e.preventDefault();
       if (!aktivnaya) return;
-      const text = (pole.current?.value ?? adres).trim();
+      const text = (suggestionIndex>=0?suggestions[suggestionIndex]?.adres??adres:pole.current?.value??adres).trim();
       const search = poisk === "google" ? "https://www.google.com/search?q=" : poisk === "yandex" ? "https://yandex.ru/search/?text=" : "https://duckduckgo.com/?q=";
       const url = !text ? "about:blank" : /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : !/\s/.test(text) && (text.includes(".") || /^localhost(?::|\/|$)/i.test(text)) ? "https://" + text : search + encodeURIComponent(text);
       void poslat({ deystvie: "pereyti", id: aktivnaya.id, adres: url });
@@ -295,17 +298,23 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button type="button" title="Назад" disabled={!aktivnaya?.nazad} onClick={() => void poslat({ deystvie: "nazad", id: aktivnaya?.id })}><Icon name="back" size={17} /></button>
       <button type="button" title="Вперёд" disabled={!aktivnaya?.vpered} onClick={() => void poslat({ deystvie: "vpered", id: aktivnaya?.id })}><Icon name="forward" size={17} /></button>
       <button type="button" title="Обновить страницу" disabled={!aktivnaya} onClick={() => void poslat({ deystvie: "obnovit", id: aktivnaya?.id })}><Icon name="reload" size={17} /></button>
-      <input ref={pole} aria-label="Адрес страницы" placeholder="Введите адрес" disabled={!aktivnaya} list="address-history" autoComplete="off" spellCheck={false}
+      <input ref={pole} aria-label="Адрес страницы" placeholder="Введите адрес" disabled={!aktivnaya} role="combobox" aria-autocomplete="both" aria-controls="address-history" aria-expanded={pravka&&suggestions.length>0} aria-activedescendant={suggestionIndex>=0?`address-option-${suggestionIndex}`:undefined} autoComplete="off" spellCheck={false}
         value={adres}
         onPointerDown={e=>{addressPointer.current=addressDown(e.currentTarget,e.button,e.clientX,e.clientY);}}
         onFocus={()=>setPravka(true)}
+        onKeyDown={e=>{
+          if(e.ctrlKey||e.altKey||e.metaKey)return;
+          if((e.key==='ArrowDown'||e.key==='ArrowUp')&&suggestions.length){
+            e.preventDefault();
+            setSuggestionIndex(previous=>e.key==='ArrowDown'?(previous+1)%suggestions.length:(previous<=0?suggestions.length-1:previous-1));
+          }else if(e.key==='Escape'){e.preventDefault();setSuggestions([]);setSuggestionIndex(-1);setPravka(false);}
+        }}
         onMouseUp={e=>{if(addressUp(e.currentTarget,addressPointer.current,e.clientX,e.clientY,e.detail))e.preventDefault();addressPointer.current=null;}}
         onPointerCancel={()=>{addressPointer.current=null;}}
         onContextMenu={e=>e.stopPropagation()}
         onBlur={()=>{addressPointer.current=null;if(!addressMenuOpen.current)setPravka(false);}}
-        onChange={e=>{completedValue.current=null;completionAllowed.current=(e.nativeEvent as InputEvent).inputType==='insertText';setAdres(e.target.value);}} />
+        onChange={e=>{setPravka(true);setSuggestionIndex(-1);completedValue.current=null;completionAllowed.current=(e.nativeEvent as InputEvent).inputType==='insertText';setAdres(e.target.value);}} />
 
-      <datalist id="address-history">{suggestions.map(row=><option key={row.adres} value={row.adres} label={row.nazvanie||row.adres}/>)}</datalist>
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
       <SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
@@ -319,6 +328,9 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {bookmarkMessage&&<span className="sr-only" role="status">{bookmarkMessage}</span>}
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
     </form>
+    {pravka&&suggestions.length>0&&<div id="address-history" className="address-suggestions" role="listbox" aria-label="Подсказки адреса">
+      {suggestions.map((row,index)=><button type="button" role="option" id={`address-option-${index}`} key={row.adres} aria-selected={suggestionIndex===index} onMouseDown={e=>e.preventDefault()} onClick={()=>{if(!aktivnaya)return;setAdres(row.adres);setSuggestions([]);setSuggestionIndex(-1);pole.current?.blur();void poslat({deystvie:"pereyti",id:aktivnaya.id,adres:row.adres});}}><span>{row.nazvanie||row.adres}</span><small>{row.adres}</small></button>)}
+    </div>}
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
     {passwordOffer&&<div className="password-offer" role="status"><span>Сохранить логин <strong>{passwordOffer.username}</strong> для {passwordOffer.origin}?</span><button disabled={savingPassword} onClick={async()=>{setSavingPassword(true);try{await invoke('security_passwords',{action:'save_draft',data:{draft_id:passwordOffer.draft_id,username:passwordOffer.username}});setPasswordOffer(null);}catch(e){setOshibka(String(e));}finally{setSavingPassword(false);}}}>Сохранить пароль</button><button onClick={()=>{void invoke('security_passwords',{action:'discard_draft',data:{draft_id:passwordOffer.draft_id}}).catch(()=>{});setPasswordOffer(null);}}>Не сейчас</button></div>}

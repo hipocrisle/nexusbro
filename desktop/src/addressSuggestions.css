@@ -1,0 +1,6 @@
+.address-suggestions { flex: 0 0 auto; max-height: 210px; overflow: auto; min-width: 0; padding: 4px 10px; border-bottom: 1px solid var(--kraj); background: var(--fon2); }
+.address-suggestions button { display: flex; align-items: baseline; gap: 14px; width: 100%; min-width: 0; padding: 7px 10px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--tekst); text-align: left; font: inherit; cursor: pointer; }
+.address-suggestions button:hover,.address-suggestions button[aria-selected="true"] { background: var(--fon3); border-color: var(--akcent); }
+.address-suggestions span,.address-suggestions small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.address-suggestions span { flex: 1; min-width: 0; }
+.address-suggestions small { max-width: 55%; color: var(--tiho); font-size: 11px; }
