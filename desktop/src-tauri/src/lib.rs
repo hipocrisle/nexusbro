@@ -998,8 +998,24 @@ async fn perezagruzit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
 async fn fokus_obolochke(window: tauri::WebviewWindow) -> Result<(),String> {
     #[cfg(target_os = "linux")]
     {
-        let nashe = nash_descriptor(&window).ok_or("не найдено окно оболочки")?;
-        sistema::fokus_obolochke(nashe).map_err(|e|e.to_string())
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        let shell = window.clone();
+        window.run_on_main_thread(move || {
+            let result = (|| -> Result<(), String> {
+                use gtk::prelude::*;
+                shell.gtk_window().map_err(|e|e.to_string())?.present();
+                let nashe = nash_descriptor(&shell).ok_or("не найдено окно оболочки")?;
+                sistema::fokus_obolochke(nashe).map_err(|e|e.to_string())?;
+                shell.with_webview(|platform| { platform.inner().grab_focus(); })
+                    .map_err(|e|e.to_string())?;
+                let webview: &tauri::Webview = shell.as_ref();
+                webview.set_focus().map_err(|e|e.to_string())
+            })();
+            let _ = sender.send(result);
+        }).map_err(|e|e.to_string())?;
+        tokio::time::timeout(std::time::Duration::from_secs(5), receiver).await
+            .map_err(|_|"Оболочка не приняла фокус".to_string())?
+            .map_err(|_|"Окно оболочки закрыто".to_string())?
     }
     #[cfg(not(target_os = "linux"))]
     {

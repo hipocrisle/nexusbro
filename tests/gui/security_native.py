@@ -58,6 +58,11 @@ def js_wait(client, expression, message, timeout=20):
     return wait_for(lambda: client.js(expression), message, timeout)
 
 
+def painted(client):
+    client.js('window.__nativePainted=false;requestAnimationFrame(()=>requestAnimationFrame(()=>window.__nativePainted=true));true')
+    js_wait(client, 'window.__nativePainted', 'Visible browser did not paint its updated interface')
+
+
 def call(client, command, *, error=False, timeout=40, **args):
     client.js('window.__securityNativeResult=null;window.__TAURI_INTERNALS__.invoke(' +
               json.dumps(command) + ',' + json.dumps(args) +
@@ -536,7 +541,9 @@ def run(args):
             client.js('window.dispatchEvent(new Event("nexusbro-security"));true')
             js_wait(client, '!!document.querySelector(".security-panel")', 'Security settings did not open')
             client.text_button('Аккаунт')
+            js_wait(client, '!!document.querySelector(".security-account-form")', 'Account interface did not render')
             if register:
+                painted(client)
                 from PIL import ImageGrab
                 ImageGrab.grab(xdisplay=a.display).save(root/'account-without-server-entry.png')
             # The user never opens advanced settings or enters a server URL.
@@ -670,6 +677,8 @@ def run(args):
             call(ca,'spisok',error=True)
             call(extra,'biblioteka_spisok',razdel='istoriya',error=True)
             require(not call(cb,'browser_lock_status')['locked'],'Lock leaked to an independent browser instance')
+            painted(ca)
+            painted(extra)
             from PIL import ImageGrab
             ImageGrab.grab(xdisplay=a.display).save(root/'browser-locked-all-windows.png')
             subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
@@ -681,8 +690,11 @@ def run(args):
         finally:extra.close()
         checkpoint('native_cef_ctrl_shift_l_locks_all_windows_blocks_data_ipc_and_unlock_restores')
         # Lock from the shell keyboard path too; the existing encrypted master is used.
+        subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
         call(ca,'fokus_obolochke')
+        js_wait(ca,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Unlock did not restore main browser window')
         ca.click('[aria-label="Адрес страницы"]')
+        js_wait(ca,'document.hasFocus()&&document.activeElement?.getAttribute("aria-label")==="Адрес страницы"','Physical click did not focus main address input')
         subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
         js_wait(ca,'!!document.querySelector(".browser-lock-screen")','Shell CtrlShiftL did not lock browser')
         ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
