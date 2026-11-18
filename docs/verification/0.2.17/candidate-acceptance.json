@@ -13,5 +13,9 @@
   "windows_native_records": 59,
   "windows_native_webview2_lock_event_verified": true,
   "linux_green_native_views_and_trusted_input_after_unlock": true,
-  "published": false
+  "published": true,
+  "publication_run": 44371651616,
+  "publication_conclusion": "success",
+  "publication_windows_native_records": 59,
+  "public_verification": "release-public.json"
 }
