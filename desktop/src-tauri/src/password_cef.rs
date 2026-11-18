@@ -38,6 +38,18 @@ thread_local! {
  static RUNTIMES:std::cell::RefCell<HashMap<u64,(Contexts,Registration)>>=Default::default();
 }
 fn update_contexts(contexts: &Contexts, method: &str, params: Option<&[u8]>) {
+    // This observer owns metadata only. Do not parse bindingCalled payloads
+    // (credentials) or unrelated protocol events into additional JSON copies.
+    if method == "Runtime.executionContextsCleared" {
+        contexts.lock().unwrap().clear();
+        return;
+    }
+    if !matches!(
+        method,
+        "Runtime.executionContextCreated" | "Runtime.executionContextDestroyed"
+    ) {
+        return;
+    }
     let parsed = params
         .filter(|p| p.len() < 2_000_000)
         .and_then(|p| serde_json::from_slice::<Value>(p).ok());
@@ -57,7 +69,6 @@ fn update_contexts(contexts: &Contexts, method: &str, params: Option<&[u8]>) {
                 }
             }
         }
-        "Runtime.executionContextsCleared" => contexts.lock().unwrap().clear(),
         "Runtime.executionContextDestroyed" => {
             if let Some(p) = parsed {
                 if let Some(id) = p["executionContextId"]
