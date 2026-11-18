@@ -673,7 +673,8 @@ def run(args):
             ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]',master_a)
             ca.text_button('Разблокировать браузер')
             js_wait(extra,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Unlock did not restore additional browser window')
-            call(extra,'plugin:window|close',label=extra.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label'))
+            # Keep the additional window alive for the shell-lock pass too;
+            # the owned app process cleanup below closes it at restart.
         finally:extra.close()
         checkpoint('native_cef_ctrl_shift_l_locks_all_windows_blocks_data_ipc_and_unlock_restores')
         # Lock from the shell keyboard path too; the existing encrypted master is used.
