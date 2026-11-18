@@ -164,12 +164,12 @@ try:
     # UI Automation locates controls; actual input is mouse clicks in WebView2.
     from pywinauto import Desktop
     win=Desktop(backend="uia").window(handle=hwnd)
-    def ui(name, kinds=None):
+    def ui(name, kinds=None, timeout=30):
         # ⛔ Новые управления WebView2 регистрируются в UIA не мгновенно, а
         # после нашей же перерисовки дерево может ещё показывать прошлое
         # состояние. Поэтому ищем дольше и с паузой, а в ошибке печатаем, что
         # реально видно — по этому видно, на каком шаге остановились.
-        deadline=time.monotonic()+30
+        deadline=time.monotonic()+timeout
         videno=set();scrolled=0
         while time.monotonic()<deadline:
             candidates=win.descendants()
@@ -188,6 +188,21 @@ try:
             videno={x.element_info.name for x in win.descendants() if x.element_info.name}
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
+    def focus_ui(name, kinds):
+        from comtypes import COMError
+        for attempt in range(3):
+            try:
+                control=ui(name,kinds,timeout=2)
+                control.click_input();control.set_focus()
+                deadline=time.monotonic()+1
+                while time.monotonic()<deadline:
+                    control=ui(name,kinds,timeout=1)
+                    if control.element_info.element.CurrentHasKeyboardFocus:return control
+                    time.sleep(.05)
+            except (COMError,AssertionError):
+                time.sleep(.1)
+        raise AssertionError('Native control did not receive keyboard focus: '+name)
+
     def themed_popup(stage):
         # UIA may merge an owned WebView popup into the owner's accessible
         # tree; enumerate actual HWND ownership rather than top-level UIA roots.
@@ -706,10 +721,7 @@ try:
     gui.hotkey('ctrl','h')
     # Await the newly opened dialog's focused search, not a stale close button
     # from the preceding library. Exercise its actual Escape dismissal.
-    search=ui('Поиск в библиотеке',['Edit']);search.click_input()
-    deadline=time.monotonic()+3
-    while time.monotonic()<deadline and not search.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
-    assert search.element_info.element.CurrentHasKeyboardFocus,'Library search did not receive focus'
+    search=focus_ui('Поиск в библиотеке',['Edit'])
     gui.press('escape')
     # UIA can retain the closing dialog. Wait for its disappearance before
     # targeting a shell control behind it; verify real keyboard focus and text.
@@ -718,16 +730,10 @@ try:
         if not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()):break
         time.sleep(.1)
     assert not any(x.element_info.name=='Закрыть библиотеку' for x in win.descendants()),'Library did not close before download navigation'
-    address=ui('Адрес страницы',['Edit','ComboBox']);address.click_input();address.set_focus()
-    deadline=time.monotonic()+3
-    while time.monotonic()<deadline and not address.element_info.element.CurrentHasKeyboardFocus:time.sleep(.1)
-    assert address.element_info.element.CurrentHasKeyboardFocus,'Download address did not receive focus'
+    address=focus_ui('Адрес страницы',['Edit','ComboBox'])
     download_url='http://vpn-fixture.test/download-fixture'
     for input_attempt in range(3):
-        address.click_input();address.set_focus()
-        deadline=time.monotonic()+3
-        while time.monotonic()<deadline and not address.element_info.element.CurrentHasKeyboardFocus:time.sleep(.05)
-        assert address.element_info.element.CurrentHasKeyboardFocus,'Download address did not retain focus'
+        address=focus_ui('Адрес страницы',['Edit','ComboBox'])
         gui.hotkey('ctrl','a');gui.write(download_url,interval=.003)
         deadline=time.monotonic()+3
         while time.monotonic()<deadline and address.iface_value.CurrentValue!=download_url:time.sleep(.05)
