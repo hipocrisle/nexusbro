@@ -379,6 +379,7 @@ def run(args):
         from PIL import ImageGrab
         label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
         title=client.command('plugin:window|title',label=label)
+        require(isinstance(title,str) and title.startswith('NexusBro'),'Native shell title is unavailable: '+stage)
         native=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^'+re.escape(title)+'$'],env={**os.environ,'DISPLAY':device.display},text=True).splitlines()[0]
         origin=client.command('plugin:window|inner_position',label=label)
         deadline=time.monotonic()+12
