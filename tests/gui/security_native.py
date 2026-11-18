@@ -536,6 +536,9 @@ def run(args):
             client.js('window.dispatchEvent(new Event("nexusbro-security"));true')
             js_wait(client, '!!document.querySelector(".security-panel")', 'Security settings did not open')
             client.text_button('Аккаунт')
+            if register:
+                from PIL import ImageGrab
+                ImageGrab.grab(xdisplay=a.display).save(root/'account-without-server-entry.png')
             # The user never opens advanced settings or enters a server URL.
             require(not client.js('(()=>{const e=document.querySelector(`[aria-label="Сервер синхронизации NexusBro"]`);return e&&e.getClientRects().length>0})()'), 'Server URL is still required in the ordinary account flow')
             if register:client.text_button('Зарегистрироваться')

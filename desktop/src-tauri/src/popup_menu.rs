@@ -251,16 +251,16 @@ pub async fn popup_menu_open(
         finish(&app, &label, None, false);
         return Err("Не удалось разместить меню".into());
     }
-    eprintln!(
+    crate::zapisat_v_zhurnal(format!(
         "NEXUSBRO_POPUP stage=created requested_width={} requested_height={}",
         width.round() as u32,
         height.round() as u32
-    );
+    ));
     let events_app = app.clone();
     let events_label = label.clone();
     popup.on_window_event(move |event| match event {
         WindowEvent::Focused(true) => {
-            eprintln!("NEXUSBRO_POPUP stage=focus focused=true");
+            crate::zapisat_v_zhurnal("NEXUSBRO_POPUP stage=focus focused=true".into());
             if let Some(pending) = events_app
                 .state::<PopupMenuState>()
                 .menus
@@ -272,7 +272,7 @@ pub async fn popup_menu_open(
             }
         }
         WindowEvent::Focused(false) => {
-            eprintln!("NEXUSBRO_POPUP stage=focus focused=false");
+            crate::zapisat_v_zhurnal("NEXUSBRO_POPUP stage=focus focused=false".into());
             let ready = events_app
                 .state::<PopupMenuState>()
                 .menus
@@ -364,7 +364,9 @@ pub async fn popup_menu_ready(app: tauri::AppHandle, window: WebviewWindow) -> R
                     gtk.display().sync();
                     if let Some(handle) = crate::nash_descriptor(&ui) {
                         if crate::okna::sistema::fokus_obolochke(handle).is_err() {
-                            eprintln!("NEXUSBRO_POPUP stage=x11-focus accepted=false");
+                            crate::zapisat_v_zhurnal(
+                                "NEXUSBRO_POPUP stage=x11-focus accepted=false".into(),
+                            );
                         }
                     }
                     ui.with_webview(|platform| {
@@ -374,21 +376,28 @@ pub async fn popup_menu_ready(app: tauri::AppHandle, window: WebviewWindow) -> R
                         view.queue_draw();
                         view.grab_focus();
                         let bounds = view.allocation();
-                        eprintln!(
+                        crate::zapisat_v_zhurnal(format!(
                             "NEXUSBRO_POPUP stage=gtk-content width={} height={}",
                             bounds.width(),
                             bounds.height()
-                        );
+                        ));
                     })?;
                 }
                 ui.set_focus()?;
-                let webview: &tauri::Webview = ui.as_ref();
-                webview.set_focus()?;
+                // WebView2 already transfers focus on activation. A second
+                // MoveFocus can emit a native Focused(false) transition and
+                // dismiss the popup we just opened. Preserve the proven Windows
+                // show+native-focus path; GTK needs its separate widget focus.
+                #[cfg(target_os = "linux")]
+                {
+                    let webview: &tauri::Webview = ui.as_ref();
+                    webview.set_focus()?;
+                }
                 if let Ok(size) = ui.inner_size() {
-                    eprintln!(
+                    crate::zapisat_v_zhurnal(format!(
                         "NEXUSBRO_POPUP stage=ready width={} height={}",
                         size.width, size.height
-                    );
+                    ));
                 }
                 Ok(())
             })();
