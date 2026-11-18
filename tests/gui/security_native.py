@@ -453,6 +453,10 @@ def run(args):
         require(before == {p.name: hashlib.sha256(p.read_bytes()).digest() for p in a.cipher_files()}, 'Failed unlock/create overwrote vault main or backup')
         call(ca, 'security_vault', action='unlock', password=master_a)
         require(len(call(ca, 'security_passwords', action='list')) == 1, 'Credential did not survive lock/unlock')
+        resumed_draft = call(ca, 'security_passwords', action='capture', data={'super_id': normal_id, 'tab_id': normal_tab})
+        require(resumed_draft.get('origin') == base and resumed_draft.get('username') == login and 'password' not in resumed_draft, 'Repeated capture after lock/unlock lost the existing isolated context')
+        call(ca, 'security_passwords', action='discard_draft', data={'draft_id': resumed_draft['draft_id']})
+        checkpoint('existing_isolated_context_reused_after_lock_unlock_without_navigation')
         checkpoint('wrong_password_and_recreate_preserve_main_backup_locked_reads_fail')
         phase = 'native-fill'
         a.navigate(normal_id, base + '/form?case=empty-fill&mode=empty')
