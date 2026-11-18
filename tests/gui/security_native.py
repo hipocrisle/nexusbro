@@ -693,6 +693,8 @@ def run(args):
         subprocess.run(['xdotool','windowraise',main_xid,'windowfocus',main_xid],env={**os.environ,'DISPLAY':a.display},check=True)
         call(ca,'fokus_obolochke')
         js_wait(ca,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")','Unlock did not restore main browser window')
+        js_wait(ca,'(()=>{const e=document.querySelector(`[aria-label="Адрес страницы"]`);return e&&!e.disabled&&e.getBoundingClientRect().width>100})()','Main address input did not become available after unlock')
+        painted(ca)
         ca.click('[aria-label="Адрес страницы"]')
         js_wait(ca,'document.hasFocus()&&document.activeElement?.getAttribute("aria-label")==="Адрес страницы"','Physical click did not focus main address input')
         subprocess.run(['xdotool','key','ctrl+shift+l'],env={**os.environ,'DISPLAY':a.display},check=True)
