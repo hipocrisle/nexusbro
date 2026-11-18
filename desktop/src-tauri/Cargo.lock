@@ -2840,6 +2840,7 @@ dependencies = [
  "tauri-plugin-window-state",
  "thiserror 2.0.21",
  "tokio",
+ "webview2-com",
  "windows 0.58.0",
  "x11rb",
  "zeroize",

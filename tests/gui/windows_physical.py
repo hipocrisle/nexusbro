@@ -893,8 +893,24 @@ try:
     ui('Мастер-пароль для разблокировки браузера',['Edit']).click_input();gui.write(browser_master,interval=.01)
     ui('Разблокировать браузер',['Button']).click_input()
     ui('Адрес страницы',['Edit','ComboBox'])
+    deadline=time.monotonic()+10
+    while time.monotonic()<deadline:
+        restored_rgb=ImageGrab.grab().getpixel((box.right-130,box.bottom-140))[:3]
+        if restored_rgb==(24,85,65):break
+        time.sleep(.1)
+    assert restored_rgb==(24,85,65),('Native CEF page did not repaint after master unlock',restored_rgb)
+    ImageGrab.grab().save(run/'browser-unlocked.png')
     results.append({'real_vault_create_and_cef_ctrl_shift_l_locks_browser':True,'master_unlock_restores_browser':True})
     focus_ui('Адрес страницы',['Edit','ComboBox'])
+    class GuiThreadInfo(ctypes.Structure):
+        _fields_=[('cbSize',wintypes.DWORD),('flags',wintypes.DWORD),('hwndActive',wintypes.HWND),('hwndFocus',wintypes.HWND),('hwndCapture',wintypes.HWND),('hwndMenuOwner',wintypes.HWND),('hwndMoveSize',wintypes.HWND),('hwndCaret',wintypes.HWND),('rcCaret',wintypes.RECT)]
+    keyboard_info=GuiThreadInfo();keyboard_info.cbSize=ctypes.sizeof(keyboard_info)
+    assert u.GetGUIThreadInfo(0,ctypes.byref(keyboard_info)),'Native keyboard focus query failed'
+    native_focus_class=ctypes.create_unicode_buffer(256)
+    u.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
+    u.GetClassNameW(keyboard_info.hwndFocus,native_focus_class,len(native_focus_class))
+    results.append({'shell_keyboard_native_focus':{'active':int(keyboard_info.hwndActive or 0),'focus':int(keyboard_info.hwndFocus or 0),'class':native_focus_class.value,'main':int(main_hwnd)}})
+    assert keyboard_info.hwndActive==main_hwnd,'Physical keyboard target is not the main browser window'
     gui.hotkey('ctrl','shift','l')
     ui('Мастер-пароль для разблокировки браузера',['Edit'])
     ImageGrab.grab().save(run/'browser-shell-locked.png')

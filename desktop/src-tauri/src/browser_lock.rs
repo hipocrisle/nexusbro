@@ -26,7 +26,7 @@ pub fn generation() -> u64 {
 #[derive(Default)]
 pub struct BrowserLockState {
     serial: tokio::sync::Mutex<()>,
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     shortcuts: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 #[derive(Clone, Serialize)]
@@ -130,7 +130,119 @@ pub fn install_shortcut(window: &tauri::WebviewWindow) {
         crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=gtk-schedule-failed".into());
     }
 }
-#[cfg(not(target_os = "linux"))]
+#[cfg(target_os = "windows")]
+thread_local! {
+    // COM registration and removal stay on the WebView2/UI thread.
+    static WINDOWS_SHORTCUTS:std::cell::RefCell<std::collections::HashMap<String,(webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,i64)>>=Default::default();
+}
+#[cfg(target_os = "windows")]
+pub fn install_shortcut(window: &tauri::WebviewWindow) {
+    let app = window.app_handle().clone();
+    let label = window.label().to_owned();
+    let cleanup_app = app.clone();
+    let cleanup_label = label.clone();
+    if window
+        .with_webview(move |platform| {
+            use webview2_com::{
+                AcceleratorKeyPressedEventHandler, Microsoft::Web::WebView2::Win32::*,
+            };
+            use windows::Win32::UI::Input::KeyboardAndMouse::{
+                GetKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+            };
+            if !app
+                .state::<BrowserLockState>()
+                .shortcuts
+                .lock()
+                .unwrap()
+                .insert(label.clone())
+            {
+                return;
+            }
+            let target = app.clone();
+            let handler = AcceleratorKeyPressedEventHandler::create(Box::new(move |_, args| {
+                let Some(args) = args else { return Ok(()) };
+                unsafe {
+                    let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
+                    args.KeyEventKind(&mut kind)?;
+                    if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
+                        && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
+                    {
+                        return Ok(());
+                    }
+                    let mut key = 0u32;
+                    let mut physical = COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
+                    args.VirtualKey(&mut key)?;
+                    args.PhysicalKeyStatus(&mut physical)?;
+                    let down = |code: u16| GetKeyState(i32::from(code)) < 0;
+                    if (physical.ScanCode != 0x26 && key != 0x4c)
+                        || !down(VK_CONTROL.0)
+                        || !down(VK_SHIFT.0)
+                        || down(VK_MENU.0)
+                        || down(VK_LWIN.0)
+                        || down(VK_RWIN.0)
+                    {
+                        return Ok(());
+                    }
+                    // WebView2 reserves Ctrl+Shift+L for Paste and Go. Mark it
+                    // handled before doing anything that could call back into UI.
+                    args.SetHandled(true)?;
+                    crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=webview2-key".into());
+                    if !physical.WasKeyDown.as_bool() && !locked_global() {
+                        request_lock(target.clone());
+                    }
+                }
+                Ok(())
+            }));
+            let controller = platform.controller();
+            let mut token = 0i64;
+            if unsafe { controller.add_AcceleratorKeyPressed(&handler, &mut token) }.is_ok() {
+                WINDOWS_SHORTCUTS.with(|registrations| {
+                    registrations
+                        .borrow_mut()
+                        .insert(label, (controller, token));
+                });
+                crate::zapisat_v_zhurnal(
+                    "NEXUSBRO_BROWSER_LOCK shortcut=webview2-installed".into(),
+                );
+            } else {
+                app.state::<BrowserLockState>()
+                    .shortcuts
+                    .lock()
+                    .unwrap()
+                    .remove(&label);
+                crate::zapisat_v_zhurnal(
+                    "NEXUSBRO_BROWSER_LOCK shortcut=webview2-install-failed".into(),
+                );
+            }
+        })
+        .is_err()
+    {
+        crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=webview2-schedule-failed".into());
+    }
+    window.on_window_event(move |event| {
+        if !matches!(event, tauri::WindowEvent::Destroyed) {
+            return;
+        }
+        let app = cleanup_app.clone();
+        let label = cleanup_label.clone();
+        let scheduler = app.clone();
+        let _ = scheduler.run_on_main_thread(move || {
+            let registration = WINDOWS_SHORTCUTS
+                .try_with(|registrations| registrations.borrow_mut().remove(&label))
+                .ok()
+                .flatten();
+            if let Some((controller, token)) = registration {
+                unsafe {
+                    let _ = controller.remove_AcceleratorKeyPressed(token);
+                }
+            }
+            if let Some(state) = app.try_state::<BrowserLockState>() {
+                state.shortcuts.lock().unwrap().remove(&label);
+            }
+        });
+    });
+}
+#[cfg(not(any(target_os = "linux", target_os = "windows")))]
 pub fn install_shortcut(_window: &tauri::WebviewWindow) {}
 
 pub fn setup(app: &tauri::AppHandle) {
