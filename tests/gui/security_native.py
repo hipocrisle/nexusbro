@@ -693,6 +693,13 @@ def run(args):
         require(extra is not None,'Additional browser window did not create inspector')
         try:
             js_wait(extra,'!!document.querySelector(".okno")','Additional browser window did not initialize')
+            def extra_ready():
+                try:return call(extra,'obychnye_spisok',id=normal_id)
+                except NativeFailure as error:
+                    if 'ещё запускается' in str(error):return None
+                    raise
+            extra_session=wait_for(extra_ready,'Additional browser session did not initialize')
+            call(extra,'obychnaya_komanda',id=normal_id,komanda={'deystvie':'pereyti','id':extra_session['aktivnaya'],'adres':base+'/form?case=extra-lock&mode=offer'})
             visible_cef(ca,a,'main-page-before-browser-lock')
             visible_cef(extra,a,'extra-page-before-browser-lock')
             main_xid=subprocess.check_output(['xdotool','search','--onlyvisible','--name','^NexusBro$'],env={**os.environ,'DISPLAY':a.display},text=True).splitlines()[0]
