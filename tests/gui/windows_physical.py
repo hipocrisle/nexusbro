@@ -296,7 +296,11 @@ try:
     gui.click(rect(container).left+80,rect(container).top+100);gui.press('f12');time.sleep(.5);assert app.poll() is None;assert not devtools_windows();u.SetForegroundWindow(hwnd)
     results.append({'native_f12_docked_devtools':True,'devtools_close_keeps_browser':True})
     r=rect(container);gui.click(r.left+80,r.top+100);gui.hotkey('ctrl','shift','delete')
-    ui('Период очистки истории',['ComboBox']);ui('Отмена',['Button']).click_input()
+    ui('Период очистки истории',['ComboBox']).click_input()
+    ui('За всё время',['ListItem','Button']).click_input()
+    assert 'За всё время' in ui('Период очистки истории',['ComboBox']).window_text()
+    results.append({'native_clear_period_dropdown_mouse_selection':True})
+    ui('Отмена',['Button']).click_input()
     results.append({'native_ctrl_shift_delete_dialog_from_cef':True})
     # Physical HTML5 reorder in WebView2 (native drag handler must be disabled).
     gui.hotkey('ctrl','t');focus_after_tools=True

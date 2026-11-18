@@ -1,7 +1,7 @@
-.vkladka.super-colored { position:relative; box-shadow:inset 3px 0 0 var(--super-color); }
-.vkladka.super-colored.aktivna { border-color:var(--super-color); box-shadow:inset 3px 0 0 var(--super-color); }
-.vkladka.super-colored:hover { box-shadow:inset 3px 0 0 var(--super-color),inset 0 0 0 1px var(--kraj); }
-.vkladka.super-colored .kratkoe-imya { color:var(--super-color); }
+.vkladka.super-colored,.vkladka.super-colored.aktivna { background:color-mix(in srgb,var(--super-color) 32%,var(--fon2)); color:var(--tekst); }
+.vkladka.super-colored:hover { background:color-mix(in srgb,var(--super-color) 42%,var(--fon2)); }
+.vkladka.super-colored.aktivna { border-color:var(--kraj); box-shadow:inset 3px 0 0 var(--akcent); }
+.vkladka.super-colored .kratkoe-imya { color:var(--tekst); }
 .vkladka.super-private { position:relative; }
 .super-private-badge { display:inline-flex; flex:0 0 auto; align-items:center; justify-content:center; width:20px; height:20px; border-radius:6px; color:var(--tekst); background:var(--fon); border:1px solid var(--kraj); }
 .panel-svernuta .vkladka.super-private { min-height:42px; padding-bottom:13px; }

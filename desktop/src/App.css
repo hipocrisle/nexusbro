@@ -454,3 +454,11 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .clear-data-panel header button{width:32px;height:32px;padding:0;font-size:20px;background:transparent}
 .clear-data-panel button:hover:not(:disabled){border-color:var(--akcent)}.clear-data-panel button:disabled{opacity:.55;cursor:default}
 .clear-data-panel footer button:last-child{background:var(--akcent);color:var(--fon);border-color:var(--akcent);font-weight:600}
+
+/* Long titles and URLs must wrap inside the list, never widen its scroll box. */
+.library-list{overflow-x:hidden;overflow-y:auto;min-width:0}
+.library-list article,.library-open,.download-row{min-width:0;max-width:100%;box-sizing:border-box}
+.library-open strong,.library-open small{max-width:100%;white-space:normal;overflow-wrap:anywhere;word-break:break-word}
+.clear-data-panel .vybor{flex:1;min-width:0}.clear-data-panel .vybor>button{width:100%;display:flex;justify-content:space-between;gap:12px}
+.clear-data-option{display:flex;flex-direction:column;gap:3px;min-width:0}.clear-data-option small{font-size:12px;color:var(--tiho)}
+.clear-data-options label{color:var(--tekst)}

@@ -27,6 +27,7 @@ mod perevod;
 mod privatnost;
 mod biblioteka;
 mod dannye_saytov;
+mod dannye_statistika;
 mod zagruzki;
 mod set_status;
 mod supervkladki;
@@ -549,7 +550,7 @@ async fn podgotovit_dvizhok(
             // Поздние сообщения завершённого движка не должны менять новый сеанс.
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
-            if dannye_saytov::otvet(&id_ui,&data){return;}
+            if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
             let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");
             if data["tip"]=="novoe-okno"{let app=h_ui.clone();let id=id_ui.clone();let private=data["privatnaya"]==true;okna_app::zapros_okna(app,Some(id),private);return;}
@@ -1323,7 +1324,7 @@ pub fn run() {
             set_status::set_status,set_status::set_proverit_ip,
             zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
             import_brauzera::import_istochniki,import_brauzera::import_nachat,import_brauzera::import_status,import_brauzera::import_otmenit,
-            dannye_saytov::ochistit_dannye_saytov,biblioteka::biblioteka_podskazki,biblioteka::dannye_ochistit,
+            dannye_statistika::dannye_saytov_statistika,biblioteka::dannye_obem,dannye_saytov::ochistit_dannye_saytov,biblioteka::biblioteka_podskazki,biblioteka::dannye_ochistit,
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,

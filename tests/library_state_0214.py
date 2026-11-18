@@ -30,6 +30,8 @@ window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
  if(cmd==='biblioteka_udalit'){if(args.razdel==='zakladki')window.__books=[];else window.__history=[];return null;}
  if(cmd==='zagruzki_spisok')return window.__downloads;
  if(cmd==='zagruzki_ochistit'){window.__downloads=[];return 1;}
+ if(cmd==='dannye_obem')return {istoriya:2,istoriya_vsego:12,zagruzki:3};
+ if(cmd==='dannye_saytov_statistika')return {cookies:7,cache_bytes:1572864,cache_memory:false};
  if(cmd==='dannye_ochistit')return {istoriya:2,zagruzki:1};
  if(cmd==='ochistit_dannye_saytov')return new Promise(resolve=>window.__sitePending=resolve);
  return originalInvoke(cmd,args);
@@ -59,7 +61,9 @@ try:
         page.wait_for_function("window.__hidePending!==null")
         page.evaluate("window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:'istoriya'}))")
         first_history = page.get_by_role("dialog", name="История", exact=True)
+        page.evaluate("window.__history[0].adres='https://history.example.test/'+('long-address'*200)")
         expect(first_history.get_by_text("History only", exact=True)).to_be_visible()
+        assert first_history.locator('.library-list').evaluate('(e)=>e.scrollWidth<=e.clientWidth+1')
         page.evaluate("window.__hidePending(null)")
         page.wait_for_timeout(100)
         expect(page.get_by_role("dialog", name="Закладки", exact=True)).not_to_be_visible()
@@ -93,7 +97,15 @@ try:
         page.keyboard.press("Control+Shift+Delete")
         clear = page.get_by_role("dialog", name="Удаление данных браузера", exact=True)
         clear.wait_for()
-        clear.get_by_role("combobox", name="Период очистки истории", exact=True).select_option("week")
+        clear.get_by_role("combobox", name="Период очистки истории", exact=True).click()
+        page.get_by_role("option",name="За всё время",exact=True).click()
+        expect(clear.get_by_role("combobox",name="Период очистки истории")).to_contain_text("За всё время")
+        expect(clear.get_by_test_id("history-size")).to_contain_text("12 за всё время")
+        expect(clear.get_by_test_id("downloads-size")).to_contain_text("3 записей")
+        expect(clear.get_by_test_id("cookies-size")).to_contain_text("7 cookies")
+        expect(clear.get_by_test_id("cache-size")).to_contain_text("1,5 МБ")
+        clear.get_by_role("combobox",name="Период очистки истории").click()
+        page.get_by_role("option",name="Последние 7 дней",exact=True).click()
         clear.get_by_role("checkbox", name="Список завершённых загрузок — за всё время", exact=True).check()
         clear.get_by_role("checkbox", name="Cookies текущей супер-вкладки — за всё время", exact=True).check()
         clear.get_by_role("button", name="Удалить данные", exact=True).click()

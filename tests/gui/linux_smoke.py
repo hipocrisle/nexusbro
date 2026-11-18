@@ -49,12 +49,16 @@ try:
   deadline=time.monotonic()+10
   while time.monotonic()<deadline and not any(p.get('case')==[case] for p in probes):time.sleep(.1)
  assert next(p for p in probes if p.get('case')==['before'])['cookie']==['smoke=before-clear'],probes
+ stats=c.command('dannye_saytov_statistika',id='linux-a');assert stats['cookies']>=1 and stats['cache_bytes'] is not None,stats
+ local=c.command('dannye_obem',period='all');assert local['istoriya']==local['istoriya_vsego'] and local['istoriya']>=1,local
  ack=c.command('ochistit_dannye_saytov',id='linux-a',cookies=True,cache=True);assert ack=={'cookies':True,'cache':True},ack
  c.command('obychnaya_komanda',id='linux-a',komanda={'deystvie':'pereyti','id':tab,'adres':url+'?case=after'});loaded(c,'linux-a')
  deadline=time.monotonic()+10
  while time.monotonic()<deadline and not any(p.get('case')==['after'] for p in probes):time.sleep(.1)
  assert next(p for p in probes if p.get('case')==['after'])['cookie']==[''],probes
  suggestions=c.command('biblioteka_podskazki',query='127.0.0.1',limit=8);assert any(r['adres'].startswith(url) for r in suggestions),suggestions
+ after_stats=c.command('dannye_saytov_statistika',id='linux-a');assert after_stats['cookies']==0,after_stats
+ checks.append({'native_site_cookie_count_before_after':True,'native_http_cache_disk_size_available':True,'native_history_counts':True})
  receipt=c.command('dannye_ochistit',period='all',istoriya=True,zagruzki=False);assert receipt['istoriya']>0
  assert c.command('biblioteka_spisok',razdel='istoriya')==[]
  checks.append({'native_cookie_delete_observed_in_cef':True,'native_cache_completion_ack':True,'native_history_suggestions_and_cleanup':True})

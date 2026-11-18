@@ -43,15 +43,18 @@ try:
         private = page.get_by_role('button', name='Работа приватно — приватная супер-вкладка', exact=True)
         expect(normal).to_be_visible()
         expect(private.locator('.super-private-badge')).to_be_visible()
-        assert normal.evaluate("e=>getComputedStyle(e).boxShadow").find('91, 158, 232') >= 0
+        active_shadow=normal.evaluate("e=>getComputedStyle(e).boxShadow")
+        initial_fill=normal.evaluate("e=>getComputedStyle(e).backgroundColor")
+        private_fill=private.evaluate("e=>getComputedStyle(e).backgroundColor")
+        assert initial_fill!=private_fill and initial_fill!='rgba(0, 0, 0, 0)'
         assert page.get_by_role('button', name='Старый профиль', exact=True).get_attribute('style') is None
         page.get_by_role('button', name='Свернуть левую панель', exact=True).click()
         expect(normal.locator('.imya')).not_to_be_visible()
         expect(normal.locator('.kratkoe-imya')).to_be_visible()
         expect(private.locator('.super-private-badge')).to_be_visible()
         assert normal.locator('.super-private-badge').count()==0
-        assert normal.locator('.kratkoe-imya').evaluate('e=>getComputedStyle(e).color') == 'rgb(91, 158, 232)'
-        assert private.locator('.kratkoe-imya').evaluate('e=>getComputedStyle(e).color') == 'rgb(180, 138, 216)'
+        assert normal.evaluate('e=>getComputedStyle(e).backgroundColor')==initial_fill
+        assert private.evaluate('e=>getComputedStyle(e).backgroundColor')==private_fill
         nb, pb = normal.bounding_box(), private.bounding_box()
         badge = private.locator('.super-private-badge').bounding_box()
         assert pb['x']<=badge['x'] and badge['x']+badge['width']<=pb['x']+pb['width']
@@ -66,6 +69,9 @@ try:
         page.get_by_role('button', name='Сохранить', exact=True).click()
         expect(page.locator('.super-color-picker')).not_to_be_visible()
         assert page.evaluate('window.__lastProfile.cvet') == '#72b566'
+        assert normal.evaluate('e=>getComputedStyle(e).backgroundColor')!=initial_fill
+        assert normal.evaluate('e=>getComputedStyle(e).boxShadow')==active_shadow
+        assert not page.evaluate("window.__args.some(x=>['zapustit','ostanovit'].includes(x.cmd))")
         assert page.evaluate('window.__lastProfile.privatnaya') is False
         normal.click(button='right')
         page.locator('.stroka-menyu').filter(has_text='Настройки').click()

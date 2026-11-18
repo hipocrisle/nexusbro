@@ -101,6 +101,15 @@ fn nachalo_perioda(period:&str,now:u64)->Result<Option<u64>,String>{
  Ok(Some(now.saturating_sub(seconds)))
 }
 #[derive(Serialize)]
+pub struct Obem{pub istoriya:usize,pub istoriya_vsego:usize,pub zagruzki:usize}
+#[tauri::command]
+pub async fn dannye_obem(period:String)->Result<Obem,String>{
+ let since=nachalo_perioda(&period,vremya())?;
+ let (selected,total)={let _lock=IO.lock().map_err(|e|e.to_string())?;let items=chitat("istoriya.json");(items.iter().filter(|i|since.is_none_or(|s|i.vremya>=s)).count(),items.len())};
+ let downloads=crate::zagruzki::zagruzki_spisok().await.into_iter().filter(|d|!["Загружается","Приостановлена"].contains(&d.status.as_str())).count();
+ Ok(Obem{istoriya:selected,istoriya_vsego:total,zagruzki:downloads})
+}
+#[derive(Serialize)]
 pub struct Ochistka{pub istoriya:usize,pub zagruzki:usize}
 #[tauri::command]
 pub async fn dannye_ochistit(app:tauri::AppHandle,period:String,istoriya:bool,zagruzki:bool)->Result<Ochistka,String>{

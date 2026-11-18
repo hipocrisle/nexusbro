@@ -66,6 +66,7 @@ pub enum Komanda {
     PerevodOriginal { id:u64 },
     PerevodAvto { id:u64, enabled:bool },
     FonKonteynera { rgb:u32 },
+    DannyeStatistika { token:String },
     OchistitDannye { token:String,cookies:bool,cache:bool },
     PerevodOtvet { id:u64, token:String, items:Vec<(u32,String)>, done:u32, total:u32, error:Option<String> },
     Issledovat { id: u64, x: i32, y: i32 },

@@ -724,7 +724,7 @@ function Dialog(props: {
             <input type="radio" name="super-color" value={c.value} checked={cvet===c.value} onChange={()=>setCvet(c.value)} aria-label={c.label}/>
             <span className={"super-color-swatch"+(c.value?"":" no-color")} style={c.value?{"--swatch-color":c.value} as CSSProperties:undefined}>{!c.value&&<svg viewBox="0 0 18 18" width="18" height="18" aria-hidden="true"><path d="m4 14 10-10" stroke="currentColor" strokeWidth="1.5"/></svg>}</span>
           </label>)}</div>
-          <small>Цветная метка видна и в свёрнутой панели. Замок обозначает приватную супер-вкладку независимо от цвета.</small>
+          <small>Цвет заливки применяется сразу, в том числе в свёрнутой панели. Активная вкладка выделяется отдельно. Замок обозначает приватность.</small>
         </fieldset>
         {props.vyhody.length > 0 && <label>Сохранённое подключение<Vybor aria-label="Сохранённое подключение" value={!proxy ? "" : props.vyhody.some((v) => v.adres === proxy) ? proxy : "manual"} onChange={(e) => {
           if (e.target.value !== "manual") { zapros.current++; setProxy(e.target.value); setUzel(""); setUzly([]); setZagruzka(false); }

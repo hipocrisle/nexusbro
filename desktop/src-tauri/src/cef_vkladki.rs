@@ -520,7 +520,7 @@ impl Rabota {
                 Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
                 Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
                     Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
-                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::Instrumenty{..} |
+                    Komanda::PerevodOtvet{..} | Komanda::PerevodAvto{..} | Komanda::FonKonteynera{..} | Komanda::OchistitDannye{..} | Komanda::DannyeStatistika{..} | Komanda::Instrumenty{..} |
                     Komanda::Issledovat{..} | Komanda::InstrumentyRazmer{..} |
                     Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
@@ -751,6 +751,10 @@ impl Rabota {
                     if s.aktivnaya==id&&!*closing{fokus=true;fokus_klaviatury=true;fokus_posle_devtools=true;}
                 }
                 Sobytie::Komanda(Komanda::FonKonteynera{rgb})=>{k.fon(rgb&0xffffff);}
+                Sobytie::Komanda(Komanda::DannyeStatistika{token})=>{
+                    let mut contexts=Vec::new();if let Some(c)=request_context_get_global_context(){contexts.push(c);}if let Some(c)=k.private_context.borrow().as_ref(){contexts.push(c.clone());}
+                    crate::dannye_statistika::izmerit(contexts,token,label.clone(),tx.clone());
+                }
                 Sobytie::Komanda(Komanda::OchistitDannye{token,cookies,cache})=>{
                     let mut contexts=Vec::new();if let Some(c)=request_context_get_global_context(){contexts.push(c);}if let Some(c)=k.private_context.borrow().as_ref(){contexts.push(c.clone());}
                     crate::dannye_saytov::ochistit(contexts,token,label.clone(),cookies,cache,tx.clone());
