@@ -1182,6 +1182,27 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let command_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
+        Box::new(tauri::generate_handler![
+
+                popup_menu::popup_menu_open,popup_menu::popup_menu_data,popup_menu::popup_menu_ready,
+                popup_menu::popup_menu_choose,popup_menu::popup_menu_dismiss,popup_menu::popup_menu_lock,
+                browser_lock::browser_lock_status,browser_lock::browser_lock,browser_lock::browser_unlock,
+
+            okna_app::novoe_okno,okna_app::okno_gotovo,okna_app::pokazat_glavnoe,
+            set_status::set_status,set_status::set_proverit_ip,
+            zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
+            import_brauzera::import_istochniki,import_brauzera::import_nachat,import_brauzera::import_status,import_brauzera::import_otmenit,
+            passwords::security_vault,passwords::security_passwords,browser_sync::security_account,browser_sync::security_sync,
+            dannye_statistika::dannye_saytov_statistika,biblioteka::dannye_obem,dannye_saytov::ochistit_dannye_saytov,biblioteka::biblioteka_podskazki,biblioteka::dannye_ochistit,
+            biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
+            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
+            supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
+            fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
+            bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
+
+                    ]);
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app,_args,_cwd|{okna_app::zapros_okna(app.clone(),None,false);}))
         .manage(Sostoyanie::default())
@@ -1358,25 +1379,7 @@ pub fn run() {
                 invoke.resolver.reject("Браузер заблокирован. Введите мастер-пароль.");
                 return true;
             }
-            (tauri::generate_handler![
-                popup_menu::popup_menu_open,popup_menu::popup_menu_data,popup_menu::popup_menu_ready,
-                popup_menu::popup_menu_choose,popup_menu::popup_menu_dismiss,popup_menu::popup_menu_lock,
-                browser_lock::browser_lock_status,browser_lock::browser_lock,browser_lock::browser_unlock,
-
-            okna_app::novoe_okno,okna_app::okno_gotovo,okna_app::pokazat_glavnoe,
-            set_status::set_status,set_status::set_proverit_ip,
-            zagruzki::zagruzki_spisok,zagruzki::zagruzki_ochistit,zagruzki::zagruzka_deystvie,
-            import_brauzera::import_istochniki,import_brauzera::import_nachat,import_brauzera::import_status,import_brauzera::import_otmenit,
-            passwords::security_vault,passwords::security_passwords,browser_sync::security_account,browser_sync::security_sync,
-            dannye_statistika::dannye_saytov_statistika,biblioteka::dannye_obem,dannye_saytov::ochistit_dannye_saytov,biblioteka::biblioteka_podskazki,biblioteka::dannye_ochistit,
-            biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
-            nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
-            supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
-            fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
-            zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
-            bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
-
-            ])(invoke)
+            command_handler(invoke)
         })
         .build(tauri::generate_context!())
         .expect("NexusBro не запустился")
