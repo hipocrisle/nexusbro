@@ -1,0 +1,192 @@
+{
+  "diagnostic_run": 44544606308,
+  "package_run": 44536646986,
+  "product_feature_ready": false,
+  "scope": "External native mechanism experiment on owned fixture windows; not product acceptance",
+  "phases": {
+    "diagnostic_hide": {
+      "/page/0/0": {
+        "states": {
+          "visible": 5
+        },
+        "raf_hz": [
+          64.01600400100025,
+          63.99680015999088,
+          64.00960144021566,
+          63.98720255948922,
+          63.99040143978441
+        ]
+      },
+      "/page/0/1": {
+        "states": {
+          "visible": 5
+        },
+        "raf_hz": [
+          63.99040143978441,
+          64.00320016000911,
+          64.00320016000725,
+          63.993600639935636,
+          64.01280256051285
+        ]
+      },
+      "/page/1/0": {
+        "states": {
+          "visible": 5
+        },
+        "raf_hz": [
+          64.00320016000911,
+          63.99680015999088,
+          64.00640064006438,
+          63.993600639935636,
+          64
+        ]
+      },
+      "/page/1/1": {
+        "states": {
+          "hidden": 4
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "diagnostic_hide_notified": {
+      "/page/0/0": {
+        "states": {
+          "hidden": 5
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "/page/0/1": {
+        "states": {
+          "hidden": 5
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "/page/1/0": {
+        "states": {
+          "hidden": 5
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "/page/1/1": {
+        "states": {
+          "hidden": 6
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    },
+    "diagnostic_restore": {
+      "/page/0/0": {
+        "states": {
+          "hidden": 5
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "/page/0/1": {
+        "states": {
+          "hidden": 5
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "/page/1/0": {
+        "states": {
+          "hidden": 5
+        },
+        "raf_hz": [
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      "/page/1/1": {
+        "states": {
+          "visible": 5
+        },
+        "raf_hz": [
+          64.74978050921779,
+          63.993600639935636,
+          63.993600639935636,
+          64.01600400100025,
+          63.993600639935636
+        ]
+      }
+    }
+  },
+  "notification_results": [
+    {
+      "action": "external_WM_WINDOWPOSCHANGED_HIDE",
+      "flags": 151,
+      "api_return": 1,
+      "message_result": 0,
+      "last_error": 0,
+      "own_ws_visible_before": false
+    },
+    {
+      "action": "external_WM_WINDOWPOSCHANGED_HIDE",
+      "flags": 151,
+      "api_return": 1,
+      "message_result": 0,
+      "last_error": 0,
+      "own_ws_visible_before": false
+    },
+    {
+      "action": "external_WM_WINDOWPOSCHANGED_HIDE",
+      "flags": 151,
+      "api_return": 1,
+      "message_result": 0,
+      "last_error": 0,
+      "own_ws_visible_before": false
+    },
+    {
+      "action": "external_WM_WINDOWPOSCHANGED_HIDE",
+      "flags": 151,
+      "api_return": 1,
+      "message_result": 0,
+      "last_error": 0,
+      "own_ws_visible_before": false
+    }
+  ]
+}
