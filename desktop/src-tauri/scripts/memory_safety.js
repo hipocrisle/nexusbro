@@ -42,7 +42,7 @@
   const fn=found.value.get;remember(found.owner,key,found.value);return self=>apply(fn,self,[]);
  };
  let observer=null, take=null, walk=null, next=null, matches=null, shadow=null, scrollX=null,scrollY=null;
- let storage=null, storageLength=null, controller=null, designMode=null,nodeType=null, added=null,removed=null,listLength=null,listItem=null;
+ let storage=null, storageLength=null, controller=null, designMode=null,nodeType=null, added=null,removed=null,listLength=null,listItem=null,beforeUnload=null;
  try{
   // Capture native operations before any page mutation of prototypes.
   const createTreeWalker=Document.prototype.createTreeWalker, walkerNext=TreeWalker.prototype.nextNode;
@@ -65,9 +65,10 @@
   take=MutationObserver.prototype.takeRecords;
   observer.observe(d,{childList:true,subtree:true});
   for(const name of ['AudioContext','webkitAudioContext','OfflineAudioContext','webkitOfflineAudioContext',
-    'RTCPeerConnection','webkitRTCPeerConnection','Worker','SharedWorker','WebSocket','MediaStream','Audio','OffscreenCanvas'])
+    'RTCPeerConnection','webkitRTCPeerConnection','Worker','SharedWorker','WebSocket','MediaStream','Audio','OffscreenCanvas','SpeechRecognition','webkitSpeechRecognition'])
    patch(g,name,'Media, connection or worker API used',null,true);
   patch(HTMLMediaElement.prototype,'play','Media playback requested');
+  if(typeof SpeechSynthesis!=='undefined')patch(SpeechSynthesis.prototype,'speak','Speech playback requested');
   patch(Element.prototype,'attachShadow','Shadow DOM used');
   patch(HTMLCanvasElement.prototype,'getContext','Canvas used');
   patch(HTMLCanvasElement.prototype,'transferControlToOffscreen','Offscreen canvas used');
@@ -78,16 +79,19 @@
   for(const name of ['getUserMedia','webkitGetUserMedia','mozGetUserMedia'])patch(Navigator.prototype,name,'Media capture requested');
   if(typeof ServiceWorkerContainer!=='undefined')patch(ServiceWorkerContainer.prototype,'register','Service worker registered');
   const creation=index=>args=>{
-   if(typeof args[index]!=='string'){mark('Uninspectable DOM creation');return;}
+   if(typeof args[index]!=='string'||args[index].length>128){mark('Uninspectable DOM creation');return;}
    if(apply(textTest,riskyTag,[apply(lower,args[index],[])]))mark('Frame, canvas or media element created');
   };
   patch(d,'createElement',null,creation(0));
   patch(d,'createElementNS',null,creation(1));
-  patch(EventTarget.prototype,'addEventListener',null,args=>{if(args[0]==='beforeunload')mark('Before-unload listener registered');});
+  patch(EventTarget.prototype,'addEventListener',null,args=>{if(typeof args[0]!=='string')mark('Uninspectable event registration');else if(args[0]==='beforeunload')mark('Before-unload listener registered');});
   const unload=find(g,'onbeforeunload');
   if(!unload||typeof unload.value.set!=='function')fail('Before-unload hook unavailable');
   else{
-   const original=unload.value;const setter=new ProxyNative(original.set,{apply(fn,self,args){if(args[0]!=null)mark('Before-unload listener registered');return apply(fn,self,args);}});
+   const original=unload.value;
+   if(typeof original.get!=='function')fail('Before-unload state unavailable');
+   else beforeUnload=()=>apply(original.get,g,[]);
+   const setter=new ProxyNative(original.set,{apply(fn,self,args){if(args[0]!=null)mark('Before-unload listener registered');return apply(fn,self,args);}});
    define(unload.owner,'onbeforeunload',{...original,set:setter});remember(unload.owner,'onbeforeunload',descriptor(unload.owner,'onbeforeunload'));
   }
  }catch{fail('Early native instrumentation unavailable');}
@@ -131,7 +135,8 @@
    if(observer)consume(apply(take,observer,[]));
    x=scrollX(g);y=scrollY(g);if(!finite(x)||!finite(y))throw Error('Invalid scroll');
    if(!blocked){
-    if(apply(lower,designMode(d),[])==='on')mark('Editable document');
+    if(beforeUnload&&beforeUnload()!=null)mark('Before-unload handler installed');
+    else if(apply(lower,designMode(d),[])==='on')mark('Editable document');
     else if(storageLength(storage())!==0)mark('Session storage is not empty');
     else if(controller&&controller())mark('Service worker controls page');
     else scan(d,{left:4096});

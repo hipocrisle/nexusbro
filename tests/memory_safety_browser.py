@@ -66,6 +66,8 @@ def main():
                 run('closed_shadow_root',lambda p:p.evaluate("const e=document.createElement('div');document.body.append(e);e.attachShadow({mode:'closed'});e.remove()"))
                 run('canvas_created_then_removed',lambda p:p.evaluate("const e=document.createElement('canvas');e.getContext('2d');e.remove()"))
                 run('beforeunload_listener',lambda p:p.evaluate("window.addEventListener('beforeunload',()=>{})"))
+                run('beforeunload_inline_body_attribute',lambda p:p.evaluate("document.body.setAttribute('onbeforeunload','return 1')"))
+                run('speech_synthesis_request',lambda p:p.evaluate("speechSynthesis.speak(new SpeechSynthesisUtterance('synthetic test'));speechSynthesis.cancel()"))
                 run('beforeunload_property',lambda p:p.evaluate("window.onbeforeunload=()=>{}"))
                 run('session_storage',lambda p:p.evaluate("sessionStorage.setItem('synthetic','state')"))
                 run('constructor_preserves_new_target',lambda p:p.evaluate("const C=class extends AudioContext{};const a=new C();const valid=a instanceof C&&a instanceof AudioContext&&a.constructor===C&&AudioContext.name==='AudioContext';a.close();if(!valid)throw Error('Constructor transparency');valid"))
