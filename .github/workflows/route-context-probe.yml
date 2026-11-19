@@ -24,6 +24,7 @@ jobs:
         id: image
         run: echo "key=${ImageOS:-$RUNNER_OS}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
       - uses: actions/cache/restore@v4
+        id: cargo-cache
         with:
           path: |
             ~/.cargo/bin/
@@ -62,6 +63,11 @@ jobs:
           mv desktop/src-tauri/cef/Resources/* desktop/src-tauri/cef/
           rm -rf desktop/src-tauri/cef/Release desktop/src-tauri/cef/Resources
           printf '{"type":"minimal","name":"%s","sha1":"%s"}' "${CEF_BASE}_linux64_minimal.tar.bz2" "$CEF_SHA1" > desktop/src-tauri/cef/archive.json
+      - uses: actions/cache/save@v4
+        if: steps.cef.outputs.cache-hit != 'true'
+        with:
+          path: desktop/src-tauri/cef
+          key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
       - name: Build only synthetic capability executable
         run: |
           set -euo pipefail
@@ -69,6 +75,17 @@ jobs:
           npm run build --prefix desktop
           export CEF_PATH="$GITHUB_WORKSPACE/desktop/src-tauri/cef"
           cargo build --release --locked --manifest-path desktop/src-tauri/Cargo.toml --target x86_64-unknown-linux-gnu --example route_context_probe
+      - name: Save probe compiler cache even after a diagnostic compile failure
+        if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            desktop/src-tauri/target/
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Measure contexts with physically isolated loopback networking
         timeout-minutes: 5
         run: |
