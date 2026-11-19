@@ -16,6 +16,10 @@ on:
         description: Measure Windows CPU and memory using packages from this run (no build or publication)
         required: false
         default: ""
+      performance_visibility:
+        description: Probe actual page visibility and animation callbacks (different workload)
+        type: boolean
+        default: false
       performance_reference:
         description: Optional reference package run to measure first on the same Windows VM
         required: false
@@ -487,7 +491,10 @@ jobs:
           PERF_SUPERS: ${{ inputs.performance_supers }}
           PERF_LIVE_TABS: ${{ inputs.performance_live_tabs }}
           REFERENCE_RUN: ${{ inputs.performance_reference }}
+          PERF_VISIBILITY: ${{ inputs.performance_visibility }}
         run: |
+          $extra = @()
+          if ($env:PERF_VISIBILITY -eq "true") { $extra += "--visibility-probe" }
           $installers = @(Get-ChildItem .dev-check/package -Recurse -Filter *.exe)
           if ($installers.Count -ne 1) { throw "Expected exactly one measured installer" }
           Get-FileHash -Algorithm SHA256 $installers[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/installer-sha256.json
@@ -501,10 +508,10 @@ jobs:
             Get-FileHash -Algorithm SHA256 $reference[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/reference-sha256.json
             7z x -y $reference[0].FullName "-o.dev-check/reference-installed"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS
+            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @extra
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS
+          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @extra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()
