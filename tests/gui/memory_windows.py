@@ -79,6 +79,21 @@ def run(a):
         one_second = b"".join(struct.pack("<h", round(160 * math.sin(2 * math.pi * 220 * i / 44100))) for i in range(44100))
         audio.writeframes(one_second * 30)
     tone = wav.getvalue()
+    # Diagnostic-only source, held inert until a trusted physical F8 AFTER a
+    # failed scenario. This is late evaluation, never an early-observer proof.
+    safety_source = (pathlib.Path(__file__).resolve().parents[2] /
+                     "desktop/src-tauri/scripts/memory_safety.js").read_text(encoding="utf-8")
+    fixed_reasons = sorted({reason for _, reason in re.findall(
+        r'''(['"])([A-Za-z][A-Za-z0-9 ,./:-]{2,120})\1''', safety_source)})
+    source_literal = json.dumps(safety_source).replace("</", "<\\/")
+    late_handler = ("<script>(()=>{const source=" + source_literal + ",fixed=" + json.dumps(fixed_reasons) + ";let sent=false;"
+                    "addEventListener('keydown',event=>{if(!event.isTrusted||event.key!=='F8'||sent)return;sent=true;"
+                    "let out={page:'MemoryLateSafetyDiagnostic',known:false,reason:'Late evaluation threw',scroll_x:0,scroll_y:0};"
+                    "try{const probe=(0,eval)(source);const value=JSON.parse(probe());"
+                    "out.known=value.known===true;out.reason=value.reason===null?null:fixed.includes(value.reason)?value.reason:'Unrecognized fixed reason';"
+                    "out.scroll_x=Number.isFinite(value.scroll_x)?value.scroll_x:0;"
+                    "out.scroll_y=Number.isFinite(value.scroll_y)?value.scroll_y:0;}catch{}"
+                    "fetch('/receipt',{method:'POST',body:JSON.stringify(out)}).catch(()=>{});},true);})();</script>").encode()
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -175,6 +190,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                          "fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryHeap',seen,cookie,"
                          "bytes:fixtureHeap.byteLength,first:fixtureHeap[0],last:fixtureHeap[fixtureHeap.length-1],"
                          "url:location.href})});</script>").encode()
+                body += late_handler
             elif path not in ["/loading", "/auto-heap"]:
                 body += ("<script>fetch('/receipt',{method:'POST',body:JSON.stringify({page:document.title})});</script>").encode()
             self.send_response(200)
@@ -708,7 +724,35 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         report["completed"] = True
         ImageGrab.grab().save(out / "completed.png")
     except Exception as error:
+        report["completed"] = False
         report["error"] = f"{type(error).__name__}: {error}"
+        checkpoint()  # Preserve the original actual failure before diagnostics.
+        report["late_safety_diagnostic"] = {"diagnostic_only": True,
+            "installation": "late_after_original_failure", "original_failure_preserved": True}
+        try:
+            if app is None or app.poll() is not None or "find" not in locals():
+                raise RuntimeError()
+            target = find("MemoryHeap", ["TabItem"])
+            if target is None or not target.is_enabled():
+                raise LookupError()
+            box = target.rectangle()
+            target.click_input(coords=(min(10, max(2, box.width() // 4)), box.height() // 2))
+            time.sleep(.15)
+            previous = sum(r.get("page") == "MemoryLateSafetyDiagnostic" for r in receipts)
+            physical_page_click(250)
+            gui.press("f8")
+            deadline = time.monotonic() + 5
+            while time.monotonic() < deadline and app.poll() is None:
+                values = [r for r in receipts if r.get("page") == "MemoryLateSafetyDiagnostic"]
+                if len(values) > previous:
+                    report["late_safety_diagnostic"]["result"] = {
+                        key: values[-1].get(key) for key in ["page", "known", "reason", "scroll_x", "scroll_y"]}
+                    break
+                time.sleep(.1)
+            else:
+                report["late_safety_diagnostic"]["receipt_timeout"] = True
+        except Exception as diagnostic_error:
+            report["late_safety_diagnostic"]["error_class"] = type(diagnostic_error).__name__
         try:
             ImageGrab.grab().save(out / "failure.png")
         except Exception:
