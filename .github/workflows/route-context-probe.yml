@@ -1,6 +1,7 @@
 name: CEF route context capability (offline, no release)
 on:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
