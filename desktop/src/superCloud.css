@@ -1,0 +1,21 @@
+.super-cloud-group{display:flex;flex-direction:column;gap:2px;min-width:0}
+.super-cloud-heading{display:flex;align-items:center;flex-wrap:wrap;gap:7px;padding:9px 5px 6px;color:var(--tiho);min-width:0}
+.super-cloud-heading-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;color:var(--akcent)}
+.super-cloud-heading-text{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.super-cloud-heading-text strong{font-size:11px;font-weight:650;letter-spacing:.03em}
+.super-cloud-heading-text small,.super-cloud-account-receipt{font-size:10px;line-height:1.35;color:var(--tiho);overflow-wrap:anywhere}
+.super-cloud-account-receipt{width:100%;padding-left:23px}
+.super-cloud-group[data-cloud-group="local"]>.super-cloud-heading{margin-top:5px;border-top:1px solid var(--kraj)}
+.vkladka.super-cloud-selected{position:relative}
+.super-cloud-badge{display:inline-flex;align-items:center;justify-content:center;flex:0 0 auto;width:18px;height:18px;color:var(--akcent)}
+.super-cloud-badge[data-cloud-state="pending"]{color:var(--tiho)}
+.super-cloud-badge[data-cloud-state="paused"]{color:var(--tiho)}
+.super-cloud-badge[data-cloud-state="conflict"]{color:#e6b66e}
+.super-cloud-saved-name{display:flex;flex-direction:column;gap:2px;min-width:0;flex:1}
+.super-cloud-saved-name .imya{overflow:hidden;text-overflow:ellipsis}
+.super-cloud-saved-name small{font-size:10px;color:var(--tiho)}
+.panel-svernuta .super-cloud-heading{justify-content:center;padding:8px 0 5px;gap:0}
+.panel-svernuta .super-cloud-heading-text,.panel-svernuta .super-cloud-account-receipt,.panel-svernuta .super-cloud-saved-name{display:none}
+.panel-svernuta .vkladka.super-cloud-selected{min-height:42px;padding-bottom:11px}
+.panel-svernuta .super-cloud-badge{position:absolute;right:2px;bottom:2px;width:16px;height:16px;background:var(--fon);border:1px solid var(--kraj);border-radius:5px}
+.panel-svernuta .super-cloud-badge svg{width:12px;height:12px}

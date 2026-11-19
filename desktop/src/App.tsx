@@ -13,6 +13,7 @@ import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu, shrifty, Vyhod } from "./Na
 import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";
 import "./superColors.css";
+import {useSuperCloud,SuperCloudBadge,SuperCloudHeading} from "./SuperCloud";
 
 const superColors = [{value:"",label:"Без цвета"},{value:"#5b9ee8",label:"Синий"},{value:"#56b6a2",label:"Бирюзовый"},{value:"#72b566",label:"Зелёный"},{value:"#d4ae55",label:"Золотой"},{value:"#dc9365",label:"Оранжевый"},{value:"#d77d8f",label:"Розовый"},{value:"#b48ad8",label:"Фиолетовый"}];
 function superColor(value?:string){return superColors.some(c=>c.value===value)?value:undefined;}
@@ -48,6 +49,8 @@ export default function App() {
   const nastrojkiRef = useRef(nastrojki);
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
   const [securityOpen,setSecurityOpen]=useState(false);
+  const cloud=useSuperCloud(securityOpen);
+  const [cloudSaved,setCloudSaved]=useState<Nastrojki[]>([]);
   useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>{setNastroykiOtkryty(false);setSecurityOpen(true);}).catch(e=>setOshibka(String(e)));};window.addEventListener("nexusbro-security",open);return()=>window.removeEventListener("nexusbro-security",open);},[]);
   useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setNastroykiOtkryty(true));};window.addEventListener("nexusbro-settings",open);return()=>window.removeEventListener("nexusbro-settings",open);},[]);
   useEffect(()=>{const off=listen<NastrojkiApp>("nastrojki-izmenilis",e=>panel(e.payload));return()=>{void off.then(f=>f());};},[]);
@@ -140,6 +143,7 @@ export default function App() {
   useEffect(() => {
     invoke<boolean>("dvizhok_est").then(setDvizhokEst);
     invoke<Vidno[]>("spisok").then(setVkladki);
+    void invoke<Nastrojki[]>("sohranennye").then(rows=>setCloudSaved(Array.isArray(rows)?rows:[])).catch(()=>{});
     invoke<string | null>("aktivnaya").then(setAktivnaya);
     soobshchitMesto();
 
@@ -151,7 +155,8 @@ export default function App() {
       setOshibka(e.payload);
     });
     const otpiska = listen<string>("vkladki-izmenilis", async () => {
-      setVkladki(await invoke<Vidno[]>("spisok"));
+      const [rows,saved]=await Promise.all([invoke<Vidno[]>("spisok"),invoke<Nastrojki[]>("sohranennye")]);
+      setVkladki(rows);setCloudSaved(Array.isArray(saved)?saved:[]);cloud.refresh();
       setAktivnaya(await invoke<string | null>("aktivnaya"));
       soobshchitMesto();
     });
@@ -348,18 +353,17 @@ export default function App() {
     catch (err) { setOshibka(String(err)); }
     finally { await invoke("pokazat_dvizhki", { vidno: true }); }
   }
-  return (
-    <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
-      {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
-          горизонтальная полоса съедала высоту широкоформатников. */}
-      <div className="reika">
-        <div className="zagolovok"><span className="brand"><img src="/nexusbro.png" width="23" height="23" alt=""/>NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
-          onClick={() => { void sohranitNastrojki({ ...nastrojkiRef.current, panel_svernuta: !nastrojkiRef.current.panel_svernuta }).catch((e) => setOshibka(String(e))); }}>{nastrojki.panel_svernuta ? "»" : "«"}</button></div>
-        <div className="spisok" onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) e.preventDefault(); }} onDrop={(e) => void perenestiSuper(null, e)}>
-          {vkladki.map((v) => (
+  const cloudOpen=vkladki.filter(v=>cloud.selected(v.id,v.privatnaya));
+  const localOpen=vkladki.filter(v=>!cloud.selected(v.id,v.privatnaya));
+  const openedIds=new Set(vkladki.map(v=>v.id));
+  const cloudClosed=cloudSaved.filter(v=>!openedIds.has(v.id)&&cloud.selected(v.id,v.privatnaya));
+  const hasCloud=cloudOpen.length+cloudClosed.length>0;
+  function renderSuper(v:Vidno){return (
             <button
               key={v.id}
-              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "") + (dragSuper === v.id ? " drop-before" : "") + (superColor(v.cvet) ? " super-colored" : "") + (v.privatnaya ? " super-private" : "")}
+              data-super-id={v.id}
+              data-cloud-state={cloud.state(v.id,v.privatnaya)}
+              className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "") + (dragSuper === v.id ? " drop-before" : "") + (superColor(v.cvet) ? " super-colored" : "") + (v.privatnaya ? " super-private" : "") + (cloud.selected(v.id,v.privatnaya)?" super-cloud-selected":"")}
               style={superColor(v.cvet) ? {"--super-color":v.cvet} as CSSProperties : undefined}
               aria-label={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "")}
               draggable
@@ -379,18 +383,37 @@ export default function App() {
                   {text:"Перезагрузить",action:async()=>{const o=await invoke<Otvet>("perezagruzit",{id:v.id});if(!o.ok)setOshibka(o.soobshchenie);setVkladki(await invoke<Vidno[]>("spisok"));}}
                 ],e.clientX,e.clientY,setOshibka).catch(err=>setOshibka(String(err)));
               }}
-              title={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "") + " — " + (v.proxy || "прямое соединение")}
+              title={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "") + " — " + (v.proxy || "прямое соединение") + " · " + cloud.label(v.id,v.privatnaya)}
             >
               <span
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
               <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" title="Приватная супер-вкладка" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
+              <SuperCloudBadge state={cloud.state(v.id,v.privatnaya)} label={cloud.label(v.id,v.privatnaya)}/>
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
             </button>
-          ))}
+  );}
+  return (
+    <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
+      {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
+          горизонтальная полоса съедала высоту широкоформатников. */}
+      <div className="reika">
+        <div className="zagolovok"><span className="brand"><img src="/nexusbro.png" width="23" height="23" alt=""/>NexusBro</span><button className="svernut-panel" aria-label={nastrojki.panel_svernuta ? "Развернуть левую панель" : "Свернуть левую панель"}
+          onClick={() => { void sohranitNastrojki({ ...nastrojkiRef.current, panel_svernuta: !nastrojkiRef.current.panel_svernuta }).catch((e) => setOshibka(String(e))); }}>{nastrojki.panel_svernuta ? "»" : "«"}</button></div>
+        <div className="spisok" onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) e.preventDefault(); }} onDrop={(e) => void perenestiSuper(null, e)}>
+          {hasCloud?<>
+            <section className="super-cloud-group" data-cloud-group="cloud" aria-label="Облако — выбраны для синхронизации">
+              <SuperCloudHeading cloud receipt={cloud.lastSync} paused={cloud.paused}/>
+              {cloudOpen.map(renderSuper)}
+              {cloudClosed.map(v=><button key={v.id} type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-selected super-cloud-saved"+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} title={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
+                <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{v.nazvanie.slice(0,1)}</span><SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)}/>
+              </button>)}
+            </section>
+            {localOpen.length>0&&<section className="super-cloud-group" data-cloud-group="local" aria-label="Супер-вкладки на этом устройстве"><SuperCloudHeading cloud={false}/>{localOpen.map(renderSuper)}</section>}
+          </>:vkladki.map(renderSuper)}
         </div>
         {!nastrojki.panel_svernuta && <div className="razdelitel-paneli" role="separator" aria-label="Ширина левой панели" aria-orientation="vertical" tabIndex={0}
           aria-valuemin={140} aria-valuemax={400} aria-valuenow={nastrojki.panel_shirina}

@@ -1,17 +1,26 @@
 import {invoke} from '@tauri-apps/api/core';
+import {emit} from '@tauri-apps/api/event';
 export type VaultStatus={exists:boolean;unlocked:boolean};
 export type CredentialSummary={id:string;origin:string;username:string;title:string;super_id:string;updated_at:number};
 export type CredentialDraft={draft_id:string;origin:string;username:string};
-export type AccountStatus={configured:boolean;logged_in:boolean;username:string;server:string;totp_enabled:boolean};
+export type AccountStatus={configured:boolean;logged_in:boolean;username:string;server:string;totp_enabled:boolean;user_id?:string|null};
 export type SyncSelection={settings:boolean;bookmarks:boolean;supers:string[];passwords:string[]};
 export type SyncReport={pushed:number;pulled:number;conflicts:string[];errors?:string[]};
 export type SyncStatus={selection:SyncSelection;last_sync?:number|string|null;available_supers:{id:string;name:string}[];report?:SyncReport};
 export const emptySelection=():SyncSelection=>({settings:false,bookmarks:false,supers:[],passwords:[]});
+export const SECURITY_STATE_CHANGED='nexusbro-security-state-changed';
+async function securityInvoke<T>(area:'vault'|'passwords'|'account'|'sync',action:string,args:Record<string,unknown>){
+ const notify=area==='vault'?action!=='status':area==='account'?action!=='status':area==='sync'?action!=='status':false;
+ let failed=false;
+ try{return await invoke<T>('security_'+area,{action,...args});}
+ catch(error){failed=true;throw error;}
+ finally{if(notify){const detail={area,action,failed};window.dispatchEvent(new CustomEvent(SECURITY_STATE_CHANGED,{detail}));void emit(SECURITY_STATE_CHANGED,detail).catch(()=>{});}}
+}
 export const security={
- vault:(action:string,password?:string)=>invoke<VaultStatus>('security_vault',{action,...(password===undefined?{}:{password})}),
- passwords:<T=CredentialSummary[]>(action:string,data?:Record<string,unknown>)=>invoke<T>('security_passwords',{action,...(data?{data}:{})}),
- account:<T=AccountStatus>(action:string,data?:Record<string,unknown>)=>invoke<T>('security_account',{action,...(data?{data}:{})}),
- sync:<T=SyncStatus>(action:string,data?:Record<string,unknown>)=>invoke<T>('security_sync',{action,...(data?{data}:{})}),
+ vault:(action:string,password?:string)=>securityInvoke<VaultStatus>('vault',action,password===undefined?{}:{password}),
+ passwords:<T=CredentialSummary[]>(action:string,data?:Record<string,unknown>)=>securityInvoke<T>('passwords',action,data?{data}:{}),
+ account:<T=AccountStatus>(action:string,data?:Record<string,unknown>)=>securityInvoke<T>('account',action,data?{data}:{}),
+ sync:<T=SyncStatus>(action:string,data?:Record<string,unknown>)=>securityInvoke<T>('sync',action,data?{data}:{}),
 };
 export async function currentCredentialTarget(){
  const super_id=await invoke<string|null>('aktivnaya');if(!super_id)throw new Error('Выберите обычную супер-вкладку с открытой страницей.');
