@@ -604,6 +604,13 @@ fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser
     if automatic&&tab.memory_keep{return Some("Для вкладки отключена автоматическая выгрузка");}
     if tab.zagruzka||browser.is_loading()!=0{return Some("Дождитесь загрузки страницы");}
     if browser.frame_count()!=1{return Some("Вкладка содержит вложенные документы и остаётся в памяти");}
+    // The navigation controller is authoritative even if a late document
+    // notification raced a newer request-method notification.
+    match browser.host().and_then(|h|h.visible_navigation_entry()) {
+        Some(entry) if entry.has_post_data()!=0=>return Some("Страница получена отправкой формы и не выгружается"),
+        None=>return Some("История текущего документа ещё неизвестна"),
+        _=>{}
+    }
     if pending_tools.contains_key(&id)||browser.host().is_some_and(|h|h.has_dev_tools()!=0){return Some("Сначала закройте инструменты разработчика");}
     if crate::zagruzki::tab_busy(id){return Some("Вкладка выполняет загрузку файла");}
     if automatic&&(browser.can_go_back()!=0||browser.can_go_forward()!=0){return Some("Сохраняем внутреннюю историю переходов вкладки");}
