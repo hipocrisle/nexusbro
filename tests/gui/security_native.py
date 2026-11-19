@@ -66,6 +66,62 @@ def painted(client):
     js_wait(client, 'window.__nativePainted', 'Visible browser did not paint its updated interface')
 
 
+def cloud_stroke_ink(pixels, foreground):
+    """Count actual foreground strokes allowing only correct alpha composition.
+
+    Input is the actual SVG rectangle, excluding the badge border. Its empty
+    corner regions establish the native painted background, not a DOM fallback.
+    Subpixel SVG strokes need not contain any fully covered foreground pixel.
+    """
+    from collections import Counter
+    pixels = pixels.convert('RGB')
+    w, h = pixels.size
+    if w < 8 or h < 8:
+        return {'ink': 0, 'spread': False, 'background': None}
+    corners = [pixels.getpixel((x, y)) for x in (0, 1, w - 2, w - 1)
+               for y in (0, 1, h - 2, h - 1)]
+    background, frequency = Counter(corners).most_common(1)[0]
+    vector = [foreground[i] - background[i] for i in range(3)]
+    norm = sum(channel * channel for channel in vector)
+    points, alphas = [], []
+    if frequency >= 4 and norm >= 144:
+        for y in range(h):
+            for x in range(w):
+                pixel = pixels.getpixel((x, y))
+                alpha = sum((pixel[i] - background[i]) * vector[i] for i in range(3)) / norm
+                residual = max(abs(background[i] + alpha * vector[i] - pixel[i]) for i in range(3))
+                if .45 <= alpha <= 1.01 and residual <= 3:
+                    points.append((x, y))
+                    alphas.append(alpha)
+    spread = bool(points and max(x for x, _ in points) - min(x for x, _ in points) >= 2
+                  and max(y for _, y in points) - min(y for _, y in points) >= 2)
+    return {'ink': len(points), 'spread': spread, 'background': background,
+            'corner_frequency': frequency, 'max_alpha': max(alphas, default=0)}
+
+
+def check_cloud_stroke_model():
+    """Small negative/positive fixtures for the native screenshot classifier."""
+    from PIL import Image, ImageDraw
+    background, green, red, gray = (32, 34, 37), (86, 189, 131), (238, 114, 121), (173, 187, 202)
+    blank = Image.new('RGB', (12, 12), background)
+    require(cloud_stroke_ink(blank, green)['ink'] == 0, 'Blank SVG crop was accepted as cloud ink')
+    badge = Image.new('RGB', (16, 16), background)
+    ImageDraw.Draw(badge).rectangle((0, 0, 15, 15), outline=gray)
+    require(cloud_stroke_ink(badge.crop((2, 2, 14, 14)), gray)['ink'] == 0,
+            'Badge border was accepted as a gray SVG glyph')
+    for foreground in (green, red, gray):
+        tile = blank.copy()
+        blend = tuple(round(b + .65 * (f - b)) for b, f in zip(background, foreground))
+        for point in ((3, 4), (4, 4), (6, 6), (8, 7)):
+            tile.putpixel(point, blend)
+        found = cloud_stroke_ink(tile, foreground)
+        require(found['ink'] >= 3 and found['spread'], 'Actual alpha-composed cloud stroke was rejected')
+        for wrong in (green, red, gray):
+            if wrong != foreground:
+                require(cloud_stroke_ink(tile, wrong)['ink'] == 0,
+                        'Wrong cloud stroke hue was accepted')
+
+
 def totp(secret, timestamp=None):
     """RFC 6238 SHA-1 / six digits, used only for a synthetic test account."""
     key = base64.b32decode(secret.upper() + '=' * (-len(secret) % 8))
@@ -480,11 +536,12 @@ def run(args):
 
     def cloud_painted(client, device, identifier, kind):
         from PIL import ImageGrab
+        check_cloud_stroke_model()
         value = client.js('(()=>{const e=document.querySelector(' +
                           json.dumps('[data-super-id="' + identifier + '"] .super-cloud-badge') + ');'
-                          'if(!e)return null;const r=e.getBoundingClientRect();'
+                          'const svg=e?.querySelector("svg");if(!svg)return null;const r=svg.getBoundingClientRect();'
                           'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1,'
-                          'rgb:getComputedStyle(e).color.match(/\\d+/g).slice(0,3).map(Number)}})()')
+                          'rgb:getComputedStyle(svg).color.match(/\\d+/g).slice(0,3).map(Number)}})()')
         require(value and value['w'] >= 10 and value['h'] >= 10, 'Native cloud status icon is not visible')
         red, green, blue = value['rgb']
         require({'green': green > red * 1.15 and green > blue * 1.05,
@@ -500,12 +557,11 @@ def run(args):
         # collapsed sidebar. Require the same actual colored ink, with a bounded
         # wait for native presentation rather than accepting computed color alone.
         deadline = time.monotonic() + 6
-        ink = 0
+        ink = {'ink': 0}
         while time.monotonic() < deadline:
             pixels = ImageGrab.grab(xdisplay=device.display).crop(box).convert('RGB')
-            ink = sum(max(abs(channel - expected) for channel, expected in zip(pixel, value['rgb'])) <= 24
-                      for pixel in pixels.getdata())
-            if ink >= 3:
+            ink = cloud_stroke_ink(pixels, value['rgb'])
+            if ink['ink'] >= 3 and ink['spread']:
                 return
             time.sleep(.1)
         pixels.save(root / ('cloud-' + identifier + '-' + kind + '-paint-failure.png'))
