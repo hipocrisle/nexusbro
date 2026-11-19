@@ -1,19 +1,23 @@
 #!/usr/bin/env python3
-"""Real Windows manual tab-unload acceptance; no injected IPC or CEF/CDP mocks."""
+"""Real Windows manual/automatic tab-unload acceptance; no IPC or CEF/CDP mocks."""
 import argparse
 import collections
 import http.server
+import io
 import json
+import math
 import os
 import pathlib
 import platform
 import re
 import statistics
+import struct
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+import wave
 
 
 def run(a):
@@ -35,7 +39,8 @@ def run(a):
     report = {"schema": 1, "completed": False, "platform": platform.platform(),
               "heap_mb": a.heap_mb, "min_private_drop_mb": a.min_drop_mb,
               "checks": [], "memory": {}, "coverage": {"beforeunload_refusal": "not_executed",
-              "user_close_during_sleep": "not_executed", "automatic_unload": "not_implemented_off"}}
+              "user_close_during_sleep": "not_executed", "automatic_unload": "not_executed",
+              "fake_capture": "not_executed_no_fake_capture_interface"}}
     started = time.monotonic()
     hits, receipts = collections.Counter(), []
     lock = threading.Lock()
@@ -49,12 +54,28 @@ def run(a):
     u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
                                ctypes.c_int, ctypes.c_int, wintypes.UINT]
     u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    # Quiet, real looping PCM media; no network service or device permission.
+    wav = io.BytesIO()
+    with wave.open(wav, "wb") as audio:
+        audio.setnchannels(1)
+        audio.setsampwidth(2)
+        audio.setframerate(44100)
+        one_second = b"".join(struct.pack("<h", round(160 * math.sin(2 * math.pi * 220 * i / 44100))) for i in range(44100))
+        audio.writeframes(one_second * 30)
+    tone = wav.getvalue()
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
             path = urllib.parse.urlsplit(self.path).path
             with lock:
                 hits[path] += 1
+            if path == "/tone.wav":
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Length", str(len(tone)))
+                self.end_headers()
+                self.wfile.write(tone)
+                return
             if path == "/download":
                 self.send_response(200)
                 self.send_header("Content-Type", "application/octet-stream")
@@ -73,7 +94,9 @@ def run(a):
                 return
             names = {"/heap": "MemoryHeap", "/keeper": "MemoryKeeper", "/pinned": "MemoryPinned",
                      "/tools": "MemoryTools", "/loading": "MemoryLoading", "/downloads": "MemoryDownload",
-                     "/private": "MemoryPrivate", "/unload": "MemoryBeforeUnload", "/draft": "MemoryDraft"}
+                     "/private": "MemoryPrivate", "/unload": "MemoryBeforeUnload", "/draft": "MemoryDraft",
+                     "/auto-heap": "MemoryAutoHeap", "/auto-keep": "MemoryAutoKeep", "/audio": "MemoryAudio",
+                     "/audio-paused": "MemoryAudioPaused", "/web-audio": "MemoryWebAudio", "/rtc": "MemoryRTC"}
             if path not in names:
                 self.send_error(404)
                 return
@@ -90,6 +113,43 @@ document.getElementById('guard').onclick=e=>{if(e.isTrusted){window.onbeforeunlo
 fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',guard:true,trusted:e.isTrusted})});}};</script>'''
             if path == "/draft":
                 body += b'<input aria-label="Actual unsaved draft" style="position:absolute;left:20px;top:130px;width:300px;height:40px">'
+            if path == "/auto-heap":
+                body += ("<style>body{min-height:4000px}#auto-snapshot{position:fixed}</style>"
+                         "<button id='auto-snapshot'>Snapshot real scroll/storage</button><script>"
+                         "const seen=localStorage.getItem('memory-auto-fixture'),cookie=document.cookie;"
+                         "localStorage.setItem('memory-auto-fixture','preserved');"
+                         "document.cookie='memoryauto=preserved;path=/;max-age=86400;SameSite=Lax';"
+                         f"window.autoHeap=new Uint8Array({a.heap_mb}*1024*1024);autoHeap.fill(41);"
+                         "function state(reason,trusted){fetch('/receipt',{method:'POST',body:JSON.stringify({"
+                         "page:document.title,reason,trusted,bytes:autoHeap.byteLength,first:autoHeap[0],"
+                         "last:autoHeap[autoHeap.length-1],seen,cookie,scroll_y:scrollY})});}"
+                         "state('allocated',false);document.getElementById('auto-snapshot').onclick=e=>{"
+                         "if(e.isTrusted)state('snapshot',true);};</script>").encode()
+            if path in ["/audio", "/audio-paused", "/web-audio", "/rtc"]:
+                kind = "html" if path.startswith("/audio") else "webaudio" if path == "/web-audio" else "rtc"
+                if kind == "html":
+                    body += b'<audio id="actual-audio" src="/tone.wav" loop preload="auto"></audio>'
+                body += ("<button id='media-start'>Start actual media/resource</button>"
+                         "<button id='media-snapshot' style='top:130px'>Snapshot actual resource clock</button>"
+                         "<button id='media-pause' style='top:175px'>Pause actual HTML audio</button>"
+                         f"<script>const mediaKind={json.dumps(kind)};let context=null,oscillator=null,peer=null;"
+                         "const element=document.getElementById('actual-audio');"
+                         "function state(reason,trusted,error){const value={page:document.title,reason,trusted,kind:mediaKind};"
+                         "if(element)Object.assign(value,{current_time:element.currentTime,duration:element.duration,"
+                         "paused:element.paused,ready_state:element.readyState});"
+                         "if(context)Object.assign(value,{current_time:context.currentTime,context_state:context.state});"
+                         "if(peer)Object.assign(value,{connection_state:peer.connectionState,signaling_state:peer.signalingState});"
+                         "if(error)value.error=String(error);fetch('/receipt',{method:'POST',body:JSON.stringify(value)}); }"
+                         "document.getElementById('media-start').onclick=async e=>{if(!e.isTrusted)return;try{"
+                         "if(element)await element.play();"
+                         "else if(mediaKind==='webaudio'){context=new AudioContext();const gain=context.createGain();"
+                         "gain.gain.value=.005;oscillator=context.createOscillator();oscillator.frequency.value=220;"
+                         "oscillator.connect(gain);gain.connect(context.destination);oscillator.start();await context.resume();}"
+                         "else peer=new RTCPeerConnection({iceServers:[]});state('start',true);"
+                         "}catch(error){state('start',true,error);}};"
+                         "document.getElementById('media-snapshot').onclick=e=>{if(e.isTrusted)state('snapshot',true);};"
+                         "document.getElementById('media-pause').onclick=e=>{if(e.isTrusted&&element){element.pause();state('pause',true);}};"
+                         "</script>").encode()
             if path == "/heap":
                 body += ("<script>const seen=localStorage.getItem('memory-fixture');"
                          "const cookie=document.cookie;localStorage.setItem('memory-fixture','preserved');"
@@ -98,7 +158,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                          "fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryHeap',seen,cookie,"
                          "bytes:fixtureHeap.byteLength,first:fixtureHeap[0],last:fixtureHeap[fixtureHeap.length-1],"
                          "url:location.href})});</script>").encode()
-            elif path != "/loading":
+            elif path not in ["/loading", "/auto-heap"]:
                 body += ("<script>fetch('/receipt',{method:'POST',body:JSON.stringify({page:document.title})});</script>").encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -126,7 +186,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 if not isinstance(item, dict):
                     raise ValueError()
                 with lock:
-                    if len(receipts) < 256:
+                    if len(receipts) < 1024:
                         receipts.append({**item, "received_seconds": time.monotonic() - started})
             except (ValueError, TypeError):
                 self.send_error(400)
@@ -215,17 +275,22 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                     (1, "/heap", "MemoryHeap"), (2, "/keeper", "MemoryKeeper"),
                     (3, "/pinned", "MemoryPinned"), (4, "/tools", "MemoryTools"),
                     (5, "/loading", "MemoryLoading"), (6, "/downloads", "MemoryDownload"),
-                    (7, "/unload", "MemoryBeforeUnload"), (8, "/draft", "MemoryDraft")]]
+                    (7, "/unload", "MemoryBeforeUnload"), (8, "/draft", "MemoryDraft"),
+                    (9, "/auto-heap", "MemoryAutoHeap"), (10, "/auto-keep", "MemoryAutoKeep"),
+                    (11, "/audio", "MemoryAudio"), (12, "/audio-paused", "MemoryAudioPaused"),
+                    (13, "/web-audio", "MemoryWebAudio"), (14, "/rtc", "MemoryRTC")]]
         folder = data / "profili" / "memory"
         folder.mkdir(parents=True)
-        (folder / "obychnye.json").write_text(json.dumps({"vkladki": tabs, "aktivnaya": 2, "sleduyushchaya": 9}), encoding="utf-8")
+        (folder / "obychnye.json").write_text(json.dumps({"vkladki": tabs, "aktivnaya": 2, "sleduyushchaya": 15}), encoding="utf-8")
         (data / "vkladki.json").write_text(json.dumps([{"id": "memory", "nazvanie": "MemorySuper",
             "proxy": "", "adres": base + "/keeper", "pustaya": False, "rezat_reklamu": True}]), encoding="utf-8")
-        (data / "nastrojki.json").write_text(json.dumps({"avtoobnovleniya": False}), encoding="utf-8")
+        (data / "nastrojki.json").write_text(json.dumps({"avtoobnovleniya": False, "memory_saver": False,
+                                                         "memory_saver_minutes": 30}), encoding="utf-8")
         cef = pathlib.Path(a.cef).resolve()
         env = {**os.environ, "CEF_PATH": str(cef), "PATH": str(cef) + os.pathsep + os.environ["PATH"],
                "NEXUSBRO_TEST_DATA": str(data), "WEBVIEW2_USER_DATA_FOLDER": str(out / "webview2"),
-               "NEXUSBRO_PROBA": "0", "NEXUSBRO_TEST_DOWNLOAD_DIR": str(out / "downloads")}
+               "NEXUSBRO_PROBA": "0", "NEXUSBRO_TEST_DOWNLOAD_DIR": str(out / "downloads"),
+               "NEXUSBRO_TEST_MEMORY_IDLE_SECONDS": "8"}
         log = (out / "app.log").open("w", encoding="utf-8")
         app = subprocess.Popen([str(pathlib.Path(a.exe).resolve())], env=env, stdout=log, stderr=log)
         desktop = Desktop(backend="uia")
@@ -304,8 +369,11 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         def native_logs():
             return "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in folder.glob("*.log"))
 
+        def refusal_events(tab_id):
+            return re.findall(rf'NEXUSBRO_MEMORY tab={tab_id}\b[^\n]*?refused=([^\n]+)', native_logs())
+
         def protected(title, tab_id=None):
-            prior_logs = native_logs()
+            prior = len(refusal_events(tab_id)) if tab_id is not None else 0
             item = open_sleep(title)
             if not item.is_enabled():
                 gui.press("escape")
@@ -314,11 +382,16 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 item.click_input()
                 click("Выгрузить", ["Button"])
                 if tab_id is not None:
-                    wait(lambda: native_logs().count(f"NEXUSBRO_MEMORY tab={tab_id} refused=") > prior_logs.count(f"NEXUSBRO_MEMORY tab={tab_id} refused="),
+                    wait(lambda: len(refusal_events(tab_id)) > prior,
                          "Actual engine did not log a protected-request refusal")
-                wait(lambda: not find("Выгрузить", ["Button"]) and any(c.element_info.name for c in controls() if c.element_info.control_type == "Text"
-                                 and any(w in c.element_info.name.lower() for w in ["нельзя", "в памяти", "откреп", "загруз", "инструмент", "сохран", "ввод"])),
-                     "Protected request did not report an actual refusal")
+                reason = refusal_events(tab_id)[-1] if tab_id is not None else None
+                def visible_refusal():
+                    if find("Выгрузить", ["Button"]):
+                        return False
+                    return any((reason in c.element_info.name if reason else
+                                any(w in c.element_info.name.lower() for w in ["нельзя", "в памяти", "откреп", "загруз", "инструмент", "сохран", "ввод"]))
+                               for c in controls() if c.element_info.control_type == "Text")
+                wait(visible_refusal, "Protected request did not report an actual refusal")
                 result = "backend_refusal_visible"
             time.sleep(.5)
             if tab_id is not None and (not row(tab_id) or row(tab_id).get("otlozhena")):
@@ -409,15 +482,16 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         wait(lambda: any(r.get("guard") and r.get("trusted") for r in receipts), "Beforeunload guard was not armed by an actual trusted gesture")
         tab("MemoryKeeper")
         for attempt in range(2):
-            prior = native_logs().count("refused=beforeunload")
+            prior = len(refusal_events(7))
             warning_confirm("MemoryBeforeUnload")
-            wait(lambda: native_logs().count("refused=beforeunload") > prior,
-                 "Native beforeunload refusal/retry callback was not observed")
-            wait(lambda: any("осталась в памяти" in c.element_info.name for c in controls()),
+            wait(lambda: len(refusal_events(7)) > prior,
+                 "Actual native safety refusal/retry was not observed for the beforeunload page")
+            reason = refusal_events(7)[-1]
+            wait(lambda: any(reason in c.element_info.name for c in controls()),
                  "Beforeunload refusal was not visible to the owner")
             if not row(7) or row(7).get("otlozhena"):
                 raise AssertionError("Refused beforeunload removed or slept the live row")
-        report["coverage"]["beforeunload_refusal"] = "actual_native_refusal_and_retry"
+        report["coverage"]["beforeunload_refusal"] = "actual_native_safety_refusal_and_retry"
         report["checks"].append({"actual_beforeunload_veto_live_retry": True})
         tab("MemoryDraft")
         wait(lambda: any(r.get("page") == "MemoryDraft" for r in receipts), "Draft fixture did not load")
@@ -431,6 +505,179 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         wait(lambda: any(r.get("page") == "MemoryPrivate" for r in receipts), "Actual private tab did not load")
         tab("MemoryKeeper")
         protected("MemoryPrivate")
+
+        def actual_media_action(page, y, reason):
+            previous = sum(r.get("page") == page and r.get("reason") == reason for r in receipts)
+            physical_page_click(y)
+            wait(lambda: sum(r.get("page") == page and r.get("reason") == reason for r in receipts) > previous,
+                 f"Actual trusted media {reason} receipt missing for {page}")
+            value = [r for r in receipts if r.get("page") == page and r.get("reason") == reason][-1]
+            if value.get("trusted") is not True or value.get("error"):
+                raise AssertionError(f"Real media action did not execute: {value}")
+            return value
+
+        # Arm genuine media/resource objects with physical gestures while auto
+        # is still OFF, retaining a clock receipt from before the idle period.
+        media_before = {}
+        for page, tab_id in [("MemoryAudio", 11), ("MemoryAudioPaused", 12),
+                             ("MemoryWebAudio", 13), ("MemoryRTC", 14)]:
+            tab(page)
+            wait(lambda: row(tab_id) and not row(tab_id).get("zagruzka") and not row(tab_id).get("otlozhena"),
+                 f"Real media fixture did not finish loading: {page}")
+            value = actual_media_action(page, 103, "start")
+            if page.startswith("MemoryAudio"):
+                if value.get("paused") is not False or value.get("ready_state", 0) < 2 or not value.get("duration"):
+                    raise AssertionError("HTML audio did not actually start")
+                if page == "MemoryAudioPaused":
+                    value = actual_media_action(page, 193, "pause")
+                    if value.get("paused") is not True:
+                        raise AssertionError("HTML audio did not actually pause")
+            elif page == "MemoryWebAudio" and value.get("context_state") != "running":
+                raise AssertionError("Actual WebAudio oscillator context is not running")
+            elif page == "MemoryRTC" and (value.get("connection_state") != "new" or value.get("signaling_state") != "stable"):
+                raise AssertionError("Actual local RTCPeerConnection was not created")
+            media_before[page] = value
+
+        # Keep previously tested ordinary pages live so unrelated closures do
+        # not manufacture the automatic heap's process-tree memory decrease.
+        for title, tab_id in [("MemoryHeap", 1), ("MemoryTools", 4), ("MemoryLoading", 5),
+                              ("MemoryDownload", 6), ("MemoryAutoKeep", 10)]:
+            tab(title)
+            wait(lambda: row(tab_id) and not row(tab_id).get("otlozhena") and not row(tab_id).get("zagruzka"),
+                 "Explicit keep fixture did not load: " + title)
+            click(title, ["TabItem"], "right")
+            click("Не выгружать автоматически", ["MenuItem", "Button"])
+            wait(lambda: row(tab_id) and row(tab_id).get("memory_keep") is True,
+                 "Actual per-tab keep command was not persisted: " + title)
+        report["automatic_isolation_keep_ids"] = [1, 4, 5, 6, 10]
+        report["checks"].append({"individual_keep_enabled_via_actual_tab_menu": True})
+        tab("MemoryAutoHeap")
+        wait(lambda: any(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "allocated"
+                         and r.get("bytes") == a.heap_mb * 1024**2 and r.get("first") == r.get("last") == 41 for r in receipts),
+             "Safe automatic page did not actually allocate/touch its heap")
+        if row(9).get("nazad") or row(9).get("vpered"):
+            raise AssertionError("Automatic fixture unexpectedly has navigation history")
+        # Native wheel scrolling, without keys/forms/sessionStorage/media.
+        journal = (data / "zhurnal.log").read_text(encoding="utf-8")
+        container = int(re.findall(r'memory: запуск ок, окно (\d+)', journal)[-1])
+        box = wintypes.RECT()
+        if not u.GetWindowRect(container, ctypes.byref(box)):
+            raise AssertionError("Automatic fixture viewport missing")
+        gui.moveTo(box.left + 400, box.top + 300)
+        gui.scroll(-6)
+        previous = sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts)
+        physical_page_click()
+        wait(lambda: sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts) > previous,
+             "Actual automatic-fixture scroll snapshot missing")
+        scroll_before = [r for r in receipts if r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot"][-1]
+        if not scroll_before.get("trusted") or scroll_before.get("scroll_y", 0) < 200:
+            raise AssertionError("Safe automatic fixture was not physically scrolled")
+        tab("MemoryKeeper")
+        auto_before = memory("before_automatic_sleep")
+        protected_hits = {path: hits[path] for path in ["/audio", "/audio-paused", "/web-audio", "/rtc", "/private"]}
+        report["checks"].append({"automatic_initially_off": json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))["memory_saver"] is False})
+        if report["checks"][-1]["automatic_initially_off"] is not True:
+            raise AssertionError("Automatic saver was enabled during manual acceptance")
+        click("Настройки NexusBro", ["Button"])
+        click("Вкладки и поиск", ["Button"])
+        checkbox = wait(lambda: find("Экономить память неактивных вкладок", ["CheckBox"]), "No real memory saver checkbox")
+        if checkbox.iface_toggle.CurrentToggleState != 0:
+            raise AssertionError("Real memory saver checkbox did not reflect the initial OFF setting")
+        try:
+            checkbox.iface_scroll_item.ScrollIntoView()
+        except Exception:
+            pass
+        checkbox.click_input()
+        click("Сохранить", ["Button"])
+        def saver_enabled():
+            try:
+                settings = json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))
+                return settings.get("memory_saver") is True and settings.get("memory_saver_minutes") == 30
+            except (ValueError, OSError):
+                return False
+        wait(saver_enabled, "Real settings did not enable automatic saver with normal 30-minute policy")
+        # No manual unload command or interaction with this tab after enabling.
+        wait(lambda: row(9) and row(9).get("otlozhena") and not row(9).get("memory_pending"),
+             "Idle automatic fixture did not actually close into its retained sleeping row", 45)
+        logs = native_logs()
+        if not re.search(r'NEXUSBRO_MEMORY tab=9\b[^\n]*requested=automatic', logs):
+            raise AssertionError("Automatic closure has no actual native automatic-request proof")
+        if not re.search(r'NEXUSBRO_MEMORY tab=9\b[^\n]*verified=two-phase close=graceful automatic=true', logs):
+            raise AssertionError("Automatic closure did not complete actual two-phase verification/graceful close")
+        auto_dropped = False
+        for attempt in range(6):
+            auto_after = memory(f"after_automatic_sleep_{attempt}")
+            if auto_before - auto_after >= a.min_drop_mb * 1024**2:
+                auto_dropped = True
+                break
+            time.sleep(1)
+        if not auto_dropped:
+            raise AssertionError("Automatic native close did not reclaim the required private commit")
+        report["checks"].append({"actual_automatic_two_phase_close": True,
+                                 "drop_private_bytes": auto_before - auto_after,
+                                 "isolated_idle_seconds": 8, "normal_policy_minutes": 30})
+        for tab_id in [1, 3, 4, 5, 6, 10, 11, 12, 13, 14]:
+            if not row(tab_id) or row(tab_id).get("otlozhena"):
+                raise AssertionError(f"Protected pinned/keep/media/resource tab was automatically unloaded: {tab_id}")
+        if row(10).get("memory_keep") is not True:
+            raise AssertionError("Automatic saver discarded the individual keep preference")
+        for path, before_hits in protected_hits.items():
+            if hits[path] != before_hits:
+                raise AssertionError("Protected page navigated/reloaded during automatic idle window: " + path)
+        media_after = {}
+        for page, tab_id in [("MemoryAudio", 11), ("MemoryAudioPaused", 12),
+                             ("MemoryWebAudio", 13), ("MemoryRTC", 14)]:
+            if row(tab_id).get("otlozhena"):
+                raise AssertionError("Protected media row was sleeping before physical inspection")
+            tab(page)
+            after_state = actual_media_action(page, 148, "snapshot")
+            before_state = media_before[page]
+            if page == "MemoryAudio":
+                first_after = after_state
+                time.sleep(.8)
+                after_state = actual_media_action(page, 148, "snapshot")
+                immediate_delta = (after_state["current_time"] - first_after["current_time"]) % after_state["duration"]
+                if not .25 <= immediate_delta <= 3.5:
+                    raise AssertionError("Two actual HTML playback snapshots did not show a progressing media clock")
+                report["html_audio_followup_clock"] = {"first": first_after, "second": after_state}
+                if after_state.get("paused") is not False:
+                    raise AssertionError("Real HTML audio stopped during automatic idle period")
+                duration = after_state["duration"]
+                actual = (after_state["current_time"] - before_state["current_time"]) % duration
+                wall = (after_state["received_seconds"] - before_state["received_seconds"]) % duration
+                drift = abs(actual - wall)
+                if min(drift, duration - drift) > 3:
+                    raise AssertionError("Actual HTML playback clock did not continue across automatic idle period")
+            elif page == "MemoryAudioPaused":
+                if after_state.get("paused") is not True or abs(after_state["current_time"] - before_state["current_time"]) > .15:
+                    raise AssertionError("Paused HTML audio was changed or resumed by automatic saver")
+            elif page == "MemoryWebAudio":
+                delta = after_state["current_time"] - before_state["current_time"]
+                wall = after_state["received_seconds"] - before_state["received_seconds"]
+                if after_state.get("context_state") != "running" or delta < 1 or abs(delta - wall) > 3:
+                    raise AssertionError("Actual WebAudio clock did not continue across automatic idle period")
+            elif after_state.get("connection_state") != "new" or after_state.get("signaling_state") != "stable":
+                raise AssertionError("Retained local RTCPeerConnection was lost")
+            media_after[page] = after_state
+        report["media_clock_proofs"] = {"before": media_before, "after": media_after}
+        tab("MemoryPrivate")
+        time.sleep(.5)
+        if hits["/private"] != protected_hits["/private"]:
+            raise AssertionError("Private page reloaded after automatic saver inspection")
+        tab("MemoryAutoHeap")
+        wait(lambda: row(9) and not row(9).get("otlozhena") and not row(9).get("zagruzka"),
+             "Automatic sleeping row did not wake")
+        previous = sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts)
+        physical_page_click()
+        wait(lambda: sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts) > previous,
+             "No actual snapshot of automatic wake scroll/storage")
+        wake_auto = [r for r in receipts if r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot"][-1]
+        if (wake_auto.get("seen") != "preserved" or "memoryauto=preserved" not in wake_auto.get("cookie", "")
+                or abs(wake_auto.get("scroll_y", 0) - scroll_before["scroll_y"]) > 64):
+            raise AssertionError("Automatic wake lost actual cookie/localStorage/scroll state")
+        report["checks"].append({"automatic_same_row_wake_cookie_storage_scroll_preserved": True})
+        report["coverage"]["automatic_unload"] = "actual_native_two_phase_auto_close_private_commit_drop_and_wake"
+        report["coverage"]["media"] = "actual_html_playing_paused_webaudio_clocks_and_local_rtc_retained"
         report["completed"] = True
         ImageGrab.grab().save(out / "completed.png")
     except Exception as error:
@@ -474,9 +721,9 @@ def main():
     p.add_argument("--out", required=True)
     p.add_argument("--heap-mb", type=int, default=192)
     p.add_argument("--min-drop-mb", type=int, default=64)
-    p.add_argument("--timeout", type=int, default=480)
+    p.add_argument("--timeout", type=int, default=600)
     a = p.parse_args()
-    if not (128 <= a.heap_mb <= 512 and 32 <= a.min_drop_mb <= a.heap_mb // 2 and 120 <= a.timeout <= 900):
+    if not (128 <= a.heap_mb <= 512 and 32 <= a.min_drop_mb <= a.heap_mb // 2 and 120 <= a.timeout <= 600):
         p.error("Heap/drop/time outside bounded fixture limits")
     run(a)
 
