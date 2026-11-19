@@ -20,7 +20,7 @@ CEF_PATH=/absolute/cef xvfb-run -a target/debug/examples/route_context_probe \
 - `shared`: B создаётся штатной shared-фабрикой от A; сначала выставляется proxyA на A, затем proxyB на B. Это намеренно проверяет общую preference, НЕ обещает независимые пути.
 - `cli`: независимые A/B, но процесс дополнительно получает `--proxy-server=proxyA`; проверяет управляемость preference и фактический приоритет CLI.
 
-Оба контекста должны вызвать `OnRequestContextInitialized` до настройки proxy и создания Browser. Предельное ожидание инициализации10с. JSONL stdout содержит по A/B `context`, булевы `can_set_proxy`, `set_proxy_ok`, `sharing`. Эти поля — измерения API, не подтверждение маршрута. Значения cookies/storage/proxy preference не выводятся.
+Оба контекста должны вызвать `OnRequestContextInitialized` до настройки proxy и создания Browser. Предельное ожидание инициализации10с. JSONL stdout содержит по A/B `context`, булевы `can_set_proxy`, `set_proxy_ok`, `sharing`. Эти поля — измерения API, не подтверждение маршрута. Значения cookies/storage/proxy preference не выводятся. Для диагностики выводятся булевы результаты setters/validity, тип Value и тип зарегистрированной preference, а также ошибка SetPreference длиной до250 символов. Это только синтетический loopback experiment.
 
 После настройки обеих preferences открываются настоящие CEF Browser A/B, соответственно same-origin `/first?context=A` и `/second?context=B`. Target и оба proxy проверяются через URL parser: только HTTP, host 127.0.0.1/localhost/[::1], явный нестандартный порт, пустые username/password, путь /, без query/fragment. Independent/shared не получают CLI proxy-флагов. Только в CLI-сценарии установлен `proxy-bypass-list=<-loopback>`; во всех сценариях запрашивается `bypass_list=<-loopback>` в preference, чтобы implicit bypass не делал тест фиктивным. Внешние fixture URLs и реальные сайты запрещены. Python может детерминированно вернуть `/second` только после POST `/first`, чтобы измерить видимость cookies/localStorage без гонки.
 
@@ -39,3 +39,5 @@ Main loop ограничен35с от начала подготовки конт
 содержит временный launcher в зарегистрированном build.yml. Не сливать этот
 launcher в продуктовую ветку: переносить только example, Python, отдельную
 route-context-probe.yml и документацию. Маршруты пользователя не реализованы.
+
+Диагностика первой runtime-попытки: independent дал can_set_proxy=true, set_proxy_ok=false, фактический DIRECT/DIRECT. Подтверждения независимых proxy пока нет. Официальный CEF pref_helper.cc проверяет регистрацию, изменяемость, валидность Value и совпадение его типа; Value::SetDictionary сам возвращает true после привязки dictionary. Поэтому добавлены измерения каждого этапа без изменения ожидаемых маршрутов.

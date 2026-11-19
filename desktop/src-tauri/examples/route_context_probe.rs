@@ -94,27 +94,37 @@ fn configure(
     let key = CefString::from("proxy");
     let can = context.can_set_preference(Some(&key)) != 0;
     let mut dict = dictionary_value_create().ok_or("dictionary creation failed")?;
-    dict.set_string(
+    let mode_ok = dict.set_string(
         Some(&CefString::from("mode")),
         Some(&CefString::from("fixed_servers")),
-    );
-    dict.set_string(
+    ) != 0;
+    let server_ok = dict.set_string(
         Some(&CefString::from("server")),
         Some(&CefString::from(proxy)),
-    );
-    dict.set_string(
+    ) != 0;
+    let bypass_ok = dict.set_string(
         Some(&CefString::from("bypass_list")),
         Some(&CefString::from("<-loopback>")),
-    );
+    ) != 0;
+    let dict_valid = dict.is_valid() != 0;
     let mut value = value_create().ok_or("value creation failed")?;
-    value.set_dictionary(Some(&mut dict));
+    let dictionary_ok = value.set_dictionary(Some(&mut dict)) != 0;
+    let value_valid = value.is_valid() != 0;
+    let value_type = format!("{:?}", value.get_type());
+    let pref_type = context
+        .preference(Some(&key))
+        .map(|v| format!("{:?}", v.get_type()));
     let mut error = CefString::default();
     let ok = context.set_preference(Some(&key), Some(&mut value), Some(&mut error)) != 0;
     println!(
         "{}",
-        serde_json::json!({"context":label,"can_set_proxy":can,"set_proxy_ok":ok,"sharing":sharing})
+        serde_json::json!({"context":label,"can_set_proxy":can,"set_proxy_ok":ok,"sharing":sharing,
+            "mode_set_ok":mode_ok,"server_set_ok":server_ok,"bypass_set_ok":bypass_ok,
+            "dict_valid":dict_valid,"dictionary_set_ok":dictionary_ok,"value_valid":value_valid,
+            "value_type":value_type,"preference_type":pref_type,
+            "set_proxy_error":error.to_string().chars().take(250).collect::<String>()})
     );
-    // No preference contents or diagnostic strings are serialized.
+    // Only bounded CEF API errors and type diagnostics; never preference contents.
     Ok(())
 }
 fn experiment(
