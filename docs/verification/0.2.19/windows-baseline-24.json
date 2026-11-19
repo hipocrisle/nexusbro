@@ -1,0 +1,151 @@
+{
+  "schema": 1,
+  "measurement_completed": true,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "processor": "AMD64 Family 25 Model 17 Stepping 1, AuthenticAMD",
+  "image": {
+    "ImageOS": "win25-vs2026",
+    "ImageVersion": "20261103.298.1",
+    "RUNNER_ARCH": "X64"
+  },
+  "total_physical_bytes": 17174360064,
+  "logical_cpus": 4,
+  "requested": {
+    "supers": 4,
+    "tabs_per_super": 6,
+    "saved_tabs_per_super": 6,
+    "saved_tabs_total": 24,
+    "visited_tabs_total": 24
+  },
+  "limits": {
+    "processes": 128,
+    "working_set_bytes": 8532843724,
+    "available_before_bytes": 14221406208,
+    "overall_timeout_seconds": 480
+  },
+  "warm_cef_browser_processes": 4,
+  "warm_tab_counts": {
+    "saved": 24,
+    "live": 24,
+    "deferred": 0,
+    "available": true
+  },
+  "fixture_hits": {
+    "/page/0/0": 1,
+    "/page/0/1": 1,
+    "/page/0/2": 1,
+    "/page/0/3": 1,
+    "/page/0/4": 1,
+    "/page/0/5": 1,
+    "/page/1/0": 1,
+    "/page/1/1": 1,
+    "/page/1/2": 1,
+    "/page/1/3": 1,
+    "/page/1/4": 1,
+    "/page/1/5": 1,
+    "/page/2/0": 1,
+    "/page/2/1": 1,
+    "/page/2/2": 1,
+    "/page/2/3": 1,
+    "/page/2/4": 1,
+    "/page/2/5": 1,
+    "/page/3/0": 1,
+    "/page/3/1": 1,
+    "/page/3/2": 1,
+    "/page/3/3": 1,
+    "/page/3/4": 1,
+    "/page/3/5": 1
+  },
+  "loaded_unique_pages": 24,
+  "phases": [
+    {
+      "phase": "cold_saved_lazy",
+      "duration_seconds": 15.15700000000001,
+      "tab_counts": {
+        "saved": 24,
+        "live": 0,
+        "deferred": 24,
+        "available": true
+      },
+      "cpu_core_percent": 2.8864551032526204,
+      "cpu_machine_percent": 0.7216137758131551,
+      "peak_processes": 7,
+      "peak_working_set_bytes": 342552576,
+      "peak_private_bytes": 119754752
+    },
+    {
+      "phase": "warm_active",
+      "duration_seconds": 15.25,
+      "tab_counts": {
+        "saved": 24,
+        "live": 24,
+        "deferred": 0,
+        "available": true
+      },
+      "cpu_core_percent": 5.635245901639344,
+      "cpu_machine_percent": 1.408811475409836,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2882727936,
+      "peak_private_bytes": 983539712
+    },
+    {
+      "phase": "warm_covered",
+      "duration_seconds": 15.187000000000012,
+      "tab_counts": {
+        "saved": 24,
+        "live": 24,
+        "deferred": 0,
+        "available": true
+      },
+      "cpu_core_percent": 4.2182458681767265,
+      "cpu_machine_percent": 1.0545614670441816,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2781007872,
+      "peak_private_bytes": 988618752
+    },
+    {
+      "phase": "warm_minimized",
+      "duration_seconds": 15.172000000000025,
+      "tab_counts": {
+        "saved": 24,
+        "live": 24,
+        "deferred": 0,
+        "available": true
+      },
+      "cpu_core_percent": 2.8836013709464754,
+      "cpu_machine_percent": 0.7209003427366188,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2619056128,
+      "peak_private_bytes": 985083904
+    },
+    {
+      "phase": "warm_restored",
+      "duration_seconds": 15.218999999999994,
+      "tab_counts": {
+        "saved": 24,
+        "live": 24,
+        "deferred": 0,
+        "available": true
+      },
+      "cpu_core_percent": 2.977363821538867,
+      "cpu_machine_percent": 0.7443409553847168,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2592538624,
+      "peak_private_bytes": 976629760
+    }
+  ],
+  "total_seconds": 99.43699999999998,
+  "provenance": {
+    "measurement_run": 44532436734,
+    "package_run": 44512453342,
+    "package_commit": "461636ff743f6fb9f91d9ea80c48610f3be617fb",
+    "installer_sha256": "DC5CB0E7EBAC3292A4CE6C7F4A4FB91D739EAC4BFD2A9191738212FE2242B119",
+    "raw_artifact": "windows-performance-measurement",
+    "raw_samples_in_artifact": true
+  },
+  "limitations": [
+    "Static loopback pages; not the owner workload",
+    "Summed working sets can count shared pages more than once; Private Bytes is committed private memory, not physical resident memory",
+    "No candidate comparison yet; no whole-browser CPU/RAM improvement claimed"
+  ]
+}
