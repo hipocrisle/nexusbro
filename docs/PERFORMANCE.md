@@ -159,3 +159,10 @@ Real Windows screen workloads completed on the published installer from build445
 |44533148196|8|1000 / 24 / 976|71|3.899 GB|1.389 GB|
 
 All fixture hit sets matched exactly the visited pages; cold startup made no page requests. These independent runs show the process-count cost of extra live Supers and verify deferred restoration at 1000 saved tabs. CPU/memory timing between separate VMs is not a controlled optimization comparison. Sum of working sets can double-count shared pages; Private Bytes is committed private memory, not resident physical RAM. Candidate comparison remains pending.
+
+
+## Verified 0.2.19 publication and paired result
+
+Published19Nov15:32:35UTC, immutable app source d80200c, package build44545888529, paired test44553397367, publication44554863848. Public Ed25519/SHA256/size/feed verification passed for EXE/DEB/RPM. CPU results and scope are in REVIEW-0.2.19.md; raw paired artifacts retain complete actual per-page histories, collected by trusted physical clicks after CPU phases. Instrumentation did not override visibility or externally control native windows in product acceptance.
+
+In the same VM, eight Supers/1000 saved/24 visited pages: minimized CPU9.939→2.950%, restored9.965→2.394%;72 stable lifecycle windows passed, background rAFzero, native painted/input recovery passed. This verifies the first Windows CPU fix, not automatic memory unloading or unlimited live profiles.

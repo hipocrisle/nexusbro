@@ -1,0 +1,12 @@
+{
+  "url": "https://nexusbro-sync.hipogas.org/v1/health",
+  "http_status": 200,
+  "body": {
+    "protocol": 1,
+    "service": "nexusbro-sync",
+    "status": "ok"
+  },
+  "checked_at": "2026-11-19T15:37:40.010422+00:00",
+  "read_only": true,
+  "client": "curl"
+}

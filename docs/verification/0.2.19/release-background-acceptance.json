@@ -1,0 +1,209 @@
+{
+  "measurement_completed": true,
+  "requested": {
+    "supers": 2,
+    "tabs_per_super": 2,
+    "saved_tabs_per_super": 2,
+    "saved_tabs_total": 4,
+    "visited_tabs_total": 4
+  },
+  "background_throttle_acceptance": [
+    {
+      "phase": "warm_active",
+      "page": "/page/0/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102225537.943,
+      "stable_end_epoch_ms": 1795102236755.64,
+      "trace_started_epoch_ms": 1795102216264,
+      "trace_captured_epoch_ms": 1795102286448,
+      "trace_total_frames": 53
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/0/1",
+      "actual_reports": 5,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102225537.943,
+      "stable_end_epoch_ms": 1795102236755.64,
+      "trace_started_epoch_ms": 1795102216789,
+      "trace_captured_epoch_ms": 1795102287288,
+      "trace_total_frames": 87
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102225537.943,
+      "stable_end_epoch_ms": 1795102236755.64,
+      "trace_started_epoch_ms": 1795102217950,
+      "trace_captured_epoch_ms": 1795102288664,
+      "trace_total_frames": 53
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/1",
+      "actual_reports": 6,
+      "expected_visible": true,
+      "max_raf_hz": 64,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102225537.943,
+      "stable_end_epoch_ms": 1795102236755.64,
+      "trace_started_epoch_ms": 1795102218483,
+      "trace_captured_epoch_ms": 1795102289501,
+      "trace_total_frames": 3374
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/0",
+      "actual_reports": 5,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 11,
+      "stable_start_epoch_ms": 1795102256942.4226,
+      "stable_end_epoch_ms": 1795102268164.5686,
+      "trace_started_epoch_ms": 1795102216264,
+      "trace_captured_epoch_ms": 1795102286448,
+      "trace_total_frames": 53
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/1",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 11,
+      "stable_start_epoch_ms": 1795102256942.4226,
+      "stable_end_epoch_ms": 1795102268164.5686,
+      "trace_started_epoch_ms": 1795102216789,
+      "trace_captured_epoch_ms": 1795102287288,
+      "trace_total_frames": 87
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/0",
+      "actual_reports": 5,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 11,
+      "stable_start_epoch_ms": 1795102256942.4226,
+      "stable_end_epoch_ms": 1795102268164.5686,
+      "trace_started_epoch_ms": 1795102217950,
+      "trace_captured_epoch_ms": 1795102288664,
+      "trace_total_frames": 53
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/1",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 11,
+      "stable_start_epoch_ms": 1795102256942.4226,
+      "stable_end_epoch_ms": 1795102268164.5686,
+      "trace_started_epoch_ms": 1795102218483,
+      "trace_captured_epoch_ms": 1795102289501,
+      "trace_total_frames": 3374
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102272240.5432,
+      "stable_end_epoch_ms": 1795102283430.8865,
+      "trace_started_epoch_ms": 1795102216264,
+      "trace_captured_epoch_ms": 1795102286448,
+      "trace_total_frames": 53
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/1",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102272240.5432,
+      "stable_end_epoch_ms": 1795102283430.8865,
+      "trace_started_epoch_ms": 1795102216789,
+      "trace_captured_epoch_ms": 1795102287288,
+      "trace_total_frames": 87
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102272240.5432,
+      "stable_end_epoch_ms": 1795102283430.8865,
+      "trace_started_epoch_ms": 1795102217950,
+      "trace_captured_epoch_ms": 1795102288664,
+      "trace_total_frames": 53
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/1",
+      "actual_reports": 6,
+      "expected_visible": true,
+      "max_raf_hz": 64,
+      "complete_trusted_trace": true,
+      "covered_full_seconds": 10,
+      "stable_start_epoch_ms": 1795102272240.5432,
+      "stable_end_epoch_ms": 1795102283430.8865,
+      "trace_started_epoch_ms": 1795102218483,
+      "trace_captured_epoch_ms": 1795102289501,
+      "trace_total_frames": 3374
+    }
+  ],
+  "restored_cef_rgb": [
+    [
+      24,
+      85,
+      65
+    ],
+    [
+      24,
+      85,
+      65
+    ],
+    [
+      24,
+      85,
+      65
+    ]
+  ],
+  "restored_input_proofs": [
+    {
+      "page": "/page/1/1",
+      "value": "nexusbro-performance-input",
+      "trusted": true,
+      "focus": true,
+      "received_seconds": 90.969
+    }
+  ],
+  "run": 44554863848,
+  "external_diagnostic_actions": false,
+  "complete_actual_page_histories": 4
+}
