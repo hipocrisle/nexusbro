@@ -115,8 +115,13 @@ def run(args):
         deadline = time.monotonic() + 10
         raw_lines = []
         while time.monotonic() < deadline:
-            text = log.read_text(encoding='utf-8', errors='replace') if log.is_file() else ''
-            raw_lines = text[-1024 * 1024:].splitlines()
+            text = ''
+            if log.is_file():
+                with log.open('rb') as stream:
+                    stream.seek(0, 2)
+                    stream.seek(max(0, stream.tell() - 1024 * 1024))
+                    text = stream.read(1024 * 1024).decode('utf-8', errors='replace')
+            raw_lines = text.splitlines()
             if any(re.match(r'NEXUSBRO_MEMORY tab=' + str(first) + r'\b.*\brefused=', line)
                    for line in raw_lines):
                 report['observed_native_refusal'] = True
@@ -128,13 +133,13 @@ def run(args):
     except Exception as error:
         # No exception text: inspector/IPC errors may include expressions or URLs.
         report['error_type'] = type(error).__name__
-        raise
+        raise RuntimeError('Native diagnostic failed; inspect sanitized results.json') from None
     finally:
-        if device:
-            device.close()
-        if server:
-            server.shutdown()
-            server.server_close()
+        for cleanup in ([device.close] if device else []) + ([server.shutdown, server.server_close] if server else []):
+            try:
+                cleanup()
+            except Exception as error:
+                report['cleanup_error_type'] = type(error).__name__
         if worker:
             worker.join(timeout=2)
         (out / 'results.json').write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding='utf-8')
