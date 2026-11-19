@@ -8,3 +8,6 @@ mod cef_events;
 
 #[path = "../../../desktop/src-tauri/src/memory_guard.rs"]
 mod memory_guard;
+
+#[path = "../../../desktop/src-tauri/src/sync_receipts.rs"]
+mod sync_receipts;

@@ -18,6 +18,7 @@ mod nastrojki;
 mod cef_vkladki;
 mod memory_guard;
 mod memory_cef;
+mod sync_receipts;
 mod cef_memory_renderer;
 #[cfg(target_os = "windows")]
 mod cef_visibility_win;

@@ -584,6 +584,7 @@ fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser
     if tab.zakreplena{return Some("Сначала открепите вкладку");}
     if automatic&&tab.memory_keep{return Some("Для вкладки отключена автоматическая выгрузка");}
     if tab.zagruzka||browser.is_loading()!=0{return Some("Дождитесь загрузки страницы");}
+    if browser.frame_count()!=1{return Some("Вкладка содержит вложенные документы и остаётся в памяти");}
     if pending_tools.contains_key(&id)||browser.host().is_some_and(|h|h.has_dev_tools()!=0){return Some("Сначала закройте инструменты разработчика");}
     if crate::zagruzki::tab_busy(id){return Some("Вкладка выполняет загрузку файла");}
     if automatic&&(browser.can_go_back()!=0||browser.can_go_forward()!=0){return Some("Сохраняем внутреннюю историю переходов вкладки");}
@@ -853,6 +854,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::MemorySettings{enabled,minutes})=>{
                     *memory_enabled=enabled;*memory_minutes=minutes.clamp(15,240);
+                    if !enabled{let ids=sleep_requests.iter().filter(|(_,a)|a.automatic&&a.stage!=MemoryStage::Closing).map(|(id,_)|*id).collect::<Vec<_>>();for id in ids{memory_refused(id,"Экономия памяти отключена",s,tx,sleep_requests,memory_registrations,brauzery);}}
                     for extra in extras.values(){let _=extra.tx.send(Sobytie::Komanda(Komanda::MemorySettings{enabled,minutes}));}
                 }
                 Sobytie::Komanda(Komanda::MemoryKeep{id,keep})=>{
@@ -861,6 +863,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::Usypit{id}|Komanda::MemoryAuto{id}) => {
                     let automatic=memory_automatic;
+                    if automatic&&!*memory_enabled{continue;}
                     let reason=memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private)
                         .or_else(||if sleep_requests.contains_key(&id){Some("Выгрузка этой вкладки уже запрошена")}else{None})
                         .or_else(||if perevody.contains_key(&id){Some("Дождитесь завершения перевода страницы")}else{None});
@@ -873,6 +876,7 @@ impl Rabota {
                         static NEXT_MEMORY:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
                         let request=NEXT_MEMORY.fetch_add(1,std::sync::atomic::Ordering::Relaxed).to_string();
                         let identity=browser.identifier();
+                        crate::cef_interfeys::cancel_context(identity);
                         let sent=crate::memory_cef::probe(browser,&request,&token);
                         sleep_requests.insert(id,MemoryAttempt{identity,token,request,stage:MemoryStage::Preflight,automatic,started:std::time::Instant::now(),wake:false,timed_out:false,scroll:(0.0,0.0)});
                         if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.memory_pending=true;}
@@ -947,8 +951,7 @@ impl Rabota {
                     let Some(attempt)=sleep_requests.get(&id).filter(|a|a.identity==identity&&Some(a.request.as_str())==data["request"].as_str()&&Some(a.token.as_str())==data["token"].as_str())else{continue;};
                     if !matches!(attempt.stage,MemoryStage::Preflight|MemoryStage::Verify){continue;}
                     let automatic=attempt.automatic;
-                    let reason=memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private)
-                        .map(str::to_owned)
+                    let reason=if *browser_locked||*closing{Some("Браузер заблокирован или закрывается".to_owned())}else{memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private).map(str::to_owned)}
                         .or_else(||if crate::memory_guard::token(identity).as_deref()!=Some(attempt.token.as_str()){Some("Документ изменился во время проверки".into())}else{None})
                         .or_else(||if data["known"]!=true{Some("Безопасность выгрузки страницы не подтверждена".into())}else{None})
                         .or_else(||data["reason"].as_str().map(str::to_owned));
@@ -973,14 +976,14 @@ impl Rabota {
                 }
                 Sobytie::MemoryFrozen(id,identity,request,success)=>{
                     let Some(attempt)=sleep_requests.get_mut(&id).filter(|a|a.identity==identity&&a.request==request&&a.stage==MemoryStage::Freezing)else{
-                        if let Some(b)=brauzery.get(&id).filter(|b|b.identifier()==identity){crate::memory_cef::resume(b);}continue;
+                        if !sleep_requests.contains_key(&id){if let Some(b)=brauzery.get(&id).filter(|b|b.identifier()==identity){crate::memory_cef::resume(b);}}continue;
                     };
                     attempt.stage=MemoryStage::Verify;
                     let sent=success&&brauzery.get(&id).is_some_and(|b|crate::memory_cef::probe(b,&attempt.request,&attempt.token));
                     if !sent{memory_refused(id,"Не удалось завершить проверку страницы",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;}
                 }
                 Sobytie::MemoryRefused(id,identity) => {
-                    if sleep_requests.get(&id).is_some_and(|a|a.identity==identity){memory_refused(id,"Страница удерживает несохранённые данные и осталась в памяти",s,tx,sleep_requests,memory_registrations,brauzery);}
+                    if sleep_requests.get(&id).is_some_and(|a|a.identity==identity){memory_refused(id,"Страница удерживает несохранённые данные и осталась в памяти",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;}
                 }
                 Sobytie::Zakryta(id,identity) => {
                     // A callback from the previous WebContents cannot close a
@@ -1311,6 +1314,12 @@ impl Rabota {
         if !s.vkladki.is_empty() && !s.vkladki.iter().any(|v| v.id == s.aktivnaya) {
             s.aktivnaya = s.vkladki[0].id;
             fokus = true;
+        }
+        if fokus_klaviatury {
+            if let Some(attempt)=sleep_requests.get_mut(&s.aktivnaya){
+                if attempt.stage==MemoryStage::Closing{attempt.wake=true;}
+                else{memory_refused(s.aktivnaya,"Вкладка снова используется",s,tx,sleep_requests,memory_registrations,brauzery);izmeneno=true;}
+            }
         }
         if fokus && !*browser_locked {
             // Восстановленные страницы не создаются до явного выбора. Закрытие
