@@ -15,8 +15,18 @@ struct Document {
     token: String,
     context: V8Context,
     probe: Option<V8Value>,
+    lifetime: u64,
+    attempts: u8,
+}
+#[derive(Clone)]
+struct Seed {
+    owner: Browser,
+    name: String,
+    nonce: String,
+    lifetime: u64,
 }
 thread_local! {
+    static SEEDS: RefCell<HashMap<i32, Seed>> = Default::default();
     static DOCUMENTS: RefCell<HashMap<(i32, String), Document>> = Default::default();
 }
 static NEXT: AtomicU64 = AtomicU64::new(1);
@@ -97,32 +107,61 @@ fn send(frame: &Frame, name: &str, value: Value) {
 fn unknown(reason: &str) -> Value {
     json!({"known":false,"reason":reason,"scroll_x":0,"scroll_y":0})
 }
-fn install(context: &V8Context) -> Option<V8Value> {
-    let valid = context.is_valid() != 0;
-    let entered = valid && context.enter() != 0;
-    if !entered {
-        diagnostic(format_args!(
-            "stage=install valid={valid} entered={entered}"
-        ));
-        return None;
+/// Registered before the first real navigation; never install this after page JS.
+pub fn new_document_script(name: &str, nonce: &str) -> String {
+    format!("(function(){{if(window!==top)return;const key={};const capture=window[key];delete window[key];if(typeof capture!=='function')return;capture({},(\n{}\n));}})();",
+        json!(name), json!(nonce), include_str!("../scripts/memory_safety.js"))
+}
+fn same_nonce(actual: &str, expected: &str) -> bool {
+    if actual.len() != expected.len() {
+        return false;
     }
-    let mut value = None;
-    let mut exception = None;
-    let ok = context.eval(
-        Some(&CefString::from(include_str!(
-            "../scripts/memory_safety.js"
-        ))),
-        None,
-        1,
-        Some(&mut value),
-        Some(&mut exception),
-    );
-    let is_function = value.as_ref().is_some_and(|v| v.is_function() != 0);
-    diagnostic(format_args!("stage=install valid={valid} entered={entered} eval_ok={} retval={} is_function={is_function} exception={} line={}",
-        ok!=0, value.is_some(), exception.is_some(), exception.as_ref().map(|e|e.line_number()).unwrap_or(0)));
-    let result = value.filter(|_| ok != 0 && exception.is_none() && is_function);
-    context.exit();
-    result
+    actual
+        .bytes()
+        .zip(expected.bytes())
+        .fold(0u8, |diff, (a, b)| diff | (a ^ b))
+        == 0
+}
+wrap_v8_handler! {
+    struct Capture {
+        document_key: (i32,String), token: String, lifetime: u64,
+        name: String, nonce: String,
+    }
+    impl V8Handler {
+        fn execute(&self,name:Option<&CefString>,object:Option<&mut V8Value>,arguments:Option<&[Option<V8Value>]>,retval:Option<&mut Option<V8Value>>,exception:Option<&mut CefString>)->i32 {
+            let _=(object,exception);
+            let Some(retval)=retval else{return 0;};
+            *retval=v8_value_create_bool(0);
+            if name.map(|n|n.to_string()).as_deref()!=Some(self.name.as_str()){return 1;}
+            let Some(mut current)=v8_context_get_current_context() else{return 1;};
+            let document=DOCUMENTS.with(|docs|docs.borrow().get(&self.document_key).cloned());
+            let Some(document)=document.filter(|d|d.token==self.token && d.lifetime==self.lifetime && d.probe.is_none() && d.attempts<8) else{return 1;};
+            if document.context.is_valid()==0 || document.context.is_same(Some(&mut current))==0{return 1;}
+            // Verify the current native Browser identity as well as its numeric ID.
+            let Some(frame)=current.frame().filter(|f|f.is_main()!=0) else{return 1;};
+            let Some(mut browser)=frame.browser() else{return 1;};
+            let seeded=SEEDS.with(|seeds|seeds.borrow().get(&self.document_key.0).is_some_and(|s|s.lifetime==self.lifetime && s.owner.is_same(Some(&mut browser))!=0));
+            if !seeded || key(&browser,&frame)!=self.document_key{return 1;}
+            let function=arguments.filter(|a|a.len()==2).and_then(|a|{
+                let nonce=a[0].as_ref().filter(|v|v.is_string()!=0)?;
+                let nonce=CefString::from(&nonce.string_value()).to_string();
+                if !same_nonce(&nonce,&self.nonce){return None;}
+                a[1].as_ref().filter(|v|v.is_valid()!=0 && v.is_function()!=0).cloned()
+            });
+            let captured=DOCUMENTS.with(|docs|{
+                let mut docs=docs.borrow_mut();
+                let Some(doc)=docs.get_mut(&self.document_key).filter(|d|d.token==self.token && d.lifetime==self.lifetime && d.probe.is_none() && d.attempts<8) else{return false;};
+                doc.attempts+=1;
+                if let Some(function)=function{doc.probe=Some(function);true}else{false}
+            });
+            if captured {
+                *retval=v8_value_create_bool(1);
+                diagnostic(format_args!("stage=native_capture_success"));
+                send(&frame,"NB_MEMORY_DOCUMENT",json!({"token":self.token}));
+            }
+            1
+        }
+    }
 }
 fn probe(document: &Document, current: &mut V8Context) -> Value {
     if document.context.is_valid() == 0 || document.context.is_same(Some(current)) == 0 {
@@ -178,17 +217,33 @@ fn probe(document: &Document, current: &mut V8Context) -> Value {
 wrap_render_process_handler! {
     struct MemoryRenderer;
     impl RenderProcessHandler {
+        fn on_browser_created(&self,browser:Option<&mut Browser>,extra_info:Option<&mut DictionaryValue>) {
+            let (Some(browser),Some(extra))=(browser,extra_info) else{return;};
+            let name=CefString::from(&extra.string(Some(&CefString::from("nb_memory_name")))).to_string();
+            let nonce=CefString::from(&extra.string(Some(&CefString::from("nb_memory_nonce")))).to_string();
+            // Names are native-generated, bounded identifiers; nonce is a separate secret.
+            if name.len()<16 || name.len()>128 || !name.bytes().all(|b|b.is_ascii_alphanumeric() || b==b'_') || nonce.len()!=32 || !nonce.bytes().all(|b|b.is_ascii_hexdigit()){return;}
+            let lifetime=NEXT.fetch_add(1,Ordering::Relaxed);
+            SEEDS.with(|seeds|{seeds.borrow_mut().insert(browser.identifier(),Seed{owner:browser.clone(),name,nonce,lifetime});});
+        }
         fn on_context_created(&self, browser:Option<&mut Browser>, frame:Option<&mut Frame>, context:Option<&mut V8Context>) {
             let (Some(browser),Some(frame),Some(context))=(browser,frame,context) else { return; };
             if frame.is_main()==0 { return; }
-            // CDP password-manager isolated worlds must not replace this main-
-            // world observer or announce a fictitious document navigation.
             let Some(mut main)=frame.v8_context() else { return; };
             if context.is_same(Some(&mut main))==0 { return; }
+            let seed=SEEDS.with(|seeds|seeds.borrow().get(&browser.identifier()).cloned());
+            let Some(seed)=seed.filter(|s|s.owner.is_same(Some(&mut *browser))!=0) else{return;};
             let Some(token)=new_token() else { return; };
-            let document=Document{token:token.clone(),context:context.clone(),probe:install(context)};
-            DOCUMENTS.with(|docs|{docs.borrow_mut().insert(key(browser,frame),document);});
-            send(frame,"NB_MEMORY_DOCUMENT",json!({"token":token}));
+            let document_key=key(browser,frame);
+            DOCUMENTS.with(|docs|{docs.borrow_mut().insert(document_key.clone(),Document{token:token.clone(),context:context.clone(),probe:None,lifetime:seed.lifetime,attempts:0});});
+            // CEF calls this before Blink installs conditional API properties.
+            // Set only a native capture binding here; never evaluate the observer.
+            let mut handler=Capture::new(document_key,token,seed.lifetime,seed.name.clone(),seed.nonce);
+            let installed=context.global().and_then(|global|{
+                let mut function=v8_value_create_function(Some(&CefString::from(seed.name.as_str())),Some(&mut handler))?;
+                Some(global.set_value_bykey(Some(&CefString::from(seed.name.as_str())),Some(&mut function),sys::cef_v8_propertyattribute_t::V8_PROPERTY_ATTRIBUTE_DONTENUM.into())!=0)
+            }).unwrap_or(false);
+            diagnostic(format_args!("stage=native_binding installed={installed}"));
         }
         fn on_context_released(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,context:Option<&mut V8Context>) {
             let (Some(browser),Some(frame),Some(context))=(browser,frame,context) else { return; };
@@ -199,7 +254,12 @@ wrap_render_process_handler! {
             });
         }
         fn on_browser_destroyed(&self,browser:Option<&mut Browser>) {
-            if let Some(browser)=browser{DOCUMENTS.with(|docs|docs.borrow_mut().retain(|(id,_),_|*id!=browser.identifier()));}
+            let Some(browser)=browser else{return;};
+            let lifetime=SEEDS.with(|seeds|{
+                let mut seeds=seeds.borrow_mut();
+                if seeds.get(&browser.identifier()).is_some_and(|s|s.owner.is_same(Some(&mut *browser))!=0){seeds.remove(&browser.identifier()).map(|s|s.lifetime)}else{None}
+            });
+            if let Some(lifetime)=lifetime{DOCUMENTS.with(|docs|docs.borrow_mut().retain(|(id,_),doc|*id!=browser.identifier() || doc.lifetime!=lifetime));}
         }
         fn on_process_message_received(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,source_process:ProcessId,message:Option<&mut ProcessMessage>)->i32 {
             let (Some(browser),Some(frame),Some(message))=(browser,frame,message) else { return 0; };
