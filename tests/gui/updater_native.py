@@ -24,6 +24,7 @@ def verify_updater(client, device, visible_cef, checks):
             chunk = b'\0' * 16384
             self.send_response(200)
             self.send_header('Access-Control-Allow-Origin', '*')
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
             self.send_header('Content-Type', 'application/octet-stream')
             self.send_header('Content-Length', str(len(chunk) * 120))
             self.end_headers()
