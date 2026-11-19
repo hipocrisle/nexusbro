@@ -410,6 +410,8 @@ pub fn rabotat(
         rx,
         #[cfg(target_os = "windows")]
         _event_relay: event_relay,
+        #[cfg(target_os = "windows")]
+        native_visibility: Default::default(),
         brauzery,
         razmer,
         devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40,devtools_pixels:None, ui_last:String::new(), perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),
@@ -512,6 +514,8 @@ struct Rabota {
     rx: Receiver<Sobytie>,
     #[cfg(target_os = "windows")]
     _event_relay: crate::cef_events::Relay<Sobytie>,
+    #[cfg(target_os = "windows")]
+    native_visibility: crate::cef_visibility_win::Visibility,
     brauzery: HashMap<u64, Browser>,
     razmer: Option<(u32, u32)>,
     devtools: HashMap<u64,u32>,
@@ -534,6 +538,15 @@ struct Rabota {
 
 impl Rabota {
     #[cfg(target_os = "windows")]
+    fn sync_native_visibility(&mut self) {
+        let allowed = !self.browser_locked && !self.closing;
+        let windows: Vec<_> = self.brauzery.iter().map(|(id, browser)| (
+            browser.identifier(), handle(browser) as u64,
+            allowed && *id == self.s.aktivnaya,
+        )).collect();
+        self.native_visibility.sync(self.k.okno as u64, &windows);
+    }
+    #[cfg(target_os = "windows")]
     fn has_live_devtools(&self) -> bool {
         self.devtools.contains_key(&self.s.aktivnaya) || self.extras.values().any(Self::has_live_devtools)
     }
@@ -552,6 +565,8 @@ impl Rabota {
             self.devtools_pending.clear();self.devtools.clear();
             let _=sistema::pokazat(self.k.okno,false);
         }
+        #[cfg(target_os = "windows")]
+        self.sync_native_visibility();
     }
     fn shag(&mut self) -> anyhow::Result<()> {
         crate::cef_interfeys::prune_contexts();
@@ -659,7 +674,7 @@ impl Rabota {
                     match sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya){Ok(b)=>{child_b.insert(tab.id,b);},Err(e)=>{eprintln!("cef: страница нового окна: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}}
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,#[cfg(target_os = "windows")] native_visibility:Default::default(),brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -778,6 +793,9 @@ impl Rabota {
                     crate::poisk::ochistit(id);
                     if let Some(tab)=s.vkladki.iter().find(|v|v.id==id&&!v.privatnaya&&v.adres!="about:blank").cloned(){s.zakrytye.push(tab);if s.zakrytye.len()>30{s.zakrytye.remove(0);}}
                     if s.aktivnaya == id {
+                        // The close callback can arrive in a later relay tick
+                        // than Komanda::Zakryt. Preserve focus for the neighbour.
+                        fokus_klaviatury = true;
                         if let Some(i) = s.vkladki.iter().position(|v| v.id == id) {
                             if let Some(v) = s.vkladki.get(if i > 0 { i - 1 } else { i + 1 }) {
                                 s.aktivnaya = v.id;
@@ -1126,6 +1144,8 @@ impl Rabota {
         }
         #[cfg(not(target_os = "windows"))]
         let _ = handled_events;
+        #[cfg(target_os = "windows")]
+        self.sync_native_visibility();
         Ok(())
     }
 }

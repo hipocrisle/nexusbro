@@ -16,6 +16,8 @@ mod brauzer;
 mod sessiya;
 mod nastrojki;
 mod cef_vkladki;
+#[cfg(target_os = "windows")]
+mod cef_visibility_win;
 mod cef_interfeys;
 pub mod cef_dvizhok;
 mod okna;
