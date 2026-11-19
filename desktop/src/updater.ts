@@ -53,14 +53,12 @@ export async function proverit_obnovlenie(
     }
     if (!soglasen) return;
 
-    // Установщик перезапустит программу, чужие окна за ней не умеют
-    // следовать — прячем их заранее.
-    await invoke("pokazat_dvizhki", { vidno: false });
-
+    // Скачивание не закрывает браузер: сайты остаются видимыми и доступными.
+    // Скрывать движки нужно только перед запуском установщика.
     let soobshchenie = "Скачиваю обновление…";
     let vsego = 0;
     let polucheno = 0;
-    await update.downloadAndInstall((sobytie) => {
+    await update.download((sobytie) => {
       if (sobytie.event === "Started" && sobytie.data.contentLength) {
         vsego = sobytie.data.contentLength;
       }
@@ -74,7 +72,14 @@ export async function proverit_obnovlenie(
       }
     });
     console.log(soobshchenie);
-    await relaunch();
+    await invoke("pokazat_dvizhki", { vidno: false });
+    try {
+      await update.install();
+      await relaunch();
+    } finally {
+      // Ошибка установки/перезапуска не должна оставлять пустое окно.
+      await invoke("pokazat_dvizhki", { vidno: true });
+    }
   } catch (e) {
     if (!tiho) soobshchit?.("Проверка обновления не удалась: " + e);
     console.warn("проверка обновления не удалась:", e);

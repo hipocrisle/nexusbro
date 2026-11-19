@@ -67,6 +67,7 @@ jobs:
           node-version: "22"
       - run: npm ci && npm run build
         working-directory: desktop
+      - run: node --test tests/updater_visibility.cjs
       - run: |
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py
@@ -280,6 +281,7 @@ jobs:
       - name: Проверить списки и подписки в интерфейсе
         if: matrix.os == 'ubuntu-24.04'
         run: |
+          node --test tests/updater_visibility.cjs
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py
           python3 tests/browser_ui_0213.py
