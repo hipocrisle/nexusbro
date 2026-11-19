@@ -15,14 +15,17 @@
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.14.1",
     "@tauri-apps/plugin-window-state": "^2.5.0",
+    "qrcode": "1.5.4",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.1.0",
+    "@types/qrcode": "1.5.6",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "@vitejs/plugin-react": "^4.3.3",
+    "jsqr": "1.4.0",
     "typescript": "^5.6.3",
     "vite": "^5.4.11"
   }

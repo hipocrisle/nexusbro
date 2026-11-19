@@ -13,6 +13,7 @@ import shutil
 import subprocess
 import tempfile
 import threading
+import urllib.parse
 from playwright.sync_api import sync_playwright, expect
 
 root=pathlib.Path(__file__).resolve().parents[1]
@@ -68,7 +69,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
  harness=pathlib.Path(temp);(harness/'src').mkdir()
- for name in ['SecuritySettings.tsx','security.ts','securitySettings.css','Icons.tsx','Vybor.tsx','App.css']:
+ for name in ['SecuritySettings.tsx','TotpQr.tsx','security.ts','securitySettings.css','Icons.tsx','Vybor.tsx','App.css']:
   shutil.copy2(root/'desktop/src'/name,harness/'src'/name)
  modules=root/'desktop/node_modules'
  if not modules.exists():modules=pathlib.Path('/matrix/nexusbro/desktop/node_modules')
@@ -76,7 +77,7 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
  (harness/'node_modules').symlink_to(modules.resolve(),target_is_directory=True)
  (harness/'package.json').write_text('{"type":"module"}')
  (harness/'index.html').write_text('<div id="root"></div><script type="module" src="/src/main.tsx"></script>')
- (harness/'src/main.tsx').write_text("import React from 'react';import {createRoot} from 'react-dom/client';import SecuritySettings from './SecuritySettings';import './App.css';createRoot(document.getElementById('root')!).render(<SecuritySettings onClose={()=>{document.body.dataset.closed='yes'}}/>);")
+ (harness/'src/main.tsx').write_text("import React from 'react';import jsQR from 'jsqr';import {createRoot} from 'react-dom/client';import SecuritySettings from './SecuritySettings';import './App.css';(window as any).__decodeTotpQr=()=>{const c=document.querySelector<HTMLCanvasElement>('[data-testid=totp-qr]');if(!c||!c.width)return null;const data=c.getContext('2d')!.getImageData(0,0,c.width,c.height);return jsQR(data.data,c.width,c.height)?.data??null;};createRoot(document.getElementById('root')!).render(<SecuritySettings onClose={()=>{document.body.dataset.closed='yes'}}/>);")
  (harness/'vite.config.mjs').write_text("import {defineConfig} from 'vite';import react from '@vitejs/plugin-react';export default defineConfig({plugins:[react()]});")
  subprocess.run([str(modules/'.bin/vite'),'build','--config',str(harness/'vite.config.mjs')],cwd=harness,check=True,stdout=subprocess.DEVNULL)
  server=http.server.ThreadingHTTPServer(('127.0.0.1',0),functools.partial(Quiet,directory=str(harness/'dist')))
@@ -84,7 +85,7 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
  try:
   with sync_playwright() as p:
    browser=p.chromium.launch(channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome') or None,headless=True,args=['--no-sandbox'])
-   page=browser.new_page(viewport={'width':1100,'height':820});errors=[];confirm_accept={'value':True};confirmations=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:(confirmations.append(d.message),d.accept() if confirm_accept['value'] else d.dismiss()));page.add_init_script(mock)
+   page=browser.new_page(viewport={'width':1100,'height':820});external_requests=[];page.on('request',lambda r:external_requests.append(True) if r.url.startswith(('https://','http://')) and not r.url.startswith(f'http://127.0.0.1:{server.server_port}/') else None);errors=[];confirm_accept={'value':True};confirmations=[];page.on('pageerror',lambda e:errors.append(str(e)));page.on('dialog',lambda d:(confirmations.append(d.message),d.accept() if confirm_accept['value'] else d.dismiss()));page.add_init_script(mock)
    page.goto(f'http://127.0.0.1:{server.server_port}')
    dialog=page.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro')
    expect(dialog.get_by_role('heading',name='Создать защищённое хранилище')).to_be_visible()
@@ -130,6 +131,22 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    region.get_by_role('button',name='Ключ сохранён',exact=True).click();expect(region).not_to_be_visible()
    dialog.get_by_role('button',name='Настроить двухфакторную аутентификацию',exact=True).click()
    expect(dialog.get_by_text('До подтверждения 2FA не включена.',exact=False)).to_be_visible()
+   qr=dialog.get_by_test_id('totp-qr');expect(qr).to_be_visible()
+   assert qr.get_attribute('role')=='img'
+   decoded=page.evaluate('window.__decodeTotpQr()')
+   expected='otpauth://totp/NexusBro:fixture?secret=JBSWY3DPEHPK3PXP&issuer=NexusBro'
+   assert decoded==expected,'Rendered local QR did not decode to the enrollment payload'
+   parts=urllib.parse.urlsplit(decoded);params=urllib.parse.parse_qs(parts.query)
+   assert parts.scheme=='otpauth' and parts.netloc=='totp' and params['issuer']==['NexusBro'],'QR account metadata changed'
+   assert not page.evaluate('window.__account.totp_enabled'),'Showing a QR enabled 2FA without verification'
+   dialog.locator('summary').filter(has_text='Ввести ключ вручную').click()
+   expect(dialog.get_by_test_id('totp-manual-key')).to_be_visible()
+   assert dialog.get_by_test_id('totp-manual-key').inner_text()==params['secret'][0],'Manual key differs from the scannable QR'
+   dialog.get_by_role('button',name='Скопировать ключ настройки',exact=True).click()
+   assert page.evaluate('window.__clipboard')==params['secret'][0],'Manual fallback copied a different key'
+   assert 'Тип: по времени (TOTP), 6 цифр, период 30 секунд.' in dialog.inner_text()
+   dialog.locator('summary').filter(has_text='Ввести ключ вручную').click()
+   page.evaluate("window.__previousTotpCanvas=document.querySelector('[data-testid=totp-qr]')")
    dialog.get_by_label('Код подтверждения 2FA',exact=True).fill('000000')
    dialog.get_by_role('button',name='Подтвердить и включить 2FA',exact=True).click()
    expect(dialog.get_by_role('alert')).to_contain_text('Неверный код 2FA')
@@ -137,6 +154,9 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    dialog.get_by_label('Код подтверждения 2FA',exact=True).fill('123456')
    dialog.get_by_role('button',name='Подтвердить и включить 2FA',exact=True).click()
    codes=dialog.get_by_role('region',name='Резервные коды 2FA',exact=True)
+   expect(qr).to_have_count(0)
+   assert page.evaluate('window.__previousTotpCanvas.width===0&&window.__previousTotpCanvas.height===0'),'Unmounted canvas retained QR pixels'
+   assert 'JBSWY3DPEHPK3PXP' not in dialog.inner_text(),'Enrollment key remained visible after confirmation'
    expect(codes).to_contain_text('BACKUP-ONE')
    codes.get_by_role('button',name='Резервные коды сохранены',exact=True).click();expect(codes).not_to_be_visible()
    dialog.get_by_role('button',name='Синхронизация',exact=True).click()
@@ -316,7 +336,8 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    expect(od.get_by_role('button',name='Войти в NexusBro',exact=True)).to_be_visible()
    assert not offline.evaluate('window.__account.logged_in')
    offline.close()
+   assert not external_requests,'Security UI made an unexpected external request'
    assert not errors,errors
-   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'default_account_without_manual_server':True,'custom_endpoint_preserved':True,'connection_failure_blocks_registration':True,'partial_registration_never_claims_login':True,'password_saving_onboarding':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
+   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'default_account_without_manual_server':True,'custom_endpoint_preserved':True,'connection_failure_blocks_registration':True,'partial_registration_never_claims_login':True,'password_saving_onboarding':True,'local_rendered_totp_qr_independently_decoded':True,'totp_qr_and_manual_key_match':True,'totp_qr_pixels_cleared_on_unmount':True,'no_external_qr_requests':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
    browser.close()
  finally:server.shutdown()

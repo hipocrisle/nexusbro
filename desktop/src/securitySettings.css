@@ -83,3 +83,13 @@
 .security-advanced-server[open] summary{margin-bottom:10px}
 .security-advanced-server p{color:var(--tiho)}
 .security-connecting{font-size:12px;color:var(--tiho);margin:0!important}
+
+.security-totp-steps{margin:0;padding-left:22px;font-size:13px;line-height:1.65}
+.security-totp-steps li+li{margin-top:7px}
+.security-totp-qr{align-self:center;max-width:100%}
+.security-totp-qr canvas{display:block;width:280px;max-width:100%;height:auto;background:#fff;border-radius:4px;image-rendering:pixelated}
+.security-totp-qr canvas[hidden]{display:none}
+.security-totp-manual{border:1px solid var(--kraj);border-radius:8px;padding:12px}
+.security-totp-manual summary{cursor:pointer;color:var(--tekst)}
+.security-totp-manual[open] summary{margin-bottom:12px}
+.security-totp-manual .security-actions{margin-top:12px}
