@@ -262,7 +262,11 @@ def run(args):
                 except (COMError, KeyError):
                     return None
                 return None
-            wait_for(find, f"Real UIA control missing: {kind}/{name}").click_input()
+            control = wait_for(find, f"Real UIA control missing: {kind}/{name}")
+            box = control.rectangle()
+            # The UIA default clickable point may be a nested close button.
+            # Click the leading padding of the requested tab/Super instead.
+            control.click_input(coords=(min(10, max(2, box.width() // 4)), box.height() // 2))
 
         measure("cold_saved_lazy")
         with hit_lock:
