@@ -184,10 +184,11 @@ class Device:
                                           start_new_session=True)
                 os.close(write_fd)
                 write_fd = None
-                ready, _, _ = select.select([read_fd], [], [], 8)
-                require(ready, 'Xvfb did not allocate a display')
+                ready, _, _ = select.select([read_fd], [], [], 25)
+                require(ready, 'Xvfb did not allocate a display within 25 seconds (exit=' +
+                        str(self.x.poll()) + ')')
                 number = os.read(read_fd, 32).decode().strip()
-                require(number.isdigit(), 'Xvfb display allocation failed')
+                require(number.isdigit(), 'Xvfb display allocation failed (exit=' + str(self.x.poll()) + ')')
                 self.display = ':' + number
             finally:
                 os.close(read_fd)
