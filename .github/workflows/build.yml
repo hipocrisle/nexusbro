@@ -589,12 +589,25 @@ jobs:
   runtime:
     if: github.event_name == 'workflow_dispatch' && inputs.runtime_build != ''
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     permissions:
       contents: read
       actions: read
     steps:
       - uses: actions/checkout@v4
+      - name: Verify app sources match the Windows installer run
+        if: ${{ !inputs.runtime_baseline }}
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN: ${{ inputs.runtime_build }}
+        run: |
+          $source = gh api "repos/$env:GITHUB_REPOSITORY/actions/runs/$env:BUILD_RUN" --jq .head_sha
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git fetch --no-tags origin $source
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          git diff --exit-code $source HEAD -- desktop
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/download-artifact@v4
         with:
           name: nexusbro-windows
@@ -630,6 +643,25 @@ jobs:
             .dev-check/windows-background/*.png
             .dev-check/windows-background/*.log
             .dev-check/windows-background/data/profili/*/cef*.log
+          retention-days: 14
+      - name: Verify real automatic unloading and continuing media in the same installer
+        if: ${{ !inputs.runtime_baseline }}
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          python tests/gui/memory_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-memory --timeout 660
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.runtime_baseline
+        with:
+          name: windows-memory-verification
+          path: |
+            .dev-check/windows-memory/*.json
+            .dev-check/windows-memory/*.png
+            .dev-check/windows-memory/*.log
+            .dev-check/windows-memory/data/zhurnal.log
+            .dev-check/windows-memory/data/profili/*/cef*.log
+            .dev-check/windows-memory/data/profili/*/obychnye.json
           retention-days: 14
       - name: Save screen and diagnostics
         if: always()
