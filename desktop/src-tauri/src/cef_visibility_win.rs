@@ -71,12 +71,17 @@ unsafe fn widget_matches(window: HWND, public: HWND, thread: u32) -> bool {
     }
     let mut name = [0u16; 96];
     let size = GetClassNameW(window, &mut name);
-    // CEF 156 browser_platform_delegate_native_win.cc identifies its Views
-    // root as Chrome_WidgetWin_0. A version/layout change fails conservatively.
-    size > 0
-        && "Chrome_WidgetWin_0"
-            .encode_utf16()
-            .eq(name[..size as usize].iter().copied())
+    // Chromium appends a registration counter, not a fixed zero. The native
+    // Windows probe observes Chrome_WidgetWin_1 for the bundled CEF 156.
+    // Keep the structural/owner checks above and accept only a numeric suffix;
+    // renderer HWND classes and unrelated children never match this prefix.
+    let prefix = "Chrome_WidgetWin_";
+    let size = size.max(0) as usize;
+    size > prefix.len()
+        && prefix.encode_utf16().eq(name[..prefix.len()].iter().copied())
+        && name[prefix.len()..size]
+            .iter()
+            .all(|c| (b'0' as u16..=b'9' as u16).contains(c))
 }
 
 unsafe fn find_widget(public: HWND, thread: u32) -> Option<HWND> {
