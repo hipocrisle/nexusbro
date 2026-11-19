@@ -236,7 +236,7 @@ class Device:
             read_fd, write_fd = os.pipe()
             try:
                 self.x = subprocess.Popen(['Xvfb', '-displayfd', str(write_fd), '-screen', '0',
-                                           '1280x900x24', '-nolisten', 'tcp'], pass_fds=(write_fd,),
+                                           '1280x900x24', '-nolisten', 'tcp', '-noreset'], pass_fds=(write_fd,),
                                           stdout=self.log('xvfb.log'), stderr=subprocess.STDOUT,
                                           start_new_session=True)
                 os.close(write_fd)
@@ -247,6 +247,18 @@ class Device:
                 number = os.read(read_fd, 32).decode().strip()
                 require(number.isdigit(), 'Xvfb display allocation failed (exit=' + str(self.x.poll()) + ')')
                 self.display = ':' + number
+                # Keep this owned X server across GTK probes/restarts. A reset
+                # must not try writing a second display number into the closed
+                # allocation pipe (observed fatal Xvfb error in native run).
+                deadline=time.monotonic()+5
+                ready=False
+                while time.monotonic()<deadline:
+                    require(self.x.poll() is None,'Owned Xvfb exited before GTK launch')
+                    probe=subprocess.run(['xdotool','getdisplaygeometry'],env={**os.environ,'DISPLAY':self.display},capture_output=True,text=True,timeout=2)
+                    if probe.returncode==0 and probe.stdout.split()==['1280','900']:
+                        ready=True;break
+                    time.sleep(.05)
+                require(ready,'Owned Xvfb did not accept a real X11 client before GTK launch')
             finally:
                 os.close(read_fd)
                 if write_fd is not None:
