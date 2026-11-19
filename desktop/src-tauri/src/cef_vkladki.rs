@@ -29,7 +29,7 @@ pub(crate) enum Sobytie {
 }
 
 wrap_display_handler! {
-    struct VidStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
+    struct VidStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl DisplayHandler {
         fn on_media_access_change(&self,browser:Option<&mut Browser>,has_video_access:i32,has_audio_access:i32){if let Some(b)=browser{crate::memory_guard::capture(b.identifier(),has_video_access!=0||has_audio_access!=0);}}
         fn on_console_message(&self,browser:Option<&mut Browser>,_level:LogSeverity,message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{
@@ -44,6 +44,7 @@ wrap_display_handler! {
             crate::cef_interfeys::ikonka(self.id, self.tx.clone(), browser, icon_urls);
         }
         fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
+            if self.bootstrap.waiting_for_target(){return;}
             if let (Some(b),Some(t)) = (browser,title) { let _ = self.tx.send(Sobytie::Zagolovok(self.id, b.identifier(), t.to_string())); }
         }
         // ⛔ Без `mut` в объявлении: грамматика `wrap_*!` принимает только
@@ -52,6 +53,7 @@ wrap_display_handler! {
             if frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false) {
                 if let Some(u) = url {
                     let u = u.to_string();
+                    if self.bootstrap.skip_address(&u){return;}
                     if let Some(b)=browser.as_ref(){let _ = self.tx.send(Sobytie::Adres(self.id, b.identifier(), u.clone()));}
 
                 }
@@ -61,9 +63,10 @@ wrap_display_handler! {
 }
 
 wrap_load_handler! {
-    struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
+    struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl LoadHandler {
         fn on_load_end(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
+            if self.bootstrap.waiting_for_target(){return;}
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier()));}}
             if !crate::borba_s_reklamoy::vklyuchena() { return; }
             if let Some(f) = frame {
@@ -82,14 +85,16 @@ wrap_load_handler! {
             }
         }
         fn on_loading_state_change(&self, browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
+            if is_loading==0&&self.bootstrap.waiting_for_target(){return;}
             if let Some(b)=browser{let _ = self.tx.send(Sobytie::Zagruzka(self.id, b.identifier(), is_loading != 0, can_go_back != 0, can_go_forward != 0));}
         }
     }
 }
 
 wrap_life_span_handler! {
-    struct ZhiznStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
+    struct ZhiznStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl LifeSpanHandler {
+        fn on_after_created(&self,browser:Option<&mut Browser>){if let Some(b)=browser{crate::memory_bootstrap::start(b,self.bootstrap.clone());}}
         fn on_before_popup(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>, _popup_id: i32,
             target_url: Option<&CefString>, _target_frame_name: Option<&CefString>, target_disposition: WindowOpenDisposition,
             _user_gesture: i32, _popup_features: Option<&PopupFeatures>, _window_info: Option<&mut WindowInfo>,
@@ -115,6 +120,7 @@ wrap_life_span_handler! {
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             if let Some(browser)=browser{
                 let identity=browser.identifier();
+                self.bootstrap.close(identity);
                 SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&identity);});
                 crate::memory_guard::closed(identity);
                 crate::cef_interfeys::cancel_context(identity);
@@ -156,10 +162,11 @@ wrap_focus_handler! {
 }
 
 wrap_request_handler! {
-    struct SboyStranicy { id: u64, privatnaya:bool, tx:Sender<Sobytie> }
+    struct SboyStranicy { id: u64, privatnaya:bool, tx:Sender<Sobytie>, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl RequestHandler {
         fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
+                if request.as_ref().is_some_and(|r|self.bootstrap.defer(&CefString::from(&r.url()).to_string())){return 1;}
                 crate::cef_interfeys::cancel_context(browser.identifier());
                 crate::memory_guard::navigation(browser.identifier(),request.is_some_and(|r|CefString::from(&r.method()).to_string()=="GET"));
             }}
@@ -198,11 +205,21 @@ wrap_request_handler! {
 }
 
 wrap_client! {
-    struct KlientVkladki { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
+    struct KlientVkladki { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl Client {
         fn on_process_message_received(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,source_process:ProcessId,message:Option<&mut ProcessMessage>)->i32{
             let (Some(b),Some(f),Some(m))=(browser,frame,message)else{return 0;};
             if let Some(data)=crate::memory_cef::receive(b,f,source_process,m){
+                if !self.bootstrap.approved(){
+                    if data["kind"]=="NB_MEMORY_DOCUMENT"{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=false bootstrap_approved=false",b.identifier());}
+                    return 1;
+                }
+                if data["kind"]=="NB_MEMORY_DOCUMENT"{
+                    let current=CefString::from(&f.url()).to_string();
+                    let uri_matches=data["url"].as_str()==Some(current.as_str());
+                    let initial_blank=self.bootstrap.rejects_initial_document(&current);
+                    if !uri_matches||initial_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=false uri_matches={uri_matches} initial_blank={initial_blank}",b.identifier());return 1;}
+                }
                 if data["kind"]=="NB_MEMORY_DOCUMENT"{if let Some(token)=data["token"].as_str().filter(|s|!s.is_empty()&&s.len()<128){crate::memory_guard::document(b.identifier(),token.into());}}
                 let _=self.tx.send(Sobytie::MemoryMessage(self.id,b.identifier(),data));return 1;
             }0
@@ -214,10 +231,10 @@ wrap_client! {
         fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(crate::cef_interfeys::klaviatura(self.id, self.tx.clone())) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(crate::cef_interfeys::menyu(self.id, self.tx.clone(), self.privatnaya)) }
         fn focus_handler(&self) -> Option<FocusHandler> { Some(FokusStranicy::new()) }
-        fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id, self.privatnaya, self.tx.clone())) }
-        fn display_handler(&self) -> Option<DisplayHandler> { Some(VidStranicy::new(self.id, self.tx.clone(), self.privatnaya)) }
-        fn load_handler(&self) -> Option<LoadHandler> { Some(ZagruzkaStranicy::new(self.id, self.tx.clone(), self.privatnaya)) }
-        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(ZhiznStranicy::new(self.id, self.tx.clone(), self.privatnaya)) }
+        fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id, self.privatnaya, self.tx.clone(),self.bootstrap.clone())) }
+        fn display_handler(&self) -> Option<DisplayHandler> { Some(VidStranicy::new(self.id, self.tx.clone(), self.privatnaya,self.bootstrap.clone())) }
+        fn load_handler(&self) -> Option<LoadHandler> { Some(ZagruzkaStranicy::new(self.id, self.tx.clone(), self.privatnaya,self.bootstrap.clone())) }
+        fn life_span_handler(&self) -> Option<LifeSpanHandler> { Some(ZhiznStranicy::new(self.id, self.tx.clone(), self.privatnaya,self.bootstrap.clone())) }
     }
 }
 
@@ -375,12 +392,14 @@ fn sozdat_brauzer(
         PRIVATE_IDS.with(|ids|{ids.borrow_mut().insert(id);});
         Some(slot.clone().ok_or_else(||anyhow::anyhow!("Не создан приватный контекст"))?)
     }else{None};
+    let bootstrap=crate::memory_bootstrap::Bootstrap::new(adres)?;
+    let extra=bootstrap.extra()?;
     let b = browser_host_create_browser_sync(
         Some(&info),
-        Some(&mut KlientVkladki::new(id, tx.clone(), privatnaya)),
-        Some(&CefString::from(adres)),
+        Some(&mut KlientVkladki::new(id, tx.clone(), privatnaya,bootstrap)),
+        Some(&CefString::from("")),
         Some(&BrowserSettings::default()),
-        None,
+        Some(&mut extra.clone()),
         context.as_mut(),
     )
     .ok_or_else(|| anyhow::anyhow!("не создалась обычная вкладка"))?;
@@ -736,7 +755,7 @@ impl Rabota {
                             v.adres = adres.clone();
                         }
                         brauzery.insert(id, sozdat_brauzer(k, id, &v.adres, tx, v.privatnaya)?);
-                        v.otlozhena = false;
+                        v.otlozhena = false;v.zagruzka=v.adres!="about:blank";
                         razbuzhen = Some(id);
                     }
                 }
@@ -1336,7 +1355,7 @@ impl Rabota {
             if fokus_klaviatury && !brauzery.contains_key(&s.aktivnaya) {
                 if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == s.aktivnaya) {
                     brauzery.insert(v.id, sozdat_brauzer(k, v.id, &v.adres, tx, v.privatnaya)?);
-                    v.otlozhena = false;
+                    v.otlozhena = false;v.zagruzka=v.adres!="about:blank";
                 }
             }
             pokazat(&s, &brauzery);

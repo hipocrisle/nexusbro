@@ -1,0 +1,172 @@
+//! Register the early observer after Chromium conditional DOM features, before
+//! any real page navigation. Missing/late bootstrap never authorizes unloading.
+use cef::*;
+use rand_core::{OsRng, RngCore};
+use std::{
+    cell::RefCell,
+    collections::HashMap,
+    sync::{
+        atomic::{AtomicBool, AtomicI32, Ordering},
+        Arc, Mutex,
+    },
+};
+static NEXT: AtomicI32 = AtomicI32::new(9_000_000);
+thread_local! {static REGISTRATIONS:RefCell<HashMap<i32,Registration>>=Default::default();}
+pub struct Bootstrap {
+    pending: AtomicBool,
+    approved: AtomicBool,
+    closed: AtomicBool,
+    seen_real: AtomicBool,
+    target: Mutex<String>,
+    name: String,
+    nonce: String,
+}
+impl Bootstrap {
+    pub fn new(target: &str) -> anyhow::Result<Arc<Self>> {
+        let mut bytes = [0u8; 32];
+        OsRng
+            .try_fill_bytes(&mut bytes)
+            .map_err(|_| anyhow::anyhow!("Не удалось подготовить защиту вкладки"))?;
+        let hex = |bytes: &[u8]| bytes.iter().map(|v| format!("{v:02x}")).collect::<String>();
+        Ok(Arc::new(Self {
+            pending: AtomicBool::new(true),
+            approved: AtomicBool::new(false),
+            closed: AtomicBool::new(false),
+            seen_real: AtomicBool::new(false),
+            target: Mutex::new(target.into()),
+            name: format!("__nb_memory_{}", hex(&bytes[..16])),
+            nonce: hex(&bytes[16..]),
+        }))
+    }
+    pub fn extra(&self) -> anyhow::Result<DictionaryValue> {
+        let value = dictionary_value_create()
+            .ok_or_else(|| anyhow::anyhow!("Не удалось подготовить параметры вкладки"))?;
+        value.set_string(
+            Some(&CefString::from("nb_memory_name")),
+            Some(&CefString::from(self.name.as_str())),
+        );
+        value.set_string(
+            Some(&CefString::from("nb_memory_nonce")),
+            Some(&CefString::from(self.nonce.as_str())),
+        );
+        Ok(value)
+    }
+    pub fn approved(&self) -> bool {
+        self.approved.load(Ordering::Acquire) && !self.closed.load(Ordering::Acquire)
+    }
+    /// User navigation before setup supersedes the initial saved URL. No page
+    /// can run before its script-on-new-document has been registered.
+    pub fn rejects_initial_document(&self, url: &str) -> bool {
+        (url.is_empty() || url == "about:blank")
+            && self.target.lock().unwrap().as_str() != "about:blank"
+    }
+    pub fn defer(&self, url: &str) -> bool {
+        if self.pending.load(Ordering::Acquire) && !url.is_empty() {
+            *self.target.lock().unwrap() = url.into();
+            true
+        } else {
+            false
+        }
+    }
+    pub fn skip_address(&self, url: &str) -> bool {
+        if !url.is_empty() && url != "about:blank" {
+            self.seen_real.store(true, Ordering::Release);
+            return false;
+        }
+        !self.seen_real.load(Ordering::Acquire)
+            && self.target.lock().unwrap().as_str() != "about:blank"
+    }
+    pub fn waiting_for_target(&self) -> bool {
+        !self.seen_real.load(Ordering::Acquire)
+            && self.target.lock().unwrap().as_str() != "about:blank"
+    }
+    pub fn close(&self, identity: i32) {
+        self.closed.store(true, Ordering::Release);
+        self.pending.store(false, Ordering::Release);
+        self.approved.store(false, Ordering::Release);
+        REGISTRATIONS.with(|r| {
+            r.borrow_mut().remove(&identity);
+        });
+    }
+}
+fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
+    if setup.closed.load(Ordering::Acquire) || !setup.pending.swap(false, Ordering::AcqRel) {
+        return;
+    }
+    setup.approved.store(approved, Ordering::Release);
+    eprintln!(
+        "NEXUSBRO_MEMORY_BOOTSTRAP browser={} registered={approved} safety={}",
+        browser.identifier(),
+        if approved { "early" } else { "keep" }
+    );
+    if browser.is_valid() == 0 {
+        return;
+    }
+    let target = setup.target.lock().unwrap().clone();
+    if !target.is_empty() && target != "about:blank" {
+        if let Some(frame) = browser.main_frame() {
+            frame.load_url(Some(&CefString::from(target.as_str())));
+        }
+    }
+}
+wrap_dev_tools_message_observer! {
+    struct BootstrapObserver{setup:Arc<Bootstrap>,message:i32}
+    impl DevToolsMessageObserver{
+        fn on_dev_tools_method_result(&self,browser:Option<&mut Browser>,message_id:i32,success:i32,result:Option<&[u8]>){
+            if message_id!=self.message{return;}
+            let Some(browser)=browser else{return;};
+            let registered=success!=0&&result.filter(|s|s.len()<4096).and_then(|s|serde_json::from_slice::<serde_json::Value>(s).ok()).is_some_and(|v|v["identifier"].as_str().is_some_and(|s|!s.is_empty()));
+            finish(browser,&self.setup,registered);
+        }
+    }
+}
+wrap_task! {
+    struct BootstrapTimeout{browser:Browser,setup:Arc<Bootstrap>}
+    impl Task{fn execute(&self){finish(&self.browser,&self.setup,false);}}
+}
+pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
+    let message = NEXT.fetch_add(1, Ordering::Relaxed);
+    let Some(host) = browser.host() else {
+        finish(browser, &setup, false);
+        return;
+    };
+    let Some(params) = dictionary_value_create() else {
+        finish(browser, &setup, false);
+        return;
+    };
+    let script = crate::cef_memory_renderer::new_document_script(&setup.name, &setup.nonce);
+    params.set_string(
+        Some(&CefString::from("source")),
+        Some(&CefString::from(script.as_str())),
+    );
+    params.set_bool(
+        Some(&CefString::from("runImmediately")),
+        (setup.target.lock().unwrap().as_str() == "about:blank") as i32,
+    );
+    let Some(registration) = host
+        .add_dev_tools_message_observer(Some(&mut BootstrapObserver::new(setup.clone(), message)))
+    else {
+        finish(browser, &setup, false);
+        return;
+    };
+    REGISTRATIONS.with(|r| {
+        r.borrow_mut().insert(browser.identifier(), registration);
+    });
+    if host.execute_dev_tools_method(
+        message,
+        Some(&CefString::from("Page.addScriptToEvaluateOnNewDocument")),
+        Some(&mut params.clone()),
+    ) == 0
+    {
+        finish(browser, &setup, false);
+        return;
+    }
+    if post_delayed_task(
+        ThreadId::UI,
+        Some(&mut BootstrapTimeout::new(browser.clone(), setup.clone())),
+        8000,
+    ) != 1
+    {
+        finish(browser, &setup, false);
+    }
+}
