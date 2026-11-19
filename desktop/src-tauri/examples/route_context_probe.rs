@@ -17,10 +17,19 @@ fn arg(name: &str) -> Result<String, String> {
         .ok_or_else(|| format!("missing {name}"))
 }
 fn loopback(value: &str) -> bool {
-    ["http://127.0.0.1:", "http://localhost:", "http://[::1]:"]
-        .iter()
-        .any(|p| value.starts_with(p))
+    let Ok(url) = reqwest::Url::parse(value) else {
+        return false;
+    };
+    url.scheme() == "http"
+        && matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]"))
+        && url.port().is_some()
+        && url.username().is_empty()
+        && url.password().is_none()
+        && url.path() == "/"
+        && url.query().is_none()
+        && url.fragment().is_none()
 }
+
 wrap_app! {
     struct ProbeApp { cli_proxy: String }
     impl App {
@@ -29,8 +38,8 @@ wrap_app! {
                 for flag in ["disable-gpu", "disable-background-networking", "disable-component-update", "disable-quic", "no-sandbox"] {
                     c.append_switch(Some(&CefString::from(flag)));
                 }
-                c.append_switch_with_value(Some(&CefString::from("proxy-bypass-list")), Some(&CefString::from("<-loopback>")));
                 if !self.cli_proxy.is_empty() {
+                c.append_switch_with_value(Some(&CefString::from("proxy-bypass-list")), Some(&CefString::from("<-loopback>")));
                     c.append_switch_with_value(Some(&CefString::from("proxy-server")), Some(&CefString::from(self.cli_proxy.as_str())));
                 }
             }

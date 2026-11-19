@@ -22,7 +22,7 @@ CEF_PATH=/absolute/cef xvfb-run -a target/debug/examples/route_context_probe \
 
 Оба контекста должны вызвать `OnRequestContextInitialized` до настройки proxy и создания Browser. Предельное ожидание инициализации10с. JSONL stdout содержит по A/B `context`, булевы `can_set_proxy`, `set_proxy_ok`, `sharing`. Эти поля — измерения API, не подтверждение маршрута. Значения cookies/storage/proxy preference не выводятся.
 
-После настройки обеих preferences открываются настоящие CEF Browser A/B, соответственно same-origin `/first?context=A` и `/second?context=B`. Target и оба proxy допускаются только HTTP loopback с явным портом. Настроены `proxy-bypass-list=<-loopback>` и `bypass_list=<-loopback>` в preference, чтобы implicit bypass не делал тест фиктивным. Внешние fixture URLs и реальные сайты запрещены. Python может детерминированно вернуть `/second` только после POST `/first`, чтобы измерить видимость cookies/localStorage без гонки.
+После настройки обеих preferences открываются настоящие CEF Browser A/B, соответственно same-origin `/first?context=A` и `/second?context=B`. Target и оба proxy проверяются через URL parser: только HTTP, host 127.0.0.1/localhost/[::1], явный нестандартный порт, пустые username/password, путь /, без query/fragment. Independent/shared не получают CLI proxy-флагов. Только в CLI-сценарии установлен `proxy-bypass-list=<-loopback>`; во всех сценариях запрашивается `bypass_list=<-loopback>` в preference, чтобы implicit bypass не делал тест фиктивным. Внешние fixture URLs и реальные сайты запрещены. Python может детерминированно вернуть `/second` только после POST `/first`, чтобы измерить видимость cookies/localStorage без гонки.
 
 Python обязан:
 
