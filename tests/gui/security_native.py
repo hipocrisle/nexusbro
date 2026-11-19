@@ -715,6 +715,18 @@ def run(args):
         wait_for(lambda: any(p.get('trusted') for p in seen('other-origin', 'submit')), 'Other-origin DOM could not be inspected through actual submit')
         require(all(not p.get('username') and not p.get('password') for p in seen('other-origin', 'submit')), 'Rejected cross-origin fill changed actual form values')
         checkpoint('other_origin_native_fill_rejected_without_disclosure')
+        phase = 'repeated-origin-capture'
+        # Reproduce the observed post-origin-transition failure without retrying
+        # a failed capture or weakening origin/context validation.
+        for transition in range(3):
+            a.navigate(normal_id, other_origin + '/form?case=transition-other-' + str(transition) + '&mode=empty')
+            marker='transition-offer-' + str(transition)
+            a.navigate(normal_id, base + '/form?case=' + marker + '&mode=offer')
+            wait_for(lambda marker=marker: seen(marker), 'Transition fixture did not initialize')
+            draft=call(ca,'security_passwords',action='capture',data={'super_id':normal_id,'tab_id':normal_tab})
+            require(draft.get('origin')==base and draft.get('username')==offer_login,'Origin transition captured the wrong document')
+            call(ca,'security_passwords',action='discard_draft',data={'draft_id':draft['draft_id']})
+        checkpoint('repeated_real_origin_transitions_preserve_native_capture_context')
         phase = 'automatic-offer'
         a.navigate(normal_id, base + '/form?case=offer&mode=offer')
         wait_for(lambda: seen('offer'), 'Offer fixture did not initialize')
@@ -1244,7 +1256,7 @@ def run(args):
         # engine output may contain test secrets and are not copied wholesale.
         bridge=[]
         for device in devices:
-            for logfile in device.data.glob('profili/*/engine.log'):
+            for logfile in device.data.glob('profili/*/cef*.log'):
                 for line in logfile.read_text(errors='replace').splitlines():
                     found=re.search(r'NEXUSBRO_PASSWORD_BRIDGE refused stage=(\d+) setup=(true|false) reason=([a-z0-9-]+)',line)
                     if found:bridge.append({'device':device.name,'stage':int(found[1]),'setup':found[2]=='true','reason':found[3]})
