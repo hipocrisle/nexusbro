@@ -49,7 +49,10 @@ def run(args):
               "platform": platform.platform(), "processor": platform.processor(),
               "image": {key: os.environ.get(key) for key in ("ImageOS", "ImageVersion", "RUNNER_ARCH")},
               "total_physical_bytes": psutil.virtual_memory().total, "logical_cpus": psutil.cpu_count(),
-              "requested": {"supers": args.supers, "tabs_per_super": args.tabs},
+              "requested": {"supers": args.supers, "tabs_per_super": args.tabs,
+                            "saved_tabs_per_super": args.saved_tabs,
+                            "saved_tabs_total": args.supers * args.saved_tabs,
+                            "visited_tabs_total": args.supers * args.tabs},
               "phases": [], "samples": [], "fixture_hits": {}}
     hits = collections.Counter()
     hit_lock = threading.Lock()
@@ -126,6 +129,20 @@ def run(args):
                 continue
         return time.monotonic(), found
 
+    def tab_counts():
+        """Read persisted lifecycle state; do not infer live pages from saved URLs."""
+        saved = live = deferred = 0
+        for s in range(args.supers):
+            try:
+                session = json.loads((data / "profili" / f"perf-{s}" / "obychnye.json").read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                return {"saved": None, "live": None, "deferred": None, "available": False}
+            tabs = session["vkladki"]
+            saved += len(tabs)
+            deferred += sum(bool(v.get("otlozhena")) for v in tabs)
+            live += sum(not v.get("otlozhena") for v in tabs)
+        return {"saved": saved, "live": live, "deferred": deferred, "available": True}
+
     def measure(name):
         # Sampling itself stays outside the application's process tree.
         previous_time, previous = snapshot()
@@ -158,7 +175,8 @@ def run(args):
                 group["cpu_core_percent"] = 100 * group["cpu_seconds_delta"] / elapsed
                 group["cpu_machine_percent"] = group["cpu_core_percent"] / report["logical_cpus"]
             row = {"phase": name, "elapsed_seconds": elapsed, "roles": dict(groups),
-                   "processes": per_process, "system_cpu_machine_percent": psutil.cpu_percent(),
+                   "processes": per_process, "tab_counts": tab_counts(),
+                   "system_cpu_machine_percent": psutil.cpu_percent(),
                    "unobserved_exited_processes": len(previous.keys() - current.keys())}
             report["samples"].append(row)
             rows.append(row)
@@ -166,6 +184,7 @@ def run(args):
         duration = sum(r["elapsed_seconds"] for r in rows)
         cpu = sum(g["cpu_seconds_delta"] for r in rows for g in r["roles"].values())
         report["phases"].append({"phase": name, "duration_seconds": duration,
+                                 "tab_counts": tab_counts(),
                                  "cpu_core_percent": 100 * cpu / duration,
                                  "cpu_machine_percent": 100 * cpu / duration / report["logical_cpus"],
                                  "peak_processes": max(len(r["processes"]) for r in rows),
@@ -201,10 +220,10 @@ def run(args):
                                 "rezat_reklamu": True})
             folder = data / "profili" / sid
             folder.mkdir(parents=True)
-            tabs = [{"id": t + 1, "adres": base + f"/page/{s}/{t}",
-                     "zagolovok": f"Perf {s}-{t}"} for t in range(args.tabs)]
+            tabs = [{"id": t + 1, "adres": base + f"/page/{s}/{t}", "otlozhena": True,
+                     "zagolovok": f"Perf {s}-{t}"} for t in range(args.saved_tabs)]
             (folder / "obychnye.json").write_text(json.dumps({"vkladki": tabs, "aktivnaya": 1,
-                                                              "sleduyushchaya": args.tabs + 1}), encoding="utf-8")
+                                                              "sleduyushchaya": args.saved_tabs + 1}), encoding="utf-8")
         (data / "vkladki.json").write_text(json.dumps(definitions), encoding="utf-8")
         (data / "nastrojki.json").write_text(json.dumps({"avtoobnovleniya": False,
                                                          "apparatnoe_uskorenie": False}), encoding="utf-8")
@@ -260,7 +279,14 @@ def run(args):
             def loaded():
                 try:
                     session = json.loads((data / "profili" / f"perf-{s}" / "obychnye.json").read_text(encoding="utf-8"))
-                    return all(not v.get("otlozhena") and not v.get("zagruzka") for v in session["vkladki"])
+                    tabs = session["vkladki"]
+                    visited = [v for v in tabs if 1 <= v["id"] <= args.tabs]
+                    deferred = [v for v in tabs if args.tabs < v["id"] <= args.saved_tabs]
+                    return (len(tabs) == args.saved_tabs
+                            and len(visited) == args.tabs
+                            and len(deferred) == args.saved_tabs - args.tabs
+                            and all(not v.get("otlozhena") and not v.get("zagruzka") for v in visited)
+                            and all(v.get("otlozhena") for v in deferred))
                 except (ValueError, OSError):
                     return False
             wait_for(loaded, f"Super{s} did not finish loading every requested tab")
@@ -268,6 +294,11 @@ def run(args):
         report["warm_cef_browser_processes"] = sum(p["role"] == "cef/browser" for p in warm_processes.values())
         if report["warm_cef_browser_processes"] != args.supers:
             raise AssertionError("Live CEF engine count differs from the requested supers")
+        report["warm_tab_counts"] = tab_counts()
+        with hit_lock:
+            expected = {f"/page/{s}/{t}" for s in range(args.supers) for t in range(args.tabs)}
+            if set(hits) != expected:
+                raise AssertionError("Fixture requested pages outside the explicitly visited workload")
         time.sleep(args.settle)
         measure("warm_active")
         cover = tkinter.Tk()
@@ -330,14 +361,18 @@ def main():
     parser.add_argument("--out", required=True, help="Fresh nonexistent result directory")
     parser.add_argument("--supers", type=int, default=4)
     parser.add_argument("--tabs", type=int, default=6)
+    parser.add_argument("--saved-tabs", type=int, help="Saved tabs per super; defaults to --tabs; at most 5000 total")
     parser.add_argument("--seconds", type=int, default=15, help="Per measured phase")
     parser.add_argument("--settle", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=480)
     parser.add_argument("--max-processes", type=int, default=128)
     parser.add_argument("--max-memory-mb", type=int, default=8192)
     args = parser.parse_args()
+    if args.saved_tabs is None:
+        args.saved_tabs = args.tabs
     if not (1 <= args.supers <= 12 and 1 <= args.tabs <= 12 and 3 <= args.seconds <= 120
             and 0 <= args.settle <= 30 and 60 <= args.timeout <= 900
+            and args.tabs <= args.saved_tabs and args.saved_tabs * args.supers <= 5000
             and 8 <= args.max_processes <= 128 and 512 <= args.max_memory_mb <= 8192):
         parser.error("Workload/time/resource limits outside safe bounds")
     run(args)

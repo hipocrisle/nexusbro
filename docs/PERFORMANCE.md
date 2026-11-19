@@ -22,6 +22,19 @@ saved session prove that all 24 pages actually loaded. A missing control, failed
 navigation or sleeping tab fails the run rather than reporting a smaller workload
 as completed.
 
+Saved session size can be scaled independently from the number of pages actually
+visited. For example, this seeds 1,000 saved tabs while explicitly waking only 24:
+
+```powershell
+python tests/gui/performance_windows.py --exe C:\test-app\nexusbro.exe --out .dev-check\performance-1000 --supers 4 --saved-tabs 250 --tabs 6
+```
+
+The harness verifies that all unvisited tabs remain deferred and that no HTTP
+request was made for them. Each sample and phase reports `tab_counts` (saved,
+live, deferred) from persisted session state; this is distinct from renderer
+process count, since Chromium can share renderer processes. The default saved
+count equals `--tabs`, preserving the original 4 × 6 baseline workload.
+
 Five phases are recorded: cold lazy restore, warmed active, warmed covered by a
 separate native window, minimized, and restored. The fixture is deliberately
 static, measuring baseline overhead rather than arbitrary site scripts or video.
@@ -41,7 +54,8 @@ is absent, so sampled CPU can undercount rapidly exiting processes. PID reuse is
 guarded by process creation time. Raw command lines, secrets and account data are
 not written into the report.
 
-Safety bounds: at most 12 supers × 12 tabs, 128 descendants, 8 GiB summed working
+Safety bounds: at most 12 supers, 12 visited tabs per super, 5,000 saved tabs total,
+128 descendants, 8 GiB summed working
 set or 60% of initially available memory (whichever is smaller), and a global
 timeout checked during UI waits and sampling. Defaults are much smaller. The
 harness kills only its recorded process tree at completion/failure. Do not run
