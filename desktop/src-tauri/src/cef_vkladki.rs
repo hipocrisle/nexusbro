@@ -941,13 +941,17 @@ impl Rabota {
                     let Some(browser)=brauzery.get(&id).filter(|b|b.identifier()==identity)else{continue;};
                     if data["kind"]=="NB_MEMORY_DOCUMENT"{
                         if sleep_requests.get(&id).is_some_and(|a|a.stage!=MemoryStage::Closing&&Some(a.token.as_str())!=data["token"].as_str()){
-                            memory_refused(id,"Документ изменился во время проверки",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;
+                            memory_refused(id,"Документ изменился во время проверки",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;izmeneno=true;
                         }
                         continue;
                     }
                     let Some(attempt)=sleep_requests.get(&id).filter(|a|a.identity==identity&&Some(a.request.as_str())==data["request"].as_str()&&Some(a.token.as_str())==data["token"].as_str())else{continue;};
                     if !matches!(attempt.stage,MemoryStage::Preflight|MemoryStage::Verify){continue;}
                     let automatic=attempt.automatic;
+                    if data["known"]!=true{
+                        let reason=data["reason"].as_str().filter(|s|s.len()<=160).unwrap_or("missing-reason");
+                        eprintln!("NEXUSBRO_MEMORY tab={id} browser={identity} automatic={automatic} probe=unknown reason={reason}");
+                    }
                     let reason=if *browser_locked||*closing{Some("Браузер заблокирован или закрывается".to_owned())}else{memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private).map(str::to_owned)}
                         // Disk policy is an independent safety gate if delivery
                         // of a just-saved disable/interval change was delayed.
@@ -1139,8 +1143,10 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::PasswordForm{id,token,origin,payload})=>{
                     let allowed=s.vkladki.iter().any(|v|v.id==id&&s.aktivnaya==id&&!v.privatnaya&&!v.otlozhena)&&!crate::privatnost::process_privatnyj();
+                    let browser_present=brauzery.contains_key(&id);
+                    let origin_matches=brauzery.get(&id).and_then(|b|b.main_frame()).and_then(|f|crate::passwords::secure_origin(&CefString::from(&f.url()).to_string()).ok()).as_deref()==Some(origin.as_str());
                     let ok=allowed&&brauzery.get(&id).is_some_and(|b|crate::password_cef::request(b,id,token.clone(),origin,payload,tx.clone()));
-                    if !ok{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"credential-result","token":token,"error":"Форма недоступна"})));}
+                    if !ok{eprintln!("NEXUSBRO_PASSWORD_REQUEST refused allowed={allowed} browser={browser_present} origin={origin_matches}");let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"credential-result","token":token,"error":"Форма недоступна"})));}
                 }
                 Sobytie::Komanda(Komanda::DannyeStatistika{token})=>{
                     let mut contexts=Vec::new();if let Some(c)=request_context_get_global_context(){contexts.push(c);}if let Some(c)=k.private_context.borrow().as_ref(){contexts.push(c.clone());}
