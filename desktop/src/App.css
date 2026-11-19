@@ -379,13 +379,12 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 .obychnaya .obychnaya-imya { min-width:0; }
 .obychnaya.zakreplena { flex:0 0 44px; width:44px; max-width:44px; min-width:44px; }
 .obychnaya.tesno { padding:5px 6px; gap:4px; justify-content:center; }
-.obychnaya.tesno .obychnaya-imya { display:none; }
 .obychnaya.tesno .zakryt-obychnuyu { display:none; }
 .obychnaya.tesno.vybrana .zakryt-obychnuyu { display:flex; }
 .obychnaya.mikro { padding:5px 1px; gap:0; }
+.obychnaya.mikro .obychnaya-imya { display:none; }
 .obychnaya.mikro .zakryt-obychnuyu { display:none !important; }
 .obychnaya.mikro svg,.obychnaya.mikro img { width:14px; min-width:14px; }
-:root[data-tesno="da"] .obychnaya .obychnaya-imya { display:none; }
 .tab-group { display:flex; align-items:center; flex:0 1 auto; min-width:0; gap:4px; }
 .tab-group .obychnye { padding-bottom:0; flex:0 1 auto; display:flex; flex-wrap:nowrap; gap:5px; min-width:0; overflow:hidden; scrollbar-width:none; }
 .tab-group .obychnye::-webkit-scrollbar { display:none; }

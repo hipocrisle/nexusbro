@@ -125,7 +125,7 @@ try:
   # запрашивает список и теряет подставленное через IPC число.
   for shirina,visota in ((1600,900),(1280,820),(900,700)):
    page.set_viewport_size({'width':shirina,'height':visota})
-   for n in (10,20):
+   for n in (7,8,10,20):
     page.evaluate("""(n) => {const vk=Array.from({length:n},(_,i)=>({id:i+1,adres:'about:blank',zagolovok:'Tab number '+(i+1),
         zakreplena:false,zagruzka:false,nazad:false,vpered:false,otlozhena:true}));
       window.__callbacks[window.__events['obychnye-izmenilis']]({event:'obychnye-izmenilis',id:1,payload:{id:'layout',sessiya:{vkladki:vk,aktivnaya:1}}});}""",n)
@@ -145,6 +145,11 @@ try:
     assert 0<=m['zazor']<=16,(shirina,n,m)
     assert m['tabBottom']<=m['polosaBottom']+1,(shirina,n,m)
     assert m['lastWidth']>=20,(shirina,n,m)
+    # Compact toolbar mode must not erase titles just because tab count > 6.
+    if n<=8:
+     for title in page.locator('.obychnaya-imya').all():
+      expect(title).to_be_visible()
+      assert title.bounding_box()['width']>=8,(shirina,n,title.bounding_box())
   page.get_by_role('button',name='Отмена',exact=True).click()
   page.locator('.zatemnenie').wait_for(state='detached')
   # Ctrl+F: Enter раньше debounce не должен позже сбрасывать поиск к первому совпадению.
