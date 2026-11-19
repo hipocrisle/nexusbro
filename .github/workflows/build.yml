@@ -499,7 +499,8 @@ jobs:
           PERF_EXPECT_THROTTLED: ${{ inputs.performance_expect_throttled }}
         run: |
           $extra = @()
-          if ($env:PERF_VISIBILITY -eq "true") { $extra += "--visibility-probe" }
+          $referenceExtra = @()
+          if ($env:PERF_VISIBILITY -eq "true") { $extra += "--visibility-probe"; $referenceExtra += "--visibility-probe" }
           if ($env:PERF_EXPECT_THROTTLED -eq "true") { $extra += "--expect-background-throttled" }
           $installers = @(Get-ChildItem .dev-check/package -Recurse -Filter *.exe)
           if ($installers.Count -ne 1) { throw "Expected exactly one measured installer" }
@@ -514,7 +515,7 @@ jobs:
             Get-FileHash -Algorithm SHA256 $reference[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/reference-sha256.json
             7z x -y $reference[0].FullName "-o.dev-check/reference-installed"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @extra
+            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @referenceExtra
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
           python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @extra
