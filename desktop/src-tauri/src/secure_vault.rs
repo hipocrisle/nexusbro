@@ -98,6 +98,7 @@ struct Inner {
     root: Option<PathBuf>,
     unlocked: Option<Unlocked>,
     timer_ready: bool,
+    idle_timeout: Option<Duration>,
 }
 
 #[derive(Clone, Serialize)]
@@ -110,11 +111,26 @@ pub struct VaultState {
 }
 impl Default for VaultState {
     fn default() -> Self {
+        Self::with_idle_timeout(Some(IDLE))
+    }
+}
+impl VaultState {
+    /// Browser and vault share one unlock session, like NexuSSH. The key stays
+    /// only in memory until explicit lock or process exit, never across restarts.
+    pub fn for_browser_session() -> Self {
+        Self::with_idle_timeout(None)
+    }
+    fn with_idle_timeout(idle_timeout: Option<Duration>) -> Self {
         let inner = Arc::new(Mutex::new(Inner {
             root: None,
             unlocked: None,
             timer_ready: false,
+            idle_timeout,
         }));
+        if idle_timeout.is_none() {
+            inner.lock().unwrap().timer_ready = true;
+            return Self { inner };
+        }
         let weak = Arc::downgrade(&inner);
         let ready = std::thread::Builder::new()
             .name("nexusbro-vault-lock".into())
@@ -136,11 +152,11 @@ impl Default for VaultState {
     }
 }
 fn expire(inner: &mut Inner) {
-    if inner
-        .unlocked
-        .as_ref()
-        .is_some_and(|v| v.touched.elapsed() >= IDLE)
-    {
+    if inner.unlocked.as_ref().is_some_and(|v| {
+        inner
+            .idle_timeout
+            .is_some_and(|timeout| v.touched.elapsed() >= timeout)
+    }) {
         inner.unlocked = None;
     }
 }
@@ -611,6 +627,50 @@ mod tests {
         assert!(vault.put("item", "new").is_err());
         assert_eq!(vault.get("item").unwrap().unwrap().as_str(), "old");
         assert_eq!(fs::read(root.0.join(FILE_NAME)).unwrap(), original);
+    }
+    #[test]
+    fn browser_session_unlock_is_shared_until_explicit_lock_or_restart() {
+        let root = Directory::new();
+        let first = Arc::new(VaultState::for_browser_session());
+        assert!(!first.status().exists);
+        first.create(&root.0, PASSWORD).unwrap();
+        first.put("password/site", "session secret").unwrap();
+        let before = fs::read(root.0.join(FILE_NAME)).unwrap();
+        drop(first);
+
+        let restarted = Arc::new(VaultState::for_browser_session());
+        restarted.configure(&root.0).unwrap();
+        assert!(restarted.status().exists);
+        assert!(!restarted.status().unlocked);
+        assert!(restarted
+            .unlock(&root.0, "wrong password long enough")
+            .is_err());
+        assert!(!restarted.status().unlocked);
+        restarted.unlock(&root.0, PASSWORD).unwrap();
+        let settings_window = Arc::clone(&restarted);
+        // Advancing last-secret access models a long active browsing session:
+        // browser and vault must not acquire independent unlock requirements.
+        restarted
+            .inner
+            .lock()
+            .unwrap()
+            .unlocked
+            .as_mut()
+            .unwrap()
+            .touched = Instant::now() - Duration::from_secs(24 * 60 * 60);
+        assert!(settings_window.status().unlocked);
+        assert_eq!(
+            settings_window
+                .get("password/site")
+                .unwrap()
+                .unwrap()
+                .as_str(),
+            "session secret"
+        );
+        assert_eq!(fs::read(root.0.join(FILE_NAME)).unwrap(), before);
+        restarted.lock();
+        assert!(!settings_window.status().unlocked);
+        assert!(settings_window.get("password/site").is_err());
     }
     #[test]
     fn idle_expiry_is_enforced_and_instances_are_isolated() {

@@ -1222,7 +1222,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app,_args,_cwd|{okna_app::zapros_okna(app.clone(),None,false);}))
         .manage(Sostoyanie::default())
-        .manage(std::sync::Arc::new(secure_vault::VaultState::default()))
+        .manage(std::sync::Arc::new(secure_vault::VaultState::for_browser_session()))
         .manage(browser_account::AccountState::default())
         .manage(browser_sync::SyncState::default())
         .manage(popup_menu::PopupMenuState::default())
