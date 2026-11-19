@@ -46,7 +46,9 @@ def run(args):
     data = out / "data"
     data.mkdir()
     report = {"schema": 1, "measurement_completed": False, "optimized": False,
-              "platform": platform.platform(), "logical_cpus": psutil.cpu_count(),
+              "platform": platform.platform(), "processor": platform.processor(),
+              "image": {key: os.environ.get(key) for key in ("ImageOS", "ImageVersion", "RUNNER_ARCH")},
+              "total_physical_bytes": psutil.virtual_memory().total, "logical_cpus": psutil.cpu_count(),
               "requested": {"supers": args.supers, "tabs_per_super": args.tabs},
               "phases": [], "samples": [], "fixture_hits": {}}
     hits = collections.Counter()
