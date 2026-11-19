@@ -1,0 +1,124 @@
+{
+  "measurement_completed": true,
+  "requested": {
+    "supers": 2,
+    "tabs_per_super": 2,
+    "saved_tabs_per_super": 2,
+    "saved_tabs_total": 4,
+    "visited_tabs_total": 4
+  },
+  "background_throttle_acceptance": [
+    {
+      "phase": "warm_active",
+      "page": "/page/0/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/0/1",
+      "actual_reports": 5,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/1",
+      "actual_reports": 6,
+      "expected_visible": true,
+      "max_raf_hz": 64.01600400100025
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/1",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/1",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/1",
+      "actual_reports": 5,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/0",
+      "actual_reports": 6,
+      "expected_visible": false,
+      "max_raf_hz": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/1",
+      "actual_reports": 6,
+      "expected_visible": true,
+      "max_raf_hz": 64.01600400100025
+    }
+  ],
+  "restored_cef_rgb": [
+    [
+      24,
+      85,
+      65
+    ],
+    [
+      24,
+      85,
+      65
+    ],
+    [
+      24,
+      85,
+      65
+    ]
+  ],
+  "restored_input_proofs": [
+    {
+      "page": "/page/1/1",
+      "value": "nexusbro-performance-input",
+      "trusted": true,
+      "focus": true,
+      "received_seconds": 88.29600000000005
+    }
+  ],
+  "package_run": 44545888529,
+  "external_diagnostic_actions": false
+}

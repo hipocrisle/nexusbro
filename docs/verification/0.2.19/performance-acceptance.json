@@ -1,0 +1,633 @@
+{
+  "accepted": true,
+  "package_run": 44545888529,
+  "package_commit": "d80200c7c0b5ca44f384d3091befc0ed28bf0638",
+  "requested": {
+    "supers": 8,
+    "tabs_per_super": 3,
+    "saved_tabs_per_super": 125,
+    "saved_tabs_total": 1000,
+    "visited_tabs_total": 24
+  },
+  "lifecycle_evidence": [
+    {
+      "phase": "warm_active",
+      "page": "/page/0/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/0/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/0/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/1/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/2/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/2/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/2/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/3/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/3/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/3/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/4/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/4/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/4/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/5/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/5/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/5/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/6/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/6/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/6/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/7/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/7/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_active",
+      "page": "/page/7/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": true,
+      "max_frames_per_second": 64
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/0/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/1/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/2/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/2/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/2/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/3/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/3/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/3/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/4/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/4/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/4/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/5/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/5/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/5/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/6/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/6/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/6/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/7/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/7/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_minimized",
+      "page": "/page/7/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/0/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/1/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/2/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/2/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/2/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/3/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/3/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/3/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/4/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/4/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/4/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/5/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/5/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/5/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/6/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/6/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/6/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/7/0",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/7/1",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": false,
+      "max_frames_per_second": 0
+    },
+    {
+      "phase": "warm_restored",
+      "page": "/page/7/2",
+      "complete_history": true,
+      "actual_second_buckets": 10,
+      "visible": true,
+      "max_frames_per_second": 64
+    }
+  ],
+  "native_restored_paint": true,
+  "trusted_native_input": true,
+  "same_vm_paired_comparison": [
+    {
+      "phase": "cold_saved_lazy",
+      "reference_cpu_machine_percent": 1.2873220406011052,
+      "candidate_cpu_machine_percent": 1.494870018474531,
+      "reference_private_bytes": 121348096,
+      "candidate_private_bytes": 120791040
+    },
+    {
+      "phase": "warm_active",
+      "reference_cpu_machine_percent": 13.321644664466419,
+      "candidate_cpu_machine_percent": 4.346850925133334,
+      "reference_private_bytes": 1393934336,
+      "candidate_private_bytes": 1378570240
+    },
+    {
+      "phase": "warm_covered",
+      "reference_cpu_machine_percent": 10.663540721047875,
+      "candidate_cpu_machine_percent": 2.986587134194575,
+      "reference_private_bytes": 1411170304,
+      "candidate_private_bytes": 1330278400
+    },
+    {
+      "phase": "warm_minimized",
+      "reference_cpu_machine_percent": 9.938664243525682,
+      "candidate_cpu_machine_percent": 2.9502616933881023,
+      "reference_private_bytes": 1421950976,
+      "candidate_private_bytes": 1327656960
+    },
+    {
+      "phase": "warm_restored",
+      "reference_cpu_machine_percent": 9.964664741009992,
+      "candidate_cpu_machine_percent": 2.3944189955180644,
+      "reference_private_bytes": 1420279808,
+      "candidate_private_bytes": 1318588416
+    }
+  ],
+  "memory_saver_implemented": false,
+  "measurement_run": 44553397367,
+  "reference_package_run": 44512453342,
+  "scope": "One Windows VM; eight Supers, 1000 saved/24 visited pages; rAF instrumentation, no DOM painting. Not the owner sites; no automatic memory unloading."
+}
