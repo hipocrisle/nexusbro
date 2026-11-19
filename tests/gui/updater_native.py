@@ -92,7 +92,23 @@ def verify_updater(client, device, visible_cef, checks):
         client.command('fokus_obolochke')
         subprocess.run(['xdotool','windowfocus','--sync',xid],env=env,check=True,timeout=5)
         client.click('button[title="Проверить обновления"]')
-        client.wait('window.__updaterNative.received>0&&!window.__updaterNative.install&&!!document.querySelector(".polosa-progress")', timeout=10)
+        client.wait('window.__updaterNative.received>window.__updaterNative.total*.25&&!window.__updaterNative.install&&!!document.querySelector(".polosa-progress")', timeout=10)
+        client.js('window.__updaterPainted=false;requestAnimationFrame(()=>requestAnimationFrame(()=>window.__updaterPainted=true));true')
+        client.wait('window.__updaterPainted')
+        from PIL import ImageGrab
+        origin=client.command('plugin:window|inner_position',label=label)
+        deadline=time.monotonic()+3
+        actual=None
+        while time.monotonic()<deadline:
+            fill=client.js('(()=>{const e=document.querySelector(".progress-zalivka"),r=e.getBoundingClientRect();return {x:r.x+Math.min(10,r.width/2),y:r.y+r.height/2,k:devicePixelRatio||1,color:getComputedStyle(e).backgroundColor,width:r.width}})()')
+            expected=tuple(round(float(v)) for v in re.findall(r'[0-9.]+',fill['color'])[:3])
+            assert fill['width']>20 and len(expected)==3, 'Progress fill has no measurable painted area'
+            point=(round(origin['x']+fill['x']*fill['k']),round(origin['y']+fill['y']*fill['k']))
+            actual=ImageGrab.grab(xdisplay=device.display).getpixel(point)[:3]
+            if actual==expected:break
+            time.sleep(.05)
+        assert actual==expected, 'Native progress fill is not visible: '+str(actual)+' versus '+str(expected)
+        checks.append({'native_updater_progress_pixels':True,'rgb':list(actual)})
         visible_cef(client, device, 'updater-streaming-real-cef-visible')
         status = client.js('({received:window.__updaterNative.received,install:window.__updaterNative.install})')
         assert status['received'] > 0 and not status['install'], 'Download finished before native progress visibility proof'
@@ -108,6 +124,6 @@ def verify_updater(client, device, visible_cef, checks):
         checks.append({'native_updater_diagnostic':client.js('(()=>{const s=window.__updaterNative;return {checks:s?.checks,downloads:s?.downloads,received:s?.received,install:s?.install,progress:!!document.querySelector(".polosa-progress"),focused:document.hasFocus()}})()')})
         raise
     finally:
-        client.js('window.__updaterNative?.restore();delete window.__updaterNative;true')
+        client.js('window.__updaterNative?.restore();delete window.__updaterNative;delete window.__updaterPainted;true')
         server.shutdown()
         server.server_close()
