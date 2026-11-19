@@ -357,6 +357,17 @@ fn pokazat(s: &Sessiya, b: &HashMap<u64, Browser>) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn sync_native_visibility_for(
+    visibility: &mut crate::cef_visibility_win::Visibility,
+    k: &Konteyner, s: &Sessiya, browsers: &HashMap<u64, Browser>, allowed: bool,
+) {
+    let windows: Vec<_> = browsers.iter().map(|(id, browser)| (
+        browser.identifier(), handle(browser) as u64, allowed && *id == s.aktivnaya,
+    )).collect();
+    visibility.sync(k.okno as u64, &windows);
+}
+
 pub fn rabotat(
     roditel: u64,
     mesto: Mesto,
@@ -539,12 +550,8 @@ struct Rabota {
 impl Rabota {
     #[cfg(target_os = "windows")]
     fn sync_native_visibility(&mut self) {
-        let allowed = !self.browser_locked && !self.closing;
-        let windows: Vec<_> = self.brauzery.iter().map(|(id, browser)| (
-            browser.identifier(), handle(browser) as u64,
-            allowed && *id == self.s.aktivnaya,
-        )).collect();
-        self.native_visibility.sync(self.k.okno as u64, &windows);
+        sync_native_visibility_for(&mut self.native_visibility, &self.k, &self.s,
+            &self.brauzery, !self.browser_locked && !self.closing);
     }
     #[cfg(target_os = "windows")]
     fn has_live_devtools(&self) -> bool {
@@ -592,7 +599,10 @@ impl Rabota {
             rx,
             brauzery,
             razmer,
-            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private, ..
+            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private,
+            #[cfg(target_os = "windows")]
+            native_visibility,
+            ..
         } = self;
         let mut izmeneno = false;
         let mut layout_dirty=false;
@@ -1083,6 +1093,11 @@ impl Rabota {
             }
             pokazat(&s, &brauzery);
         }
+        // Restore the selected native Widget before focusing it. It may have
+        // been hidden while its public Browser HWND remained alive.
+        #[cfg(target_os = "windows")]
+        sync_native_visibility_for(native_visibility, k, s, brauzery,
+            !*browser_locked && !*closing);
         if fokus_klaviatury && !*browser_locked
             && (fokus_posle_devtools||s.vkladki
                 .iter()
