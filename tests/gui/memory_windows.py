@@ -20,6 +20,22 @@ import urllib.parse
 import wave
 
 
+def automatic_media_refusals(logs, tab_id, kind):
+    """A generic interaction refusal does not prove the media/API hook works."""
+    pattern = (rf'NEXUSBRO_MEMORY tab={tab_id}\b[^\n]*?browser=(\d+)\b'
+               r'[^\n]*?automatic=true\b[^\n]*?refused=([^\n]+)')
+    found = []
+    for browser, reason in re.findall(pattern, logs):
+        lower = reason.lower()
+        shared_api = "media, connection or worker api used" in lower
+        specific = (("media" in lower or "audio" in lower or "video" in lower) if kind == "html"
+                    else ("audiocontext" in lower or shared_api) if kind == "webaudio"
+                    else ("rtc" in lower or "peerconnection" in lower or shared_api))
+        if specific and "trusted page interaction" not in lower:
+            found.append({"browser_id": int(browser), "reason": reason})
+    return found
+
+
 def run(a):
     if sys.platform != "win32":
         raise RuntimeError("Requires an actual disposable Windows desktop")
@@ -124,7 +140,8 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                          "page:document.title,reason,trusted,bytes:autoHeap.byteLength,first:autoHeap[0],"
                          "last:autoHeap[autoHeap.length-1],seen,cookie,scroll_y:scrollY})});}"
                          "state('allocated',false);document.getElementById('auto-snapshot').onclick=e=>{"
-                         "if(e.isTrusted)state('snapshot',true);};</script>").encode()
+                         "if(e.isTrusted)state('snapshot',true);};let scrollReports=0;"
+                         "addEventListener('scroll',e=>{if(e.isTrusted&&scrollReports++<32)state('native-scroll',true);});</script>").encode()
             if path in ["/audio", "/audio-paused", "/web-audio", "/rtc"]:
                 kind = "html" if path.startswith("/audio") else "webaudio" if path == "/web-audio" else "rtc"
                 if kind == "html":
@@ -565,11 +582,14 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
             raise AssertionError("Automatic fixture viewport missing")
         gui.moveTo(box.left + 400, box.top + 300)
         gui.scroll(-6)
-        previous = sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts)
-        physical_page_click()
-        wait(lambda: sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts) > previous,
-             "Actual automatic-fixture scroll snapshot missing")
-        scroll_before = [r for r in receipts if r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot"][-1]
+        # Do not click this safe page before auto: the conservative early hook
+        # deliberately protects trusted pointer/click interactions. The native
+        # wheel's own scroll event supplies real scroll evidence without a click.
+        wait(lambda: any(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "native-scroll"
+                         and r.get("trusted") and r.get("scroll_y", 0) >= 200 for r in receipts),
+             "Actual automatic-fixture wheel scroll receipt missing")
+        time.sleep(.6)  # Let native wheel smoothing finish before recording y.
+        scroll_before = [r for r in receipts if r.get("page") == "MemoryAutoHeap" and r.get("reason") == "native-scroll"][-1]
         if not scroll_before.get("trusted") or scroll_before.get("scroll_y", 0) < 200:
             raise AssertionError("Safe automatic fixture was not physically scrolled")
         tab("MemoryKeeper")
@@ -616,6 +636,13 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         report["checks"].append({"actual_automatic_two_phase_close": True,
                                  "drop_private_bytes": auto_before - auto_after,
                                  "isolated_idle_seconds": 8, "normal_policy_minutes": 30})
+        media_kinds = {11: "html", 12: "html", 13: "webaudio", 14: "rtc"}
+        wait(lambda: all(automatic_media_refusals(native_logs(), tab_id, kind)
+                         for tab_id, kind in media_kinds.items()),
+             "Missing actual automatic media/API-specific refusal; trusted-interaction-only protection is insufficient", 45)
+        report["automatic_media_refusal_proofs"] = {
+            str(tab_id): {"kind": kind, "actual_native_automatic_refusals": automatic_media_refusals(native_logs(), tab_id, kind)}
+            for tab_id, kind in media_kinds.items()}
         for tab_id in [1, 3, 4, 5, 6, 10, 11, 12, 13, 14]:
             if not row(tab_id) or row(tab_id).get("otlozhena"):
                 raise AssertionError(f"Protected pinned/keep/media/resource tab was automatically unloaded: {tab_id}")

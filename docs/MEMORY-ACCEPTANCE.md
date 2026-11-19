@@ -60,6 +60,10 @@ Previously tested ordinary pages receive explicit keep preferences through the
 real tab menu, so unrelated background closures do not manufacture that decrease.
 Selecting that exact row must reload it and restore actual cookies, localStorage
 and scroll position (64-pixel tolerance), verified by a trusted page snapshot.
+The pre-unload scroll receipt comes directly from the physical wheel's actual
+scroll event. No snapshot button is clicked before auto, because the conservative
+early hook intentionally protects any trusted pointer/click interaction. The
+post-wake snapshot uses a physical click after the automatic scenario is complete.
 
 Media/resource exclusions are genuine runtime fixtures, armed by physical clicks:
 
@@ -80,6 +84,17 @@ substitute for audio progress. A keep preference is set through the actual tab
 menu and must persist; pinned and private pages also remain retained. Capture
 with a fake device/interface is explicitly `not_executed_no_fake_capture_interface`;
 no real microphone/camera permission is requested or claimed tested.
+
+Retention alone is insufficient: while the keeper page remains active, every
+media/resource fixture must produce an actual native automatic-probe refusal
+containing a media/API-specific reason and browser identity. HTML audio requires
+media/HTMLMediaElement evidence, WebAudio requires AudioContext or the native
+media/connection API tracker, and RTC requires its peer/connection tracker.
+Generic trusted-interaction protection does not satisfy this assertion. The
+harness waits at most 45 seconds for all four proofs and records the actual
+reason/browser IDs in `automatic_media_refusal_proofs`, then still verifies real
+audio-clock continuation. Removing media instrumentation while leaving pointer
+protection in place must therefore fail this test.
 
 Current explicit coverage gap: a user-close while native sleep is pending. It
 remains `not_executed` in JSON. A `completed: true` result covers only the listed
