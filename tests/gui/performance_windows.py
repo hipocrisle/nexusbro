@@ -8,6 +8,7 @@ import argparse
 import collections
 import http.server
 import json
+import math
 import os
 import pathlib
 import platform
@@ -53,9 +54,13 @@ def run(args):
                             "saved_tabs_per_super": args.saved_tabs,
                             "saved_tabs_total": args.supers * args.saved_tabs,
                             "visited_tabs_total": args.supers * args.tabs},
-              "phases": [], "samples": [], "fixture_hits": {}}
+              "phases": [], "samples": [], "fixture_hits": {},
+              "visibility_probe": args.visibility_probe}
     hits = collections.Counter()
     hit_lock = threading.Lock()
+    visibility_reports = []
+    visibility_dropped = 0
+    current_phase = "setup"
     started = time.monotonic()
     app = cover = log = None
     owned = {}
@@ -80,12 +85,68 @@ def run(args):
             body = (f'<!doctype html><meta charset="utf-8"><title>{title}</title>'
                     '<style>html,body{margin:0;background:#185541;color:white;font:24px sans-serif}</style>'
                     f'<h1>{title}</h1><p>Static loopback performance fixture.</p>').encode()
+            if args.visibility_probe:
+                # Diagnostic-only: requests rAF without changing the DOM/painting.
+                # This intentionally differs from the static CPU baseline.
+                body += b'''<script>
+(()=>{let frames=0,previousFrames=0,previousTime=performance.now(),seq=0;
+const page=location.pathname;
+function frame(){frames++;if(frames<60000)requestAnimationFrame(frame)}
+requestAnimationFrame(frame);
+function report(reason){const now=performance.now(),duration=now-previousTime;
+const delta=frames-previousFrames;
+const body={page,seq:++seq,reason,visibility:document.visibilityState,
+hidden:document.hidden,focus:document.hasFocus(),frames,frames_delta:delta,
+interval_ms:duration,raf_hz:duration>0?delta*1000/duration:0,client_ms:now};
+previousTime=now;previousFrames=frames;
+fetch('/visibility',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify(body),keepalive:true}).catch(()=>{});}
+report('initial');document.addEventListener('visibilitychange',()=>report('visibilitychange'));
+setInterval(()=>report('interval'),2000);
+})();</script>'''
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self):
+            nonlocal visibility_dropped
+            if not args.visibility_probe or self.path != "/visibility":
+                self.send_error(404)
+                return
+            try:
+                size = int(self.headers.get("Content-Length", "0"))
+                if not 0 < size <= 2048:
+                    raise ValueError("Invalid diagnostic payload size")
+                payload = json.loads(self.rfile.read(size))
+                keys = {"page", "seq", "reason", "visibility", "hidden", "focus", "frames",
+                        "frames_delta", "interval_ms", "raf_hz", "client_ms"}
+                if not isinstance(payload, dict) or set(payload) != keys:
+                    raise ValueError("Invalid diagnostic payload keys")
+                parts = payload["page"].strip("/").split("/")
+                if (len(parts) != 3 or parts[0] != "page" or not all(p.isdecimal() for p in parts[1:])
+                        or not 0 <= int(parts[1]) < args.supers or not 0 <= int(parts[2]) < args.tabs
+                        or payload["reason"] not in ["initial", "interval", "visibilitychange"]
+                        or payload["visibility"] not in ["visible", "hidden", "prerender"]
+                        or not isinstance(payload["hidden"], bool) or not isinstance(payload["focus"], bool)):
+                    raise ValueError("Invalid diagnostic page/state")
+                if any(type(payload[k]) not in [int, float] or not math.isfinite(payload[k])
+                       or payload[k] < 0 for k in ["seq", "frames", "frames_delta", "interval_ms", "raf_hz", "client_ms"]):
+                    raise ValueError("Invalid diagnostic counters")
+                with hit_lock:
+                    if len(visibility_reports) < 20000:
+                        visibility_reports.append({**payload, "received_seconds": time.monotonic() - started,
+                                                   "received_phase": current_phase})
+                    else:
+                        visibility_dropped += 1
+            except (ValueError, TypeError, KeyError, AttributeError):
+                self.send_error(400)
+                return
+            self.send_response(204)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
 
         def log_message(self, *_):
             pass
@@ -144,6 +205,9 @@ def run(args):
         return {"saved": saved, "live": live, "deferred": deferred, "available": True}
 
     def measure(name):
+        nonlocal current_phase
+        with hit_lock:
+            current_phase = name
         # Sampling itself stays outside the application's process tree.
         previous_time, previous = snapshot()
         phase_start = previous_time
@@ -184,6 +248,8 @@ def run(args):
         duration = sum(r["elapsed_seconds"] for r in rows)
         cpu = sum(g["cpu_seconds_delta"] for r in rows for g in r["roles"].values())
         report["phases"].append({"phase": name, "duration_seconds": duration,
+                                 "start_seconds": phase_start - started,
+                                 "end_seconds": time.monotonic() - started,
                                  "tab_counts": tab_counts(),
                                  "cpu_core_percent": 100 * cpu / duration,
                                  "cpu_machine_percent": 100 * cpu / duration / report["logical_cpus"],
@@ -192,6 +258,8 @@ def run(args):
                                  "peak_private_bytes": max(sum(p["private_bytes"] for p in r["processes"]) for r in rows)})
         ImageGrab.grab().save(out / (name + ".png"))
         (out / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+        with hit_lock:
+            current_phase = "between_phases"
 
     def wait_for(predicate, description, seconds=30):
         deadline = time.monotonic() + seconds
@@ -320,6 +388,11 @@ def run(args):
         u.ShowWindow(hwnd, 9)
         window.set_focus()
         measure("warm_restored")
+        if args.visibility_probe:
+            with hit_lock:
+                observed = {row["page"] for row in visibility_reports}
+                if observed != expected or visibility_dropped:
+                    raise AssertionError("Visibility probe missing a visited page or exceeded its report bound")
         report["measurement_completed"] = True
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
@@ -352,6 +425,9 @@ def run(args):
             server.shutdown()
             server.server_close()
         report["fixture_hits"] = dict(hits)
+        if args.visibility_probe:
+            report["visibility_reports"] = list(visibility_reports)
+            report["visibility_reports_dropped"] = visibility_dropped
         report["loaded_unique_pages"] = len(hits)
         report["total_seconds"] = time.monotonic() - started
         (out / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -366,6 +442,7 @@ def main():
     parser.add_argument("--supers", type=int, default=4)
     parser.add_argument("--tabs", type=int, default=6)
     parser.add_argument("--saved-tabs", type=int, help="Saved tabs per super; defaults to --tabs; at most 5000 total")
+    parser.add_argument("--visibility-probe", action="store_true", help="Diagnostic JS visibility/rAF reporting; changes the static CPU workload")
     parser.add_argument("--seconds", type=int, default=15, help="Per measured phase")
     parser.add_argument("--settle", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=480)

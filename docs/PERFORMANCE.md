@@ -40,6 +40,23 @@ separate native window, minimized, and restored. The fixture is deliberately
 static, measuring baseline overhead rather than arbitrary site scripts or video.
 This does not explain a user's particular website workload by itself.
 
+Add `--visibility-probe` for a separate diagnostic run investigating whether
+native child-window/super hiding reaches Chromium's page lifecycle. This mode
+reports actual `document.visibilityState`, `document.hidden`, `document.hasFocus()`
+and requestAnimationFrame callback counts/rates for each visited page. No DOM
+animation is added, but the rAF loop and local POSTs change the workload: **do not
+compare this run's CPU directly with the default static baseline**.
+
+Each page sends metadata every two seconds and on `visibilitychange`. Reports
+retain client monotonic time, interval duration/frame delta and server receipt
+time/phase in `visibility_reports`. A rate interval can straddle a phase change;
+use client intervals and the surrounding reports rather than treating the receipt
+phase as the entire interval. Missing periodic reports while hidden may itself
+reflect timer throttling; no synthetic zero-rate reports are inserted. The rAF
+loop stops after 60,000 callbacks per page, POST bodies are limited to 2 KiB, and
+at most 20,000 reports are retained. These POSTs are excluded from page-load hit
+counts. Every visited page must supply at least one report for probe completion.
+
 `results.json` retains per-second samples and per-process identities, role,
 cumulative CPU seconds, working set, and private bytes. Roles distinguish shell,
 CEF browser/renderer/GPU/utility and WebView2. CPU **core percent** counts one busy
