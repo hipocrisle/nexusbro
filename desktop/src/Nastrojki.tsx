@@ -6,10 +6,12 @@ import { invoke } from "@tauri-apps/api/core";
 import Icon from "./Icons";
 export type Vyhod = { id: string; nazvanie: string; adres: string; proxy_uzel?: string };
 export type NastrojkiApp = {
+  memory_saver: boolean; memory_saver_minutes: number;
   tema: string; shrift: string; razmer_shrifta: number; plotnost: string; masshtab_stranic: number; vyhody: Vyhod[];
   panel_shirina: number; panel_svernuta: boolean; panel_zakladok: boolean; novaya_stranica: string; poisk: string; avtoobnovleniya: boolean; apparatnoe_uskorenie: boolean;
 };
 export const poUmolchaniyu: NastrojkiApp = {
+  memory_saver: true, memory_saver_minutes: 30,
   tema: "temnaya", shrift: "system", razmer_shrifta: 14, plotnost: "udobno", masshtab_stranic: 100, vyhody: [],
   panel_shirina: 180, panel_svernuta: false, panel_zakladok: false, novaya_stranica: "about:blank", poisk: "duckduckgo", avtoobnovleniya: true, apparatnoe_uskorenie: false,
 };
@@ -46,6 +48,8 @@ export default function Nastrojki({ value, onSave, onClose }: { value: Nastrojki
           <label>Страница новой вкладки<input aria-label="Страница новой вкладки" value={n.novaya_stranica} onChange={(e) => field("novaya_stranica", e.target.value)} placeholder="about:blank" /></label>
           <label>Масштаб страниц<Vybor aria-label="Масштаб страниц" value={n.masshtab_stranic} onChange={(e) => field("masshtab_stranic", Number(e.target.value))}>{[50,67,75,80,90,100,110,125,150,175,200].map((v) => <option key={v} value={v}>{v}%</option>)}</Vybor></label>
           <label className="galka"><input type="checkbox" checked={!!n.panel_zakladok} onChange={e=>field("panel_zakladok",e.target.checked)}/><span>Показывать панель закладок<small>Также переключается через Ctrl+Shift+B.</small></span></label>
+          <label className="galka"><input type="checkbox" aria-label="Экономить память неактивных вкладок" checked={n.memory_saver} onChange={e=>field("memory_saver",e.target.checked)}/><span>Экономить память неактивных вкладок<small>Не выгружать вкладки с медиа, звонками, вводом и загрузками. Страница восстановится при открытии.</small></span></label>
+          {n.memory_saver&&<label>Выгружать после бездействия<Vybor aria-label="Выгружать после бездействия" value={n.memory_saver_minutes} onChange={e=>field("memory_saver_minutes",Number(e.target.value))}>{[[15,"15 минут"],[30,"30 минут"],[60,"1 час"],[120,"2 часа"],[240,"4 часа"]].map(([minutes,label])=><option key={minutes} value={minutes}>{label}</option>)}</Vybor></label>}
           <div className="shortcut-list"><span>Новая вкладка<kbd>Ctrl T</kbd></span><span>Закрыть вкладку<kbd>Ctrl W</kbd></span><span>Переключить вкладку<kbd>Ctrl Tab</kbd></span><span>Адресная строка<kbd>Ctrl L</kbd></span><span>Обновить страницу<kbd>F5</kbd></span><span>Обновить без кеша<kbd>Ctrl F5</kbd></span><span>Инструменты разработчика<kbd>F12</kbd></span><span>Исходный код<kbd>Ctrl U</kbd></span></div>
         </>}
         {section === "set" && <><h3>Подключения для супер-вкладок</h3><p className="muted">Сохраните свои подписки и прокси. У каждой супер-вкладки можно выбрать отдельное подключение и узел.</p>

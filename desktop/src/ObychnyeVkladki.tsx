@@ -13,7 +13,7 @@ import {listenWindow as listen} from "./windowEvents";
 import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
-type Vkladka = { id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
+type Vkladka = { memory_keep?: boolean; memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
 // Serialize this dialog's visibility writes. A dismissed dialog's late hide
 // must not outlive a newer dialog or its final restore in this WebView.
@@ -26,9 +26,9 @@ function memoryVisibility(vidno: boolean) {
 }
 
 type MemoryRequest = { owner: string; tab: Vkladka };
-const canUnload = (tab: Vkladka, session: Sessiya | null, owner: string | null) => !!owner && !!session && !owner.startsWith("pvt-") && tab.id !== session.aktivnaya && !tab.zakreplena && !tab.privatnaya && !tab.zagruzka && !tab.otlozhena;
+const canUnload = (tab: Vkladka, session: Sessiya | null, owner: string | null) => !!owner && !!session && !owner.startsWith("pvt-") && tab.id !== session.aktivnaya && !tab.zakreplena && !tab.privatnaya && !tab.zagruzka && !tab.otlozhena && !tab.memory_pending;
 
-type Komanda = { deystvie: string;enabled?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
+type Komanda = { deystvie: string;enabled?:boolean; keep?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
 export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta,panelZakladok=false,onToggleBookmarks=()=>{} }: {panelZakladok?:boolean;onToggleBookmarks?:()=>void; id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
   const [receivedSession,setReceivedSession]=useState<{owner:string|null;data:Sessiya}|null>(null);
@@ -184,6 +184,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {text:"Обновить",action:action({deystvie:"obnovit",id:v.id})},
       {text:"Дублировать",action:action({deystvie:"novaya",adres:v.adres})},
       {text:"Выгрузить вкладку из памяти",enabled:canUnload(v,sessiya,id)&&!memoryPendingRef.current.some(item=>item.owner===id&&item.tab.id===v.id),action:()=>{if(id)setMemoryDialog({owner:id,tab:v});}},
+      {text:v.memory_keep?"Разрешить автоматическую выгрузку":"Не выгружать автоматически",enabled:!!id&&!id.startsWith("pvt-")&&!v.privatnaya&&!v.memory_pending,action:action({deystvie:"memory_keep",id:v.id,keep:!v.memory_keep})},
       {text:v.zakreplena?"Открепить":"Закрепить",action:action({deystvie:"zakrepit",id:v.id,zakreplena:!v.zakreplena})},
       {text:"Исходный код страницы",action:action({deystvie:"iskhodnik",id:v.id})},
       {text:"Инструменты разработчика",action:action({deystvie:"instrumenty",id:v.id})},null,
@@ -226,6 +227,11 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   }
   async function poslat(komanda: Komanda) {
     if (!id) return;
+    const target = sessiyaRef.current?.vkladki.find(tab => tab.id === komanda.id);
+    if (target?.memory_pending && ["pereyti", "obnovit", "obnovit_bez_kesha", "nazad", "vpered", "iskhodnik", "instrumenty", "issledovat", "perevesti", "nayti"].includes(komanda.deystvie)) {
+      setOshibka("Завершаем выгрузку… Страница откроется после её завершения.");
+      return;
+    }
     setOshibka("");
     try { await invoke("obychnaya_komanda", { id, komanda }); }
     catch (e) { setOshibka(String(e)); }
@@ -328,7 +334,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); } }}
           onContextMenu={e=>{e.preventDefault();e.stopPropagation();tabMenu(v,e.clientX,e.clientY);}}
-          title={(v.otlozhena ? "Страница не загружена в память — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
+          title={(v.memory_pending ? "Завершаем выгрузку…\n" : v.otlozhena ? "Страница не загружена в память — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "") + (v.memory_keep ? "\nНе выгружается автоматически" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
           onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void poslat({ deystvie: "vybrat", id: v.id }); } }}>
           {v.privatnaya&&<span title="Приватная вкладка" aria-label="Приватная вкладка" className="private-mark">◐</span>}<span className={"favicon" + (v.zagruzka ? " loading" : "")}>{v.zagruzka ? <span className="spinner" /> : v.ikonka?.startsWith("data:image/png;base64,") ? <img src={v.ikonka} alt="" draggable={false} /> : <Icon name="globe" size={16} />}</span>
           {!v.zakreplena && <span className="obychnaya-imya">{v.zagolovok || "Новая вкладка"}</span>}
@@ -342,17 +348,17 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     {aktivnaya?.privatnaya&&<div className="private-notice">Приватная вкладка · История и cookies не сохраняются после закрытия приватных вкладок. Сетевой выход — этой супер-вкладки.</div>}
     <form className="navigaciya" onSubmit={(e) => {
       e.preventDefault();
-      if (!aktivnaya) return;
+      if (!aktivnaya || aktivnaya.memory_pending) return;
       const text = (suggestionIndex>=0?suggestions[suggestionIndex]?.adres??adres:pole.current?.value??adres).trim();
       const search = poisk === "google" ? "https://www.google.com/search?q=" : poisk === "yandex" ? "https://yandex.ru/search/?text=" : "https://duckduckgo.com/?q=";
       const url = !text ? "about:blank" : /^[a-z][a-z0-9+.-]*:/i.test(text) ? text : !/\s/.test(text) && (text.includes(".") || /^localhost(?::|\/|$)/i.test(text)) ? "https://" + text : search + encodeURIComponent(text);
       void poslat({ deystvie: "pereyti", id: aktivnaya.id, adres: url });
       pole.current?.blur();
     }}>
-      <button type="button" title="Назад" disabled={!aktivnaya?.nazad} onClick={() => void poslat({ deystvie: "nazad", id: aktivnaya?.id })}><Icon name="back" size={17} /></button>
-      <button type="button" title="Вперёд" disabled={!aktivnaya?.vpered} onClick={() => void poslat({ deystvie: "vpered", id: aktivnaya?.id })}><Icon name="forward" size={17} /></button>
-      <button type="button" title="Обновить страницу" disabled={!aktivnaya} onClick={() => void poslat({ deystvie: "obnovit", id: aktivnaya?.id })}><Icon name="reload" size={17} /></button>
-      <input ref={pole} aria-label="Адрес страницы" placeholder="Введите адрес" disabled={!aktivnaya} role="combobox" aria-autocomplete="both" aria-controls="address-history" aria-expanded={pravka&&suggestions.length>0} aria-activedescendant={suggestionIndex>=0?`address-option-${suggestionIndex}`:undefined} autoComplete="off" spellCheck={false}
+      <button type="button" title="Назад" disabled={!aktivnaya?.nazad||!!aktivnaya.memory_pending} onClick={() => void poslat({ deystvie: "nazad", id: aktivnaya?.id })}><Icon name="back" size={17} /></button>
+      <button type="button" title="Вперёд" disabled={!aktivnaya?.vpered||!!aktivnaya.memory_pending} onClick={() => void poslat({ deystvie: "vpered", id: aktivnaya?.id })}><Icon name="forward" size={17} /></button>
+      <button type="button" title="Обновить страницу" disabled={!aktivnaya||aktivnaya.memory_pending} onClick={() => void poslat({ deystvie: "obnovit", id: aktivnaya?.id })}><Icon name="reload" size={17} /></button>
+      <input ref={pole} aria-label="Адрес страницы" placeholder="Введите адрес" disabled={!aktivnaya||aktivnaya.memory_pending} role="combobox" aria-autocomplete="both" aria-controls="address-history" aria-expanded={pravka&&suggestions.length>0} aria-activedescendant={suggestionIndex>=0?`address-option-${suggestionIndex}`:undefined} autoComplete="off" spellCheck={false}
         value={adres}
         onPointerDown={e=>{addressPointer.current=addressDown(e.currentTarget,e.button,e.clientX,e.clientY);}}
         onFocus={()=>setPravka(true)}
@@ -399,7 +405,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button aria-label="Следующее совпадение" disabled={!findText}>↓</button>
       <button type="button" aria-label="Закрыть поиск" onClick={closeFind}>×</button>
     </form>}
-    {aktivnaya?.otlozhena && poleKontenta.current && createPortal(<div className="pusto"><Icon name="tabs" size={36} /><h1>Вкладка ждёт открытия</h1><p>Страница сейчас не загружена в память. Нажмите вкладку или кнопку ниже, когда она понадобится.</p><button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button></div>, poleKontenta.current)}
+    {(aktivnaya?.otlozhena||aktivnaya?.memory_pending) && poleKontenta.current && createPortal(<div className="pusto" role={aktivnaya.memory_pending?"status":undefined}><Icon name="tabs" size={36} /><h1>{aktivnaya.memory_pending?"Завершаем выгрузку…":"Вкладка ждёт открытия"}</h1><p>{aktivnaya.memory_pending?"Страница откроется после завершения выгрузки.":"Страница сейчас не загружена в память. Нажмите вкладку или кнопку ниже, когда она понадобится."}</p>{!aktivnaya.memory_pending&&<button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button>}</div>, poleKontenta.current)}
 
   </>;
 }
