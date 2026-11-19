@@ -222,7 +222,10 @@ def run(args):
                           "NexusBro shell did not appear", 45)
         hwnd = window.handle
         u.ShowWindow(hwnd, 9)
-        if not u.SetWindowPos(hwnd, None, 20, 20, 1280, 820, 0x0040):
+        width, height = min(1280, u.GetSystemMetrics(0)-40), min(820, u.GetSystemMetrics(1)-60)
+        if width < 900 or height < 560:
+            raise RuntimeError("Windows desktop too small for physical tab workload")
+        if not u.SetWindowPos(hwnd, None, 20, 20, width, height, 0x0040):
             raise RuntimeError("Native SetWindowPos failed")
         window.set_focus()
 
@@ -250,8 +253,7 @@ def run(args):
         for s in range(args.supers):
             click(f"PerfSuper{s}", "Button")
             for t in range(args.tabs):
-                if t:
-                    click(f"Perf {s}-{t}", "TabItem")
+                click(f"Perf {s}-{t}", "TabItem")
                 path = f"/page/{s}/{t}"
                 wait_for(lambda: hits.get(path, 0) > 0, f"Tab did not really load: {path}")
             # Wait for the actual persisted loaded title, not only an HTTP request.
