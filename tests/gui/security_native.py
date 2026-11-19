@@ -472,11 +472,31 @@ def run(args):
                 client.click('[aria-label="' + ('Свернуть левую панель' if collapsed else 'Развернуть левую панель') + '"]')
             js_wait(client, '!!document.querySelector(' + json.dumps(desired) + ')', 'Panel did not change layout')
             painted(client)
-            require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"] .super-cloud-badge`);'
-                              'if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);'
-                              'return r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
-                              's.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity)>0&&!!e.querySelector("svg")})()'),
-                    'Cloud marker is not visible in ' + ('collapsed' if collapsed else 'expanded') + ' panel')
+            # The current sidebar identifies healthy sync by group membership;
+            # per-row cloud glyphs are reserved for conflict/paused warnings.
+            # cloud_state above independently verifies real IPC selection and ACK.
+            require(client.js('(()=>{const ids=["native-credentials","retained-super"];'
+                              'return ids.every(id=>{const row=document.querySelector(`[data-super-id="${id}"]`);'
+                              'return row&&row.dataset.cloudState==="selected"&&'
+                              'row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
+                              '!row.querySelector(".super-cloud-badge")})})()'),
+                    'Healthy synced rows should remain in the cloud group without warning glyphs')
+            require(client.js('(()=>{const collapsed=' + json.dumps(collapsed) + ';'
+                              'const ids=["native-credentials","retained-super","local-cloud-ui","pvt-cloud-ui"];'
+                              'return ids.every(id=>{const row=document.querySelector(`[data-super-id="${id}"]`);'
+                              'if(!row)return false;const full=row.querySelector(".imya"),short=row.querySelector(".kratkoe-imya");'
+                              'if(!full||!short||short.textContent!==Array.from(full.textContent).slice(0,3).join(""))return false;'
+                              'const name=collapsed?short:full,r=name.getBoundingClientRect(),style=getComputedStyle(name);'
+                              'return r.width>0&&r.height>0&&r.top>=0&&r.bottom<=innerHeight&&'
+                              'style.display!=="none"&&style.visibility!=="hidden"&&Number(style.opacity)>0})})()'),
+                    'Super names are not visible/full or three-letter in the expected panel layout')
+            require(client.js('(()=>{const row=document.querySelector(`[data-super-id="pvt-cloud-ui"]`);'
+                              'const lock=row?.querySelector(".super-private-badge");if(!lock)return false;'
+                              'const r=lock.getBoundingClientRect(),style=getComputedStyle(lock);'
+                              'return row.dataset.cloudState==="local"&&!row.querySelector(".super-cloud-badge")&&'
+                              'r.width>=8&&r.height>=8&&style.display!=="none"&&style.visibility!=="hidden"&&'
+                              'Number(style.opacity)>0&&!!lock.querySelector("svg")})()'),
+                    'Private Super lost its lock or acquired a sync warning')
             label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
             origin = client.command('plugin:window|inner_position', label=label)
             bounds = client.js('(()=>{const r=document.querySelector(".reika").getBoundingClientRect();'
@@ -846,6 +866,24 @@ def run(args):
         require(set(imported['conflicts']) <= expected_conflicts, 'Unexpected native import conflict')
         require('nexusbro.v1/settings/global' in imported['conflicts'], 'Differing local settings were overwritten instead of conflicting')
         require(call(cb, 'nastrojki_poluchit')['tema'] == 'svetlaya', 'Pending conflict overwrote local settings')
+        if 'nexusbro.v1/super/retained-super' in imported['conflicts']:
+            from PIL import ImageGrab
+            # This warning must come from the real native import conflict; do
+            # not manufacture a status merely to exercise the sidebar glyph.
+            cloud_refresh(cb)
+            js_wait(cb, 'document.querySelector(`[data-super-id="retained-super"][data-cloud-saved="true"]`)?.dataset.cloudState==="conflict"',
+                    'Real imported Super conflict did not reach the sidebar')
+            painted(cb)
+            require(cb.js('(()=>{const row=document.querySelector(`[data-super-id="retained-super"]`);'
+                          'const badge=row?.querySelector(`.super-cloud-badge[data-cloud-state="conflict"]`);'
+                          'if(!badge)return false;const r=badge.getBoundingClientRect(),style=getComputedStyle(badge);'
+                          'return row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
+                          'r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
+                          'style.display!=="none"&&style.visibility!=="hidden"&&Number(style.opacity)>0&&'
+                          '!!badge.querySelector("svg")})()'),
+                    'Real conflict warning glyph is not visible in the cloud group')
+            ImageGrab.grab(xdisplay=b.display).save(root / 'cloud-real-conflict-before-resolve.png')
+            checkpoint('native_sidebar_real_conflict_warning_preserved')
         for identifier in imported['conflicts']:
             call(cb, 'security_sync', action='resolve', data={'id': identifier, 'choice': 'remote'}, timeout=60)
         settled = call(cb, 'security_sync', action='run', timeout=90)
