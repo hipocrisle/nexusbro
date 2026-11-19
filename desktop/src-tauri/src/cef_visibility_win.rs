@@ -8,13 +8,14 @@ use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use windows::core::w;
 use windows::Win32::{
-    Foundation::{HANDLE, HWND},
+    Foundation::{HANDLE, HWND, LPARAM, WPARAM},
     System::Threading::GetCurrentThreadId,
     UI::WindowsAndMessaging::{
         GetAncestor, GetClassNameW, GetParent, GetPropW, GetWindow, GetWindowLongPtrW,
-        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, RemovePropW, SetPropW,
-        ShowWindow, GA_ROOT, GWL_STYLE, GW_CHILD, GW_HWNDNEXT, SW_HIDE, SW_SHOWNOACTIVATE,
-        WS_CHILD, WS_VISIBLE,
+        GetWindowThreadProcessId, IsIconic, IsWindow, IsWindowVisible, RemovePropW, SendMessageW,
+        SetPropW, ShowWindow, GA_ROOT, GWL_STYLE, GW_CHILD, GW_HWNDNEXT, SWP_HIDEWINDOW,
+        SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE,
+        WINDOWPOS, WM_WINDOWPOSCHANGED, WS_CHILD, WS_VISIBLE,
     },
 };
 
@@ -39,14 +40,26 @@ static NEXT_GENERATION: AtomicUsize = AtomicUsize::new(1);
 impl Drop for Entry {
     fn drop(&mut self) {
         unsafe {
-            // HWND properties disappear when the native window is destroyed.
-            // A reused numeric HWND cannot carry this old lifetime marker.
-            if GetPropW(self.widget, w!("NexusBro.CefVisibility.Generation")).0 as usize
-                == self.generation
+            // Generations are process-local. A foreign process can reuse a
+            // numeric HWND and the same generation; validate its owner first.
+            if owned_ui_window(self.widget, GetCurrentThreadId())
+                && GetPropW(self.widget, w!("NexusBro.CefVisibility.Generation")).0 as usize
+                    == self.generation
             {
                 let _ = RemovePropW(self.widget, w!("NexusBro.CefVisibility.Generation"));
             }
         }
+    }
+}
+
+impl Entry {
+    unsafe fn valid_identity(&self, thread: u32) -> bool {
+        owned_ui_window(self.container, thread)
+            && owned_ui_window(self.public, thread)
+            && GetParent(self.public).ok() == Some(self.container)
+            && widget_matches(self.widget, self.public, thread)
+            && GetPropW(self.widget, w!("NexusBro.CefVisibility.Generation")).0 as usize
+                == self.generation
     }
 }
 
@@ -190,11 +203,36 @@ impl Visibility {
                 let own_visible =
                     GetWindowLongPtrW(entry.widget, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0;
                 if !visible && own_visible {
-                    // Same-thread ShowWindow synchronously delivers the Widget's
-                    // visibility notification. Never call from Tauri/worker UI.
                     let _ = ShowWindow(entry.widget, SW_HIDE);
-                    entry.hidden_by_us =
-                        GetWindowLongPtrW(entry.widget, GWL_STYLE) as u32 & WS_VISIBLE.0 == 0;
+                    // ShowWindow can run nested callbacks that destroy/reparent
+                    // a browser. Validate the complete native lifetime again.
+                    if entry.valid_identity(thread)
+                        && GetWindowLongPtrW(entry.widget, GWL_STYLE) as u32 & WS_VISIBLE.0 == 0
+                    {
+                        entry.hidden_by_us = true;
+                        // Windows can omit the effective-visibility transition
+                        // when an ancestor was hidden first. The real Widget
+                        // WS_VISIBLE bit is already clear: deliver the matching
+                        // native notification to Chromium, not a JS override.
+                        // NOMOVE/NOSIZE/NOZORDER/NOACTIVATE preserve geometry,
+                        // stacking and focus. Same UI thread, synchronous send:
+                        // this stack WINDOWPOS stays alive for the entire call.
+                        let mut position = WINDOWPOS {
+                            hwnd: entry.widget,
+                            flags: SWP_HIDEWINDOW
+                                | SWP_NOMOVE
+                                | SWP_NOSIZE
+                                | SWP_NOZORDER
+                                | SWP_NOACTIVATE,
+                            ..Default::default()
+                        };
+                        let _ = SendMessageW(
+                            entry.widget,
+                            WM_WINDOWPOSCHANGED,
+                            WPARAM(0),
+                            LPARAM((&mut position as *mut WINDOWPOS) as isize),
+                        );
+                    }
                 } else if visible && entry.hidden_by_us {
                     let _ = ShowWindow(entry.widget, SW_SHOWNOACTIVATE);
                     if GetWindowLongPtrW(entry.widget, GWL_STYLE) as u32 & WS_VISIBLE.0 != 0 {
