@@ -548,6 +548,48 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                         and name.value == row["class_name"]
                         and bool(int(get_style(row["hwnd"], -16)) & 0x40000000))
 
+            class WINDOWPOS(ctypes.Structure):
+                _fields_ = [("hwnd", wintypes.HWND), ("hwndInsertAfter", wintypes.HWND),
+                            ("x", ctypes.c_int), ("y", ctypes.c_int), ("cx", ctypes.c_int),
+                            ("cy", ctypes.c_int), ("flags", wintypes.UINT)]
+
+            u.SendMessageTimeoutW.argtypes = [wintypes.HWND, wintypes.UINT, ctypes.c_size_t,
+                                             ctypes.c_ssize_t, wintypes.UINT, wintypes.UINT,
+                                             ctypes.POINTER(ctypes.c_size_t)]
+            u.SendMessageTimeoutW.restype = ctypes.c_ssize_t
+            kernel = ctypes.windll.kernel32
+            kernel.SetLastError.argtypes = [wintypes.DWORD]
+            kernel.GetLastError.restype = wintypes.DWORD
+            report["diagnostic_windowpos_size_bytes"] = ctypes.sizeof(WINDOWPOS)
+
+            def notify_native_visibility(row, visible):
+                if not diagnostic_still_owned(row):
+                    raise AssertionError("Diagnostic ownership changed before native notification")
+                own_visible = bool(int(get_style(row["hwnd"], -16)) & 0x10000000)
+                effective_visible = bool(u.IsWindowVisible(row["hwnd"]))
+                if (visible and not effective_visible) or (not visible and own_visible):
+                    raise AssertionError("Diagnostic native visibility guard rejected notification")
+                # System message WM_WINDOWPOSCHANGED is marshalled by Windows
+                # across processes; HWND/LPARAM/WINDOWPOS keep their native ABI.
+                flags = (0x40 if visible else 0x80) | 0x01 | 0x02 | 0x04 | 0x10
+                position = WINDOWPOS(row["hwnd"], None, 0, 0, 0, 0, flags)
+                result = ctypes.c_size_t()
+                before = time.monotonic()
+                kernel.SetLastError(0)
+                returned = u.SendMessageTimeoutW(row["hwnd"], 0x47, 0,
+                            ctypes.cast(ctypes.byref(position), ctypes.c_void_p).value,
+                            0x01 | 0x02, 1000, ctypes.byref(result))
+                error = kernel.GetLastError()
+                actions.append({"action": "external_WM_WINDOWPOSCHANGED_SHOW" if visible else "external_WM_WINDOWPOSCHANGED_HIDE",
+                                "hwnd": row["hwnd"], "pid": row["pid"], "tid": row["tid"],
+                                "flags": flags, "own_ws_visible_before": own_visible,
+                                "effective_visible_before": effective_visible,
+                                "api_return": int(returned), "message_result": result.value,
+                                "last_error": error, "timeout_reported": not returned and error == 1460,
+                                "zero_return_without_error": not returned and error == 0,
+                                "elapsed_ms": (time.monotonic() - before) * 1000,
+                                "received_seconds": time.monotonic() - started})
+
             changed = []
             try:
                 for row in targets:
@@ -566,6 +608,10 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                 native_window_tree("diagnostic_hide_queued")
                 measure("diagnostic_hide", duration_seconds=10)
                 native_window_tree("diagnostic_hide_observed")
+                for row in targets:
+                    notify_native_visibility(row, False)
+                measure("diagnostic_hide_notified", duration_seconds=10)
+                native_window_tree("diagnostic_hide_notified_observed")
             finally:
                 for row in changed:
                     if row["own_ws_visible"] and diagnostic_still_owned(row):
@@ -573,6 +619,14 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                                         "hwnd": row["hwnd"], "original_own_ws_visible": True,
                                         "queued": bool(u.ShowWindowAsync(row["hwnd"], 4)),
                                         "received_seconds": time.monotonic() - started})
+            wait_for(lambda: all(bool(int(get_style(row["hwnd"], -16)) & 0x10000000) == row["own_ws_visible"]
+                                 for row in changed), "Diagnostic original own-visibility did not restore", 3)
+            for row in changed:
+                if row["own_ws_visible"] and u.IsWindowVisible(row["hwnd"]):
+                    notify_native_visibility(row, True)
+                else:
+                    actions.append({"action": "external_SHOW_notification_skipped_not_effectively_visible",
+                                    "hwnd": row["hwnd"], "received_seconds": time.monotonic() - started})
             measure("diagnostic_restore", duration_seconds=10)
             native_window_tree("diagnostic_restore_observed")
         if args.expect_background_throttled:

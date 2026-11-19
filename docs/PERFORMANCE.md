@@ -87,6 +87,17 @@ is always false in this mode. This can establish whether the native mechanism
 notifies Chromium while a rebuilt application is pending; it cannot establish
 that the application itself manages background visibility correctly.
 
+The experiment additionally sends a bounded, native-ABI `WM_WINDOWPOSCHANGED`
+notification with `SWP_HIDEWINDOW | NOSIZE | NOMOVE | NOZORDER | NOACTIVATE` after
+verifying that each owned widget's actual WS_VISIBLE is already clear. It then
+observes ten seconds in `diagnostic_hide_notified`. `SendMessageTimeoutW` has a
+one-second timeout; raw return, message result, last error and elapsed time are
+retained, including ambiguous zero returns without an error. After original
+styles are restored, a SHOW notification is sent only to widgets that are
+effectively visible through their native ancestry; hidden supers remain hidden.
+This separates raw child-window style changes from Chromium visibility delivery
+without changing the product or passing its feature gate.
+
 `results.json` retains per-second samples and per-process identities, role,
 cumulative CPU seconds, working set, and private bytes. Roles distinguish shell,
 CEF browser/renderer/GPU/utility and WebView2. CPU **core percent** counts one busy
