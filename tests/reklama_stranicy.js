@@ -131,6 +131,7 @@ function uzel(tag, klass) {
     isConnected: true,
     children: [],
     parentOf: null,
+    get parentElement(){return this.parentOf;},
     getBoundingClientRect() {
       // как в браузере: размер считается по окну страницы. `this` — узел,
       // окно ищем в контексте страницы (там оно есть как `window`).
@@ -148,6 +149,7 @@ function uzel(tag, klass) {
       const i = el.parentOf ? el.parentOf.children.indexOf(el) : -1;
       if (i >= 0) el.parentOf.children.splice(i, 1);
     },
+    contains(other){if(this===other)return true;return this.children.some(c=>c.contains(other));},
     style: { setProperty() {} },
     querySelectorAll(sel) {
       const vse = [];
@@ -174,10 +176,21 @@ function uzel(tag, klass) {
 function stranica(adres) {
   const body = uzel("body");
   const koren = uzel("html");
-  const document = { body, documentElement: koren };
+  koren.children.push(body);body.parentOf=koren;
+  const document = { body, documentElement: koren,
+    createTreeWalker(root,mask){
+      const all=[];const walk=n=>{if(mask===4){if(n.innerText)all.push({nodeValue:n.innerText});}else all.push(n);for(const c of n.children||[])walk(c);};walk(root);
+      let index=mask===4?-1:0;
+      return {get currentNode(){return all[index]},lastChild(){if(mask===4)return null;const n=all[index];const children=n.children||[];if(!children.length)return null;index=all.indexOf(children.at(-1));return all[index];},previousNode(){return --index>=0?all[index]:null;},nextNode(){return ++index<all.length?all[index]:null;}};
+    }};
+  const timers=[];let tick=0;
+  const drain=()=>{let guard=0;while(timers.length){if(++guard>10000)throw Error('Unbounded cosmetic task queue');timers.shift()();}};
   const nabl = [];
   const window = {
     innerWidth: 1280,
+    setTimeout(fn){timers.push(fn);return timers.length;},
+    performance:{now(){return tick+=0.001;}},
+    NodeFilter:{SHOW_TEXT:4,SHOW_ELEMENT:1},
     innerHeight: 800,
     MutationObserver: class {
       constructor(fn) {
@@ -197,9 +210,9 @@ function stranica(adres) {
       d.parentOf = body;
       body.children.push(d);
     });
-    return nabl.length ? nabl[nabl.length - 1].fn([{ addedNodes: uzly }]) : undefined;
+    if(nabl.length)nabl[nabl.length - 1].fn([{ addedNodes: uzly }]);drain();
   };
-  return { g, document, window, dobavit, nabl };
+  return { g, document, window, dobavit, nabl, drain };
 }
 
 proveritGranicySkripta().forEach((x) =>
@@ -208,7 +221,7 @@ proveritGranicySkripta().forEach((x) =>
 
 for (const adres of ["https://yandex.ru/", "https://www.google.com/", "https://mail.ru/"]) {
   const s = stranica(adres);
-  vm.runInContext(gotovyj, s.g);
+  vm.runInContext(gotovyj, s.g);s.drain();
 
   const novost = uzel("div");
   novost.innerText = "Погода в Москве завтра: до −3 и снег";
@@ -237,7 +250,7 @@ for (const adres of ["https://yandex.ru/", "https://www.google.com/", "https://m
 // ad-блок часто приходит внутри пустой оболочки-контейнера.
 {
   const s = stranica("https://yandex.ru/");
-  vm.runInContext(gotovyj, s.g);
+  vm.runInContext(gotovyj, s.g);s.drain();
   const obolochka = uzel("div");
   const vnutri = uzel("aside");
   vnutri.innerText = "Установите другой браузер — этот устарел";
@@ -251,7 +264,7 @@ for (const adres of ["https://yandex.ru/", "https://www.google.com/", "https://m
 // Та же плашка, но прямым узлом: если она убирается, ищем проблему в projti.
 {
   const s = stranica("https://yandex.ru/");
-  vm.runInContext(gotovyj, s.g);
+  vm.runInContext(gotovyj, s.g);s.drain();
   const pryamo = uzel("aside");
   pryamo.innerText = "Установите другой браузер — этот устарел";
   s.dobavit([pryamo]);
@@ -261,8 +274,8 @@ for (const adres of ["https://yandex.ru/", "https://www.google.com/", "https://m
 // Повторный запуск в той же странице ничего не делает и не падает.
 {
   const s = stranica("https://yandex.ru/");
-  vm.runInContext(gotovyj, s.g);
-  vm.runInContext(gotovyj, s.g);
+  vm.runInContext(gotovyj, s.g);s.drain();
+  vm.runInContext(gotovyj, s.g);s.drain();
   proverit(s.window.__nbReklama === 1, "скрипт не отметил повторный запуск");
 }
 

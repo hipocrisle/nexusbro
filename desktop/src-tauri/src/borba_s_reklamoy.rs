@@ -233,29 +233,30 @@ pub fn skript_dlya(adres: &str) -> Option<&'static str> {
                     serde_json::to_string(ZNAKI).unwrap_or_else(|_| "[]".into()),
                     serde_json::to_string(KLASSY).unwrap_or_else(|_| "[]".into()),
                 );
+                // Added roots are coalesced, then walked incrementally in reverse
+                // order so a child advert is removed before its useful parent.
+                // Only text/class candidates read rendered text and geometry;
+                // unusually large text subtrees fail open within a bounded scan.
                 format!(
                     "{nacalo}\
-var removed=Object.create(null),pending=false;\
+var removed=Object.create(null),pending=false,roots=new Set(),work=null,timer=null;\
 function flush(){{pending=false;var data=removed;removed=Object.create(null);if(typeof console!=='undefined'&&console.debug)console.debug('__NEXUSBRO_COSMETIC__'+JSON.stringify(data));}}\
 function report(reason){{removed[reason]=(removed[reason]||0)+1;if(!pending){{pending=true;if(typeof queueMicrotask==='function')queueMicrotask(flush);else flush();}}}}\
-function skryt(el,reason){{try{{if(!el||!el.isConnected)return;\
-el.style.setProperty('display','none','important');el.remove();report(reason||'Рекламный элемент');}}catch(e){{}}}}\
-function otsenit(el){{if(!el||el.nodeType!==1)return;\
-if(el===document.body||el===document.documentElement)return;\
-var r=el.getBoundingClientRect();\
-if(r.width*r.height>window.innerWidth*window.innerHeight*0.5)return;\
-var t=(el.innerText||'').toLowerCase();if(t.length>2000)return;\
-if(el.matches('a,[role=link]')&&t.trim().length>30&&/(^|[\\n\\r])\\s*реклама\\s*($|[\\n\\r])/i.test(t)){{skryt(el,'Маркировка РЕКЛАМА');return;}}\
-for(var i=0;i<ZN.length;i++)if(t.indexOf(ZN[i])>=0){{skryt(el,ZN[i]);return;}}\
-var k=((el.className&&el.className.baseVal)||el.className||'')+'';k=k.toLowerCase();\
-for(var j=0;j<KL.length;j++)if(k.indexOf(KL[j])>=0){{skryt(el,KL[j]);return;}}}}\
-function projti(k){{if(!k||!k.querySelectorAll)return;\
-var v=k.querySelectorAll('a,div,section,aside,ins,iframe,span');\
-for(var i=v.length-1;i>=0;i--)otsenit(v[i]);}}\
-new MutationObserver(function(ms){{for(var i=0;i<ms.length;i++){{var d=ms[i].addedNodes;\
-for(var j=0;j<d.length;j++){{var n=d[j];if(!n||n.nodeType!==1)continue;\
-otsenit(n);projti(n);}}}}}}).observe(\
-document.documentElement,{{childList:true,subtree:true}});projti(document);}})();"
+function skryt(el,reason){{try{{if(!el||!el.isConnected)return;el.style.setProperty('display','none','important');el.remove();report(reason||'Рекламный элемент');}}catch(e){{}}}}\
+function cheapText(el){{var w=document.createTreeWalker(el,NodeFilter.SHOW_TEXT),n,text='',count=0;while((n=w.nextNode())){{if(text.length+n.nodeValue.length>4000||++count>128)return null;text+=n.nodeValue;}}return text.toLowerCase().replace(/\\s+/g,' ');}}\
+function otsenit(el){{if(!el||el.nodeType!==1||!el.isConnected||el===document.body||el===document.documentElement)return;\
+var k=((el.className&&el.className.baseVal)||el.className||'')+'';k=k.toLowerCase();var klass=KL.find(function(x){{return k.indexOf(x)>=0;}});\
+if(!klass){{var cheap=cheapText(el);if(cheap===null||!ZN.some(function(x){{return cheap.indexOf(x)>=0;}})&&cheap.indexOf('реклама')<0)return;}}\
+var t=(el.innerText||'').toLowerCase();if(t.length>2000)return;var reason=null;\
+if(el.matches('a,[role=link]')&&t.trim().length>30&&/(^|[\\n\\r])\\s*реклама\\s*($|[\\n\\r])/i.test(t))reason='Маркировка РЕКЛАМА';\
+if(!reason)reason=ZN.find(function(x){{return t.indexOf(x)>=0;}});if(!reason)reason=klass;if(!reason)return;\
+var r=el.getBoundingClientRect();if(r.width*r.height>window.innerWidth*window.innerHeight*0.5)return;skryt(el,reason);}}\
+function schedule(){{if(timer===null)timer=setTimeout(run,0);}}\
+function add(root){{if(!root||root.nodeType!==1||!root.isConnected)return;roots.add(root);if(roots.size>256){{roots.clear();roots.add(document.documentElement);}}schedule();}}\
+function nextWork(){{var root=roots.values().next().value;if(!root)return null;roots.delete(root);if(!root.isConnected)return null;for(var p=root.parentElement;p;p=p.parentElement)if(roots.has(p))return null;for(var other of roots)if(root.contains(other))roots.delete(other);\
+var walker=document.createTreeWalker(root,NodeFilter.SHOW_ELEMENT);while(walker.lastChild()){{}}return {{root:root,walker:walker,node:walker.currentNode}};}}\
+function run(){{timer=null;var deadline=performance.now()+4,count=0;while(count<160&&performance.now()<deadline){{if(!work){{if(!roots.size)break;work=nextWork();if(!work)continue;}}var node=work.node,root=work.root;work.node=work.walker.previousNode();if(!work.node)work=null;if(node&&(node===root||/^(A|DIV|SECTION|ASIDE|INS|IFRAME|SPAN)$/.test(node.tagName)))otsenit(node);count++;}}if(work||roots.size)schedule();}}\
+new MutationObserver(function(ms){{for(var i=0;i<ms.length;i++){{var d=ms[i].addedNodes;for(var j=0;j<d.length;j++)add(d[j]);}}}}).observe(document.documentElement,{{childList:true,subtree:true}});add(document.documentElement);}})();"
                 )
             })
         })
