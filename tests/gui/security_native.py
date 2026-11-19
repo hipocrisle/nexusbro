@@ -19,6 +19,7 @@ import select
 import shutil
 import signal
 import socket
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -432,10 +433,18 @@ def run(args):
         # state. No injected selection, receipt, or synthetic cloud status.
         client.js('window.dispatchEvent(new Event("nexusbro-security-state-changed"));true')
 
-    def cloud_state(client, *, selected, receipt=False):
+    def cloud_state(client, *, selected, receipt=False, saved_state=None):
         status = call(client, 'security_sync', action='status')
+        native_state = {'local': 'off', 'pending': 'pending', 'selected': 'ok',
+                        'error': 'error', 'conflict': 'conflict'}[selected]
         require(('native-credentials' in status['selection']['supers']) == (selected != 'local'),
                 'Cloud assertion does not match persisted native selection')
+        require(status.get('super_states', {}).get('native-credentials', {}).get('state') == native_state,
+                'Per-record native ACK state does not justify the displayed cloud state')
+        require(status.get('sync_state', {}).get('state') == ('error' if native_state == 'conflict' else native_state),
+                'Aggregate native status does not justify the cloud header state')
+        require('pvt-cloud-ui' not in status['super_states'] and 'pvt-native-private' not in status['super_states'],
+                'Private definitions entered the authoritative cloud receipt map')
         js_wait(client, 'document.querySelector(`[data-super-id="native-credentials"]`)?.dataset.cloudState===' +
                 json.dumps(selected), 'Super cloud state did not refresh from native status')
         require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"]`);'
@@ -446,13 +455,14 @@ def run(args):
         require(client.js('(()=>{const ordinary=document.querySelector(`[data-super-id="local-cloud-ui"]`),'
                           'privateRow=document.querySelector(`[data-super-id="pvt-cloud-ui"]`);'
                           'return [ordinary,privateRow].every(e=>e&&e.dataset.cloudState==="local"&&'
-                          '(e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local"||'
-                          '(!e.closest("[data-cloud-group]")&&!document.querySelector(`[data-cloud-group="cloud"]`)))&&'
-                          '!e.querySelector(".super-cloud-badge"))})()'),
+                          'e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local")&&'
+                          'ordinary.querySelector(`.super-cloud-badge[data-cloud-state="local"]`)&&'
+                          '!privateRow.querySelector(".super-cloud-badge")})()'),
                 'Unselected or private Super was presented as cloud-selected')
         if selected != 'local':
+            saved_state = saved_state or selected
             js_wait(client, 'document.querySelector(`[data-super-id="retained-super"][data-cloud-saved="true"]`)?.dataset.cloudState===' +
-                    json.dumps(selected), 'Selected saved Super did not appear in the cloud group')
+                    json.dumps(saved_state), 'Selected saved Super did not reflect its independent receipt state')
             require(client.js('(()=>{const rows=Array.from(document.querySelectorAll("[data-super-id]"));'
                               'return new Set(rows.map(e=>e.dataset.superId)).size===rows.length&&'
                               '!document.querySelector(`[data-super-id="pvt-native-private"]`)})()'),
@@ -463,8 +473,46 @@ def run(args):
                     'Sidebar did not render the real account sync receipt')
             require(client.js('document.querySelector(`[data-testid="cloud-last-account-sync"]`).dataset.lastSync') ==
                     str(status['last_sync']), 'Displayed account receipt differs from persisted native last_sync')
+            require(client.js('(()=>{const e=document.querySelector(`[data-testid="cloud-last-account-sync"]`);'
+                              'return e.getBoundingClientRect().height<=32&&e.textContent.trim()==="Облако"&&'
+                              'e.title.includes("синхронизац")})()'),
+                    'Cloud header is not one compact row with its date confined to tooltip metadata')
 
-    def cloud_layouts(client, device, stage):
+    def cloud_painted(client, device, identifier, kind):
+        from PIL import ImageGrab
+        value = client.js('(()=>{const e=document.querySelector(' +
+                          json.dumps('[data-super-id="' + identifier + '"] .super-cloud-badge') + ');'
+                          'if(!e)return null;const r=e.getBoundingClientRect();'
+                          'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1,'
+                          'rgb:getComputedStyle(e).color.match(/\\d+/g).slice(0,3).map(Number)}})()')
+        require(value and value['w'] >= 10 and value['h'] >= 10, 'Native cloud status icon is not visible')
+        red, green, blue = value['rgb']
+        require({'green': green > red * 1.15 and green > blue * 1.05,
+                 'red': red > green * 1.25 and red > blue * 1.15,
+                 'gray': max(red, green, blue) - min(red, green, blue) <= 55}[kind],
+                'Cloud status icon does not use the expected ' + kind + ' color')
+        label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        origin = client.command('plugin:window|inner_position', label=label)
+        box = (round(origin['x'] + value['x'] * value['k']), round(origin['y'] + value['y'] * value['k']),
+               round(origin['x'] + (value['x'] + value['w']) * value['k']),
+               round(origin['y'] + (value['y'] + value['h']) * value['k']))
+        # DOM/layout RAF can complete before the window compositor paints a
+        # collapsed sidebar. Require the same actual colored ink, with a bounded
+        # wait for native presentation rather than accepting computed color alone.
+        deadline = time.monotonic() + 6
+        ink = 0
+        while time.monotonic() < deadline:
+            pixels = ImageGrab.grab(xdisplay=device.display).crop(box).convert('RGB')
+            ink = sum(max(abs(channel - expected) for channel, expected in zip(pixel, value['rgb'])) <= 24
+                      for pixel in pixels.getdata())
+            if ink >= 3:
+                return
+            time.sleep(.1)
+        pixels.save(root / ('cloud-' + identifier + '-' + kind + '-paint-failure.png'))
+        require(False, 'Native cloud icon color exists in DOM but was not painted on screen: ' +
+                json.dumps({'identifier': identifier, 'kind': kind, 'crop': box, 'color': value['rgb'], 'ink': ink}))
+
+    def cloud_layouts(client, device, stage, kind='green'):
         from PIL import ImageGrab
         for collapsed in (False, True):
             desired = '.okno.panel-svernuta' if collapsed else '.okno:not(.panel-svernuta)'
@@ -472,15 +520,13 @@ def run(args):
                 client.click('[aria-label="' + ('Свернуть левую панель' if collapsed else 'Развернуть левую панель') + '"]')
             js_wait(client, '!!document.querySelector(' + json.dumps(desired) + ')', 'Panel did not change layout')
             painted(client)
-            # The current sidebar identifies healthy sync by group membership;
-            # per-row cloud glyphs are reserved for conflict/paused warnings.
-            # cloud_state above independently verifies real IPC selection and ACK.
-            require(client.js('(()=>{const ids=["native-credentials","retained-super"];'
-                              'return ids.every(id=>{const row=document.querySelector(`[data-super-id="${id}"]`);'
-                              'return row&&row.dataset.cloudState==="selected"&&'
-                              'row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
-                              '!row.querySelector(".super-cloud-badge")})})()'),
-                    'Healthy synced rows should remain in the cloud group without warning glyphs')
+            require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"] .super-cloud-badge`);'
+                              'if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);'
+                              'return r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
+                              's.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity)>0&&!!e.querySelector("svg")})()'),
+                    'Cloud marker is not visible in ' + ('collapsed' if collapsed else 'expanded') + ' panel')
+            cloud_painted(client, device, 'native-credentials', kind)
+            cloud_painted(client, device, 'local-cloud-ui', 'gray')
             require(client.js('(()=>{const collapsed=' + json.dumps(collapsed) + ';'
                               'const ids=["native-credentials","retained-super","local-cloud-ui","pvt-cloud-ui"];'
                               'return ids.every(id=>{const row=document.querySelector(`[data-super-id="${id}"]`);'
@@ -563,11 +609,14 @@ def run(args):
         streams.append(stream)
         deployment_key = base64.b64encode(secrets.token_bytes(32)).decode()
         sensitive.add(deployment_key)
-        server_process = subprocess.Popen([str(server_binary)], env={**os.environ,
+        server_environment = {**os.environ,
             'NEXUSBRO_SYNC_BIND': '127.0.0.1:' + str(sync_port),
             'NEXUSBRO_SYNC_DB': str(sync_root / 'nexusbro-sync.db'),
             'NEXUSBRO_SYNC_TOTP_KEY': deployment_key,
-            'RUST_LOG': 'info'}, stdout=stream, stderr=subprocess.STDOUT, start_new_session=True)
+            'RUST_LOG': 'info'}
+        server_log = stream
+        server_process = subprocess.Popen([str(server_binary)], env=server_environment,
+                                          stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append(server_process)
 
         def health():
@@ -1071,6 +1120,93 @@ def run(args):
         cloud_layouts(ca, a, 'cloud-selection-after-restart')
         checkpoint('native_cloud_selection_real_receipt_and_panel_markers_survive_restart')
         checkpoint('restart_locks_key_persists_encrypted_session_selection_local_only_password')
+        phase = 'cloud-record-ack-is-not-account-date'
+        old_receipt = call(ca, 'security_sync', action='status')['last_sync']
+        edited_super = next(row for row in call(ca, 'spisok') if row['id'] == normal_id)
+        edited_super['nazvanie'] = 'Native metadata changed after authenticated ACK'
+        call(ca, 'izmenit', nastrojki=edited_super)
+        cloud_refresh(ca)
+        cloud_state(ca, selected='pending', saved_state='selected', receipt=True)
+        require(call(ca, 'security_sync', action='status')['last_sync'] == old_receipt,
+                'Local Super edit fabricated a new account receipt')
+        painted(ca)
+        cloud_painted(ca, a, normal_id, 'gray')
+        changed_report = call(ca, 'security_sync', action='run', timeout=90)
+        report_ok(changed_report)
+        require(changed_report['pushed'] >= 1, 'Changed portable Super was not actually sent to the server')
+        cloud_refresh(ca)
+        cloud_state(ca, selected='selected', receipt=True)
+        checkpoint('native_local_super_hash_change_is_pending_despite_historical_account_receipt_actual_exchange_restores_green')
+        phase = 'cloud-disable-saved-moves-local-without-delete'
+        local_before = {name: (a.data / name).read_bytes() for name in ('vkladki.json', 'sohranennye.json')}
+        saved_before = call(ca, 'sohranennye')
+        user_id = call(ca, 'security_account', action='status')['user_id']
+
+        def remote_saved_record():
+            # Read only this test's private DB. Opaque ciphertext/revision stays
+            # in memory; never inspect or contact a production service.
+            with sqlite3.connect('file:' + str(sync_root / 'nexusbro-sync.db') + '?mode=ro', uri=True) as database:
+                return database.execute('SELECT ciphertext,rev,deleted FROM items WHERE user_id=? AND item_id=?',
+                                        (user_id, 'nexusbro.v1/super/retained-super')).fetchone()
+
+        remote_before = remote_saved_record()
+        require(remote_before and remote_before[2] == 0, 'Selected saved Super has no live authenticated server record')
+        disabled_selection = {**selection_a, 'supers': [normal_id]}
+        call(ca, 'security_sync', action='configure', data={'selection': disabled_selection})
+        cloud_refresh(ca)
+        js_wait(ca, '(()=>{const e=document.querySelector(`[data-super-id="retained-super"]`);'
+                    'return e?.dataset.cloudSaved==="true"&&e.dataset.cloudState==="local"&&'
+                    'e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local"})()',
+                'Disabled saved Super disappeared instead of moving to the local group')
+        painted(ca)
+        cloud_painted(ca, a, 'retained-super', 'gray')
+        report_ok(call(ca, 'security_sync', action='run', timeout=90))
+        require(call(ca, 'sohranennye') == saved_before and
+                all((a.data / name).read_bytes() == raw for name, raw in local_before.items()),
+                'Disabling sync changed or removed local Super data')
+        require(remote_saved_record() == remote_before,
+                'Disabling sync deleted or changed the opaque server record')
+        require(not any(row['id'] == 'retained-super' for row in call(ca, 'spisok')),
+                'Moving a disabled saved Super started its CEF engine')
+        call(ca, 'security_sync', action='configure', data={'selection': selection_a})
+        report_ok(call(ca, 'security_sync', action='run', timeout=90))
+        cloud_refresh(ca)
+        cloud_state(ca, selected='selected', receipt=True)
+        checkpoint('native_disabled_closed_saved_super_remains_local_gray_no_local_or_remote_delete_reenable_actual_ack_green')
+        phase = 'cloud-real-network-error'
+        server_process.terminate()
+        try:
+            server_process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            server_process.kill()
+            server_process.wait(timeout=3)
+        network_error = call(ca, 'security_sync', action='run', error=True, timeout=45)
+        require('ACCOUNT_SESSION_EXPIRED' not in network_error, 'Network outage unexpectedly revoked the account session')
+        cloud_refresh(ca)
+        cloud_state(ca, selected='error', receipt=True)
+        cloud_layouts(ca, a, 'cloud-real-network-error', kind='red')
+        checkpoint('native_real_stopped_isolated_server_exchange_is_red_without_false_green_from_old_receipts')
+        phase = 'cloud-network-error-persists-after-restart'
+        a.stop_app()
+        ca = a.start()
+        js_wait(ca, '!!document.querySelector(".browser-lock-screen")', 'Restarted app did not require its existing master password')
+        ca.fill('[aria-label="Мастер-пароль для разблокировки браузера"]', master_a)
+        ca.text_button('Разблокировать браузер')
+        js_wait(ca, '!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
+                'Master password did not unlock the app after the real network error')
+        cloud_state(ca, selected='error', receipt=True)
+        cloud_layouts(ca, a, 'cloud-real-network-error-after-restart', kind='red')
+        checkpoint('native_failed_exchange_red_persists_across_real_app_restart')
+        phase = 'cloud-same-server-recovery'
+        server_process = subprocess.Popen([str(server_binary)], env=server_environment,
+                                          stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True)
+        processes.append(server_process)
+        wait_for(health, 'Same isolated server DB and deployment key did not restart', 20)
+        report_ok(call(ca, 'security_sync', action='run', timeout=90))
+        cloud_refresh(ca)
+        cloud_state(ca, selected='selected', receipt=True)
+        cloud_layouts(ca, a, 'cloud-real-network-recovered')
+        checkpoint('native_same_db_and_secrets_authenticated_server_recovery_restores_green')
         phase = 'ciphertext-and-log-review'
         for device in devices:
             check_encrypted(device)
