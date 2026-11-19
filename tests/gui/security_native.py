@@ -430,18 +430,30 @@ def run(args):
         js_wait(client, 'document.querySelector(`[data-super-id="native-credentials"]`)?.dataset.cloudState===' +
                 json.dumps(selected), 'Super cloud state did not refresh from native status')
         require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"]`);'
-                          'return e.closest("[data-cloud-group]")?.dataset.cloudGroup===' +
-                          json.dumps('local' if selected == 'local' else 'cloud') + '})()'),
+                          'const group=e.closest("[data-cloud-group]")?.dataset.cloudGroup;'
+                          'return group===' + json.dumps('local' if selected == 'local' else 'cloud') +
+                          ('||(!group&&!document.querySelector(`[data-cloud-group="cloud"]`))' if selected == 'local' else '') + '})()'),
                 'Selected Super is in the wrong cloud/local group')
         require(client.js('(()=>{const ordinary=document.querySelector(`[data-super-id="local-cloud-ui"]`),'
                           'privateRow=document.querySelector(`[data-super-id="pvt-cloud-ui"]`);'
                           'return [ordinary,privateRow].every(e=>e&&e.dataset.cloudState==="local"&&'
-                          'e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local"&&!e.querySelector(".super-cloud-badge"))})()'),
+                          '(e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local"||'
+                          '(!e.closest("[data-cloud-group]")&&!document.querySelector(`[data-cloud-group="cloud"]`)))&&'
+                          '!e.querySelector(".super-cloud-badge"))})()'),
                 'Unselected or private Super was presented as cloud-selected')
+        if selected != 'local':
+            js_wait(client, 'document.querySelector(`[data-super-id="retained-super"][data-cloud-saved="true"]`)?.dataset.cloudState===' +
+                    json.dumps(selected), 'Selected saved Super did not appear in the cloud group')
+            require(client.js('(()=>{const rows=Array.from(document.querySelectorAll("[data-super-id]"));'
+                              'return new Set(rows.map(e=>e.dataset.superId)).size===rows.length&&'
+                              '!document.querySelector(`[data-super-id="pvt-native-private"]`)})()'),
+                    'Cloud group duplicated open/saved IDs or included a private saved definition')
         if receipt:
             require(status.get('last_sync'), 'UI cloud receipt has no native successful account sync')
             js_wait(client, '!!document.querySelector(`[data-testid="cloud-last-account-sync"]`)',
                     'Sidebar did not render the real account sync receipt')
+            require(client.js('document.querySelector(`[data-testid="cloud-last-account-sync"]`).dataset.lastSync') ==
+                    str(status['last_sync']), 'Displayed account receipt differs from persisted native last_sync')
 
     def cloud_layouts(client, device, stage):
         from PIL import ImageGrab
