@@ -86,8 +86,6 @@ def visible_qr_uri(client, device):
     from PIL import ImageGrab
     decoder = pathlib.Path(__file__).resolve().parents[2] / 'desktop/node_modules/jsqr/dist/jsQR.js'
     require(decoder.is_file(), 'Install locked desktop devDependencies before native QR acceptance')
-    require(client.js(decoder.read_text() + ';typeof window.jsQR==="function"'),
-            'Local QR decoder did not initialize')
     selector = 'canvas[data-testid="totp-qr"]'
     scroll_visible(client, selector)
     rect = client.js('(()=>{const e=document.querySelector(' + json.dumps(selector) + ');'
@@ -105,15 +103,25 @@ def visible_qr_uri(client, device):
            round(origin['x'] + (rect['x'] + rect['w']) * rect['k']),
            round(origin['y'] + (rect['y'] + rect['h']) * rect['k']))
     pixels = ImageGrab.grab(xdisplay=device.display).crop(box).convert('RGBA')
-    encoded = base64.b64encode(pixels.tobytes()).decode('ascii')
+    # Keep both the decoder bundle and RGBA payload off the WebKit inspector:
+    # large Runtime.evaluate frames can reset its connection. Node receives
+    # synthetic screen pixels only over stdin and returns the URI over a private
+    # captured pipe; no QR, provisioning URI, or key is written to artifacts.
+    program = ('const fs=require("fs"),decode=require(process.argv[1]);'
+               'const image=JSON.parse(fs.readFileSync(0,"utf8"));'
+               'const bytes=new Uint8ClampedArray(Buffer.from(image.pixels,"base64"));'
+               'const qr=decode(bytes,image.width,image.height,{inversionAttempts:"dontInvert"});'
+               'process.stdout.write(JSON.stringify({data:qr?.data||null}));')
     try:
-        value = client.js('(()=>{const bytes=Uint8ClampedArray.from(atob(' + json.dumps(encoded) +
-                          '),c=>c.charCodeAt(0));return window.jsQR(bytes,' + str(pixels.width) + ',' +
-                          str(pixels.height) + ',{inversionAttempts:"dontInvert"})?.data||null})()')
+        decoded = subprocess.run(['node', '-e', program, str(decoder)],
+                                 input=json.dumps({'width': pixels.width, 'height': pixels.height,
+                                                   'pixels': base64.b64encode(pixels.tobytes()).decode('ascii')}),
+                                 capture_output=True, text=True, timeout=15)
+        require(decoded.returncode == 0 and len(decoded.stdout) <= 8192,
+                'Local QR decoder process did not complete')
+        value = json.loads(decoded.stdout).get('data')
     except Exception:
         raise NativeFailure('Local decoder could not inspect visible enrollment QR') from None
-    finally:
-        client.js('delete window.jsQR;true')
     require(isinstance(value, str) and value.startswith('otpauth://totp/'),
             'Visible native enrollment QR does not decode as a TOTP provisioning URI')
     return value
