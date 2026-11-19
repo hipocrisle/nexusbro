@@ -14,9 +14,6 @@ jobs:
       CEF_SHA1: "cacfbb7d7261fea682fb67c108de7e4347519ff7"
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-gnu
@@ -31,21 +28,15 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            desktop/src-tauri/target/
-          key: ${{ runner.os }}-cargo-${{ steps.image.outputs.key }}-${{ hashFiles('desktop/src-tauri/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-${{ steps.image.outputs.key }}-
-      - name: Native build dependencies (ephemeral runner)
-        timeout-minutes: 10
+            tests/route_context_probe/target/
+          key: ${{ runner.os }}-route-probe-${{ steps.image.outputs.key }}-${{ hashFiles('tests/route_context_probe/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-route-probe-${{ steps.image.outputs.key }}-
+      - name: Check preinstalled offline probe tools
         run: |
           set -euo pipefail
-          if [ -f /etc/apt/apt-mirrors.txt ]; then
-            printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt >/dev/null
-          fi
-          if [ -f /etc/apt/apt-security-mirrors.txt ]; then
-            printf '%s\n' 'https://security.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-security-mirrors.txt >/dev/null
-          fi
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config libxcb1-dev xvfb iproute2
+          command -v Xvfb
+          command -v ip
+          command -v unshare
       - uses: actions/cache/restore@v4
         id: cef
         with:
@@ -71,10 +62,10 @@ jobs:
       - name: Build only synthetic capability executable
         run: |
           set -euo pipefail
-          npm ci --prefix desktop
-          npm run build --prefix desktop
           export CEF_PATH="$GITHUB_WORKSPACE/desktop/src-tauri/cef"
-          cargo build --release --locked --manifest-path desktop/src-tauri/Cargo.toml --target x86_64-unknown-linux-gnu --example route_context_probe
+          cargo build --release --locked --manifest-path tests/route_context_probe/Cargo.toml --target x86_64-unknown-linux-gnu --bin route_context_probe
+          ldd "$CEF_PATH/libcef.so" > /tmp/route-probe-runtime-libs
+          if grep -q "not found" /tmp/route-probe-runtime-libs; then cat /tmp/route-probe-runtime-libs; exit 1; fi
       - name: Save probe compiler cache even after a diagnostic compile failure
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -84,7 +75,7 @@ jobs:
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
-            desktop/src-tauri/target/
+            tests/route_context_probe/target/
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
       - name: Measure contexts with physically isolated loopback networking
         timeout-minutes: 5
@@ -94,7 +85,7 @@ jobs:
             set -euo pipefail
             ip link set lo up
             exec env CEF_PATH="$1" LD_LIBRARY_PATH="$1" python3 tests/gui/route_context_probe.py --exe "$2" --out "$3"
-          ' route-probe "$GITHUB_WORKSPACE/desktop/src-tauri/cef" "$GITHUB_WORKSPACE/desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/examples/route_context_probe" "$GITHUB_WORKSPACE/.dev-check/route-probe"
+          ' route-probe "$GITHUB_WORKSPACE/desktop/src-tauri/cef" "$GITHUB_WORKSPACE/tests/route_context_probe/target/x86_64-unknown-linux-gnu/release/route_context_probe" "$GITHUB_WORKSPACE/.dev-check/route-probe"
       - uses: actions/upload-artifact@v4
         if: always()
         with:

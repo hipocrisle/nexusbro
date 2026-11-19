@@ -43,3 +43,12 @@ route-context-probe.yml и документацию. Маршруты польз
 Диагностика первой runtime-попытки: independent дал can_set_proxy=true, set_proxy_ok=false, фактический DIRECT/DIRECT. Подтверждения независимых proxy пока нет. Официальный CEF pref_helper.cc проверяет регистрацию, изменяемость, валидность Value и совпадение его типа; Value::SetDictionary сам возвращает true после привязки dictionary. Поэтому добавлены измерения каждого этапа без изменения ожидаемых маршрутов.
 
 Установлена причина пустой ошибки до вызова helper: cef-rs156 `CefStringData::default()` — Borrowed(None), преобразование `&mut CefStringUtf16` даёт NULL. Официальный [генератор CEF C-to-C++](https://github.com/chromiumembedded/cef/blob/8078/tools/make_cpptoc_impl.py) проверяет обязательный string_byref и возвращает0 при NULL; [SetPreference](https://github.com/chromiumembedded/cef/blob/8078/include/cef_preference.h) помечает optional только value, не error. Теперь output error создаётся `CefString::from("probe-placeholder")`, чтобы передать настоящий writable cef_string_t. На успешном вызове placeholder не выводится; на неуспешном ограниченная диагностика сохраняется. Фактические маршруты по-прежнему проверяются только Python receipts; исправление FFI ещё должно пройти runtime CI.
+
+После сбоя Ubuntu APT в44520751378 probe переведён на минимальный самостоятельный
+Cargo harness tests/route_context_probe (тот же Rust example, фиксированные
+cef/serde_json/reqwest). Он не собирает Tauri/GTK/WebKit и не требует apt/NPM.
+Xvfb и iproute2 уже присутствуют в GitHub Ubuntu24; наличие проверяется явно.
+При отсутствии runtime-библиотеки ldd останавливает тест, без фиктивного успеха.
+Команда из корня: cargo build --release --locked --manifest-path
+tests/route_context_probe/Cargo.toml --target x86_64-unknown-linux-gnu.
+Локально наDE1 выполнена только offlineгенерацияCargo.lock, не Rustсборка.
