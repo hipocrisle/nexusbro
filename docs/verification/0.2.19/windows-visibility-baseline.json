@@ -1,0 +1,60 @@
+{
+  "measurement_run": 44535226647,
+  "package_run": 44512453342,
+  "package_version": "0.2.18",
+  "visibility_probe": true,
+  "measurement_completed": true,
+  "requested": {
+    "supers": 4,
+    "tabs_per_super": 6,
+    "saved_tabs_per_super": 6,
+    "saved_tabs_total": 24,
+    "visited_tabs_total": 24
+  },
+  "phases": {
+    "warm_active": {
+      "reports": 188,
+      "pages": 24,
+      "visibility_states": {
+        "visible": 188
+      },
+      "raf_hz_median": 64.00320016000725,
+      "raf_hz_min": 63.50317515875905,
+      "raf_hz_max": 64.49355064493513
+    },
+    "warm_covered": {
+      "reports": 187,
+      "pages": 24,
+      "visibility_states": {
+        "visible": 187
+      },
+      "raf_hz_median": 64,
+      "raf_hz_min": 63.48730253949136,
+      "raf_hz_max": 64.51290258051685
+    },
+    "warm_minimized": {
+      "reports": 184,
+      "pages": 24,
+      "visibility_states": {
+        "visible": 184
+      },
+      "raf_hz_median": 64.0,
+      "raf_hz_min": 63.5031751587572,
+      "raf_hz_max": 64.48710257948522
+    },
+    "warm_restored": {
+      "reports": 182,
+      "pages": 24,
+      "visibility_states": {
+        "visible": 182
+      },
+      "raf_hz_median": 64.0,
+      "raf_hz_min": 63.48730253949321,
+      "raf_hz_max": 64.49032645103084
+    }
+  },
+  "raw_report_count": 907,
+  "dropped": 0,
+  "finding": "All 24 real CEF pages report visible and keep approximately64rAF callbacks/s even with the Tauri window minimized. Wrong native child visibility propagation is a confirmed defect, not yet an implemented fix.",
+  "caveat": "Probe workload includes rAF and metadata POSTs and must not be CPU-compared with the static baseline."
+}
