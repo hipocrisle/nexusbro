@@ -24,6 +24,10 @@ on:
         description: Require hidden background pages, paused animation frames and restored paint/input
         type: boolean
         default: false
+      performance_native_diagnostic:
+        description: Diagnostic external Widget hide/restore (never product acceptance)
+        type: boolean
+        default: false
       performance_reference:
         description: Optional reference package run to measure first on the same Windows VM
         required: false
@@ -497,11 +501,13 @@ jobs:
           REFERENCE_RUN: ${{ inputs.performance_reference }}
           PERF_VISIBILITY: ${{ inputs.performance_visibility }}
           PERF_EXPECT_THROTTLED: ${{ inputs.performance_expect_throttled }}
+          PERF_NATIVE_DIAGNOSTIC: ${{ inputs.performance_native_diagnostic }}
         run: |
           $extra = @()
           $referenceExtra = @()
           if ($env:PERF_VISIBILITY -eq "true") { $extra += "--visibility-probe"; $referenceExtra += "--visibility-probe" }
           if ($env:PERF_EXPECT_THROTTLED -eq "true") { $extra += "--expect-background-throttled" }
+          if ($env:PERF_NATIVE_DIAGNOSTIC -eq "true") { $extra += "--diagnostic-native-hide" }
           $installers = @(Get-ChildItem .dev-check/package -Recurse -Filter *.exe)
           if ($installers.Count -ne 1) { throw "Expected exactly one measured installer" }
           Get-FileHash -Algorithm SHA256 $installers[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/installer-sha256.json
