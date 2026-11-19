@@ -776,6 +776,35 @@ def run(args):
         ca.text_button('Резервные коды сохранены')
         ca.click('[aria-label="Закрыть пароли и синхронизацию"]')
         checkpoint('native_displayed_qr_screen_pixels_decoded_real_totp_ui_verified')
+        phase = 'mfa-revokes-other-device'
+        b_off_selection = {'settings': False, 'bookmarks': False, 'supers': [], 'passwords': []}
+        require(call(cb, 'security_sync', action='status')['selection'] == b_off_selection,
+                'Second device sync selection changed before MFA reauthentication')
+        expired = call(cb, 'security_sync', action='run', error=True, timeout=90)
+        require('ACCOUNT_SESSION_EXPIRED' in expired,
+                'Enabling MFA did not revoke the other real device session')
+        cb.js('window.dispatchEvent(new Event("nexusbro-security"));true')
+        js_wait(cb, '!!document.querySelector(".security-panel")', 'Second device security settings did not reopen')
+        cb.text_button('Аккаунт')
+        # Expired-session handling normally clears the native cached session.
+        # If the UI still has its earlier snapshot, use its real logout action.
+        if call(cb, 'security_account', action='status')['logged_in']:
+            js_wait(cb, '!!document.querySelector(".security-account-status")', 'Cached account interface did not render')
+            cb.text_button('Выйти из аккаунта')
+        js_wait(cb, '!!document.querySelector(".security-account-form")', 'Revoked device did not offer real account login')
+        cb.fill('[aria-label="Имя аккаунта NexusBro"]', username)
+        cb.fill('[aria-label="Пароль аккаунта NexusBro"]', account_password)
+        scroll_visible(cb, '[aria-label="Код 2FA для входа"]')
+        cb.fill('[aria-label="Код 2FA для входа"]', backup_codes[0])
+        cb.text_button('Войти в NexusBro')
+        wait_for(lambda: call(cb, 'security_account', action='status')['logged_in'],
+                 'Revoked device could not log in through UI with its real recovery code', 45)
+        require(call(cb, 'security_account', action='status')['totp_enabled'],
+                'Second device login lost the enabled MFA state')
+        require(call(cb, 'security_sync', action='status')['selection'] == b_off_selection,
+                'MFA reauthentication silently opted the second device into sync')
+        cb.click('[aria-label="Закрыть пароли и синхронизацию"]')
+        checkpoint('mfa_revokes_other_device_and_real_recovery_login')
         phase = 'first-selected-sync'
         cloud_refresh(ca)
         cloud_state(ca, selected='local')
