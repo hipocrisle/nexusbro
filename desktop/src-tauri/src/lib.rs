@@ -34,6 +34,7 @@ mod secure_vault;
 mod browser_crypto;
 mod browser_account;
 mod browser_sync;
+mod sync_receipts;
 mod password_cef;
 mod passwords;
 mod zagruzki;

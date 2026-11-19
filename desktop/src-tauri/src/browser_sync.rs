@@ -2,6 +2,7 @@
 use crate::{
     browser_account::{AccountState, SyncItem},
     secure_vault::VaultState,
+    sync_receipts::{classify_record, Receipt, RecordState},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -47,6 +48,10 @@ struct Local {
     intent_seen: BTreeMap<String, u64>,
     report: Report,
     catalog: BTreeMap<String, String>,
+    // Separate from `meta`: snapshot metadata is written before a network ACK.
+    super_receipts: BTreeMap<String, Receipt>,
+    last_exchange_failed: bool,
+    exchange_incomplete: bool,
 }
 const SETTINGS: &[&str] = &[
     "tema",
@@ -542,13 +547,84 @@ async fn apply(
     }
     Ok(())
 }
+// Called only for an authenticated remote echo after matching/applying its value.
+fn remember_super_ack(data: &mut Local, item: &SyncItem) {
+    let Ok((kind, key)) = identity(&item.id) else {
+        return;
+    };
+    if kind != "super" || crate::privatnost::eto_id(key) {
+        return;
+    }
+    if item.deleted {
+        data.super_receipts.remove(&item.id);
+    } else {
+        data.super_receipts.insert(
+            item.id.clone(),
+            Receipt {
+                hash: hash(&item.value),
+                confirmed_at: crate::passwords::now(),
+            },
+        );
+    }
+}
 fn status(s: &crate::Sostoyanie, data: &Local) -> Result<Value, String> {
+    let normal: BTreeMap<_, _> = all_supers(s)?
+        .into_iter()
+        .filter(|(key, n)| !crate::privatnost::eto_id(key) && !n.privatnaya)
+        .collect();
     let mut supers = data.catalog.clone();
-    for (id, n) in all_supers(s)? {
-        supers.insert(id, n.nazvanie);
+    supers.retain(|key, _| !crate::privatnost::eto_id(key));
+    for (key, n) in &normal {
+        supers.insert(key.clone(), n.nazvanie.clone());
+    }
+    let exchange_bad =
+        data.last_exchange_failed || data.exchange_incomplete || !data.report.errors.is_empty();
+    let mut states = BTreeMap::new();
+    let mut active = Vec::new();
+    for key in supers.keys() {
+        let record = id("super", key);
+        let digest = normal
+            .get(key)
+            .map(|n| hash(&portable_super(n).to_string()));
+        let receipt = data.super_receipts.get(&record);
+        let kind = classify_record(
+            selected(&data.selection, &record),
+            digest.as_deref(),
+            receipt,
+            data.report.conflicts.contains(&record),
+            exchange_bad,
+        );
+        let mut row = json!({"state":kind});
+        if let Some(ack) = receipt {
+            row["last_success"] = json!(ack.confirmed_at);
+        }
+        states.insert(key.clone(), row);
+        if kind != RecordState::Off {
+            active.push(kind);
+        }
+    }
+    let overall = if active.is_empty() {
+        "off"
+    } else if exchange_bad
+        || !data.report.conflicts.is_empty()
+        || active
+            .iter()
+            .any(|s| matches!(s, RecordState::Error | RecordState::Conflict))
+    {
+        "error"
+    } else if active.iter().all(|s| *s == RecordState::Ok) {
+        "ok"
+    } else {
+        "pending"
+    };
+    let mut sync_state = json!({"state":overall});
+    if let Some(time) = data.last_sync {
+        sync_state["last_success"] = json!(time);
     }
     Ok(
-        json!({"selection":data.selection,"last_sync":data.last_sync,"available_supers":supers.into_iter().map(|(id,name)|json!({"id":id,"name":name})).collect::<Vec<_>>(),"report":data.report}),
+        json!({"selection":data.selection,"last_sync":data.last_sync,
+        "available_supers":supers.into_iter().map(|(id,name)|json!({"id":id,"name":name})).collect::<Vec<_>>(),
+        "report":data.report,"super_states":states,"sync_state":sync_state}),
     )
 }
 #[tauri::command]
@@ -566,10 +642,18 @@ pub async fn security_account(
             if let Ok(candidate) = std::env::var("NEXUSBRO_TEST_SYNC_URL") {
                 let url = reqwest::Url::parse(&candidate).map_err(|_| "Неверный тестовый адрес")?;
                 if url.scheme() != "http"
-                    || !matches!(url.host_str(), Some("127.0.0.1" | "localhost" | "[::1]" | "::1"))
-                    || !url.username().is_empty() || url.password().is_some()
-                    || url.path() != "/" || url.query().is_some() || url.fragment().is_some()
-                { return Err("Тестовый сервер должен быть локальным".into()); }
+                    || !matches!(
+                        url.host_str(),
+                        Some("127.0.0.1" | "localhost" | "[::1]" | "::1")
+                    )
+                    || !url.username().is_empty()
+                    || url.password().is_some()
+                    || url.path() != "/"
+                    || url.query().is_some()
+                    || url.fragment().is_some()
+                {
+                    return Err("Тестовый сервер должен быть локальным".into());
+                }
                 return Ok(json!({"server":candidate.trim_end_matches('/')}));
             }
         }
@@ -670,16 +754,36 @@ pub async fn security_sync(
                     local.intent_seen.insert(item.id.clone(), *generation);
                 }
             }
+            // A cached conflict choice is not a fresh server acknowledgement.
+            local.super_receipts.remove(&item.id);
             local.report.conflicts.retain(|n| n != id);
             save(&vault, &key, &local)?;
             status(&state, &local)
         }
         "run" => {
+            // Durable before any fallible work: restart/lock interruption must
+            // not restore a stale green status from an earlier account date.
+            local.exchange_incomplete = true;
+            save(&vault, &key, &local)?;
             let intent_snapshot = delete_intents()?;
             let initial = gather(&vault, &state, &local.selection)?;
             let items = snapshot(&mut local, &initial, &intent_snapshot)?;
             save(&vault, &key, &local)?;
-            let exchange = account.exchange(&vault, items).await?;
+            let exchange = match account.exchange(&vault, items).await {
+                Ok(exchange) => {
+                    local.last_exchange_failed = false;
+                    exchange
+                }
+                Err(error) => {
+                    local.last_exchange_failed = true;
+                    local.exchange_incomplete = false;
+                    save(&vault, &key, &local)?;
+                    return Err(error);
+                }
+            };
+            for conflict in &exchange.conflicts {
+                local.super_receipts.remove(conflict);
+            }
             let mut report = Report {
                 pushed: exchange.pushed,
                 pulled: 0,
@@ -701,6 +805,9 @@ pub async fn security_sync(
                 if !selected(&local.selection, &item.id) {
                     continue;
                 }
+                if item.deleted {
+                    local.super_receipts.remove(&item.id);
+                }
                 if delete_intents()?.get(&item.id) != intent_snapshot.get(&item.id) {
                     report
                         .errors
@@ -716,6 +823,9 @@ pub async fn security_sync(
                     continue;
                 }
                 if current.get(&item.id) == Some(&item.value) && !item.deleted {
+                    if !report.conflicts.contains(&item.id) {
+                        remember_super_ack(&mut local, &item);
+                    }
                     local.meta.insert(
                         item.id.clone(),
                         Meta {
@@ -735,6 +845,9 @@ pub async fn security_sync(
                 .await
                 {
                     Ok(()) => {
+                        if !report.conflicts.contains(&item.id) {
+                            remember_super_ack(&mut local, &item);
+                        }
                         local.meta.insert(
                             item.id.clone(),
                             Meta {
@@ -752,7 +865,10 @@ pub async fn security_sync(
                         }
                         report.pulled += 1;
                     }
-                    Err(error) => report.errors.push(error),
+                    Err(error) => {
+                        local.super_receipts.remove(&item.id);
+                        report.errors.push(error);
+                    }
                 }
             }
             report.conflicts.sort();
@@ -761,6 +877,7 @@ pub async fn security_sync(
                 local.last_sync = Some(crate::passwords::now());
             }
             local.report = report;
+            local.exchange_incomplete = false;
             save(&vault, &key, &local)?;
             Ok(serde_json::to_value(&local.report).map_err(|_| "Ошибка отчёта")?)
         }
