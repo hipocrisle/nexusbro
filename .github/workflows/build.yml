@@ -78,6 +78,7 @@ jobs:
           python3 tests/super_colors_0214.py
           python3 tests/address_autocomplete_0214.py
           python3 tests/security_ui_browser.py
+          python3 tests/cloud_supers.py
   build:
     needs: security
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
@@ -290,6 +291,8 @@ jobs:
           python3 tests/library_state_0214.py
           python3 tests/super_colors_0214.py
           python3 tests/address_autocomplete_0214.py
+          python3 tests/security_ui_browser.py
+          python3 tests/cloud_supers.py
 
       - name: Проверить CEF и окна Linux под Xvfb
         if: matrix.os == 'ubuntu-24.04'
