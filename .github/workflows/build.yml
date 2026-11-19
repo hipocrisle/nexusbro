@@ -12,6 +12,10 @@ on:
         description: Build frontend and isolated security tests (no CEF)
         type: boolean
         default: false
+      runtime_memory_only:
+        description: Run only native memory integration from an existing matching Windows package (never publish)
+        type: boolean
+        default: false
       performance_build:
         description: Measure Windows CPU and memory using packages from this run (no build or publication)
         required: false
@@ -422,7 +426,7 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
-          python tests/gui/memory_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-memory --timeout 660
+          python tests/gui/memory_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-memory --timeout 600
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Retain native memory acceptance evidence
         if: always() && matrix.os == 'windows-latest'
@@ -595,6 +599,10 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v4
+      - name: Validate diagnostic runtime mode
+        shell: pwsh
+        run: |
+          if ("${{ inputs.runtime_memory_only }}" -eq "true" -and ("${{ inputs.runtime_baseline }}" -eq "true" -or "${{ inputs.publish_tag }}" -ne "")) { throw "Memory-only diagnostics cannot test a baseline or publish" }
       - name: Verify app sources match the Windows installer run
         if: ${{ !inputs.runtime_baseline }}
         shell: pwsh
@@ -626,9 +634,12 @@ jobs:
           if ("${{ inputs.runtime_baseline }}" -eq "true") { $extra += "--baseline" }
           python tests/xray_assets.py --bin .dev-check/installed/binaries/xray.exe
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ("${{ inputs.runtime_memory_only }}" -ne "true") {
+            python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - name: Verify real background lifecycle of the exact measured installer
+        if: ${{ !inputs.runtime_memory_only }}
         timeout-minutes: 6
         shell: pwsh
         run: |
@@ -649,7 +660,7 @@ jobs:
         timeout-minutes: 12
         shell: pwsh
         run: |
-          python tests/gui/memory_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-memory --timeout 660
+          python tests/gui/memory_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-memory --timeout 600
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always() && !inputs.runtime_baseline
@@ -816,6 +827,7 @@ jobs:
     if: >-
       always() && github.event_name == 'workflow_dispatch' &&
       inputs.runtime_build != '' && inputs.publish_tag != '' &&
+      !inputs.runtime_memory_only &&
       needs.runtime.result == 'success' &&
       (inputs.linux_runtime_build == '' ||
        (inputs.linux_runtime_build == inputs.runtime_build && needs['linux-runtime'].result == 'success'))
