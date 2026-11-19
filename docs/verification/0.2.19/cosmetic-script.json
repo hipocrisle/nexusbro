@@ -1,0 +1,92 @@
+{
+  "baseline_ref": "097a659",
+  "baseline": {
+    "rect": 23372,
+    "text": 23369,
+    "slices": 0,
+    "longestSlice": 0,
+    "articles": 320,
+    "rows": 2560,
+    "help": true,
+    "huge": true,
+    "draft": "Несохранённый текст",
+    "ads": 0,
+    "cdp": {
+      "TaskDuration": 0.315735,
+      "LayoutDuration": 0.055405,
+      "RecalcStyleDuration": 0.018456,
+      "LayoutCount": 4,
+      "RecalcStyleCount": 4
+    },
+    "late_nested_content_preserved": false,
+    "late_nested_ad_removed": true,
+    "idle_no_periodic_work": true
+  },
+  "candidate": {
+    "rect": 4,
+    "text": 4,
+    "slices": 52,
+    "longestSlice": 5.300000190734863,
+    "articles": 320,
+    "rows": 2560,
+    "help": true,
+    "huge": true,
+    "draft": "Несохранённый текст",
+    "ads": 0,
+    "cdp": {
+      "TaskDuration": 0.20435199999999998,
+      "LayoutDuration": 0.052629,
+      "RecalcStyleDuration": 0.027113,
+      "LayoutCount": 4,
+      "RecalcStyleCount": 4
+    },
+    "late_nested_content_preserved": true,
+    "late_nested_ad_removed": true,
+    "idle_no_periodic_work": true
+  },
+  "initial_baseline": {
+    "rect": 7685,
+    "text": 7684,
+    "slices": 0,
+    "longestSlice": 0,
+    "articles": 320,
+    "rows": 2560,
+    "help": true,
+    "huge": true,
+    "draft": "Несохранённый текст",
+    "ads": 0,
+    "cdp": {
+      "TaskDuration": 0.074633,
+      "LayoutDuration": 0.0005129999999999996,
+      "RecalcStyleDuration": 5.199999999999996e-05,
+      "LayoutCount": 3,
+      "RecalcStyleCount": 3
+    },
+    "late_nested_content_preserved": false,
+    "late_nested_ad_removed": true,
+    "idle_no_periodic_work": true
+  },
+  "initial_candidate": {
+    "rect": 4,
+    "text": 4,
+    "slices": 51,
+    "longestSlice": 3,
+    "articles": 320,
+    "rows": 2560,
+    "help": true,
+    "huge": true,
+    "draft": "Несохранённый текст",
+    "ads": 0,
+    "cdp": {
+      "TaskDuration": 0.07516300000000001,
+      "LayoutDuration": 0.0005830000000000002,
+      "RecalcStyleDuration": 8.800000000000127e-05,
+      "LayoutCount": 3,
+      "RecalcStyleCount": 3
+    },
+    "late_nested_content_preserved": true,
+    "late_nested_ad_removed": true,
+    "idle_no_periodic_work": true
+  },
+  "scope": "synthetic real Chromium cosmetic script only; not total browser CPU"
+}
