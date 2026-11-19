@@ -53,26 +53,46 @@ time/phase in `visibility_reports`. A rate interval can straddle a phase change;
 use client intervals and the surrounding reports rather than treating the receipt
 phase as the entire interval. Missing periodic reports while hidden may itself
 reflect timer throttling; no synthetic zero-rate reports are inserted. The rAF
-loop stops after 60,000 callbacks per page, POST bodies are limited to 2 KiB, and
+loop stops after 60,000 callbacks per page, periodic POST bodies are limited to 2 KiB, and
 at most 20,000 reports are retained. These POSTs are excluded from page-load hit
 counts. Every visited page must supply at least one report for probe completion.
 
+Each page also keeps complete bounded in-page history: an initial visibility
+state plus every actual `visibilitychange` (at most 512 entries), and sparse
+one-second epoch buckets incremented on every actual rAF callback (at most 1024
+buckets). The sum of these buckets must equal the independent total callback
+counter. Reaching any bound marks the trace truncated and prevents acceptance.
+After all five CPU phases, the harness physically selects every visited page and
+clicks its fixed trace button. Its trusted click and document focus are required
+for a separate `/trace-proof` POST (at most 64 KiB). Both references and candidates
+in visibility mode collect these traces; this extra navigation/input work is
+outside the measured CPU phases. Default static mode adds neither script nor button.
+
 For a candidate fixing background page activity, add
 `--visibility-probe --expect-background-throttled` (at least eight seconds per
-phase). Acceptance requires at least two real periodic reports per visited page
-in each active, minimized and restored phase, with each measured interval starting
-after a two-second grace period. Only the final selected page may be visible and
+phase). Acceptance validates complete trusted traces covering each active,
+minimized and restored phase, excludes two seconds at both phase boundaries and
+requires at least two fully covered one-second buckets. Every actual lifecycle
+state during that stable interval must match the expectation. Only the final selected page may be visible and
 must have resumed rAF callbacks while active/restored; every other page must be
 hidden with zero rAF callbacks. During minimization every page must be hidden with
 zero callbacks. The covered phase is retained as evidence without an assertion,
 since native occlusion behavior can differ.
 
+A missing network report never implies zero callbacks. A missing sparse bucket
+can mean zero only after verifying complete non-truncated history, actual trusted
+capture, epoch coverage and equality of bucket sum with the independent total
+counter. This allows hidden timers to be correctly throttled without weakening
+the background rAF assertion. Periodic delivery counts remain in the acceptance
+evidence for debugging. Phase start/end epoch times align the in-page trace with
+the same VM clock, independently from the monotonic CPU interval accounting.
+
 This acceptance mode also checks actual green pixels in the restored CEF viewport
 and uses physical mouse/keyboard input in a fixed fixture field. The real page
 must send a loopback receipt from a trusted input event with document focus;
 neither IPC nor CDP substitutes for rendering or input. Input receipts do not
-increment navigation hits. The default static benchmark and diagnostic-only probe
-remain unchanged when acceptance is not requested.
+increment navigation hits. Default static mode remains unchanged; diagnostic-only
+visibility runs collect identical histories without asserting product behavior.
 
 `--visibility-probe --diagnostic-native-hide` is an optional **external Win32
 mechanism experiment**, never a product feature test. It runs after all five

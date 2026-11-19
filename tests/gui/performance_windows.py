@@ -32,27 +32,82 @@ def role(name, command, root=False):
     return family + "/browser" if family == "webview2" else "other"
 
 
-def assert_background_throttled(reports, phases, pages, active_page):
-    """Require actual stable reports; missing hidden reports never imply zero rAF."""
+def validate_visibility_trace(trace):
+    """Validate complete native-page counters before interpreting sparse buckets."""
+    if (not isinstance(trace, dict) or trace.get("trusted") is not True
+            or trace.get("focus") is not True or trace.get("truncated") is not False):
+        raise AssertionError("Missing, untrusted or truncated actual visibility trace")
+    started, captured = trace.get("started_epoch_ms"), trace.get("captured_epoch_ms")
+    if any(type(v) not in [int, float] or not math.isfinite(v) for v in [started, captured]) or captured <= started:
+        raise AssertionError("Invalid visibility trace epoch coverage")
+    events, buckets = trace.get("visibility_events"), trace.get("frame_buckets")
+    if not isinstance(events, list) or not 0 < len(events) <= 512 or not isinstance(buckets, list) or len(buckets) > 1024:
+        raise AssertionError("Missing or oversized complete visibility history")
+    previous = started
+    for event in events:
+        if (not isinstance(event, dict) or set(event) != {"at_ms", "visibility", "hidden"}
+                or type(event["at_ms"]) not in [int, float] or not math.isfinite(event["at_ms"])
+                or not previous <= event["at_ms"] <= captured
+                or event["visibility"] not in ["visible", "hidden"]
+                or event["hidden"] is not (event["visibility"] == "hidden")):
+            raise AssertionError("Incomplete or inconsistent actual visibility timeline")
+        previous = event["at_ms"]
+    if events[0]["at_ms"] > started + 100:
+        raise AssertionError("Visibility trace has no initial lifecycle state")
+    counts = {}
+    for bucket in buckets:
+        if (not isinstance(bucket, dict) or set(bucket) != {"second", "count"}
+                or type(bucket["second"]) is not int or type(bucket["count"]) is not int
+                or bucket["second"] in counts or bucket["count"] <= 0
+                or not started // 1000 <= bucket["second"] <= captured // 1000):
+            raise AssertionError("Invalid, duplicated or out-of-coverage actual rAF bucket")
+        counts[bucket["second"]] = bucket["count"]
+    if type(trace.get("total_frames")) is not int or not 0 <= trace["total_frames"] < 60000 or sum(counts.values()) != trace["total_frames"]:
+        raise AssertionError("Complete callback counter does not match actual frame buckets")
+    return events, counts
+
+
+def assert_background_throttled(reports, phases, pages, active_page, traces=None):
+    """Missing periodic delivery is acceptable only with complete trusted history."""
+    if not isinstance(traces, list) or len(traces) != len(pages) or {t.get("page") for t in traces} != pages:
+        raise AssertionError("Missing complete actual visibility traces for visited pages")
+    by_page = {t["page"]: (t, *validate_visibility_trace(t)) for t in traces}
     evidence = []
     for name in ["warm_active", "warm_minimized", "warm_restored"]:
         phase = next(p for p in phases if p["phase"] == name)
         for page in sorted(pages):
+            trace, events, counts = by_page[page]
+            start, end = phase["start_epoch_ms"] + 2000, phase["end_epoch_ms"] - 2000
+            if trace["started_epoch_ms"] > start or trace["captured_epoch_ms"] < end or end <= start:
+                raise AssertionError(f"Actual trace does not cover the complete stable phase: {name}/{page}")
             stable = [r for r in reports if r["page"] == page and r["received_phase"] == name
                       and r["reason"] == "interval" and r["interval_ms"] >= 1000
                       and r["received_seconds"] - r["interval_ms"] / 1000 >= phase["start_seconds"] + 2]
-            if len(stable) < 2:
-                raise AssertionError(f"Insufficient actual stable visibility reports: {name}/{page}: {len(stable)}")
             visible = name != "warm_minimized" and page == active_page
-            if any(r["visibility"] != ("visible" if visible else "hidden") or r["hidden"] != (not visible) for r in stable):
+            initial = [event for event in events if event["at_ms"] <= start]
+            if not initial:
+                raise AssertionError(f"No actual lifecycle state at stable phase start: {name}/{page}")
+            timeline = [initial[-1]] + [event for event in events if start < event["at_ms"] <= end]
+            if any(event["visibility"] != ("visible" if visible else "hidden") for event in timeline):
                 raise AssertionError(f"Unexpected actual document visibility: {name}/{page}")
+            seconds = list(range(math.ceil(start / 1000), math.floor(end / 1000)))
+            if len(seconds) < 2:
+                raise AssertionError(f"Insufficient fully covered one-second rAF buckets: {name}/{page}")
+            # A missing bucket means zero ONLY after complete history/counter,
+            # trusted capture, and epoch coverage have all been validated above.
+            rates = [counts.get(second, 0) for second in seconds]
             if visible:
-                if not any(r["frames_delta"] > 0 and r["raf_hz"] >= 5 for r in stable):
+                if not any(rate >= 5 for rate in rates):
                     raise AssertionError(f"Visible page animation did not resume: {name}/{page}")
-            elif any(r["frames_delta"] != 0 or r["raf_hz"] != 0 for r in stable):
+            elif any(rates):
                 raise AssertionError(f"Background page continued animation: {name}/{page}")
             evidence.append({"phase": name, "page": page, "actual_reports": len(stable),
-                             "expected_visible": visible, "max_raf_hz": max(r["raf_hz"] for r in stable)})
+                             "expected_visible": visible, "max_raf_hz": max(rates),
+                             "complete_trusted_trace": True, "covered_full_seconds": len(seconds),
+                             "stable_start_epoch_ms": start, "stable_end_epoch_ms": end,
+                             "trace_started_epoch_ms": trace["started_epoch_ms"],
+                             "trace_captured_epoch_ms": trace["captured_epoch_ms"],
+                             "trace_total_frames": trace["total_frames"]})
     return evidence
 
 
@@ -85,6 +140,7 @@ def run(args):
     hit_lock = threading.Lock()
     visibility_reports = []
     input_proofs = []
+    visibility_traces = {}
     visibility_dropped = 0
     current_phase = "setup"
     started = time.monotonic()
@@ -179,10 +235,16 @@ def run(args):
             if args.visibility_probe:
                 # Diagnostic-only: requests rAF without changing the DOM/painting.
                 # This intentionally differs from the static CPU baseline.
-                body += b'''<script>
+                body += b'''<button id="trace-flush" style="position:absolute;left:20px;top:85px;width:300px;height:32px">Flush actual page trace</button><script>
 (()=>{let frames=0,previousFrames=0,previousTime=performance.now(),seq=0;
+const startedEpoch=Date.now(),buckets=new Map(),visibilityEvents=[];let truncated=false;
 const page=location.pathname;
-function frame(){frames++;if(frames<60000)requestAnimationFrame(frame)}
+function recordVisibility(){if(visibilityEvents.length>=512){truncated=true;return;}
+visibilityEvents.push({at_ms:Date.now(),visibility:document.visibilityState,hidden:document.hidden});}
+recordVisibility();
+function frame(){frames++;const second=Math.floor(Date.now()/1000);
+if(buckets.has(second)||buckets.size<1024)buckets.set(second,(buckets.get(second)||0)+1);else truncated=true;
+if(frames<60000)requestAnimationFrame(frame);else truncated=true;}
 requestAnimationFrame(frame);
 function report(reason){const now=performance.now(),duration=now-previousTime;
 const delta=frames-previousFrames;
@@ -192,8 +254,14 @@ interval_ms:duration,raf_hz:duration>0?delta*1000/duration:0,client_ms:now};
 previousTime=now;previousFrames=frames;
 fetch('/visibility',{method:'POST',headers:{'Content-Type':'application/json'},
 body:JSON.stringify(body),keepalive:true}).catch(()=>{});}
-report('initial');document.addEventListener('visibilitychange',()=>report('visibilitychange'));
+report('initial');document.addEventListener('visibilitychange',()=>{recordVisibility();report('visibilitychange')});
 setInterval(()=>report('interval'),2000);
+document.getElementById('trace-flush').addEventListener('click',event=>{
+if(!event.isTrusted||!document.hasFocus())return;
+fetch('/trace-proof',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({page,trusted:event.isTrusted,focus:document.hasFocus(),
+started_epoch_ms:startedEpoch,captured_epoch_ms:Date.now(),visibility_events:visibilityEvents,
+frame_buckets:Array.from(buckets,([second,count])=>({second,count})),total_frames:frames,truncated})}).catch(()=>{});});
 })();</script>'''
                 if args.expect_background_throttled:
                     body += b'''<input id="physical-input" aria-label="Physical input proof"
@@ -212,14 +280,30 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
 
         def do_POST(self):
             nonlocal visibility_dropped
-            if not args.visibility_probe or self.path not in ["/visibility", "/input-proof"]:
+            if not args.visibility_probe or self.path not in ["/visibility", "/input-proof", "/trace-proof"]:
                 self.send_error(404)
                 return
             try:
                 size = int(self.headers.get("Content-Length", "0"))
-                if not 0 < size <= 2048:
+                if not 0 < size <= (65536 if self.path == "/trace-proof" else 2048):
                     raise ValueError("Invalid diagnostic payload size")
                 payload = json.loads(self.rfile.read(size))
+                if self.path == "/trace-proof":
+                    keys = {"page", "trusted", "focus", "started_epoch_ms", "captured_epoch_ms",
+                            "visibility_events", "frame_buckets", "total_frames", "truncated"}
+                    if not isinstance(payload, dict) or set(payload) != keys:
+                        raise ValueError("Invalid physical trace payload")
+                    parts = payload["page"].strip("/").split("/")
+                    if (len(parts) != 3 or parts[0] != "page" or not all(p.isdecimal() for p in parts[1:])
+                            or not 0 <= int(parts[1]) < args.supers or not 0 <= int(parts[2]) < args.tabs):
+                        raise ValueError("Invalid physical trace page")
+                    validate_visibility_trace(payload)
+                    with hit_lock:
+                        visibility_traces[payload["page"]] = {**payload, "received_seconds": time.monotonic() - started}
+                    self.send_response(204)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 if self.path == "/input-proof":
                     if (not args.expect_background_throttled or not isinstance(payload, dict)
                             or set(payload) != {"page", "value", "trusted", "focus"}
@@ -254,7 +338,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                                                    "received_phase": current_phase})
                     else:
                         visibility_dropped += 1
-            except (ValueError, TypeError, KeyError, AttributeError):
+            except (ValueError, TypeError, KeyError, AttributeError, AssertionError):
                 self.send_error(400)
                 return
             self.send_response(204)
@@ -324,6 +408,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         # Sampling itself stays outside the application's process tree.
         previous_time, previous = snapshot()
         phase_start = previous_time
+        phase_epoch_start = time.time() * 1000
         rows = []
         while time.monotonic() - phase_start < (args.seconds if duration_seconds is None else duration_seconds):
             until = time.monotonic() + 1
@@ -361,6 +446,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         duration = sum(r["elapsed_seconds"] for r in rows)
         cpu = sum(g["cpu_seconds_delta"] for r in rows for g in r["roles"].values())
         report["phases"].append({"phase": name, "duration_seconds": duration,
+                                 "start_epoch_ms": phase_epoch_start, "end_epoch_ms": time.time() * 1000,
                                  "start_seconds": phase_start - started,
                                  "end_seconds": time.monotonic() - started,
                                  "tab_counts": tab_counts(),
@@ -503,6 +589,28 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         u.ShowWindow(hwnd, 9)
         window.set_focus()
         measure("warm_restored")
+        if args.visibility_probe:
+            import pyautogui
+            # Timer throttling must not hide evidence. Physically foreground
+            # every visited fixture AFTER all CPU phases and flush its complete
+            # in-page history via a trusted click, without CDP or backend mocks.
+            report["trace_flush_started_epoch_ms"] = time.time() * 1000
+            for s in range(args.supers):
+                click(f"PerfSuper{s}", "Button")
+                for t in range(args.tabs):
+                    click(f"Perf {s}-{t}", "TabItem")
+                    time.sleep(.2)
+                    journal = (data / "zhurnal.log").read_text(encoding="utf-8")
+                    handles = re.findall(rf'perf-{s}: запуск ок, окно (\d+)', journal)
+                    if not handles:
+                        raise AssertionError("Owned fixture container missing during actual trace flush")
+                    box = wintypes.RECT()
+                    if not u.GetWindowRect(int(handles[-1]), ctypes.byref(box)):
+                        raise AssertionError("No actual fixture rectangle during trace flush")
+                    pyautogui.click(box.left + 120, box.top + 101)
+                    page = f"/page/{s}/{t}"
+                    wait_for(lambda: page in visibility_traces, f"Missing trusted physical trace flush: {page}", 15)
+            report["trace_flush_finished_epoch_ms"] = time.time() * 1000
         if args.diagnostic_native_hide:
             # External Win32 experiment on our disposable fixture only. This is
             # not an application fix and cannot satisfy product acceptance.
@@ -659,7 +767,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             with hit_lock:
                 report["background_throttle_acceptance"] = assert_background_throttled(
                     visibility_reports, report["phases"], expected,
-                    f"/page/{args.supers - 1}/{args.tabs - 1}")
+                    f"/page/{args.supers - 1}/{args.tabs - 1}", list(visibility_traces.values()))
         if args.visibility_probe:
             with hit_lock:
                 observed = {row["page"] for row in visibility_reports}
@@ -702,6 +810,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             report["visibility_reports"] = list(visibility_reports)
             report["visibility_reports_dropped"] = visibility_dropped
             report["restored_input_proofs"] = list(input_proofs)
+            report["visibility_traces"] = list(visibility_traces.values())
         report["loaded_unique_pages"] = len(hits)
         report["total_seconds"] = time.monotonic() - started
         (out / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
