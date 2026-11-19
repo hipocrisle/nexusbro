@@ -57,6 +57,23 @@ loop stops after 60,000 callbacks per page, POST bodies are limited to 2 KiB, an
 at most 20,000 reports are retained. These POSTs are excluded from page-load hit
 counts. Every visited page must supply at least one report for probe completion.
 
+For a candidate fixing background page activity, add
+`--visibility-probe --expect-background-throttled` (at least eight seconds per
+phase). Acceptance requires at least two real periodic reports per visited page
+in each active, minimized and restored phase, with each measured interval starting
+after a two-second grace period. Only the final selected page may be visible and
+must have resumed rAF callbacks while active/restored; every other page must be
+hidden with zero rAF callbacks. During minimization every page must be hidden with
+zero callbacks. The covered phase is retained as evidence without an assertion,
+since native occlusion behavior can differ.
+
+This acceptance mode also checks actual green pixels in the restored CEF viewport
+and uses physical mouse/keyboard input in a fixed fixture field. The real page
+must send a loopback receipt from a trusted input event with document focus;
+neither IPC nor CDP substitutes for rendering or input. Input receipts do not
+increment navigation hits. The default static benchmark and diagnostic-only probe
+remain unchanged when acceptance is not requested.
+
 `results.json` retains per-second samples and per-process identities, role,
 cumulative CPU seconds, working set, and private bytes. Roles distinguish shell,
 CEF browser/renderer/GPU/utility and WebView2. CPU **core percent** counts one busy

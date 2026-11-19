@@ -12,6 +12,7 @@ import math
 import os
 import pathlib
 import platform
+import re
 import subprocess
 import sys
 import threading
@@ -29,6 +30,30 @@ def role(name, command, root=False):
     if "--nb-dvizhok" in command:
         return "cef/browser"
     return family + "/browser" if family == "webview2" else "other"
+
+
+def assert_background_throttled(reports, phases, pages, active_page):
+    """Require actual stable reports; missing hidden reports never imply zero rAF."""
+    evidence = []
+    for name in ["warm_active", "warm_minimized", "warm_restored"]:
+        phase = next(p for p in phases if p["phase"] == name)
+        for page in sorted(pages):
+            stable = [r for r in reports if r["page"] == page and r["received_phase"] == name
+                      and r["reason"] == "interval" and r["interval_ms"] >= 1000
+                      and r["received_seconds"] - r["interval_ms"] / 1000 >= phase["start_seconds"] + 2]
+            if len(stable) < 2:
+                raise AssertionError(f"Insufficient actual stable visibility reports: {name}/{page}: {len(stable)}")
+            visible = name != "warm_minimized" and page == active_page
+            if any(r["visibility"] != ("visible" if visible else "hidden") or r["hidden"] != (not visible) for r in stable):
+                raise AssertionError(f"Unexpected actual document visibility: {name}/{page}")
+            if visible:
+                if not any(r["frames_delta"] > 0 and r["raf_hz"] >= 5 for r in stable):
+                    raise AssertionError(f"Visible page animation did not resume: {name}/{page}")
+            elif any(r["frames_delta"] != 0 or r["raf_hz"] != 0 for r in stable):
+                raise AssertionError(f"Background page continued animation: {name}/{page}")
+            evidence.append({"phase": name, "page": page, "actual_reports": len(stable),
+                             "expected_visible": visible, "max_raf_hz": max(r["raf_hz"] for r in stable)})
+    return evidence
 
 
 def run(args):
@@ -59,6 +84,7 @@ def run(args):
     hits = collections.Counter()
     hit_lock = threading.Lock()
     visibility_reports = []
+    input_proofs = []
     visibility_dropped = 0
     current_phase = "setup"
     started = time.monotonic()
@@ -71,6 +97,7 @@ def run(args):
     u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     u.IsIconic.argtypes = [wintypes.HWND]
     u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -104,6 +131,14 @@ body:JSON.stringify(body),keepalive:true}).catch(()=>{});}
 report('initial');document.addEventListener('visibilitychange',()=>report('visibilitychange'));
 setInterval(()=>report('interval'),2000);
 })();</script>'''
+                if args.expect_background_throttled:
+                    body += b'''<input id="physical-input" aria-label="Physical input proof"
+style="position:absolute;left:20px;top:130px;width:320px;height:40px;box-sizing:border-box">
+<script>document.getElementById('physical-input').addEventListener('input',event=>{
+if(event.isTrusted&&event.target.value==='nexusbro-performance-input'){
+fetch('/input-proof',{method:'POST',headers:{'Content-Type':'application/json'},
+body:JSON.stringify({page:location.pathname,value:event.target.value,
+trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{});}});</script>'''
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
             self.send_header("Cache-Control", "no-store")
@@ -113,7 +148,7 @@ setInterval(()=>report('interval'),2000);
 
         def do_POST(self):
             nonlocal visibility_dropped
-            if not args.visibility_probe or self.path != "/visibility":
+            if not args.visibility_probe or self.path not in ["/visibility", "/input-proof"]:
                 self.send_error(404)
                 return
             try:
@@ -121,6 +156,20 @@ setInterval(()=>report('interval'),2000);
                 if not 0 < size <= 2048:
                     raise ValueError("Invalid diagnostic payload size")
                 payload = json.loads(self.rfile.read(size))
+                if self.path == "/input-proof":
+                    if (not args.expect_background_throttled or not isinstance(payload, dict)
+                            or set(payload) != {"page", "value", "trusted", "focus"}
+                            or payload["page"] != f"/page/{args.supers - 1}/{args.tabs - 1}"
+                            or payload["value"] != "nexusbro-performance-input"
+                            or payload["trusted"] is not True or payload["focus"] is not True):
+                        raise ValueError("Invalid real physical input proof")
+                    with hit_lock:
+                        if len(input_proofs) < 4:
+                            input_proofs.append({**payload, "received_seconds": time.monotonic() - started})
+                    self.send_response(204)
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
                 keys = {"page", "seq", "reason", "visibility", "hidden", "focus", "frames",
                         "frames_delta", "interval_ms", "raf_hz", "client_ms"}
                 if not isinstance(payload, dict) or set(payload) != keys:
@@ -388,6 +437,37 @@ setInterval(()=>report('interval'),2000);
         u.ShowWindow(hwnd, 9)
         window.set_focus()
         measure("warm_restored")
+        if args.expect_background_throttled:
+            import pyautogui
+            journal = (data / "zhurnal.log").read_text(encoding="utf-8")
+            handles = re.findall(rf'perf-{args.supers - 1}: запуск ок, окно (\d+)', journal)
+            if not handles:
+                raise AssertionError("Owned active CEF container handle absent from the application journal")
+            container = int(handles[-1])
+            box = wintypes.RECT()
+            if not u.GetWindowRect(container, ctypes.byref(box)) or box.bottom - box.top < 220:
+                raise AssertionError("Restored native CEF viewport has no usable rectangle")
+            rgb = []
+            def painted():
+                nonlocal rgb
+                screen = ImageGrab.grab()
+                points = [(box.left + 20, (box.top + box.bottom) // 2),
+                          ((box.left + box.right) // 2, (box.top + box.bottom) // 2),
+                          (box.right - 20, (box.top + box.bottom) // 2)]
+                rgb = [screen.getpixel(point)[:3] for point in points]
+                if all(c == (24, 85, 65) for c in rgb):
+                    screen.save(out / "restored-cef-painted.png")
+                    return True
+                return False
+            wait_for(painted, "Restored CEF viewport is not actually painted green", 15)
+            report["restored_cef_rgb"] = rgb
+            pyautogui.click(box.left + 100, box.top + 150)
+            pyautogui.write("nexusbro-performance-input", interval=.04)
+            wait_for(lambda: bool(input_proofs), "Restored CEF did not accept actual trusted keyboard input", 15)
+            with hit_lock:
+                report["background_throttle_acceptance"] = assert_background_throttled(
+                    visibility_reports, report["phases"], expected,
+                    f"/page/{args.supers - 1}/{args.tabs - 1}")
         if args.visibility_probe:
             with hit_lock:
                 observed = {row["page"] for row in visibility_reports}
@@ -428,6 +508,7 @@ setInterval(()=>report('interval'),2000);
         if args.visibility_probe:
             report["visibility_reports"] = list(visibility_reports)
             report["visibility_reports_dropped"] = visibility_dropped
+            report["restored_input_proofs"] = list(input_proofs)
         report["loaded_unique_pages"] = len(hits)
         report["total_seconds"] = time.monotonic() - started
         (out / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
@@ -443,12 +524,15 @@ def main():
     parser.add_argument("--tabs", type=int, default=6)
     parser.add_argument("--saved-tabs", type=int, help="Saved tabs per super; defaults to --tabs; at most 5000 total")
     parser.add_argument("--visibility-probe", action="store_true", help="Diagnostic JS visibility/rAF reporting; changes the static CPU workload")
+    parser.add_argument("--expect-background-throttled", action="store_true", help="Require actual hidden/zero-rAF background pages and restored painted/trusted-input proof")
     parser.add_argument("--seconds", type=int, default=15, help="Per measured phase")
     parser.add_argument("--settle", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=480)
     parser.add_argument("--max-processes", type=int, default=128)
     parser.add_argument("--max-memory-mb", type=int, default=8192)
     args = parser.parse_args()
+    if args.expect_background_throttled and (not args.visibility_probe or args.seconds < 8):
+        parser.error("--expect-background-throttled requires --visibility-probe and --seconds >= 8")
     if args.saved_tabs is None:
         args.saved_tabs = args.tabs
     if not (1 <= args.supers <= 12 and 1 <= args.tabs <= 12 and 3 <= args.seconds <= 120
