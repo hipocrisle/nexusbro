@@ -1240,6 +1240,15 @@ def run(args):
         message = str(error)
         for secret in sensitive:
             message = message.replace(secret, '[synthetic credential redacted]')
+        # Keep only fixed bridge stage/reason metadata. Profiles and arbitrary
+        # engine output may contain test secrets and are not copied wholesale.
+        bridge=[]
+        for device in devices:
+            for logfile in device.data.glob('profili/*/engine.log'):
+                for line in logfile.read_text(errors='replace').splitlines():
+                    found=re.search(r'NEXUSBRO_PASSWORD_BRIDGE refused stage=(\d+) setup=(true|false) reason=([a-z0-9-]+)',line)
+                    if found:bridge.append({'device':device.name,'stage':int(found[1]),'setup':found[2]=='true','reason':found[3]})
+        if bridge:checks.append({'native_credential_bridge_failure_metadata':bridge[-32:]})
         failure = 'security_native failed during ' + phase + ': ' + message[:1000]
         checks.append({'failed_' + phase.replace('-', '_'): True, 'success': False})
     finally:
