@@ -69,3 +69,15 @@ Keep both raw result files and source/build IDs. Establish thresholds only after
 the initial baseline, and retain separate input/render/security acceptance tests.
 
 Status: harness prepared; no Windows performance result is claimed by this file.
+
+## Published 0.2.18 baseline, November 19
+
+Real Windows screen workloads completed on the published installer from build44512453342. Raw samples/screenshots remain in each run's `windows-performance-measurement` artifact; compact reports are under `docs/verification/0.2.19/`.
+
+| Measurement run | Supers | Saved / live / deferred | Warm processes | Peak summed working sets | Peak private committed bytes |
+|---|---:|---:|---:|---:|---:|
+|44532436734|4|24 / 24 / 0|51|2.883 GB|0.984 GB|
+|44532556075|4|1000 / 24 / 976|51|2.895 GB|1.007 GB|
+|44533148196|8|1000 / 24 / 976|71|3.899 GB|1.389 GB|
+
+All fixture hit sets matched exactly the visited pages; cold startup made no page requests. These independent runs show the process-count cost of extra live Supers and verify deferred restoration at 1000 saved tabs. CPU/memory timing between separate VMs is not a controlled optimization comparison. Sum of working sets can double-count shared pages; Private Bytes is committed private memory, not resident physical RAM. Candidate comparison remains pending.

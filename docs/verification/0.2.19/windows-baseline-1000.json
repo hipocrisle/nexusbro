@@ -1,0 +1,143 @@
+{
+  "schema": 1,
+  "measurement_completed": true,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "processor": "AMD64 Family 25 Model 17 Stepping 1, AuthenticAMD",
+  "image": {
+    "ImageOS": "win25-vs2026",
+    "ImageVersion": "20261103.298.1",
+    "RUNNER_ARCH": "X64"
+  },
+  "total_physical_bytes": 17174360064,
+  "logical_cpus": 4,
+  "requested": {
+    "supers": 4,
+    "tabs_per_super": 6,
+    "saved_tabs_per_super": 250,
+    "saved_tabs_total": 1000,
+    "visited_tabs_total": 24
+  },
+  "warm_cef_browser_processes": 4,
+  "warm_tab_counts": {
+    "saved": 1000,
+    "live": 24,
+    "deferred": 976,
+    "available": true
+  },
+  "fixture_hits": {
+    "/page/0/0": 1,
+    "/page/0/1": 1,
+    "/page/0/2": 1,
+    "/page/0/3": 1,
+    "/page/0/4": 1,
+    "/page/0/5": 1,
+    "/page/1/0": 1,
+    "/page/1/1": 1,
+    "/page/1/2": 1,
+    "/page/1/3": 1,
+    "/page/1/4": 1,
+    "/page/1/5": 1,
+    "/page/2/0": 1,
+    "/page/2/1": 1,
+    "/page/2/2": 1,
+    "/page/2/3": 1,
+    "/page/2/4": 1,
+    "/page/2/5": 1,
+    "/page/3/0": 1,
+    "/page/3/1": 1,
+    "/page/3/2": 1,
+    "/page/3/3": 1,
+    "/page/3/4": 1,
+    "/page/3/5": 1
+  },
+  "loaded_unique_pages": 24,
+  "phases": [
+    {
+      "phase": "cold_saved_lazy",
+      "duration_seconds": 15.218999999999994,
+      "tab_counts": {
+        "saved": 1000,
+        "live": 0,
+        "deferred": 1000,
+        "available": true
+      },
+      "cpu_core_percent": 3.2853669754911636,
+      "cpu_machine_percent": 0.8213417438727909,
+      "peak_processes": 7,
+      "peak_working_set_bytes": 342585344,
+      "peak_private_bytes": 119615488
+    },
+    {
+      "phase": "warm_active",
+      "duration_seconds": 15.25,
+      "tab_counts": {
+        "saved": 1000,
+        "live": 24,
+        "deferred": 976,
+        "available": true
+      },
+      "cpu_core_percent": 5.327868852459017,
+      "cpu_machine_percent": 1.3319672131147542,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2895335424,
+      "peak_private_bytes": 1007095808
+    },
+    {
+      "phase": "warm_covered",
+      "duration_seconds": 15.25,
+      "tab_counts": {
+        "saved": 1000,
+        "live": 24,
+        "deferred": 976,
+        "available": true
+      },
+      "cpu_core_percent": 3.6885245901639343,
+      "cpu_machine_percent": 0.9221311475409836,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2783629312,
+      "peak_private_bytes": 1011773440
+    },
+    {
+      "phase": "warm_minimized",
+      "duration_seconds": 15.204000000000008,
+      "tab_counts": {
+        "saved": 1000,
+        "live": 24,
+        "deferred": 976,
+        "available": true
+      },
+      "cpu_core_percent": 2.4664561957379623,
+      "cpu_machine_percent": 0.6166140489344906,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2630643712,
+      "peak_private_bytes": 1004896256
+    },
+    {
+      "phase": "warm_restored",
+      "duration_seconds": 15.281000000000006,
+      "tab_counts": {
+        "saved": 1000,
+        "live": 24,
+        "deferred": 976,
+        "available": true
+      },
+      "cpu_core_percent": 3.1697860087690586,
+      "cpu_machine_percent": 0.7924465021922646,
+      "peak_processes": 51,
+      "peak_working_set_bytes": 2607206400,
+      "peak_private_bytes": 997060608
+    }
+  ],
+  "total_seconds": 100.93799999999999,
+  "provenance": {
+    "measurement_run": 44532556075,
+    "package_run": 44512453342,
+    "package_commit": "461636ff743f6fb9f91d9ea80c48610f3be617fb",
+    "installer_sha256": "DC5CB0E7EBAC3292A4CE6C7F4A4FB91D739EAC4BFD2A9191738212FE2242B119",
+    "raw_artifact": "windows-performance-measurement"
+  },
+  "limitations": [
+    "Separate runner VMs: CPU ratios between these baseline runs are not an optimization comparison",
+    "Static loopback pages, summed working sets may double count shared memory, Private Bytes is private committed memory"
+  ]
+}
