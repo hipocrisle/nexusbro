@@ -1159,8 +1159,8 @@ impl Rabota {
         }
         #[cfg(not(target_os = "windows"))]
         let _ = handled_events;
-        #[cfg(target_os = "windows")]
-        self.sync_native_visibility();
+        // Visibility is synchronized unconditionally before focus above,
+        // including idle maintenance. Do not scan every live tab twice.
         Ok(())
     }
 }
