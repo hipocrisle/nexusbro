@@ -43,6 +43,12 @@ window.__TAURI_INTERNALS__={invoke:async(cmd,args)=>{
  if(cmd==='security_account'){
   if(a.action==='default_server')return {server:'https://nexusbro-sync.hipogas.org'};
   if(a.action==='configure'){if(window.__configureOffline)throw 'Сервис аккаунтов временно недоступен';if(!a.data.server.startsWith('https://'))throw 'Требуется HTTPS';window.__account.server=a.data.server;window.__account.configured=true;}
+  if(a.action==='login'&&window.__requireLoginFactor){
+   if(Object.hasOwn(a.data,'totp')&&Object.hasOwn(a.data,'recovery_code'))throw 'Оба вида кода отправлены одновременно';
+   if(Object.hasOwn(a.data,'totp')){if(a.data.totp!=='123456')throw 'Неверный код 2FA';}
+   else if(Object.hasOwn(a.data,'recovery_code')){if(a.data.recovery_code!=='BACKUP-VALID-42')throw 'Неверный резервный код';}
+   else throw 'TOTP_REQUIRED';
+  }
   if(['register','login','recover'].includes(a.action)){if(window.__offline)throw 'Сервер недоступен';window.__account.logged_in=true;window.__account.username=a.data.username;if(a.action==='register'){if(window.__authPartial){window.__account.logged_in=false;return {...window.__account,recovery_key:'RECOVERY-FIXTURE-ONLY',warning:'Автоматический вход не завершён'};}return {...window.__account,recovery_key:'RECOVERY-FIXTURE-ONLY'};}}
   if(a.action==='logout')window.__account.logged_in=false;
   if(a.action==='totp_enroll')return {secret:'JBSWY3DPEHPK3PXP',otpauth_uri:'otpauth://totp/NexusBro:fixture?secret=JBSWY3DPEHPK3PXP&issuer=NexusBro'};
@@ -312,6 +318,40 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    assert custom.evaluate('window.__account.server')=='https://owner-server.fixture.invalid'
    assert not custom.evaluate("window.__calls.some(x=>x.cmd==='security_account'&&['configure','default_server'].includes(x.action))")
    custom.close()
+   # The real UI has one factor field, while the API has distinct TOTP and
+   # backup-code keys. Reject wrong proofs and require the correct wire field.
+   factor_page=browser.new_page(viewport={'width':1100,'height':820});factor_page.on('pageerror',lambda e:errors.append(str(e)))
+   factor_page.add_init_script(mock+"window.__vault={exists:true,unlocked:true};window.__account={configured:true,logged_in:false,username:'',server:'https://browser-sync.fixture.invalid',totp_enabled:true};window.__requireLoginFactor=true;")
+   factor_page.goto(f'http://127.0.0.1:{server.server_port}')
+   fd=factor_page.get_by_role('dialog',name='Пароли, аккаунт и синхронизация NexusBro');fd.get_by_role('button',name='Аккаунт',exact=True).click()
+   expect(fd.get_by_label('Код 2FA для входа',exact=True)).to_be_visible()
+   assert 'Код 2FA или резервный код' in fd.inner_text()
+   assert fd.get_by_label('Код 2FA для входа',exact=True).get_attribute('maxlength')!='6'
+   def factor_login(proof):
+    fd.get_by_label('Имя аккаунта NexusBro',exact=True).fill('factor-fixture')
+    fd.get_by_label('Пароль аккаунта NexusBro',exact=True).fill('factor-password-fixture')
+    fd.get_by_label('Код 2FA для входа',exact=True).fill(proof)
+    fd.get_by_role('button',name='Войти в NexusBro',exact=True).click()
+   def last_login():
+    return factor_page.evaluate("window.__calls.filter(x=>x.cmd==='security_account'&&x.action==='login').at(-1).data")
+   factor_login('000 000')
+   expect(fd.get_by_role('alert')).to_contain_text('Неверный код 2FA')
+   payload=last_login();assert payload['totp']=='000000' and 'recovery_code' not in payload,'Wrong TOTP used the wrong API proof'
+   assert not factor_page.evaluate('window.__account.logged_in')
+   factor_login(' 123 456 ')
+   expect(fd.get_by_role('status')).to_contain_text('Вход в аккаунт NexusBro выполнен')
+   payload=last_login();assert payload['totp']=='123456' and 'recovery_code' not in payload,'TOTP routing or whitespace normalization failed'
+   fd.get_by_role('button',name='Выйти из аккаунта',exact=True).click()
+   expect(fd.get_by_role('button',name='Войти в NexusBro',exact=True)).to_be_visible()
+   factor_login('WRONG-BACKUP')
+   expect(fd.get_by_role('alert')).to_contain_text('Неверный резервный код')
+   payload=last_login();assert payload['recovery_code']=='WRONG-BACKUP' and 'totp' not in payload,'Wrong backup code was sent as TOTP'
+   assert not factor_page.evaluate('window.__account.logged_in')
+   factor_login(' BACKUP - VALID - 42 ')
+   expect(fd.get_by_role('status')).to_contain_text('Вход в аккаунт NexusBro выполнен')
+   payload=last_login();assert payload['recovery_code']=='BACKUP-VALID-42' and 'totp' not in payload,'Backup code routing or whitespace normalization failed'
+   assert factor_page.evaluate('window.__account.logged_in')
+   factor_page.close()
    # Connection errors block registration and do not leave a success/pending state.
    offline=browser.new_page(viewport={'width':1100,'height':820});offline.on('pageerror',lambda e:errors.append(str(e)))
    offline.add_init_script(mock+"window.__vault={exists:true,unlocked:true};window.__configureOffline=true;")
@@ -339,6 +379,6 @@ with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
    offline.close()
    assert not external_requests,'Security UI made an unexpected external request'
    assert not errors,errors
-   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'default_account_without_manual_server':True,'custom_endpoint_preserved':True,'connection_failure_blocks_registration':True,'partial_registration_never_claims_login':True,'password_saving_onboarding':True,'local_rendered_totp_qr_independently_decoded':True,'totp_qr_and_manual_key_match':True,'totp_qr_pixels_cleared_on_unmount':True,'no_external_qr_requests':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
+   print(json.dumps({'real_chromium':True,'native_ipc':'fixture','vault_gate':True,'manual_password_save_and_explicit_reveal':True,'separate_account_and_show_once_recovery':True,'default_account_without_manual_server':True,'custom_endpoint_preserved':True,'connection_failure_blocks_registration':True,'partial_registration_never_claims_login':True,'password_saving_onboarding':True,'totp_and_backup_login_use_distinct_wire_fields':True,'wrong_factor_codes_never_login':True,'grouped_factor_whitespace_normalized':True,'local_rendered_totp_qr_independently_decoded':True,'totp_qr_and_manual_key_match':True,'totp_qr_pixels_cleared_on_unmount':True,'no_external_qr_requests':True,'totp_confirmation_and_bad_code':True,'account_change_recover_delete':True,'granular_sync_all_off':True,'new_device_explicit_wildcard_import':True,'offline_and_conflicts_never_success':True,'explicit_conflict_choices_and_cloud_confirmation':True,'capture_consent_and_exact_target':True,'private_target_rejected_before_ipc':True,'small_window_fits':True,'lock_hides_secrets':True,'no_localstorage_secrets':True}))
    browser.close()
  finally:server.shutdown()

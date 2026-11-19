@@ -56,11 +56,12 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
   if(draft)await security.passwords('save_draft',{draft_id:draft.draft_id,username,title});else await security.passwords('save',{origin,username,password:secret,title,super_id:superId});
   setDraft(null);setManual(false);setOrigin('');setUsername('');setTitle('');await refresh();setNotice('Логин и пароль сохранены в зашифрованном хранилище.');
  });}
- async function authenticate(e:FormEvent){e.preventDefault();const secret=accountPass,key=recovery;setAccountPass('');setAccountAgain('');setRecovery('');await run(async()=>{
+ async function authenticate(e:FormEvent){e.preventDefault();const secret=accountPass,key=recovery,factor=code.trim().replace(/\s/g,'');setAccountPass('');setAccountAgain('');setRecovery('');await run(async()=>{
   try{
    if(!account?.configured){setAuthStep('Подключаю аккаунт NexusBro…');const standard=await security.account<{server:string}>('default_server');const selected=server.trim();await security.account('configure',{server:selected&&selected!==DEFAULT_ACCOUNT_SERVER?selected:standard.server});}
    setAuthStep(mode==='register'?'Создаю аккаунт…':mode==='recover'?'Восстанавливаю доступ…':'Выполняю вход…');
-   const data=mode==='recover'?{username:accountName,recovery_key:key,new_password:secret}:{username:accountName,password:secret,...(code?{totp:code}:{})};
+   const proof=mode==='login'&&factor?(/^\d{6}$/.test(factor)?{totp:factor}:{recovery_code:factor}):{};
+   const data=mode==='recover'?{username:accountName,recovery_key:key,new_password:secret}:{username:accountName,password:secret,...proof};
    const result=await security.account<AccountResult>(mode,data);setCode('');await refresh();if(result.recovery_key)setRecoveryKey(result.recovery_key);if(result.recovery_codes)setBackupCodes(result.recovery_codes);
    if(!result.logged_in){if(mode==='register'&&result.recovery_key){setNotice('Аккаунт создан. Сохраните ключ восстановления и выполните вход.');if(result.warning)setError(errorText(result.warning));setMode('login');return;}throw new Error(result.warning||'Вход не завершён. Повторите попытку.');}
    setNotice(mode==='register'?'Аккаунт NexusBro создан. Сохраните ключ восстановления.':mode==='recover'?'Доступ к аккаунту NexusBro восстановлен.':'Вход в аккаунт NexusBro выполнен.');
@@ -132,7 +133,7 @@ export default function SecuritySettings({onClose}:{onClose:()=>void}){
     {mode==='recover'&&<Secret label="Ключ восстановления аккаунта" value={recovery} onChange={setRecovery}/>}
     <Secret label={mode==='recover'?'Новый пароль аккаунта':'Пароль аккаунта NexusBro'} value={accountPass} onChange={setAccountPass} minLength={mode==='login'?undefined:12} autoComplete={mode==='login'?'current-password':'new-password'}/>
     {mode!=='login'&&<Secret label="Повторите пароль аккаунта" value={accountAgain} onChange={setAccountAgain} minLength={12} autoComplete="new-password"/>}
-    {mode==='login'&&<label>Код двухфакторной аутентификации<input aria-label="Код 2FA для входа" value={code} onChange={e=>setCode(e.target.value)} autoComplete="one-time-code" placeholder="Если включена 2FA"/></label>}
+    {mode==='login'&&<label>Код 2FA или резервный код<input aria-label="Код 2FA для входа" value={code} onChange={e=>setCode(e.target.value)} autoComplete="one-time-code" placeholder="Если включена 2FA"/><small>6 цифр из приложения-аутентификатора или одноразовый резервный код.</small></label>}
     <button className="security-primary" disabled={busy||!accountName||!accountPass||(mode!=='login'&&(accountPass.length<12||accountPass!==accountAgain))||(mode==='recover'&&!recovery)}>{authStep||(mode==='login'?'Войти в NexusBro':mode==='register'?'Создать аккаунт NexusBro':'Восстановить аккаунт')}</button>
     {authStep&&<p className="security-connecting" aria-live="polite">{authStep}</p>}
    </form>
