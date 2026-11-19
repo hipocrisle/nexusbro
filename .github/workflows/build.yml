@@ -16,6 +16,10 @@ on:
         description: Measure Windows CPU and memory using packages from this run (no build or publication)
         required: false
         default: ""
+      performance_reference:
+        description: Optional reference package run to measure first on the same Windows VM
+        required: false
+        default: ""
       performance_saved_tabs:
         description: Saved tabs per Super in the measurement
         required: false
@@ -454,15 +458,27 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           BUILD_RUN: ${{ inputs.performance_build }}
+          REFERENCE_RUN: ${{ inputs.performance_reference }}
         run: |
           New-Item -ItemType Directory -Force .dev-check/performance-provenance | Out-Null
           gh api "repos/${{ github.repository }}/actions/runs/$env:BUILD_RUN" > .dev-check/performance-provenance/source-run.json
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:REFERENCE_RUN) {
+            gh api "repos/${{ github.repository }}/actions/runs/$env:REFERENCE_RUN" > .dev-check/performance-provenance/reference-run.json
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
       - uses: actions/download-artifact@v4
         with:
           name: nexusbro-windows
           path: .dev-check/package
           run-id: ${{ inputs.performance_build }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v4
+        if: inputs.performance_reference != ''
+        with:
+          name: nexusbro-windows
+          path: .dev-check/reference-package
+          run-id: ${{ inputs.performance_reference }}
           github-token: ${{ github.token }}
       - name: Measure real Windows process tree and page workload
         shell: pwsh
@@ -470,6 +486,7 @@ jobs:
           PERF_SAVED_TABS: ${{ inputs.performance_saved_tabs }}
           PERF_SUPERS: ${{ inputs.performance_supers }}
           PERF_LIVE_TABS: ${{ inputs.performance_live_tabs }}
+          REFERENCE_RUN: ${{ inputs.performance_reference }}
         run: |
           $installers = @(Get-ChildItem .dev-check/package -Recurse -Filter *.exe)
           if ($installers.Count -ne 1) { throw "Expected exactly one measured installer" }
@@ -478,6 +495,15 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install Pillow pyautogui pywinauto psutil
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:REFERENCE_RUN) {
+            $reference = @(Get-ChildItem .dev-check/reference-package -Recurse -Filter *.exe)
+            if ($reference.Count -ne 1) { throw "Expected exactly one reference installer" }
+            Get-FileHash -Algorithm SHA256 $reference[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/reference-sha256.json
+            7z x -y $reference[0].FullName "-o.dev-check/reference-installed"
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
           python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
@@ -490,6 +516,10 @@ jobs:
             .dev-check/performance/*.png
             .dev-check/performance/*.log
             .dev-check/performance/data/zhurnal.log
+            .dev-check/performance-reference/*.json
+            .dev-check/performance-reference/*.png
+            .dev-check/performance-reference/*.log
+            .dev-check/performance-reference/data/zhurnal.log
           retention-days: 14
 
   runtime:
