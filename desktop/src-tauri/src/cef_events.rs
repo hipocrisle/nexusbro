@@ -68,7 +68,13 @@ mod tests {
         // Keep a sender alive: channel disconnection alone cannot stop recv.
         drop(guard);
         assert!(ready.recv_timeout(Duration::from_secs(3)).is_err());
-        assert!(tx.send("after-stop").is_err());
+        // Receiver captures may be dropped just after ready_tx; wait for the
+        // worker's input to disconnect rather than depending on drop order.
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        while tx.send("after-stop").is_ok() && std::time::Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(1));
+        }
+        assert!(tx.send("after-exit").is_err());
     }
 
     #[test]
