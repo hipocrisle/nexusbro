@@ -23,6 +23,10 @@ pub struct Obychnaya {
     pub vpered: bool,
     #[serde(default)]
     pub privatnaya: bool,
+    #[serde(default)]
+    pub memory_keep:bool,
+    #[serde(default)]
+    pub memory_pending:bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +56,11 @@ pub enum Komanda {
     Skachat{adres:String,privatnaya:bool},
     Vybrat { id: u64 },
     Zakryt { id: u64 },
+    /// Explicit reload-based unload; never scheduled automatically.
+    Usypit { id: u64 },
+    MemoryAuto { id:u64 },
+    MemorySettings { enabled:bool,minutes:u32 },
+    MemoryKeep { id:u64,keep:bool },
     ZakrytDrugie { id: u64, sprava: bool },
     Zakrepit { id: u64, zakreplena: bool },
     Pereyti { id: u64, adres: String },
@@ -107,6 +116,8 @@ impl Sessiya {
             ikonka: None,
             vpered: false,
             privatnaya: false,
+            memory_keep:false,
+            memory_pending:false,
         });
         self.aktivnaya = id;
         id
@@ -151,6 +162,7 @@ impl Sessiya {
         for v in &mut s.vkladki {
             v.zagruzka = false;
             v.otlozhena = true;
+            v.memory_pending=false;
             v.nazad = false;
             v.vpered = false;
         }
@@ -160,7 +172,7 @@ impl Sessiya {
 
     pub fn sohranit(&self, profil: &Path) -> anyhow::Result<()> {
         if profil.file_name().and_then(|s|s.to_str()).is_some_and(crate::privatnost::eto_id){return Ok(());}
-        let mut public=self.clone();public.vkladki.retain(|v|!v.privatnaya);public.zakrytye.retain(|v|!v.privatnaya);
+        let mut public=self.clone();for v in &mut public.vkladki{v.memory_pending=false;}public.vkladki.retain(|v|!v.privatnaya);public.zakrytye.retain(|v|!v.privatnaya);
         if !public.vkladki.iter().any(|v|v.id==public.aktivnaya){public.aktivnaya=public.vkladki.first().map(|v|v.id).unwrap_or(0);}
         std::fs::create_dir_all(profil)?;
         let put = profil.join("obychnye.json");

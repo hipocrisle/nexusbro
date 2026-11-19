@@ -5,3 +5,6 @@ mod secure_vault;
 
 #[path = "../../../desktop/src-tauri/src/cef_events.rs"]
 mod cef_events;
+
+#[path = "../../../desktop/src-tauri/src/memory_guard.rs"]
+mod memory_guard;

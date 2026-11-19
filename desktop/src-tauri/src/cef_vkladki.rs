@@ -14,19 +14,24 @@ pub(crate) enum Sobytie {
     #[cfg(target_os="windows")]
     DevtoolsZakrytOkno(u64,u32),
     Komanda(Komanda),
-    Zagolovok(u64, String),
-    Adres(u64, String),
-    Zagruzka(u64, bool, bool, bool),
-    Zakryta(u64),
+    Zagolovok(u64, i32, String),
+    Adres(u64, i32, String),
+    Zagruzka(u64, i32, bool, bool, bool),
+    Zakryta(u64, Option<i32>),
+    MemoryRefused(u64, i32),
+    MemoryMessage(u64,i32,serde_json::Value),
+    MemoryFrozen(u64,i32,String,bool),
+    MemoryLoaded(u64,i32),
     Ikonka(u64, String, String),
     AdresnyiVvod,
     #[cfg(target_os = "windows")]
-    ZakrytOkno(u64),
+    ZakrytOkno(u64, i32),
 }
 
 wrap_display_handler! {
     struct VidStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl DisplayHandler {
+        fn on_media_access_change(&self,browser:Option<&mut Browser>,has_video_access:i32,has_audio_access:i32){if let Some(b)=browser{crate::memory_guard::capture(b.identifier(),has_video_access!=0||has_audio_access!=0);}}
         fn on_console_message(&self,browser:Option<&mut Browser>,_level:LogSeverity,message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{
             if let Some(data)=message.map(|m|m.to_string()).and_then(|m|m.strip_prefix("__NEXUSBRO_COSMETIC__").map(str::to_owned)).filter(|s|s.len()<16000).and_then(|s|serde_json::from_str::<serde_json::Value>(&s).ok()){
                 let host=browser.and_then(|b|b.main_frame()).and_then(|f|reqwest::Url::parse(&CefString::from(&f.url()).to_string()).ok()).and_then(|u|u.host_str().map(str::to_owned)).unwrap_or_default();
@@ -38,16 +43,16 @@ wrap_display_handler! {
         fn on_favicon_urlchange(&self, browser: Option<&mut Browser>, icon_urls: Option<&mut CefStringList>) {
             crate::cef_interfeys::ikonka(self.id, self.tx.clone(), browser, icon_urls);
         }
-        fn on_title_change(&self, _browser: Option<&mut Browser>, title: Option<&CefString>) {
-            if let Some(t) = title { let _ = self.tx.send(Sobytie::Zagolovok(self.id, t.to_string())); }
+        fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
+            if let (Some(b),Some(t)) = (browser,title) { let _ = self.tx.send(Sobytie::Zagolovok(self.id, b.identifier(), t.to_string())); }
         }
         // ⛔ Без `mut` в объявлении: грамматика `wrap_*!` принимает только
         // шаблон `имя: тип`, иначе «no rules expected». Внутри берём `&mut`.
-        fn on_address_change(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
+        fn on_address_change(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, url: Option<&CefString>) {
             if frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(false) {
                 if let Some(u) = url {
                     let u = u.to_string();
-                    let _ = self.tx.send(Sobytie::Adres(self.id, u.clone()));
+                    if let Some(b)=browser.as_ref(){let _ = self.tx.send(Sobytie::Adres(self.id, b.identifier(), u.clone()));}
 
                 }
             }
@@ -59,7 +64,7 @@ wrap_load_handler! {
     struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl LoadHandler {
         fn on_load_end(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
-            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());}}
+            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier()));}}
             if !crate::borba_s_reklamoy::vklyuchena() { return; }
             if let Some(f) = frame {
                 if f.is_main() != 0 {
@@ -76,8 +81,8 @@ wrap_load_handler! {
                 eprintln!("cef: вкладка {} load_error {:?}: {}", self.id, error_code, error_text.map(|t| t.to_string()).unwrap_or_default());
             }
         }
-        fn on_loading_state_change(&self, _browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
-            let _ = self.tx.send(Sobytie::Zagruzka(self.id, is_loading != 0, can_go_back != 0, can_go_forward != 0));
+        fn on_loading_state_change(&self, browser: Option<&mut Browser>, is_loading: i32, can_go_back: i32, can_go_forward: i32) {
+            if let Some(b)=browser{let _ = self.tx.send(Sobytie::Zagruzka(self.id, b.identifier(), is_loading != 0, can_go_back != 0, can_go_forward != 0));}
         }
     }
 }
@@ -95,22 +100,46 @@ wrap_life_span_handler! {
             }
             1
         }
-        fn do_close(&self, _browser: Option<&mut Browser>) -> i32 {
+        fn do_close(&self, browser: Option<&mut Browser>) -> i32 {
             #[cfg(target_os = "windows")]
             {
                 // CEF по умолчанию посылает WM_CLOSE верхнему родителю — Tauri!
                 // Разрушаем только собственный HWND вкладки на CEF UI-потоке,
                 // после возврата из callback, чтобы не войти в teardown рекурсивно.
-                let _ = self.tx.send(Sobytie::ZakrytOkno(self.id));
+                if let Some(b)=browser{let _ = self.tx.send(Sobytie::ZakrytOkno(self.id,b.identifier()));}
                 return 1;
             }
             #[cfg(not(target_os = "windows"))]
             { 0 }
         }
         fn on_before_close(&self, browser: Option<&mut Browser>) {
-            if let Some(browser)=browser{crate::cef_interfeys::cancel_context(browser.identifier());}
-            crate::password_cef::closed(self.id);
-            let _ = self.tx.send(Sobytie::Zakryta(self.id));
+            if let Some(browser)=browser{
+                let identity=browser.identifier();
+                SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&identity);});
+                crate::memory_guard::closed(identity);
+                crate::cef_interfeys::cancel_context(identity);
+                crate::password_cef::closed(self.id);
+                let _ = self.tx.send(Sobytie::Zakryta(self.id,Some(identity)));
+            }
+        }
+    }
+}
+
+thread_local! {static SLEEP_CLOSES:std::cell::RefCell<std::collections::HashSet<i32>>=Default::default();}
+wrap_jsdialog_handler! {
+    struct MemoryDialog { id:u64, tx:Sender<Sobytie> }
+    impl JsdialogHandler {
+        fn on_before_unload_dialog(&self,browser:Option<&mut Browser>,_message_text:Option<&CefString>,_is_reload:i32,callback:Option<&mut JsdialogCallback>)->i32 {
+            let Some(browser)=browser else{return 0;};
+            let identity=browser.identifier();
+            if SLEEP_CLOSES.with(|m|m.borrow_mut().remove(&identity)) {
+                if let Some(callback)=callback {
+                    callback.cont(0,None);
+                    let _=self.tx.send(Sobytie::MemoryRefused(self.id,identity));
+                    return 1;
+                }
+            }
+            0
         }
     }
 }
@@ -129,8 +158,11 @@ wrap_focus_handler! {
 wrap_request_handler! {
     struct SboyStranicy { id: u64, privatnaya:bool, tx:Sender<Sobytie> }
     impl RequestHandler {
-        fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,_request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
-            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{crate::cef_interfeys::cancel_context(browser.identifier());}}
+        fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
+            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
+                crate::cef_interfeys::cancel_context(browser.identifier());
+                crate::memory_guard::navigation(browser.identifier(),request.is_some_and(|r|CefString::from(&r.method()).to_string()=="GET"));
+            }}
             0
         }
         fn on_open_urlfrom_tab(&self,_browser:Option<&mut Browser>,_frame:Option<&mut Frame>,target_url:Option<&CefString>,target_disposition:WindowOpenDisposition,_user_gesture:i32)->i32{
@@ -168,6 +200,15 @@ wrap_request_handler! {
 wrap_client! {
     struct KlientVkladki { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl Client {
+        fn on_process_message_received(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,source_process:ProcessId,message:Option<&mut ProcessMessage>)->i32{
+            let (Some(b),Some(f),Some(m))=(browser,frame,message)else{return 0;};
+            if let Some(data)=crate::memory_cef::receive(b,f,source_process,m){
+                if data["kind"]=="NB_MEMORY_DOCUMENT"{if let Some(token)=data["token"].as_str().filter(|s|!s.is_empty()&&s.len()<128){crate::memory_guard::document(b.identifier(),token.into());}}
+                let _=self.tx.send(Sobytie::MemoryMessage(self.id,b.identifier(),data));return 1;
+            }0
+        }
+
+        fn jsdialog_handler(&self)->Option<JsdialogHandler>{Some(MemoryDialog::new(self.id,self.tx.clone()))}
         fn download_handler(&self)->Option<DownloadHandler>{Some(crate::zagruzki::handler(self.id,self.tx.clone(),self.privatnaya))}
         fn find_handler(&self) -> Option<FindHandler> { Some(crate::poisk::handler(self.id, self.tx.clone())) }
         fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(crate::cef_interfeys::klaviatura(self.id, self.tx.clone())) }
@@ -353,7 +394,7 @@ fn sozdat_brauzer(
 
 fn pokazat(s: &Sessiya, b: &HashMap<u64, Browser>) {
     for (id, b) in b {
-        let _ = sistema::pokazat(handle(b), *id == s.aktivnaya);
+        let _ = sistema::pokazat(handle(b), *id == s.aktivnaya && !s.vkladki.iter().any(|v|v.id==*id&&v.memory_pending));
     }
 }
 
@@ -363,7 +404,7 @@ fn sync_native_visibility_for(
     k: &Konteyner, s: &Sessiya, browsers: &HashMap<u64, Browser>, allowed: bool,
 ) {
     let windows: Vec<_> = browsers.iter().map(|(id, browser)| (
-        browser.identifier(), handle(browser) as u64, allowed && *id == s.aktivnaya,
+        browser.identifier(), handle(browser) as u64, allowed && *id == s.aktivnaya && !s.vkladki.iter().any(|v|v.id==*id&&v.memory_pending),
     )).collect();
     visibility.sync(k.okno as u64, &windows);
 }
@@ -424,6 +465,7 @@ pub fn rabotat(
         #[cfg(target_os = "windows")]
         native_visibility: Default::default(),
         brauzery,
+        sleep_requests:Default::default(),memory_registrations:Default::default(),memory_last_used:Default::default(),memory_next_scan:std::time::Instant::now(),memory_enabled:crate::nastrojki::zagruzit().memory_saver,memory_minutes:crate::nastrojki::zagruzit().memory_saver_minutes,memory_scroll:Default::default(),
         razmer,
         devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40,devtools_pixels:None, ui_last:String::new(), perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),
         label:String::new(), extras:HashMap::new(), closed_labels:Default::default(), closing:false, browser_locked:initially_locked, browser_lock_generation:initial_lock_generation, force_private:crate::privatnost::process_privatnyj(),
@@ -518,6 +560,36 @@ wrap_task! {
     }
 }
 
+#[derive(Clone,Copy,PartialEq,Eq)]
+enum MemoryStage { Preflight,Freezing,Verify,Closing }
+struct MemoryAttempt {
+    identity:i32,token:String,request:String,stage:MemoryStage,automatic:bool,
+    started:std::time::Instant,wake:bool,timed_out:bool,scroll:(f64,f64),
+}
+fn memory_refused(id:u64,error:&str,s:&mut Sessiya,tx:&Sender<Sobytie>,requests:&mut HashMap<u64,MemoryAttempt>,registrations:&mut HashMap<u64,Registration>,browsers:&HashMap<u64,Browser>){
+    if let Some(attempt)=requests.remove(&id){
+        if attempt.stage!=MemoryStage::Preflight{if let Some(b)=browsers.get(&id).filter(|b|b.identifier()==attempt.identity){crate::memory_cef::resume(b);}}
+        SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&attempt.identity);});
+        if let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id){tab.memory_pending=false;}
+        eprintln!("NEXUSBRO_MEMORY tab={id} browser={} automatic={} refused={error}",attempt.identity,attempt.automatic);
+        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":false,"automatic":attempt.automatic,"error":error})));
+    }
+    registrations.remove(&id);
+}
+fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser>,pending_tools:&HashMap<u64,std::time::Instant>,force_private:bool)->Option<&'static str>{
+    let Some(tab)=s.vkladki.iter().find(|v|v.id==id)else{return Some("Вкладка уже закрыта");};
+    let Some(browser)=browsers.get(&id)else{return Some("Вкладка уже выгружена");};
+    if s.aktivnaya==id{return Some("Активную вкладку нельзя выгрузить");}
+    if tab.privatnaya||force_private{return Some("Приватная вкладка остаётся в памяти");}
+    if tab.zakreplena{return Some("Сначала открепите вкладку");}
+    if automatic&&tab.memory_keep{return Some("Для вкладки отключена автоматическая выгрузка");}
+    if tab.zagruzka||browser.is_loading()!=0{return Some("Дождитесь загрузки страницы");}
+    if pending_tools.contains_key(&id)||browser.host().is_some_and(|h|h.has_dev_tools()!=0){return Some("Сначала закройте инструменты разработчика");}
+    if crate::zagruzki::tab_busy(id){return Some("Вкладка выполняет загрузку файла");}
+    if automatic&&(browser.can_go_back()!=0||browser.can_go_forward()!=0){return Some("Сохраняем внутреннюю историю переходов вкладки");}
+    crate::memory_guard::reason(browser.identifier())
+}
+
 struct Rabota {
     k: Konteyner,
     s: Sessiya,
@@ -528,6 +600,13 @@ struct Rabota {
     #[cfg(target_os = "windows")]
     native_visibility: crate::cef_visibility_win::Visibility,
     brauzery: HashMap<u64, Browser>,
+    sleep_requests: HashMap<u64,MemoryAttempt>,
+    memory_registrations:HashMap<u64,Registration>,
+    memory_last_used:HashMap<u64,std::time::Instant>,
+    memory_next_scan:std::time::Instant,
+    memory_enabled:bool,
+    memory_minutes:u32,
+    memory_scroll:HashMap<u64,(f64,f64)>,
     razmer: Option<(u32, u32)>,
     devtools: HashMap<u64,u32>,
     devtools_pending:HashMap<u64,std::time::Instant>,
@@ -598,6 +677,7 @@ impl Rabota {
             tx,
             rx,
             brauzery,
+            sleep_requests,memory_registrations,memory_last_used,memory_next_scan,memory_enabled,memory_minutes,memory_scroll,
             razmer,
             devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private,
             #[cfg(target_os = "windows")]
@@ -615,9 +695,26 @@ impl Rabota {
             // A lock covers queued/in-flight UI actions too. Lifecycle events
             // still complete, while no key, popup or stale command can reopen a page.
             if *browser_locked && matches!(&sobytie,Sobytie::Komanda(command) if !matches!(command,
-                Komanda::BrowserLocked{..}|Komanda::PasswordsEnabled{..}|Komanda::OknoKomanda{..}|
+                Komanda::BrowserLocked{..}|Komanda::PasswordsEnabled{..}|Komanda::MemorySettings{..}|Komanda::OknoKomanda{..}|
                 Komanda::OknoZakryt{..}|Komanda::GlavnoeSkryto|Komanda::GlavnoePokazat)) {continue;}
 
+            // No input or navigation reaches a WebContents after close was
+            // committed. Selecting it records intent; the replacement waits.
+            let target=match &sobytie {
+                Sobytie::Komanda(Komanda::Vybrat{id}|Komanda::Pereyti{id,..}|Komanda::Obnovit{id}|Komanda::ObnovitBezKesha{id}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Instrumenty{id}|Komanda::Issledovat{id,..}|Komanda::Nayti{id,..}|Komanda::Perevesti{id}|Komanda::PasswordForm{id,..})=>Some(*id),
+                _=>None,
+            };
+            if let Some(id)=target {
+                if let Some(attempt)=sleep_requests.get_mut(&id){
+                    if attempt.stage==MemoryStage::Closing {
+                        if matches!(&sobytie,Sobytie::Komanda(Komanda::Vybrat{..})){attempt.wake=true;s.aktivnaya=id;fokus=true;izmeneno=true;}
+                        else{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":false,"error":"Вкладка завершает выгрузку; дождитесь её восстановления"})));}
+                        continue;
+                    }
+                    memory_refused(id,"Вкладка снова используется",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;
+                }
+                memory_last_used.insert(id,std::time::Instant::now());
+            }
             let budit = match &sobytie {
                 Sobytie::Komanda(
                     Komanda::Pereyti { id, .. }
@@ -654,6 +751,7 @@ impl Rabota {
                     Komanda::Issledovat{..} | Komanda::InstrumentyRazmer{..} |
                     Komanda::ZagruzkaUpravlenie{..} | Komanda::Masshtab{..}));
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
+            let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
                 Sobytie::Komanda(Komanda::OknoNovoe{label:new_label,parent,x,y,w,h,privatnaya,sessiya})=>{
                     if !label.is_empty()||extras.contains_key(&new_label){continue;}
@@ -677,14 +775,14 @@ impl Rabota {
                     static NEXT_VIEW:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
                     let base=NEXT_VIEW.fetch_add(1,std::sync::atomic::Ordering::Relaxed)*1_000_000;
                     let active=child_s.vkladki.iter().position(|v|v.id==child_s.aktivnaya).unwrap_or(0);
-                    for (i,v) in child_s.vkladki.iter_mut().enumerate(){v.id=base+i as u64;v.privatnaya|=privatnaya||crate::privatnost::process_privatnyj();v.zagruzka=false;v.otlozhena=restoring&&i!=active;}
+                    for (i,v) in child_s.vkladki.iter_mut().enumerate(){v.id=base+i as u64;v.privatnaya|=privatnaya||crate::privatnost::process_privatnyj();v.zagruzka=false;v.memory_pending=false;v.otlozhena=restoring&&i!=active;}
                     child_s.aktivnaya=child_s.vkladki[active].id;child_s.sleduyushchaya=base+child_s.vkladki.len() as u64;
                     let mut child_b=HashMap::new();
                     let tab=&child_s.vkladki[active];
                     match sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya){Ok(b)=>{child_b.insert(tab.id,b);},Err(e)=>{eprintln!("cef: страница нового окна: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}}
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,#[cfg(target_os = "windows")] native_visibility:Default::default(),brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,#[cfg(target_os = "windows")] native_visibility:Default::default(),brauzery:child_b,sleep_requests:Default::default(),memory_registrations:Default::default(),memory_last_used:Default::default(),memory_next_scan:std::time::Instant::now(),memory_enabled:crate::nastrojki::zagruzit().memory_saver,memory_minutes:crate::nastrojki::zagruzit().memory_saver_minutes,memory_scroll:Default::default(),razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -700,7 +798,7 @@ impl Rabota {
                     if label.is_empty(){
                         *closing=true; // Не создаём скрытую приватную blank-вкладку.
                         for tab in s.vkladki.iter().filter(|v|v.privatnaya){
-                            if let Some(h)=brauzery.get(&tab.id).and_then(|b|b.host()){h.close_browser(1);}else{let _=tx.send(Sobytie::Zakryta(tab.id));}
+                            if let Some(h)=brauzery.get(&tab.id).and_then(|b|b.host()){h.close_browser(1);}else{let _=tx.send(Sobytie::Zakryta(tab.id,None));}
                         }
                     }
                 }
@@ -753,30 +851,61 @@ impl Rabota {
                         fokus_klaviatury = true;
                     }
                 }
+                Sobytie::Komanda(Komanda::MemorySettings{enabled,minutes})=>{
+                    *memory_enabled=enabled;*memory_minutes=minutes.clamp(15,240);
+                    for extra in extras.values(){let _=extra.tx.send(Sobytie::Komanda(Komanda::MemorySettings{enabled,minutes}));}
+                }
+                Sobytie::Komanda(Komanda::MemoryKeep{id,keep})=>{
+                    if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.memory_keep=keep;}
+                    if keep&&sleep_requests.get(&id).is_some_and(|a|a.stage!=MemoryStage::Closing){memory_refused(id,"Вкладка исключена из автоматической выгрузки",s,tx,sleep_requests,memory_registrations,brauzery);}
+                }
+                Sobytie::Komanda(Komanda::Usypit{id}|Komanda::MemoryAuto{id}) => {
+                    let automatic=memory_automatic;
+                    let reason=memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private)
+                        .or_else(||if sleep_requests.contains_key(&id){Some("Выгрузка этой вкладки уже запрошена")}else{None})
+                        .or_else(||if perevody.contains_key(&id){Some("Дождитесь завершения перевода страницы")}else{None});
+                    if let Some(error)=reason {
+                        eprintln!("NEXUSBRO_MEMORY tab={id} automatic={automatic} refused={error}");
+                        if !automatic{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":false,"error":error})));}
+                        continue;
+                    }
+                    if let Some(browser)=brauzery.get(&id){if let Some(token)=crate::memory_guard::token(browser.identifier()){
+                        static NEXT_MEMORY:std::sync::atomic::AtomicU64=std::sync::atomic::AtomicU64::new(1);
+                        let request=NEXT_MEMORY.fetch_add(1,std::sync::atomic::Ordering::Relaxed).to_string();
+                        let identity=browser.identifier();
+                        let sent=crate::memory_cef::probe(browser,&request,&token);
+                        sleep_requests.insert(id,MemoryAttempt{identity,token,request,stage:MemoryStage::Preflight,automatic,started:std::time::Instant::now(),wake:false,timed_out:false,scroll:(0.0,0.0)});
+                        if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.memory_pending=true;}
+                        eprintln!("NEXUSBRO_MEMORY tab={id} browser={identity} requested={}",if automatic{"automatic"}else{"manual"});
+                        if !sent{memory_refused(id,"Не удалось проверить состояние страницы",s,tx,sleep_requests,memory_registrations,brauzery);}
+                    }}
+                }
                 Sobytie::Komanda(Komanda::Zakryt { id }) => {
+                    if let Some(attempt)=sleep_requests.remove(&id){SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&attempt.identity);});if let Some(b)=brauzery.get(&id){crate::memory_cef::resume(b);}memory_registrations.remove(&id);if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.memory_pending=false;}}
                     fokus_klaviatury |= s.aktivnaya == id;
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         h.close_browser(0);
                     } else {
-                        let _ = tx.send(Sobytie::Zakryta(id));
+                        let _ = tx.send(Sobytie::Zakryta(id,None));
                     }
                 }
                 Sobytie::Komanda(Komanda::ZakrytDrugie { id, sprava }) => {
                     if let Some(poziciya) = s.vkladki.iter().position(|v| v.id == id) {
                         for (i, v) in s.vkladki.iter().enumerate() {
                             if v.id != id && !v.zakreplena && (!sprava || i > poziciya) {
+                                if let Some(attempt)=sleep_requests.remove(&v.id){SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&attempt.identity);});if let Some(b)=brauzery.get(&v.id){crate::memory_cef::resume(b);}memory_registrations.remove(&v.id);}
                                 if let Some(h) = brauzery.get(&v.id).and_then(|b| b.host()) {
                                     h.close_browser(0);
                                 } else {
-                                    let _ = tx.send(Sobytie::Zakryta(v.id));
+                                    let _ = tx.send(Sobytie::Zakryta(v.id,None));
                                 }
                             }
                         }
                     }
                 }
                 #[cfg(target_os = "windows")]
-                Sobytie::ZakrytOkno(id) => {
-                    if let Some(b) = brauzery.get(&id) {
+                Sobytie::ZakrytOkno(id,identity) => {
+                    if let Some(b) = brauzery.get(&id).filter(|b|b.identifier()==identity) {
                         use windows::Win32::{
                             Foundation::HWND,
                             System::Threading::{GetCurrentProcessId, GetCurrentThreadId},
@@ -799,7 +928,80 @@ impl Rabota {
                         }
                     }
                 }
-                Sobytie::Zakryta(id) => {
+                Sobytie::MemoryLoaded(id,identity)=>{
+                    if let Some(browser)=brauzery.get(&id).filter(|b|b.identifier()==identity){
+                        if let Some((x,y))=memory_scroll.remove(&id){if let Some(frame)=browser.main_frame(){
+                            let js=format!("requestAnimationFrame(()=>scrollTo({x},{y}))");
+                            frame.execute_java_script(Some(&CefString::from(js.as_str())),None,0);
+                        }}
+                    }
+                }
+                Sobytie::MemoryMessage(id,identity,data)=>{
+                    let Some(browser)=brauzery.get(&id).filter(|b|b.identifier()==identity)else{continue;};
+                    if data["kind"]=="NB_MEMORY_DOCUMENT"{
+                        if sleep_requests.get(&id).is_some_and(|a|a.stage!=MemoryStage::Closing&&Some(a.token.as_str())!=data["token"].as_str()){
+                            memory_refused(id,"Документ изменился во время проверки",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;
+                        }
+                        continue;
+                    }
+                    let Some(attempt)=sleep_requests.get(&id).filter(|a|a.identity==identity&&Some(a.request.as_str())==data["request"].as_str()&&Some(a.token.as_str())==data["token"].as_str())else{continue;};
+                    if !matches!(attempt.stage,MemoryStage::Preflight|MemoryStage::Verify){continue;}
+                    let automatic=attempt.automatic;
+                    let reason=memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private)
+                        .map(str::to_owned)
+                        .or_else(||if crate::memory_guard::token(identity).as_deref()!=Some(attempt.token.as_str()){Some("Документ изменился во время проверки".into())}else{None})
+                        .or_else(||if data["known"]!=true{Some("Безопасность выгрузки страницы не подтверждена".into())}else{None})
+                        .or_else(||data["reason"].as_str().map(str::to_owned));
+                    if let Some(reason)=reason{memory_refused(id,&reason,s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;continue;}
+                    let stage=attempt.stage;
+                    let request=attempt.request.clone();
+                    if stage==MemoryStage::Preflight {
+                        if let Some(registration)=crate::memory_cef::freeze(browser,id,&request,tx.clone()){
+                            memory_registrations.insert(id,registration);
+                            sleep_requests.get_mut(&id).unwrap().stage=MemoryStage::Freezing;
+                        }else{memory_refused(id,"Не удалось подготовить страницу к выгрузке",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;}
+                    }else{
+                        let attempt=sleep_requests.get_mut(&id).unwrap();
+                        attempt.scroll=(data["scroll_x"].as_f64().filter(|v|v.is_finite()).unwrap_or(0.0).clamp(-1e8,1e8),data["scroll_y"].as_f64().filter(|v|v.is_finite()).unwrap_or(0.0).clamp(-1e8,1e8));
+                        if let Some(host)=browser.host(){
+                            attempt.stage=MemoryStage::Closing;attempt.started=std::time::Instant::now();
+                            SLEEP_CLOSES.with(|m|{m.borrow_mut().insert(identity);});
+                            eprintln!("NEXUSBRO_MEMORY tab={id} browser={identity} verified=two-phase close=graceful automatic={automatic}");
+                            host.close_browser(0);
+                        }else{memory_refused(id,"Страница уже недоступна",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;}
+                    }
+                }
+                Sobytie::MemoryFrozen(id,identity,request,success)=>{
+                    let Some(attempt)=sleep_requests.get_mut(&id).filter(|a|a.identity==identity&&a.request==request&&a.stage==MemoryStage::Freezing)else{
+                        if let Some(b)=brauzery.get(&id).filter(|b|b.identifier()==identity){crate::memory_cef::resume(b);}continue;
+                    };
+                    attempt.stage=MemoryStage::Verify;
+                    let sent=success&&brauzery.get(&id).is_some_and(|b|crate::memory_cef::probe(b,&attempt.request,&attempt.token));
+                    if !sent{memory_refused(id,"Не удалось завершить проверку страницы",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;}
+                }
+                Sobytie::MemoryRefused(id,identity) => {
+                    if sleep_requests.get(&id).is_some_and(|a|a.identity==identity){memory_refused(id,"Страница удерживает несохранённые данные и осталась в памяти",s,tx,sleep_requests,memory_registrations,brauzery);}
+                }
+                Sobytie::Zakryta(id,identity) => {
+                    // A callback from the previous WebContents cannot close a
+                    // replacement, and deferred-row removal has no live identity.
+                    if brauzery.get(&id).map(|b|b.identifier())!=identity{continue;}
+                    if identity.is_some() && sleep_requests.get(&id).map(|a|a.identity)==identity {
+                        let attempt=sleep_requests.remove(&id).unwrap();
+                        memory_registrations.remove(&id);
+                        memory_scroll.insert(id,attempt.scroll);
+                        brauzery.remove(&id);
+                        crate::poisk::ochistit(id);
+                        if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.otlozhena=true;v.memory_pending=false;v.zagruzka=false;v.nazad=false;v.vpered=false;}
+                        // An explicit selection while close was pending wins;
+                        // create the replacement only AFTER OnBeforeClose.
+                        fokus=true;fokus_klaviatury|=attempt.wake&&s.aktivnaya==id;
+                        izmeneno=true;
+                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":true})));
+                        eprintln!("NEXUSBRO_MEMORY tab={id} browser={} closed=row-retained",identity.unwrap());
+                        continue;
+                    }
+                    sleep_requests.remove(&id);memory_registrations.remove(&id);memory_scroll.remove(&id);memory_last_used.remove(&id);
                     crate::poisk::ochistit(id);
                     if let Some(tab)=s.vkladki.iter().find(|v|v.id==id&&!v.privatnaya&&v.adres!="about:blank").cloned(){s.zakrytye.push(tab);if s.zakrytye.len()>30{s.zakrytye.remove(0);}}
                     if s.aktivnaya == id {
@@ -1029,12 +1231,14 @@ impl Rabota {
                 Sobytie::DownloadNachata(id,adres)=>{
                     if !adres.is_empty(){if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.adres=adres;v.zagruzka=false;}}
                 }
-                Sobytie::Zagolovok(id, t) => {
+                Sobytie::Zagolovok(id, identity, t) => {
+                    if !brauzery.get(&id).is_some_and(|b|b.identifier()==identity){continue;}
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                         v.zagolovok = t;
                     }
                 }
-                Sobytie::Adres(id, u) => {
+                Sobytie::Adres(id, identity, u) => {
+                    if !brauzery.get(&id).is_some_and(|b|b.identifier()==identity){continue;}
                     let changed=s.vkladki.iter().find(|v|v.id==id).is_some_and(|v|bez_fragmenta(&v.adres)!=bez_fragmenta(&u));
                     if changed{
                         perevody.remove(&id);perevod_ui.remove(&id);perevod_due.remove(&id);
@@ -1059,7 +1263,8 @@ impl Rabota {
                         v.adres = u;
                     }
                 }
-                Sobytie::Zagruzka(id, l, n, vp) => {
+                Sobytie::Zagruzka(id, identity, l, n, vp) => {
+                    if !brauzery.get(&id).is_some_and(|b|b.identifier()==identity){continue;}
                     if let Some(v) = s.vkladki.iter_mut().find(|v| v.id == id) {
                         v.zagruzka = l;
                         v.nazad = n;
@@ -1070,6 +1275,31 @@ impl Rabota {
                 }
             }
             izmeneno |= session_dirty;
+        }
+        let memory_now=std::time::Instant::now();
+        memory_last_used.insert(s.aktivnaya,memory_now);
+        for id in brauzery.keys(){memory_last_used.entry(*id).or_insert(memory_now);}
+        let expired=sleep_requests.iter().filter(|(_,a)|!a.timed_out&&a.started.elapsed().as_secs()>=8).map(|(id,a)|(*id,a.stage)).collect::<Vec<_>>();
+        for (id,stage) in expired{
+            if stage==MemoryStage::Closing{
+                // Retain the close classification: a late callback must keep
+                // the row, never become a normal user close after a timeout.
+                sleep_requests.get_mut(&id).unwrap().timed_out=true;
+                let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":false,"error":"Страница долго завершает выгрузку. Можно выбрать другую вкладку или закрыть эту."})));
+                eprintln!("NEXUSBRO_MEMORY tab={id} timeout=close intent=retained");
+            }else{memory_refused(id,"Страница не ответила на проверку и осталась в памяти",s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;izmeneno=true;}
+        }
+        if memory_now>=*memory_next_scan{
+            let test_seconds=std::env::var_os("NEXUSBRO_TEST_DATA").and_then(|_|std::env::var("NEXUSBRO_TEST_MEMORY_IDLE_SECONDS").ok()).and_then(|s|s.parse::<u64>().ok()).map(|s|s.clamp(1,300));
+            *memory_next_scan=memory_now+std::time::Duration::from_secs(if test_seconds.is_some(){1}else{10});
+            let idle=std::time::Duration::from_secs(test_seconds.unwrap_or((*memory_minutes).clamp(15,240) as u64*60));
+            if *memory_enabled&&!*browser_locked&&!*closing{
+                // One operation per scan bounds protocol work and close bursts.
+                if let Some(id)=s.vkladki.iter().filter(|v|!sleep_requests.contains_key(&v.id)&&memory_last_used.get(&v.id).is_some_and(|at|at.elapsed()>=idle))
+                    .filter(|v|memory_blocked(v.id,true,s,brauzery,devtools_pending,*force_private).is_none()&&!perevody.contains_key(&v.id)).map(|v|v.id).next(){
+                    memory_last_used.insert(id,memory_now);let _=tx.send(Sobytie::Komanda(Komanda::MemoryAuto{id}));
+                }
+            }
         }
         if s.vkladki.is_empty() && !*closing && !*browser_locked {
             let id = s.dobavit("about:blank");
@@ -1103,7 +1333,7 @@ impl Rabota {
                 .iter()
                 .any(|v| v.id == s.aktivnaya && v.adres != "about:blank"))
         {
-            if let Some(h) = brauzery.get(&s.aktivnaya).and_then(|b| b.host()) {
+            if let Some(h) = brauzery.get(&s.aktivnaya).filter(|_|!s.vkladki.iter().any(|v|v.id==s.aktivnaya&&v.memory_pending)).and_then(|b| b.host()) {
                 h.set_focus(1);
             }
         }

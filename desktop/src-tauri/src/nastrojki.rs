@@ -14,6 +14,8 @@ pub struct Nastrojki {
     pub razmer_shrifta: u32,
     pub plotnost: String,
     pub masshtab_stranic: u32,
+    pub memory_saver:bool,
+    pub memory_saver_minutes:u32,
     pub vyhody: Vec<Vyhod>,
     pub panel_shirina: u32,
     pub panel_svernuta: bool,
@@ -30,6 +32,7 @@ impl Default for Nastrojki {
         Self {
             tema: "temnaya".into(),
             shrift: "system".into(), razmer_shrifta: 14, plotnost: "udobno".into(),
+            memory_saver:true,memory_saver_minutes:30,
             masshtab_stranic: 100, vyhody: Vec::new(),
             panel_shirina: 180,
             panel_svernuta: false,
@@ -70,6 +73,7 @@ fn proverit(mut n: Nastrojki) -> Result<Nastrojki, String> {
     }
     n.yazyk_perevoda = yazyk;
     n.masshtab_stranic = n.masshtab_stranic.clamp(50, 200);
+    n.memory_saver_minutes=n.memory_saver_minutes.clamp(15,240);
     if n.vyhody.len() > 100 { return Err("Можно сохранить до 100 подключений".into()); }
     let mut ids = std::collections::HashSet::new();
     for v in &mut n.vyhody {
@@ -115,7 +119,7 @@ pub async fn nastrojki_sohranit(app: tauri::AppHandle, nastrojki: Nastrojki) -> 
     use tauri::Manager;
     let state: tauri::State<crate::Sostoyanie> = app.state();
     let queues: Vec<_> = state.vkladki.lock().map_err(|e| e.to_string())?.values().filter_map(|v| v.kanal.clone()).collect();
-    for q in queues { let _ = q.try_send(crate::sessiya::Komanda::Masshtab { procent: saved.masshtab_stranic }); }
+    for q in queues { let _ = q.try_send(crate::sessiya::Komanda::Masshtab { procent: saved.masshtab_stranic });let _=q.try_send(crate::sessiya::Komanda::MemorySettings{enabled:saved.memory_saver,minutes:saved.memory_saver_minutes}); }
     use tauri::Emitter;let _=app.emit("nastrojki-izmenilis",&saved);
     Ok(saved)
 }

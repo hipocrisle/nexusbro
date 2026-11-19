@@ -19,12 +19,13 @@ pub(crate) fn shortcut_code(e:&KeyEvent)->i32{
 wrap_keyboard_handler! {
     struct Klaviatura { id: u64, tx: Sender<Sobytie> }
     impl KeyboardHandler {
-        fn on_pre_key_event(&self, _browser: Option<&mut Browser>, event: Option<&KeyEvent>,
+        fn on_pre_key_event(&self, browser: Option<&mut Browser>, event: Option<&KeyEvent>,
             _os_event: Option<&mut NativeKeyEvent>, _is_keyboard_shortcut: Option<&mut i32>) -> i32 {
             let Some(e) = event else { return 0 };
+            if e.type_==KeyEventType::CHAR{if let Some(b)=browser.as_ref(){crate::memory_guard::edited(b.identifier());}return 0;}
             if e.type_ != KeyEventType::RAWKEYDOWN && e.type_ != KeyEventType::KEYDOWN { return 0 }
             let ctrl = e.modifiers & (1 << 2) != 0;
-            if ctrl && e.modifiers & (1 << 3) != 0 {return 0;}
+            if ctrl && e.modifiers & (1 << 3) != 0 {if let Some(b)=browser.as_ref(){crate::memory_guard::edited(b.identifier());}return 0;}
             let key=shortcut_code(e);
             let shift = e.modifiers & (1 << 1) != 0;
             if ctrl&&shift&&key==76{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"browser-lock","id":self.id})));return 1;}
@@ -54,6 +55,9 @@ wrap_keyboard_handler! {
                 _ => None,
             };
             if let Some(c) = cmd { let _ = self.tx.send(Sobytie::Komanda(c)); return 1 }
+            // Conservative: protect any page-directed key, including IME.
+            // Browser shortcuts above return before reaching this point.
+            if !matches!(key,16|17|18|91|92){if let Some(browser)=browser{crate::memory_guard::edited(browser.identifier());}}
             0
         }
     }
@@ -168,9 +172,10 @@ const PEREVOD: i32 = 26506;
 wrap_context_menu_handler! {
     struct MenyuStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool }
     impl ContextMenuHandler {
-        fn on_before_context_menu(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
+        fn on_before_context_menu(&self, browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             params: Option<&mut ContextMenuParams>, model: Option<&mut MenuModel>) {
             let (Some(p), Some(m)) = (params, model) else { return };
+            if p.is_editable()!=0{if let Some(browser)=browser{crate::memory_guard::edited(browser.identifier());}}
             for (cmd, label) in [(MenuId::BACK, "Назад"), (MenuId::FORWARD, "Вперёд"), (MenuId::RELOAD, "Обновить"),
                 (MenuId::STOPLOAD, "Остановить"), (MenuId::CUT, "Вырезать"), (MenuId::COPY, "Копировать"),
                 (MenuId::PASTE, "Вставить"), (MenuId::SELECT_ALL, "Выделить всё"), (MenuId::PRINT, "Печать…"),

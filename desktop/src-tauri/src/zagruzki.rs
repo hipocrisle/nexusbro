@@ -5,11 +5,15 @@ use serde::{Serialize,Deserialize};
 use serde_json::{json,Value};
 use std::{collections::HashMap,sync::{Mutex,OnceLock,mpsc::Sender},cell::RefCell};
 thread_local!{static CALLBACKS:RefCell<HashMap<u32,(DownloadItemCallback,bool)>>=RefCell::new(HashMap::new());}
+thread_local!{static DOWNLOAD_OWNERS:RefCell<HashMap<u32,u64>>=Default::default();}
+/// Includes the save-file chooser and paused transfers. Unknown completion keeps protection.
+pub fn tab_busy(id:u64)->bool{DOWNLOAD_OWNERS.with(|m|m.borrow().values().any(|owner|*owner==id))}
 wrap_download_handler!{
     struct Zagruzka{id:u64,tx:Sender<Sobytie>,privatnaya:bool}
     impl DownloadHandler{
         fn can_download(&self,_browser:Option<&mut Browser>,_url:Option<&CefString>,_request_method:Option<&CefString>)->i32{1}
-        fn on_before_download(&self,browser:Option<&mut Browser>,_download_item:Option<&mut DownloadItem>,suggested_name:Option<&CefString>,callback:Option<&mut BeforeDownloadCallback>)->i32{
+        fn on_before_download(&self,browser:Option<&mut Browser>,download_item:Option<&mut DownloadItem>,suggested_name:Option<&CefString>,callback:Option<&mut BeforeDownloadCallback>)->i32{
+            if let Some(item)=download_item{DOWNLOAD_OWNERS.with(|m|{m.borrow_mut().insert(item.id(),self.id);});}
             // Навигация с ответом attachment не заменяет документ страницы.
             if let Some(frame)=browser.and_then(|b|b.main_frame()){
                 let _=self.tx.send(Sobytie::DownloadNachata(self.id,CefString::from(&frame.url()).to_string()));
@@ -26,6 +30,7 @@ wrap_download_handler!{
         fn on_download_updated(&self,_browser:Option<&mut Browser>,download_item:Option<&mut DownloadItem>,callback:Option<&mut DownloadItemCallback>){
             if let Some(d)=download_item{
                 let id=d.id();
+                DOWNLOAD_OWNERS.with(|m|{let mut m=m.borrow_mut();if d.is_in_progress()!=0{m.insert(id,self.id);}else{m.remove(&id);}});
                 let status=if d.is_complete()!=0{"Готово"}else if d.is_canceled()!=0{"Отменена"}else if d.is_in_progress()!=0{if d.is_paused()!=0{"Приостановлена"}else{"Загружается"}}else{"Ошибка"};
                 CALLBACKS.with(|m|{let mut m=m.borrow_mut();if d.is_in_progress()!=0{if let Some(c)=callback{m.insert(id,(c.clone(),self.privatnaya));}}else{m.remove(&id);}});
                 let data=json!({"tip":"download","tab_id":self.id,"download_id":id,"engine_pid":std::process::id(),"name":CefString::from(&d.suggested_file_name()).to_string(),"url":CefString::from(&d.url()).to_string(),"path":CefString::from(&d.full_path()).to_string(),"percent":d.percent_complete(),"received":d.received_bytes(),"total":d.total_bytes(),"speed":d.current_speed(),"status":status,"privatnaya":self.privatnaya});
