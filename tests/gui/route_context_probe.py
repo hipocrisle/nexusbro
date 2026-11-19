@@ -106,14 +106,12 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
             raise AssertionError('Native '+kind+' probe did not complete; inspect its bounded diagnostic output')
         expected = {'independent': {'A':'A','B':'B'}, 'shared': {'A':'B','B':'B'}, 'cli': {'A':'A','B':'A'}}[kind]
         actual = {key: row['route'] for key, row in reports.items()}
-        assert actual == expected, (kind, 'actual HTTP routes', actual)
-        assert {key: row['route'] for key, row in navigation.items()} == expected, 'Navigation/fetch routes differ'
+        navigation_routes = {key: row['route'] for key, row in navigation.items()}
         shared = reports['B']['storage'] == 'A' and 'route_probe_seed=A' in reports['B']['cookie']
-        assert shared == (kind == 'shared'), 'Storage sharing differs from the actual scenario'
-        if kind != 'shared': assert reports['B']['storage'] is None and not reports['B']['cookie'], 'Independent context inherited storage'
+        storage_expected = shared if kind == 'shared' else reports['B']['storage'] is None and not reports['B']['cookie']
         overlap = max(row['start'] for row in navigation.values()) < min(row['end'] for row in navigation.values())
-        assert overlap, 'The two navigation requests did not overlap'
-        return {'scenario':kind,'actual_navigation_and_fetch_routes':actual,'storage_shared':shared,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'feature_ready':False}
+        matches = actual == expected and navigation_routes == expected and storage_expected and overlap
+        return {'scenario':kind,'actual_fetch_routes':actual,'actual_navigation_routes':navigation_routes,'expected_routes':expected,'storage_shared':shared,'storage_matches_expected':storage_expected,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'matches_expected_matrix':matches,'feature_ready':False}
     finally:
         if process.poll() is None:
             os.killpg(process.pid, signal.SIGTERM)
@@ -145,6 +143,7 @@ def main():
                 finally:
                     for path in workspace.glob(kind+'-native.*'):
                         (args.out/path.name).write_bytes(path.read_bytes())
+        assert all(row['matches_expected_matrix'] for row in rows), 'Actual routes or storage do not match the proposed capability matrix'
         (args.out/'results.json').write_text(json.dumps({'measurements':rows,'capability_measurement_passed':True,'product_feature_ready':False},indent=2)+'\n')
         print(json.dumps({'capability_measurement_passed':True,'product_feature_ready':False}))
     except Exception as error:
