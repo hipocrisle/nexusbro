@@ -6,7 +6,17 @@ metadata=json.loads(gh('run','view',run,'--json','status,headSha,jobs'))
 assert metadata['status']=='completed'
 ref=json.loads(subprocess.check_output(['gh','api',f'repos/{repo}/git/ref/tags/{tag}'],text=True))
 assert ref['object']['type']=='commit' and ref['object']['sha']==metadata['headSha'],'Build does not match immutable release tag'
-assert any(j['conclusion']=='success' and 'ubuntu-24.04' in j['name'] for j in metadata['jobs']),'Missing Linux acceptance'
+def linux_accepted(jobs,build_run,runtime_build,runtime_result):
+ # runtime_result is a needs.* result supplied by this workflow, never an input.
+ if runtime_build:return runtime_build==build_run and runtime_result=='success'
+ return any(j['conclusion']=='success' and 'ubuntu-24.04' in j['name'] for j in jobs)
+assert linux_accepted(metadata['jobs'],run,os.environ.get('LINUX_RUNTIME_BUILD',''),os.environ.get('LINUX_RUNTIME_RESULT','')),'Missing Linux acceptance of the exact candidate binary'
+# The replacement job verifies this too; retain an independent publication gate.
+if os.environ.get('LINUX_RUNTIME_BUILD'):
+ assert os.environ['LINUX_RUNTIME_BUILD']==run and os.environ.get('LINUX_RUNTIME_RESULT')=='success','Linux runtime check did not accept this build'
+ subprocess.run(['git','fetch','--no-tags','origin',metadata['headSha']],check=True)
+ subprocess.run(['git','diff','--exit-code',metadata['headSha'],'HEAD','--','desktop'],check=True)
+
 root=pathlib.Path('.dev-check/publish');root.mkdir(parents=True,exist_ok=True)
 for name in ['nexusbro-windows','nexusbro-linux']:
  subprocess.run(['gh','run','download',run,'--repo',repo,'-n',name,'--dir',str(root/name)],check=True)

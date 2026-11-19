@@ -592,8 +592,13 @@ jobs:
 
   publish-tested:
     name: Publish runtime-verified existing packages
-    needs: runtime
-    if: github.event_name == 'workflow_dispatch' && inputs.runtime_build != '' && inputs.publish_tag != ''
+    needs: [runtime, linux-runtime]
+    if: >-
+      always() && github.event_name == 'workflow_dispatch' &&
+      inputs.runtime_build != '' && inputs.publish_tag != '' &&
+      needs.runtime.result == 'success' &&
+      (inputs.linux_runtime_build == '' ||
+       (inputs.linux_runtime_build == inputs.runtime_build && needs['linux-runtime'].result == 'success'))
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -601,10 +606,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: python3 -m pip install cryptography
+      - run: python3 tests/release_acceptance_test.py
       - name: Verify tag, Linux acceptance, signatures and publish
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           TAG: ${{ inputs.publish_tag }}
           BUILD_RUN: ${{ inputs.runtime_build }}
+          LINUX_RUNTIME_BUILD: ${{ inputs.linux_runtime_build }}
+          LINUX_RUNTIME_RESULT: ${{ needs['linux-runtime'].result }}
         run: python3 tests/publish_tested_release.py
