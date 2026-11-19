@@ -20,6 +20,51 @@ thread_local! {
     static DOCUMENTS: RefCell<HashMap<(i32, String), Document>> = Default::default();
 }
 static NEXT: AtomicU64 = AtomicU64::new(1);
+static DIAGNOSTICS: AtomicU64 = AtomicU64::new(0);
+fn diagnostic(message: std::fmt::Arguments<'_>) {
+    if DIAGNOSTICS.fetch_add(1, Ordering::Relaxed) < 64 {
+        eprintln!("NEXUSBRO_MEMORY_RENDERER {message}");
+    }
+}
+fn reason_code(reason: &Value) -> &'static str {
+    match reason.as_str() {
+        None => "none",
+        Some(
+            "Unsupported native hook"
+            | "Native hooks unavailable"
+            | "Early native instrumentation unavailable"
+            | "Before-unload hook unavailable"
+            | "Before-unload state unavailable",
+        ) => "js_install_unavailable",
+        Some("Dynamic or uninspectable document") => "js_dynamic_budget",
+        Some("Document state unavailable or changed") => "js_probe_unavailable_or_tampered",
+        Some("Trusted page interaction or editing") => "js_trusted_interaction",
+        Some(
+            "Media, connection or worker API used"
+            | "Media playback requested"
+            | "Speech playback requested"
+            | "Media capture requested"
+            | "Screen capture requested",
+        ) => "js_media_or_worker",
+        Some(
+            "Form, media, frame, canvas or shadow DOM"
+            | "Frame, canvas or media element created"
+            | "Shadow DOM used"
+            | "Canvas used"
+            | "Offscreen canvas used",
+        ) => "js_dom_protected",
+        Some("Before-unload listener registered" | "Before-unload handler installed") => {
+            "js_unload_protected"
+        }
+        Some(
+            "Session storage is not empty"
+            | "Service worker controls page"
+            | "Service worker registered"
+            | "Editable document",
+        ) => "js_state_protected",
+        Some(_) => "other_internal_reason",
+    }
+}
 
 fn key(browser: &Browser, frame: &Frame) -> (i32, String) {
     (
@@ -53,7 +98,12 @@ fn unknown(reason: &str) -> Value {
     json!({"known":false,"reason":reason,"scroll_x":0,"scroll_y":0})
 }
 fn install(context: &V8Context) -> Option<V8Value> {
-    if context.is_valid() == 0 || context.enter() == 0 {
+    let valid = context.is_valid() != 0;
+    let entered = valid && context.enter() != 0;
+    if !entered {
+        diagnostic(format_args!(
+            "stage=install valid={valid} entered={entered}"
+        ));
         return None;
     }
     let mut value = None;
@@ -67,28 +117,43 @@ fn install(context: &V8Context) -> Option<V8Value> {
         Some(&mut value),
         Some(&mut exception),
     );
-    let result = value.filter(|v| ok != 0 && exception.is_none() && v.is_function() != 0);
+    let is_function = value.as_ref().is_some_and(|v| v.is_function() != 0);
+    diagnostic(format_args!("stage=install valid={valid} entered={entered} eval_ok={} retval={} is_function={is_function} exception={} line={}",
+        ok!=0, value.is_some(), exception.is_some(), exception.as_ref().map(|e|e.line_number()).unwrap_or(0)));
+    let result = value.filter(|_| ok != 0 && exception.is_none() && is_function);
     context.exit();
     result
 }
 fn probe(document: &Document, current: &mut V8Context) -> Value {
     if document.context.is_valid() == 0 || document.context.is_same(Some(current)) == 0 {
+        diagnostic(format_args!("stage=probe_context_changed"));
         return unknown("Document context changed");
     }
-    let Some(function) = document.probe.as_ref().filter(|v| v.is_valid() != 0) else {
+    let function_present = document.probe.is_some();
+    let function_valid = document.probe.as_ref().is_some_and(|v| v.is_valid() != 0);
+    let Some(function) = document.probe.as_ref().filter(|_| function_valid) else {
+        diagnostic(format_args!("stage=probe_no_observer function_present={function_present} function_valid={function_valid}"));
         return unknown("Early safety observation unavailable");
     };
     if document.context.enter() == 0 {
+        diagnostic(format_args!(
+            "stage=probe_cannot_enter function_valid={function_valid}"
+        ));
         return unknown("Cannot enter document context");
     }
     // Execute the saved closure through native V8, including after Page.freeze.
     // Do not depend on page timers, a mutable global name or Function.call.
     let value = function.execute_function(None, None);
+    let value_present = value.is_some();
+    let value_string = value.as_ref().is_some_and(|v| v.is_string() != 0);
     let raw = value
         .filter(|v| v.is_string() != 0)
         .map(|v| CefString::from(&v.string_value()).to_string());
     document.context.exit();
     let Some(raw) = raw.filter(|s| s.len() <= 2048) else {
+        diagnostic(format_args!(
+            "stage=probe_invalid_string value_present={value_present} value_string={value_string}"
+        ));
         return unknown("Invalid safety result");
     };
     let Some(value) = serde_json::from_str::<Value>(&raw).ok().filter(|v| {
@@ -97,8 +162,14 @@ fn probe(document: &Document, current: &mut V8Context) -> Value {
             && v["scroll_x"].as_f64().is_some_and(f64::is_finite)
             && v["scroll_y"].as_f64().is_some_and(f64::is_finite)
     }) else {
+        diagnostic(format_args!("stage=probe_invalid_json_schema"));
         return unknown("Invalid safety result");
     };
+    diagnostic(format_args!(
+        "stage=probe_js known={} reason_code={}",
+        value["known"].as_bool().unwrap_or(false),
+        reason_code(&value["reason"])
+    ));
     // Forward only the four declared fields, never arbitrary renderer data.
     json!({"known":value["known"],"reason":value["reason"],
         "scroll_x":value["scroll_x"],"scroll_y":value["scroll_y"]})
