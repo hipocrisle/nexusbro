@@ -205,6 +205,31 @@ try:
             videno={x.element_info.name for x in uia_descendants(win) if x.element_info.name}
             time.sleep(.25)
         raise AssertionError('UIA control missing: '+name+' | видно: '+', '.join(sorted(videno)[:40]))
+    def super_button(name, timeout=15):
+        # The owner window's actual accessible button, not a sidebar row number:
+        # cloud/local headings and collapsed labels can change its position.
+        deadline=time.monotonic()+timeout
+        visible=[]
+        while time.monotonic()<deadline:
+            matches=[];visible=[]
+            for control in uia_descendants(win):
+                if control.element_info.control_type!='Button':continue
+                label=control.element_info.name
+                try:
+                    if not control.is_visible() or not control.is_enabled():continue
+                    visible.append(label)
+                    if label not in (name,name+' — приватная супер-вкладка'):continue
+                    try:control.iface_scroll_item.ScrollIntoView()
+                    except Exception:pass
+                    box=control.rectangle();owner=win.rectangle()
+                    x=(box.left+box.right)//2;y=(box.top+box.bottom)//2
+                    if box.right>box.left and box.bottom>box.top and owner.left<=x<owner.right and owner.top<=y<owner.bottom:
+                        matches.append(control)
+                except COMError:continue
+            if len(matches)==1:return matches[0]
+            assert len(matches)<2,('Ambiguous Super button in owner window',name,len(matches))
+            time.sleep(.1)
+        raise AssertionError(('Super button missing in owner window',name,visible))
     def focus_ui(name, kinds):
         from comtypes import COMError
         for attempt in range(3):
@@ -237,12 +262,13 @@ try:
         assert not Desktop(backend='uia').windows(class_name='#32768'),'Unexpected system menu instead of themed popup'
         screen.save(run/(stage+'-themed.png'))
         results.append({'themed_menu':stage,'background_rgb':colors,'owned_html_popup':True})
+        return menus[0]
     ui('Варианты новой вкладки',['Button']).click_input()
     ui('Новая приватная вкладка',['MenuItem'])
     themed_popup('new-tab')
     pixels('new-tab-menu-keeps-document')
     gui.press('escape')
-    ui('Проба',['Button']).click_input(button='right')
+    super_button('Проба').click_input(button='right')
     ui('Настройки',['MenuItem'])
     themed_popup('super-context')
     pixels('super-menu-keeps-document')
@@ -285,8 +311,8 @@ try:
     assert u.SetWindowPos(hwnd, None,20,20,max(900,width-120),max(560,height-100),0x0040)
     time.sleep(.5)
     pixels('after-resize')
-    pt = origin(); r = rect(container)
-    gui.click(r.left-18, pt.y+24)
+    r = rect(container)
+    ui('Свернуть левую панель',['Button']).click_input()
     time.sleep(.5)
     assert rect(container).left < r.left, 'Sidebar collapse did not reach native CEF'
     pixels('after-sidebar-collapse')
@@ -529,7 +555,19 @@ try:
         raise AssertionError('CEF did not restart')
     container=new_container();hwnd=u.FindWindowW(None,'NexusBro');assert u.SetWindowPos(hwnd,None,20,20,width,height,0x0040);win=Desktop(backend='uia').window(handle=hwnd);u.SetForegroundWindow(hwnd);time.sleep(.5)
     def edit_super():
-        pt=origin();gui.click(pt.x+26,pt.y+80,button='right');ui('Настройки').click_input()
+        super_button('Проба').click_input(button='right')
+        # Wait for the context item, then verify its actual native owner before
+        # clicking. The unrelated global "Настройки NexusBro" is not a match.
+        ui('Настройки',['MenuItem'],timeout=10)
+        popup_hwnd=themed_popup('super-settings-context')
+        # UIA may merge the popup's virtual nodes into the owner tree. Match
+        # the actual menu rectangle instead of assuming a separate UIA root.
+        settings=ui('Настройки',['MenuItem'],timeout=10)
+        item=settings.rectangle();popup=rect(popup_hwnd)
+        x=(item.left+item.right)//2;y=(item.top+item.bottom)//2
+        assert popup.left<=x<popup.right and popup.top<=y<popup.bottom,('Settings is outside owned context popup',item,popup)
+        settings.click_input()
+        ui('Открыть сразу',['Edit'],timeout=10)
     def fill_start_url(url):
         # Focus the actual native edit control, then type real keys and read back.
         # WebView2 ScrollItem/IsOffscreen ignore the sticky footer's occlusion.
@@ -795,12 +833,7 @@ try:
     while time.monotonic()<deadline and not any(r.get('case')==['other-super-start'] for r in storage_reports):time.sleep(.1)
     assert any(r.get('case')==['other-super-start'] for r in storage_reports)
     def choose_super(name):
-        deadline=time.monotonic()+15
-        while time.monotonic()<deadline:
-            matches=[x for x in uia_descendants(win) if x.element_info.control_type=='Button' and name in x.element_info.name and x.is_visible()]
-            if matches:matches[0].click_input();time.sleep(.4);return
-            time.sleep(.1)
-        raise AssertionError('Super button missing: '+name)
+        super_button(name).click_input();time.sleep(.4)
     choose_super('Проба');main_before_extra=session();main_hwnd=hwnd;main_win=win
     def browser_windows():
         found=[]
