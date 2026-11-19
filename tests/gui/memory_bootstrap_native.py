@@ -117,7 +117,7 @@ def run(args):
     exe, cef = pathlib.Path(args.exe).resolve(), pathlib.Path(args.cef).resolve()
     report = {'diagnostic_only': True, 'feature_acceptance': False,
               'scope': 'native-engine-component', 'safe_unload': args.safe_unload,
-              'observed_native_refusal': False, 'lines': []}
+              'observed_native_refusal': False, 'lines': [], 'phase': 'startup'}
     device = server = worker = log = None
     receipts, receipt_lock = [], threading.Lock()
     try:
@@ -181,14 +181,17 @@ def run(args):
         client = device.start()
         owner = 'memory-bootstrap'
         address = 'http://127.0.0.1:' + str(server.server_port) + ('/safe' if args.safe_unload else '/form')
+        report['phase'] = 'opening-fixture'
         call(client, 'otkryt', nastrojki=super_record(owner, 'Bootstrap diagnostic', address))
         first = device.loaded(owner, address=address)['aktivnaya']
         log = device.data / 'profili' / owner / 'cef.log'
         if args.safe_unload:
+            report['phase'] = 'waiting-allocation'
             wait_for(lambda: len(receipts) == 1, 'Touched allocation receipt missing', 10)
             report['initial_allocation_receipt'] = dict(receipts[0])
             if receipts[0]['cookie_before'] or receipts[0]['storage_before']:
                 raise RuntimeError('Owned fresh profile was not empty')
+        report['phase'] = 'selecting-blank'
         call(client, 'obychnaya_komanda', id=owner,
              komanda={'deystvie': 'novaya', 'adres': 'about:blank'})
         def inactive_loaded():
@@ -198,9 +201,12 @@ def run(args):
                         for tab in state.get('vkladki', [])))
         wait_for(inactive_loaded, 'Fixture did not become a loaded inactive tab', 10)
         if args.safe_unload:
+            report['phase'] = 'before-close-metric'
             report['before_close'] = median_uss(device)
+        report['phase'] = 'requesting-unload'
         call(client, 'obychnaya_komanda', id=owner,
              komanda={'deystvie': 'usypit', 'id': first})
+        report['phase'] = 'waiting-close' if args.safe_unload else 'waiting-refusal'
         deadline = time.monotonic() + 10
         report['observed_native_close'] = False
         while time.monotonic() < deadline:
@@ -229,6 +235,7 @@ def run(args):
         else:
             if not report['observed_native_close']:
                 raise RuntimeError('Retained native close was not observed within ten seconds')
+            report['phase'] = 'measuring-recovery'
             reclaim_deadline = time.monotonic() + 10
             while time.monotonic() < reclaim_deadline:
                 report['after_close'] = median_uss(device)
@@ -239,6 +246,7 @@ def run(args):
                     break
             if not report.get('observed_uss_recovery'):
                 raise RuntimeError('Actual Linux USS recovery was below sixteen MiB')
+            report['phase'] = 'waking'
             call(client, 'obychnaya_komanda', id=owner, komanda={'deystvie': 'vybrat', 'id': first})
             restored = device.loaded(owner, address=address, tab_id=first)
             wait_for(lambda: len(receipts) >= 2, 'Restored allocation receipt missing', 10)
@@ -248,6 +256,7 @@ def run(args):
             if not report['same_row_restored'] or not report['persistent_storage_preserved']:
                 raise RuntimeError('Native wake did not preserve row and persistent storage')
             report['component_steps_observed'] = True
+        report['phase'] = 'done'
     except Exception as error:
         report['error_type'] = type(error).__name__
         raise RuntimeError('Native diagnostic failed; inspect sanitized results.json') from None
