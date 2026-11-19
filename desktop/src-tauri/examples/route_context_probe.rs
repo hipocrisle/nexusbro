@@ -151,11 +151,21 @@ fn experiment(
     let mut browsers = Vec::new();
     let mut creation_error = None;
     for (label, path, ctx) in [("A", "first", &mut ca), ("B", "second", &mut cb)] {
+        // Linux CEF creates a top-level X11 window when parent_window is 0.
+        // set_as_popup is a Windows-only cef-rs convenience method.
         let info = WindowInfo {
             runtime_style: RuntimeStyle::ALLOY,
+            window_name: CefString::from(label),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                width: 800,
+                height: 600,
+            },
             ..WindowInfo::default()
-        }
-        .set_as_popup(Default::default(), label);
+        };
+        #[cfg(target_os = "windows")]
+        let info = info.set_as_popup(Default::default(), label);
         let url = format!("{}/{path}?context={label}", target.trim_end_matches('/'));
         match browser_host_create_browser_sync(
             Some(&info),
