@@ -31,7 +31,8 @@ pub fn process_vhod() -> i32 {
     };
     // Подпроцесс движка (renderer/gpu/utility/...): выполнить и выйти.
     if std::env::args().any(|a| a.starts_with("--type=")) {
-        let kod = execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
+        let mut prilozhenie = DvizhokApp::new();
+        let kod = execute_process(Some(args.as_main_args()), Some(&mut prilozhenie), std::ptr::null_mut());
         return if kod >= 0 { kod } else { 0 };
     }
     crate::password_cef::enabled(std::env::args().any(|a|a=="--nb-passwords"));
@@ -43,11 +44,18 @@ wrap_app! {
     struct DvizhokApp;
 
     impl App {
+        fn render_process_handler(&self) -> Option<RenderProcessHandler> {
+            Some(crate::cef_memory_renderer::handler())
+        }
         fn on_before_command_line_processing(
             &self,
             _tip_processa: Option<&CefString>,
             komandnaya_stroka: Option<&mut CommandLine>,
         ) {
+            // Child processes previously received no CefApp. Preserve their
+            // inherited flags; the new renderer observer must not alter GPU
+            // or networking switches in a subprocess.
+            if _tip_processa.is_some_and(|p| !p.to_string().is_empty()) { return; }
             if let Some(ks) = komandnaya_stroka {
                 // ⛔ GPU-процесс падал в цикле на машине user'а (12.11.2026):
                 // программный рендер — медленнее, но стабилен везде.
