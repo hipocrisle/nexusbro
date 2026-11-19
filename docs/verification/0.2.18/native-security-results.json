@@ -1,0 +1,275 @@
+[
+  {
+    "isolated_real_sync_server_health": true
+  },
+  {
+    "two_real_apps_independent_dbus_display_inspector_data": true
+  },
+  {
+    "real_local_vault_create_both_devices": true
+  },
+  {
+    "updater-streaming-real-cef-visible": true,
+    "native_cef_rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "updater-install-failure-real-cef-restored": true,
+    "native_cef_rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "native_updater_bundled_app_physical_button_and_real_progress": true,
+    "transport": "real_local_http_stream",
+    "updater_ipc_confirmation_and_os_installer": "test_adapters",
+    "download_bytes": 2621440
+  },
+  {
+    "native_cef_capture_draft_explicit_consent_encrypted_store": true
+  },
+  {
+    "existing_isolated_context_reused_after_lock_unlock_without_navigation": true
+  },
+  {
+    "wrong_password_and_recreate_preserve_main_backup_locked_reads_fail": true
+  },
+  {
+    "real_same_origin_fill_and_actual_dom_input_change_events": true
+  },
+  {
+    "other_origin_native_fill_rejected_without_disclosure": true
+  },
+  {
+    "trusted_submit_native_offer_no_autosave_physical_consent": true
+  },
+  {
+    "private_middle_link_opens_background_same_super_without_losing_privacy": true
+  },
+  {
+    "private_capture_fill_auto_offer_and_history_excluded": true
+  },
+  {
+    "native_ui_register_login_without_server_field_real_service": true
+  },
+  {
+    "native_displayed_qr_screen_pixels_decoded_real_totp_ui_verified": true
+  },
+  {
+    "mfa_revokes_other_device_and_real_recovery_login": true
+  },
+  {
+    "native_cloud_local_private_pending_selected_real_account_receipt_both_panel_layouts": true
+  },
+  {
+    "selected_settings_bookmarks_supers_password_really_encrypted_uploaded": true
+  },
+  {
+    "new_native_device_all_off_no_upload_or_apply": true
+  },
+  {
+    "wildcard_new_record_import_explicit_conflicts_proxy_and_history_exclusion": true
+  },
+  {
+    "synced_password_decrypts_in_second_real_cef_cookie_profiles_isolated": true
+  },
+  {
+    "native_conflict_stale_resolution_rejected_local_choice_propagates": true
+  },
+  {
+    "disabling_categories_never_deletes_other_device_or_applies_remote": true
+  },
+  {
+    "authenticated_tombstone_applies_only_to_selected_category": true
+  },
+  {
+    "main-page-before-browser-lock": true,
+    "native_cef_rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "extra-page-before-browser-lock": true,
+    "native_cef_rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "main-page-after-browser-unlock": true,
+    "native_cef_rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "extra-page-after-browser-unlock": true,
+    "native_cef_rgb": [
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ],
+      [
+        24,
+        85,
+        65
+      ]
+    ]
+  },
+  {
+    "all_native_cef_views_repaint_and_accept_trusted_input_after_browser_unlock": true
+  },
+  {
+    "native_cef_ctrl_shift_l_locks_all_windows_blocks_data_ipc_and_unlock_restores": true
+  },
+  {
+    "shell_physical_focus_attempts": 1
+  },
+  {
+    "physical_shell_shortcut_events": [
+      {
+        "type": "keydown",
+        "key": "Control",
+        "code": "ControlLeft",
+        "ctrl": true,
+        "shift": false,
+        "alt": false,
+        "meta": false,
+        "trusted": true
+      },
+      {
+        "type": "keydown",
+        "key": "Shift",
+        "code": "ShiftLeft",
+        "ctrl": true,
+        "shift": true,
+        "alt": false,
+        "meta": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Shift",
+        "code": "ShiftLeft",
+        "ctrl": true,
+        "shift": true,
+        "alt": false,
+        "meta": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "Control",
+        "code": "ControlLeft",
+        "ctrl": true,
+        "shift": false,
+        "alt": false,
+        "meta": false,
+        "trusted": true
+      },
+      {
+        "type": "keyup",
+        "key": "l",
+        "code": "KeyL",
+        "ctrl": false,
+        "shift": false,
+        "alt": false,
+        "meta": false,
+        "trusted": true
+      }
+    ]
+  },
+  {
+    "shell_ctrl_shift_l_uses_same_master_gate": true
+  },
+  {
+    "startup_browser_master_gate_wrong_password_preserves_ciphertext_correct_unlock_opens_sites": true
+  },
+  {
+    "native_cloud_selection_real_receipt_and_panel_markers_survive_restart": true
+  },
+  {
+    "restart_locks_key_persists_encrypted_session_selection_local_only_password": true
+  },
+  {
+    "vault_main_backup_runtime_logs_server_database_have_no_plaintext_credentials": true
+  },
+  {
+    "success": true
+  }
+]
