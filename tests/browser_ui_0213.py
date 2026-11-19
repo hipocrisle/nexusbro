@@ -58,14 +58,29 @@ try:
   page.evaluate("document.dispatchEvent(new KeyboardEvent('keydown',{key:'е',code:'Unidentified',ctrlKey:true,bubbles:true}))")
   assert page.evaluate("window.__args.filter(x=>x.cmd==='obychnaya_komanda').at(-1).args.komanda.deystvie")=='novaya'
   hides_before=page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")
-  address=page.get_by_label('Адрес страницы',exact=True);address.focus();address.press('Control+a');selected=address.input_value();address.click(button='right')
+  address=page.get_by_label('Адрес страницы',exact=True)
+  expect(address).to_be_visible()
+  selected=address.input_value()
+  assert selected and selected.startswith('https://example.test/'),{'visible_address_value':selected}
+  box=address.bounding_box()
+  # Chromium may collapse a selection when right-clicking the trailing blank
+  # area of a long input. Click actual selected glyphs, not the field's center.
+  leading=address.evaluate('e=>parseFloat(getComputedStyle(e).paddingLeft)||0')
+  point={'x':min(box['width']-2,leading+8),'y':box['height']/2}
+  address.click(position=point)
+  address.press('Control+a')
+  before=address.evaluate('e=>({value:e.value,start:e.selectionStart,end:e.selectionEnd,focused:document.activeElement===e})')
+  assert before=={'value':selected,'start':0,'end':len(selected),'focused':True},{'before_contextmenu':before}
+  address.click(button='right',position=point)
+  after=address.evaluate('e=>({value:e.value,start:e.selectionStart,end:e.selectionEnd})')
+  assert after=={'value':selected,'start':0,'end':len(selected)},{'before_contextmenu':before,'after_contextmenu':after,'point':point}
   print('stage: address',flush=True)
   expect(page.locator('.nexus-popup-menu[role=menu]')).to_be_visible()
   assert page.evaluate("window.__args.filter(x=>x.cmd==='pokazat_dvizhki'&&x.args.vidno===false).length")==hides_before
   items=page.evaluate("window.__args.filter(x=>x.cmd==='popup_menu_open').at(-1).args.items")
   assert [i['text'].split('\t')[0] for i in items]==['Отменить','Повторить','Вырезать','Копировать','Вставить','Удалить','Выделить всё'],items
   assert not any(s in str(items).lower() for s in ['эмодзи','парол','направлен','инструмент'])
-  assert items[3]['enabled']
+  assert items[3]['enabled'],{'before_contextmenu':before,'after_contextmenu':after,'copy_item':items[3]}
   assert not page.evaluate("window.__args.some(x=>x.cmd.startsWith('plugin:menu|'))")
   page.get_by_role('menuitem',name='Копировать',exact=True).click();page.wait_for_timeout(100)
   assert page.evaluate("Promise.race([navigator.clipboard.readText(),new Promise(r=>setTimeout(()=>r('TIMEOUT'),2500))])")==selected
