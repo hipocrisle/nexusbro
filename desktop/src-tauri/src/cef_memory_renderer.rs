@@ -157,7 +157,7 @@ wrap_v8_handler! {
             if captured {
                 *retval=v8_value_create_bool(1);
                 diagnostic(format_args!("stage=native_capture_success"));
-                send(&frame,"NB_MEMORY_DOCUMENT",json!({"token":self.token}));
+                send(&frame,"NB_MEMORY_DOCUMENT",json!({"token":self.token,"url":CefString::from(&frame.url()).to_string()}));
             }
             1
         }
