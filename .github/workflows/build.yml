@@ -530,10 +530,12 @@ jobs:
             .dev-check/performance/*.png
             .dev-check/performance/*.log
             .dev-check/performance/data/zhurnal.log
+            .dev-check/performance/data/profili/*/cef*.log
             .dev-check/performance-reference/*.json
             .dev-check/performance-reference/*.png
             .dev-check/performance-reference/*.log
             .dev-check/performance-reference/data/zhurnal.log
+            .dev-check/performance-reference/data/profili/*/cef*.log
           retention-days: 14
 
   runtime:
