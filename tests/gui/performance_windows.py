@@ -98,6 +98,69 @@ def run(args):
     u.IsIconic.argtypes = [wintypes.HWND]
     u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
     u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+    u.GetParent.argtypes = [wintypes.HWND]
+    u.GetParent.restype = wintypes.HWND
+    u.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    u.GetAncestor.restype = wintypes.HWND
+    u.IsWindowVisible.argtypes = [wintypes.HWND]
+    u.IsWindow.argtypes = [wintypes.HWND]
+    u.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+    u.GetWindowThreadProcessId.restype = wintypes.DWORD
+    u.GetClassNameW.argtypes = [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int]
+    get_style = getattr(u, "GetWindowLongPtrW", u.GetWindowLongW)
+    get_style.argtypes = [wintypes.HWND, ctypes.c_int]
+    get_style.restype = ctypes.c_ssize_t
+    enum_proc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, ctypes.c_ssize_t)
+    u.EnumChildWindows.argtypes = [wintypes.HWND, enum_proc, ctypes.c_ssize_t]
+
+    def native_window_tree(stage):
+        """Bounded HWND evidence only: no titles, URLs, profiles or secrets."""
+        if not args.visibility_probe:
+            return
+        trees = []
+        try:
+            journal = (data / "zhurnal.log").read_text(encoding="utf-8")
+            for s in range(args.supers):
+                handles = re.findall(rf'perf-{s}: запуск ок, окно (\d+)', journal)
+                if not handles:
+                    trees.append({"super": s, "container_missing": True})
+                    continue
+                container = int(handles[-1])
+                tree = {"super": s, "container": container, "windows": [], "truncated": False}
+
+                def describe(h):
+                    pid = wintypes.DWORD()
+                    tid = u.GetWindowThreadProcessId(h, ctypes.byref(pid))
+                    name = ctypes.create_unicode_buffer(256)
+                    u.GetClassNameW(h, name, len(name))
+                    box = wintypes.RECT()
+                    has_rect = bool(u.GetWindowRect(h, ctypes.byref(box)))
+                    style = int(get_style(h, -16)) & 0xffffffff
+                    root = u.GetAncestor(h, 2)
+                    return {"hwnd": int(h), "parent": int(u.GetParent(h) or 0),
+                            "pid": pid.value, "tid": tid, "class_name": name.value,
+                            "style": f"0x{style:08x}", "own_ws_visible": bool(style & 0x10000000),
+                            "own_ws_child": bool(style & 0x40000000),
+                            "effective_visible": bool(u.IsWindowVisible(h)), "exists": bool(u.IsWindow(h)),
+                            "rect": [box.left, box.top, box.right, box.bottom] if has_rect else None,
+                            "ancestor_root": int(root or 0), "root_iconic": bool(root and u.IsIconic(root))}
+
+                tree["windows"].append(describe(container))
+
+                @enum_proc
+                def collect(child, _):
+                    if len(tree["windows"]) >= 128:
+                        tree["truncated"] = True
+                        return False
+                    tree["windows"].append(describe(child))
+                    return True
+
+                u.EnumChildWindows(container, collect, 0)
+                trees.append(tree)
+            report.setdefault("native_window_trees", {})[stage] = {
+                "received_seconds": time.monotonic() - started, "supers": trees}
+        except Exception as error:
+            report.setdefault("native_window_trees", {})[stage] = {"error": f"{type(error).__name__}: {error}"}
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -305,6 +368,8 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                                  "peak_processes": max(len(r["processes"]) for r in rows),
                                  "peak_working_set_bytes": max(sum(p["working_set_bytes"] for p in r["processes"]) for r in rows),
                                  "peak_private_bytes": max(sum(p["private_bytes"] for p in r["processes"]) for r in rows)})
+        if name in ["warm_active", "warm_minimized", "warm_restored"]:
+            native_window_tree(name)
         ImageGrab.grab().save(out / (name + ".png"))
         (out / "results.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         with hit_lock:
@@ -476,6 +541,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         report["measurement_completed"] = True
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
+        native_window_tree("failure")
         try:
             ImageGrab.grab().save(out / "failure.png")
         except Exception as screenshot_error:
