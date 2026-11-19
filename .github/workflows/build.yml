@@ -519,6 +519,11 @@ jobs:
       actions: read
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install native acceptance QR decoder and TypeScript
+        run: npm ci --prefix desktop
       - name: Verify app sources match the binary run
         env:
           GH_TOKEN: ${{ github.token }}
