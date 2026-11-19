@@ -12,6 +12,10 @@ on:
         description: Build frontend and isolated security tests (no CEF)
         type: boolean
         default: false
+      linux_memory_diagnostic:
+        description: Inspect native early-memory installation only (never security acceptance or publication)
+        type: boolean
+        default: false
       runtime_memory_only:
         description: Run only native memory integration from an existing matching Windows package (never publish)
         type: boolean
@@ -807,11 +811,24 @@ jobs:
           mv .dev-check/cef/Resources/* .dev-check/cef/
           chmod +x .dev-check/native-binary/nexusbro .dev-check/backend-package/nexusbro-sync-server
           (cd .dev-check/backend-package && sha256sum -c SHA256SUMS)
+      - name: Native memory-bootstrap diagnostics only
+        if: ${{ inputs.linux_memory_diagnostic }}
+        timeout-minutes: 4
+        run: |
+          test -z "${{ inputs.publish_tag }}"
+          python3 tests/gui/memory_bootstrap_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-memory-diagnostic
+      - uses: actions/upload-artifact@v4
+        if: always() && inputs.linux_memory_diagnostic
+        with:
+          name: native-memory-bootstrap-diagnostic
+          path: .dev-check/native-memory-diagnostic/results.json
+          retention-days: 14
       - name: Native encrypted vault, UI lock and two-device sync
+        if: ${{ !inputs.linux_memory_diagnostic }}
         timeout-minutes: 10
         run: python3 tests/gui/security_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --server .dev-check/backend-package/nexusbro-sync-server --out .dev-check/security-native
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: always() && !inputs.linux_memory_diagnostic
         with:
           name: native-security-verification
           path: |
@@ -827,7 +844,7 @@ jobs:
     if: >-
       always() && github.event_name == 'workflow_dispatch' &&
       inputs.runtime_build != '' && inputs.publish_tag != '' &&
-      !inputs.runtime_memory_only &&
+      !inputs.runtime_memory_only && !inputs.linux_memory_diagnostic &&
       needs.runtime.result == 'success' &&
       (inputs.linux_runtime_build == '' ||
        (inputs.linux_runtime_build == inputs.runtime_build && needs['linux-runtime'].result == 'success'))
