@@ -818,7 +818,7 @@ jobs:
         timeout-minutes: 4
         run: |
           test -z "${{ inputs.publish_tag }}"
-          python3 tests/gui/memory_bootstrap_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-memory-diagnostic
+          python3 tests/gui/memory_bootstrap_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-memory-diagnostic --safe-unload
       - uses: actions/upload-artifact@v4
         if: always() && inputs.linux_memory_diagnostic
         with:
