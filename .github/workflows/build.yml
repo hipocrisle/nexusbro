@@ -17,7 +17,15 @@ on:
         required: false
         default: ""
       performance_saved_tabs:
-        description: Saved tabs per Super in the measurement (six are visited per Super)
+        description: Saved tabs per Super in the measurement
+        required: false
+        default: "6"
+      performance_supers:
+        description: Number of real Supers in the measurement (1-12)
+        required: false
+        default: "4"
+      performance_live_tabs:
+        description: Tabs actually visited per Super in the measurement (1-12)
         required: false
         default: "6"
       runtime_build:
@@ -460,6 +468,8 @@ jobs:
         shell: pwsh
         env:
           PERF_SAVED_TABS: ${{ inputs.performance_saved_tabs }}
+          PERF_SUPERS: ${{ inputs.performance_supers }}
+          PERF_LIVE_TABS: ${{ inputs.performance_live_tabs }}
         run: |
           $installers = @(Get-ChildItem .dev-check/package -Recurse -Filter *.exe)
           if ($installers.Count -ne 1) { throw "Expected exactly one measured installer" }
@@ -468,7 +478,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python -m pip install Pillow pyautogui pywinauto psutil
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS
+          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()
