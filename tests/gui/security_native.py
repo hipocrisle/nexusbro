@@ -8,6 +8,7 @@ stay in memory. No deployment or external endpoint is used.
 import argparse
 import base64
 import hashlib
+import hmac
 import http.server
 import json
 import os
@@ -62,6 +63,60 @@ def js_wait(client, expression, message, timeout=20):
 def painted(client):
     client.js('window.__nativePainted=false;requestAnimationFrame(()=>requestAnimationFrame(()=>window.__nativePainted=true));true')
     js_wait(client, 'window.__nativePainted', 'Visible browser did not paint its updated interface')
+
+
+def totp(secret, timestamp=None):
+    """RFC 6238 SHA-1 / six digits, used only for a synthetic test account."""
+    key = base64.b32decode(secret.upper() + '=' * (-len(secret) % 8))
+    counter = int(time.time() if timestamp is None else timestamp) // 30
+    digest = hmac.new(key, counter.to_bytes(8, 'big'), hashlib.sha1).digest()
+    offset = digest[-1] & 15
+    return str((int.from_bytes(digest[offset:offset + 4], 'big') & 0x7fffffff) % 1_000_000).zfill(6)
+
+
+def scroll_visible(client, selector):
+    require(client.js('(()=>{const e=document.querySelector(' + json.dumps(selector) + ');'
+                      'if(!e)return false;e.scrollIntoView({block:"center",inline:"nearest"});return true})()'),
+            'Native UI control is missing: ' + selector)
+    painted(client)
+
+
+def visible_qr_uri(client, device):
+    """Decode actual native screen pixels, entirely in memory; never save the QR."""
+    from PIL import ImageGrab
+    decoder = pathlib.Path(__file__).resolve().parents[2] / 'desktop/node_modules/jsqr/dist/jsQR.js'
+    require(decoder.is_file(), 'Install locked desktop devDependencies before native QR acceptance')
+    require(client.js(decoder.read_text() + ';typeof window.jsQR==="function"'),
+            'Local QR decoder did not initialize')
+    selector = 'canvas[data-testid="totp-qr"]'
+    scroll_visible(client, selector)
+    rect = client.js('(()=>{const e=document.querySelector(' + json.dumps(selector) + ');'
+                     'const r=e.getBoundingClientRect(),s=getComputedStyle(e);'
+                     'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1,'
+                     'visible:s.visibility==="visible"&&s.display!=="none"&&r.top>=0&&r.bottom<=innerHeight,'
+                     'role:e.getAttribute("role"),label:e.getAttribute("aria-label")}})()')
+    require(rect and rect['visible'] and rect['w'] >= 160 and rect['h'] >= 160,
+            'Enrollment QR is not fully visible at scannable size')
+    require(rect['role'] == 'img' and rect['label'] == 'QR-код для приложения-аутентификатора',
+            'Enrollment QR lacks an accessible image label')
+    label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    origin = client.command('plugin:window|inner_position', label=label)
+    box = (round(origin['x'] + rect['x'] * rect['k']), round(origin['y'] + rect['y'] * rect['k']),
+           round(origin['x'] + (rect['x'] + rect['w']) * rect['k']),
+           round(origin['y'] + (rect['y'] + rect['h']) * rect['k']))
+    pixels = ImageGrab.grab(xdisplay=device.display).crop(box).convert('RGBA')
+    encoded = base64.b64encode(pixels.tobytes()).decode('ascii')
+    try:
+        value = client.js('(()=>{const bytes=Uint8ClampedArray.from(atob(' + json.dumps(encoded) +
+                          '),c=>c.charCodeAt(0));return window.jsQR(bytes,' + str(pixels.width) + ',' +
+                          str(pixels.height) + ',{inversionAttempts:"dontInvert"})?.data||null})()')
+    except Exception:
+        raise NativeFailure('Local decoder could not inspect visible enrollment QR') from None
+    finally:
+        client.js('delete window.jsQR;true')
+    require(isinstance(value, str) and value.startswith('otpauth://totp/'),
+            'Visible native enrollment QR does not decode as a TOTP provisioning URI')
+    return value
 
 
 def call(client, command, *, error=False, timeout=40, **args):
@@ -363,6 +418,57 @@ def run(args):
         n['tema'] = theme
         call(device.client, 'nastrojki_sohranit', nastrojki=n)
 
+    def cloud_refresh(client):
+        # Same notification as security.ts mutations; the App reads real IPC
+        # state. No injected selection, receipt, or synthetic cloud status.
+        client.js('window.dispatchEvent(new Event("nexusbro-security-state-changed"));true')
+
+    def cloud_state(client, *, selected, receipt=False):
+        status = call(client, 'security_sync', action='status')
+        require(('native-credentials' in status['selection']['supers']) == (selected != 'local'),
+                'Cloud assertion does not match persisted native selection')
+        js_wait(client, 'document.querySelector(`[data-super-id="native-credentials"]`)?.dataset.cloudState===' +
+                json.dumps(selected), 'Super cloud state did not refresh from native status')
+        require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"]`);'
+                          'return e.closest("[data-cloud-group]")?.dataset.cloudGroup===' +
+                          json.dumps('local' if selected == 'local' else 'cloud') + '})()'),
+                'Selected Super is in the wrong cloud/local group')
+        require(client.js('(()=>{const ordinary=document.querySelector(`[data-super-id="local-cloud-ui"]`),'
+                          'privateRow=document.querySelector(`[data-super-id="pvt-cloud-ui"]`);'
+                          'return [ordinary,privateRow].every(e=>e&&e.dataset.cloudState==="local"&&'
+                          'e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local"&&!e.querySelector(".super-cloud-badge"))})()'),
+                'Unselected or private Super was presented as cloud-selected')
+        if receipt:
+            require(status.get('last_sync'), 'UI cloud receipt has no native successful account sync')
+            js_wait(client, '!!document.querySelector(`[data-testid="cloud-last-account-sync"]`)',
+                    'Sidebar did not render the real account sync receipt')
+
+    def cloud_layouts(client, device, stage):
+        from PIL import ImageGrab
+        for collapsed in (False, True):
+            desired = '.okno.panel-svernuta' if collapsed else '.okno:not(.panel-svernuta)'
+            if not client.js('!!document.querySelector(' + json.dumps(desired) + ')'):
+                client.click('[aria-label="' + ('Свернуть левую панель' if collapsed else 'Развернуть левую панель') + '"]')
+            js_wait(client, '!!document.querySelector(' + json.dumps(desired) + ')', 'Panel did not change layout')
+            painted(client)
+            require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"] .super-cloud-badge`);'
+                              'if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);'
+                              'return r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
+                              's.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity)>0&&!!e.querySelector("svg")})()'),
+                    'Cloud marker is not visible in ' + ('collapsed' if collapsed else 'expanded') + ' panel')
+            label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+            origin = client.command('plugin:window|inner_position', label=label)
+            bounds = client.js('(()=>{const r=document.querySelector(".reika").getBoundingClientRect();'
+                               'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1}})()')
+            box = (round(origin['x'] + bounds['x'] * bounds['k']), round(origin['y'] + bounds['y'] * bounds['k']),
+                   round(origin['x'] + (bounds['x'] + bounds['w']) * bounds['k']),
+                   round(origin['y'] + (bounds['y'] + bounds['h']) * bounds['k']))
+            ImageGrab.grab(xdisplay=device.display).crop(box).save(root / (stage + ('-collapsed.png' if collapsed else '-expanded.png')))
+        # Leave the shell as it was before these checks; settings are also a
+        # selected sync category, so changing layout must not poison later runs.
+        client.click('[aria-label="Развернуть левую панель"]')
+        js_wait(client, '!!document.querySelector(".okno:not(.panel-svernuta)")', 'Expanded panel did not restore')
+
     def check_encrypted(device):
         for path in device.cipher_files():
             raw = path.read_bytes()
@@ -446,6 +552,11 @@ def run(args):
         private_saved = super_record('pvt-native-private', 'Never sync private definition', 'about:blank', private=True)
         (a.data / 'sohranennye.json').write_text(json.dumps([saved_a, private_saved]))
         (b.data / 'sohranennye.json').write_text(json.dumps([saved_b]))
+        # Dormant synthetic rows exercise cloud grouping without launching more
+        # CEF processes. Neither row is selected for sync, including the private one.
+        (a.data / 'vkladki.json').write_text(json.dumps([
+            super_record('local-cloud-ui', 'Local cloud UI fixture', 'about:blank'),
+            super_record('pvt-cloud-ui', 'Private cloud UI fixture', 'about:blank', private=True)]))
         history_b = [{'id': 'local-history-b', 'adres': 'https://local-history.fixture.invalid/', 'nazvanie': 'Local history only',
                       'vremya': int(time.time()), 'papka': '', 'super_id': None}]
         (b.data / 'istoriya.json').write_text(json.dumps(history_b))
@@ -466,6 +577,10 @@ def run(args):
         normal_tab = a.loaded(normal_id, address=first_url)['aktivnaya']
         a.navigate(normal_id, first_url + '&set_cookie=1')
         wait_for(lambda: seen('capture'), 'CEF did not report fixture readiness')
+        phase = 'native-updater-visible-sites'
+        from updater_native import verify_updater
+        verify_updater(ca, a, visible_cef, checks)
+        phase = 'native-capture'
         require(call(ca, 'security_passwords', action='list') == [], 'Page load saved a password without consent')
         draft = call(ca, 'security_passwords', action='capture', data={'super_id': normal_id, 'tab_id': normal_tab})
         require(draft.get('origin') == base and draft.get('username') == login and 'password' not in draft, 'Native capture did not return a safe draft summary')
@@ -584,15 +699,79 @@ def run(args):
                 sensitive.add(key)
             client.click('[aria-label="Закрыть пароли и синхронизацию"]')
         checkpoint('native_ui_register_login_without_server_field_real_service')
+        phase = 'native-visible-qr-enrollment'
+        ca.js('window.dispatchEvent(new Event("nexusbro-security"));true')
+        js_wait(ca, '!!document.querySelector(".security-panel")', 'Security settings did not reopen for 2FA')
+        ca.text_button('Аккаунт')
+        js_wait(ca, '!!document.querySelector(".security-account-status")', 'Logged-in account interface did not render')
+        require(not call(ca, 'security_account', action='status')['totp_enabled'], 'Fresh account already has 2FA enabled')
+        ca.js('Array.from(document.querySelectorAll("button")).find(e=>e.textContent.trim()==="Настроить двухфакторную аутентификацию")?.scrollIntoView({block:"center"});true')
+        painted(ca)
+        ca.text_button('Настроить двухфакторную аутентификацию')
+        js_wait(ca, '!!document.querySelector(`canvas[data-testid="totp-qr"]`)', 'Enrollment did not display its local QR')
+        uri = visible_qr_uri(ca, a)
+        sensitive.add(uri)
+        parsed = urllib.parse.urlsplit(uri)
+        options = urllib.parse.parse_qs(parsed.query)
+        secret = options.get('secret', [''])[0]
+        if secret:
+            sensitive.add(secret)
+        require(parsed.scheme == 'otpauth' and parsed.netloc == 'totp' and secret,
+                'QR provisioning URI is incomplete')
+        require(options.get('issuer') == ['NexusBro'] and username in urllib.parse.unquote(parsed.path),
+                'Visible QR identifies the wrong issuer or synthetic account')
+        require(options.get('algorithm', ['SHA1']) == ['SHA1'] and options.get('digits', ['6']) == ['6']
+                and options.get('period', ['30']) == ['30'], 'Unsupported provisioning parameters')
+        manual_details = 'details:has([data-testid="totp-manual-key"])'
+        scroll_visible(ca, manual_details + ' summary')
+        ca.click(manual_details + ' summary')
+        js_wait(ca, '!!document.querySelector(' + json.dumps(manual_details + '[open]') + ')',
+                'Manual setup key did not open through the native UI')
+        manual_key = ca.js('document.querySelector(`[data-testid="totp-manual-key"]`)?.innerText?.replace(/\\s/g,"")')
+        require(manual_key == secret, 'Scanned QR and visible manual setup key disagree')
+        require(not call(ca, 'security_account', action='status')['totp_enabled'],
+                'Displaying the QR enabled 2FA without verification')
+        # Enter a real time-based code through the actual native input, not IPC.
+        # Stay clear of the period boundary while xdotool types and HTTP verifies.
+        if time.time() % 30 > 25:
+            time.sleep(30 - time.time() % 30 + .2)
+        code = totp(secret)
+        sensitive.add(code)
+        scroll_visible(ca, '[aria-label="Код подтверждения 2FA"]')
+        ca.fill('[aria-label="Код подтверждения 2FA"]', code)
+        ca.js('Array.from(document.querySelectorAll("button")).find(e=>e.textContent.trim()==="Подтвердить и включить 2FA")?.scrollIntoView({block:"center"});true')
+        painted(ca)
+        ca.text_button('Подтвердить и включить 2FA')
+        wait_for(lambda: call(ca, 'security_account', action='status')['totp_enabled'],
+                 'Real server did not verify the code from the visible QR', 30)
+        js_wait(ca, 'document.querySelector(".security-account-status")?.textContent.includes("Двухфакторная аутентификация: включена")',
+                'Account UI did not reflect successful real TOTP verification')
+        js_wait(ca, '!document.querySelector(`[data-testid="totp-qr"]`)', 'Verified QR stayed on screen')
+        backup_codes = ca.js('Array.from(document.querySelectorAll(".security-backup-codes code"),e=>e.textContent)')
+        require(backup_codes, 'Real TOTP verification did not issue recovery codes')
+        sensitive.update(backup_codes)
+        ca.js('Array.from(document.querySelectorAll("button")).find(e=>e.textContent.trim()==="Резервные коды сохранены")?.scrollIntoView({block:"center"});true')
+        painted(ca)
+        ca.text_button('Резервные коды сохранены')
+        ca.click('[aria-label="Закрыть пароли и синхронизацию"]')
+        checkpoint('native_displayed_qr_screen_pixels_decoded_real_totp_ui_verified')
         phase = 'first-selected-sync'
+        cloud_refresh(ca)
+        cloud_state(ca, selected='local')
         call(ca, 'zakladki_sohranit', adres='https://selected-bookmark.fixture.invalid/', nazvanie='Selected encrypted bookmark', papka='')
         selection_a = {'settings': True, 'bookmarks': True, 'supers': [normal_id, 'retained-super'], 'passwords': [credential_id]}
         call(ca, 'security_sync', action='configure', data={'selection': selection_a})
+        cloud_refresh(ca)
+        cloud_state(ca, selected='pending')
         private_selection = {**selection_a, 'supers': ['pvt-native-private']}
         call(ca, 'security_sync', action='configure', data={'selection': private_selection}, error=True)
         first_report = call(ca, 'security_sync', action='run', timeout=90)
         report_ok(first_report)
         require(first_report['pushed'] >= 5, 'Selected native records were not actually uploaded')
+        cloud_refresh(ca)
+        cloud_state(ca, selected='selected', receipt=True)
+        cloud_layouts(ca, a, 'cloud-selection-after-real-sync')
+        checkpoint('native_cloud_local_private_pending_selected_real_account_receipt_both_panel_layouts')
         checkpoint('selected_settings_bookmarks_supers_password_really_encrypted_uploaded')
         phase = 'new-device-default-off'
         status = call(cb, 'security_sync', action='status')
@@ -796,9 +975,13 @@ def run(args):
         require(call(ca, 'security_vault', action='status')['unlocked'], 'Browser unlock did not unlock password vault')
         checkpoint('startup_browser_master_gate_wrong_password_preserves_ciphertext_correct_unlock_opens_sites')
         require(call(ca, 'security_account', action='status')['logged_in'], 'Encrypted account session did not survive restart')
+        require(call(ca, 'security_account', action='status')['totp_enabled'], 'Verified 2FA did not survive native app restart')
         remaining = call(ca, 'security_passwords', action='list')
         require(len(remaining) == 1 and remaining[0]['username'] == offer_login, 'Local-only credential did not persist independently')
         require(call(ca, 'security_sync', action='status')['selection'] == selection_a, 'Granular sync selection did not persist')
+        cloud_state(ca, selected='selected', receipt=True)
+        cloud_layouts(ca, a, 'cloud-selection-after-restart')
+        checkpoint('native_cloud_selection_real_receipt_and_panel_markers_survive_restart')
         checkpoint('restart_locks_key_persists_encrypted_session_selection_local_only_password')
         phase = 'ciphertext-and-log-review'
         for device in devices:
