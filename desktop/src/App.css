@@ -193,7 +193,7 @@ body {
 .niz .plyus { min-width: 26px; }
 .panel-svernuta .zagolovok { justify-content: center; padding: 8px 2px; }
 .panel-svernuta .zagolovok > span, .panel-svernuta .vkladka .imya, .panel-svernuta .vkladka .krest, .panel-svernuta .vkladka .tochka { display: none; }
-.panel-svernuta .kratkoe-imya { display: block; }
+.panel-svernuta .kratkoe-imya { display: block; font-size: 12px; font-weight: 600; line-height: 1.3; white-space: nowrap; }
 .panel-svernuta .spisok { padding: 4px; }
 .panel-svernuta .vkladka { justify-content: center; padding: 8px 2px; }
 .panel-svernuta .niz { flex-direction: column; padding: 6px; }

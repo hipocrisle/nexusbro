@@ -14,7 +14,7 @@ export function CloudGlyph({state='selected'}:{state?:SuperCloudState}){
  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 18a4.5 4.5 0 1 1 .6-9A6 6 0 0 1 18.5 8a5 5 0 0 1-.5 10H6.5Z"/>{state==='paused'?<path d="m4 3 16 18"/>:state==='conflict'?<><path d="M12 10v4"/><circle cx="12" cy="17" r=".7" fill="currentColor" stroke="none"/></>:state==='pending'?<><circle cx="9" cy="13" r=".8" fill="currentColor" stroke="none"/><circle cx="12" cy="13" r=".8" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r=".8" fill="currentColor" stroke="none"/></>:null}</svg>;
 }
 export function SuperCloudBadge({state,label}:{state:SuperCloudState;label:string}){
- if(state==='local')return null;
+ if(state!=='conflict'&&state!=='paused')return null;
  return <span className="super-cloud-badge" data-cloud-state={state} title={label} aria-label={label}><CloudGlyph state={state}/></span>;
 }
 export function SuperCloudHeading({cloud,receipt,paused}:{cloud:boolean;receipt?:SyncStatus['last_sync'];paused?:boolean}){

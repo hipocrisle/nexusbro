@@ -389,7 +389,7 @@ export default function App() {
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
-              <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" title="Приватная супер-вкладка" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{v.nazvanie.slice(0, 1)}</span>
+              <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" title="Приватная супер-вкладка" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0, 3).join('')}</span>
               <SuperCloudBadge state={cloud.state(v.id,v.privatnaya)} label={cloud.label(v.id,v.privatnaya)}/>
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
@@ -409,7 +409,7 @@ export default function App() {
               <SuperCloudHeading cloud receipt={cloud.lastSync} paused={cloud.paused}/>
               {cloudOpen.map(renderSuper)}
               {cloudClosed.map(v=><button key={v.id} type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-selected super-cloud-saved"+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} title={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
-                <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{v.nazvanie.slice(0,1)}</span><SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)}/>
+                <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span><SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)}/>
               </button>)}
             </section>
             {localOpen.length>0&&<section className="super-cloud-group" data-cloud-group="local" aria-label="Супер-вкладки на этом устройстве"><SuperCloudHeading cloud={false}/>{localOpen.map(renderSuper)}</section>}

@@ -91,7 +91,7 @@ try:
   expect(receipt).to_contain_text('Последняя успешная синхронизация аккаунта')
   assert opened.get_attribute('data-cloud-state')!='synced'
   dialog.get_by_role('button',name='Закрыть',exact=True).click()
-  expect(opened.locator('.super-cloud-badge')).to_be_visible()
+  expect(opened.locator('.super-cloud-badge')).to_have_count(0)
   assert opened.evaluate('e=>getComputedStyle(e).backgroundColor')==before_fill
   assert opened.evaluate('e=>getComputedStyle(e).boxShadow')==before_shadow
 
@@ -104,11 +104,13 @@ try:
   assert page.locator('[data-cloud-group="cloud"] .vkladka').count()==2
   page.get_by_role('button',name='Свернуть левую панель',exact=True).click()
   expect(opened.locator('.imya')).not_to_be_visible()
-  expect(opened.locator('.super-cloud-badge')).to_be_visible()
+  expect(opened.locator('.super-cloud-badge')).to_have_count(0)
   expect(page.locator('[data-cloud-group="cloud"] .super-cloud-heading-icon svg')).to_be_visible()
-  badge=opened.locator('.super-cloud-badge').bounding_box();row=opened.bounding_box()
-  assert badge['x']>=row['x'] and badge['x']+badge['width']<=row['x']+row['width']
-  assert badge['y']>=row['y'] and badge['y']+badge['height']<=row['y']+row['height']
+  for button,short in [(opened,'Обл'),(local,'Лок'),(private,'При')]:
+   expect(button.locator('.kratkoe-imya')).to_have_text(short)
+   box=button.locator('.kratkoe-imya').bounding_box();row=button.bounding_box()
+   assert box['x']>=row['x'] and box['x']+box['width']<=row['x']+row['width']
+   assert button.locator('.kratkoe-imya').evaluate('(e)=>e.scrollWidth<=e.clientWidth')
   expect(private.locator('.super-private-badge')).to_be_visible()
   assert private.locator('.super-cloud-badge').count()==0
   page.screenshot(path='/tmp/nexusbro-cloud-collapsed.png')
