@@ -371,6 +371,8 @@ pub fn rabotat(
         .unwrap_or_else(|| Sessiya::zagruzit(profil));
     if crate::privatnost::process_privatnyj(){for v in &mut s.vkladki{v.privatnaya=true;}}
     let (tx, rx) = channel();
+    #[cfg(target_os = "windows")]
+    let (rx, event_relay) = crate::cef_events::relay(&tx, rx, Sobytie::Komanda(Komanda::ObnovitInterfeys), request_wake)?;
     let mut brauzery = HashMap::new();
     if initially_locked{for tab in &mut s.vkladki{tab.otlozhena=true;}let _=sistema::pokazat(k.okno,false);}
     for v in &s.vkladki {
@@ -406,6 +408,8 @@ pub fn rabotat(
         s,
         tx,
         rx,
+        #[cfg(target_os = "windows")]
+        _event_relay: event_relay,
         brauzery,
         razmer,
         devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40,devtools_pixels:None, ui_last:String::new(), perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),
@@ -413,13 +417,21 @@ pub fn rabotat(
     };
     #[cfg(target_os = "windows")]
     {
-        // Настоящая Win32-петля обслуживает WM_PAINT, ввод и compositor.
-        // Все браузеры и контейнер остаются на исходном CEF UI-потоке.
+        // CEF keeps its native message loop. Our commands wake it on demand;
+        // infrequent maintenance only watches native resize and timed actions.
         let rabota = std::rc::Rc::new(std::cell::RefCell::new(rabota));
-        if post_delayed_task(ThreadId::UI, Some(&mut Obrabotat::new(rabota)), 8) != 1 {
+        UI_WORK.with(|slot| *slot.borrow_mut() = std::rc::Rc::downgrade(&rabota));
+        UI_RUNNING.store(true, std::sync::atomic::Ordering::Release);
+        if post_delayed_task(ThreadId::UI, Some(&mut Obrabotat::new(true)), 0) != 1 {
+            UI_RUNNING.store(false, std::sync::atomic::Ordering::Release);
+            UI_WORK.with(|slot| *slot.borrow_mut() = Default::default());
             anyhow::bail!("не удалось запланировать обработку команд CEF");
         }
         run_message_loop();
+        UI_RUNNING.store(false, std::sync::atomic::Ordering::Release);
+        UI_WORK.with(|slot| *slot.borrow_mut() = Default::default());
+        // Dropping Rabota stops every relay, including additional windows.
+        drop(rabota);
         Ok(())
     }
     #[cfg(not(target_os = "windows"))]
@@ -433,17 +445,62 @@ pub fn rabotat(
     }
 }
 
+// These primitives contain no CEF object or UI-thread Rc. Relay threads only
+// forward owned events and post a task; every Browser operation stays on UI.
+#[cfg(target_os = "windows")]
+static UI_RUNNING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+#[cfg(target_os = "windows")]
+static UI_WAKE_PENDING: crate::cef_events::WakeGate = crate::cef_events::WakeGate::new();
+#[cfg(target_os = "windows")]
+thread_local! {
+    static UI_WORK: std::cell::RefCell<std::rc::Weak<std::cell::RefCell<Rabota>>> = Default::default();
+}
+
+#[cfg(target_os = "windows")]
+pub(crate) fn request_wake() {
+    use std::sync::atomic::Ordering;
+    if !UI_RUNNING.load(Ordering::Acquire) || !UI_WAKE_PENDING.claim() {
+        return;
+    }
+    if post_task(ThreadId::UI, Some(&mut Obrabotat::new(false))) != 1 {
+        // No permanent pending bit on shutdown/post failure. Maintenance is
+        // also a bounded fallback if CEF rejects a concurrent wake.
+        UI_WAKE_PENDING.release();
+    }
+}
+
 #[cfg(target_os = "windows")]
 wrap_task! {
-    struct Obrabotat { rabota: std::rc::Rc<std::cell::RefCell<Rabota>> }
+    struct Obrabotat { maintenance: bool }
     impl Task {
         fn execute(&self) {
-            if let Err(e) = self.rabota.borrow_mut().shag() {
-                eprintln!("cef: обработка команд: {e}");
-                quit_message_loop();
-                return;
+            use std::sync::atomic::Ordering;
+            if !self.maintenance {
+                // Clear BEFORE draining: arrivals during a tick post the next
+                // task even if the current drain has just passed their lane.
+                UI_WAKE_PENDING.release();
             }
-            let _ = post_delayed_task(ThreadId::UI, Some(&mut Obrabotat::new(self.rabota.clone())), 8);
+            if !UI_RUNNING.load(Ordering::Acquire) { return; }
+            let next = UI_WORK.with(|slot| {
+                let Some(work) = slot.borrow().upgrade() else { return Some(100) };
+                // CEF may dispatch nested work during Browser creation. Do not
+                // panic or borrow Rabota recursively; maintenance retries it.
+                let Ok(mut work) = work.try_borrow_mut() else { return Some(100) };
+                if let Err(e) = work.shag() {
+                    eprintln!("cef: обработка команд: {e}");
+                    quit_message_loop();
+                    return None;
+                }
+                Some(if work.has_live_devtools() { 16 } else { 100 })
+            });
+            if self.maintenance {
+                if let Some(delay) = next {
+                    if post_delayed_task(ThreadId::UI, Some(&mut Obrabotat::new(true)), delay) != 1 {
+                        eprintln!("cef: не удалось продолжить обслуживание окон");
+                        quit_message_loop();
+                    }
+                }
+            }
         }
     }
 }
@@ -453,6 +510,8 @@ struct Rabota {
     s: Sessiya,
     tx: Sender<Sobytie>,
     rx: Receiver<Sobytie>,
+    #[cfg(target_os = "windows")]
+    _event_relay: crate::cef_events::Relay<Sobytie>,
     brauzery: HashMap<u64, Browser>,
     razmer: Option<(u32, u32)>,
     devtools: HashMap<u64,u32>,
@@ -474,6 +533,10 @@ struct Rabota {
 }
 
 impl Rabota {
+    #[cfg(target_os = "windows")]
+    fn has_live_devtools(&self) -> bool {
+        self.devtools.contains_key(&self.s.aktivnaya) || self.extras.values().any(Self::has_live_devtools)
+    }
     fn set_browser_locked(&mut self, locked:bool, generation:u64){
         if generation<self.browser_lock_generation{return;}
         self.browser_lock_generation=generation;
@@ -514,14 +577,16 @@ impl Rabota {
             rx,
             brauzery,
             razmer,
-            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private,
+            devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private, ..
         } = self;
         let mut izmeneno = false;
         let mut layout_dirty=false;
         let mut fokus = false;
         let mut fokus_klaviatury = false;
         let mut fokus_posle_devtools=false;
+        let mut handled_events = 0;
         for sobytie in rx.try_iter().take(128) {
+            handled_events += 1;
             // A lock covers queued/in-flight UI actions too. Lifecycle events
             // still complete, while no key, popup or stale command can reopen a page.
             if *browser_locked && matches!(&sobytie,Sobytie::Komanda(command) if !matches!(command,
@@ -571,6 +636,16 @@ impl Rabota {
                     let mut child_k=match Konteyner::sozdat(parent,Mesto{x,y,w,h}){Ok(k)=>k,Err(e)=>{eprintln!("cef: новое окно: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}};
                     child_k.private_context=k.private_context.clone();
                     let (child_tx,child_rx)=channel();
+                    #[cfg(target_os = "windows")]
+                    let (child_rx, child_event_relay) = match crate::cef_events::relay(&child_tx, child_rx, Sobytie::Komanda(Komanda::ObnovitInterfeys), request_wake) {
+                        Ok(relay) => relay,
+                        Err(e) => {
+                            eprintln!("cef: обработчик нового окна: {e}");
+                            println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));
+                            std::io::stdout().flush()?;
+                            continue;
+                        }
+                    };
                     let restoring=sessiya.is_some();
                     let mut child_s=sessiya.unwrap_or_else(||Sessiya::novaya("about:blank"));
                     if child_s.vkladki.is_empty(){child_s=Sessiya::novaya("about:blank");}
@@ -584,7 +659,7 @@ impl Rabota {
                     match sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya){Ok(b)=>{child_b.insert(tab.id,b);},Err(e)=>{eprintln!("cef: страница нового окна: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}}
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,brauzery:child_b,razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -1043,6 +1118,14 @@ impl Rabota {
             if label.is_empty(){println!("NB-VKLADKI {}", serde_json::to_string(&s)?);}else{println!("NB-UI {}",serde_json::json!({"tip":"okno-session","label":label,"sessiya":s}));}
             std::io::stdout().flush()?;
         }
+        #[cfg(target_os = "windows")]
+        if handled_events == 128 {
+            // A tick is deliberately bounded. A burst must continue even when
+            // the relay has already finished sending and no fresh event comes.
+            request_wake();
+        }
+        #[cfg(not(target_os = "windows"))]
+        let _ = handled_events;
         Ok(())
     }
 }

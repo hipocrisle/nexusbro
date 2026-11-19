@@ -5,6 +5,7 @@ mod win{
  use windows::Win32::{Foundation::*,Graphics::Gdi::*,UI::WindowsAndMessaging::*};
  thread_local!{static WINDOWS:RefCell<HashMap<isize,(u32,isize)>>=RefCell::new(HashMap::new());}
  unsafe extern "system" fn proc(hwnd:HWND,msg:u32,w:WPARAM,l:LPARAM)->LRESULT{
+  if msg==WM_SIZE||msg==WM_SHOWWINDOW{crate::cef_vkladki::request_wake();}
   let state=WINDOWS.with(|m|m.borrow().get(&(hwnd.0 as isize)).copied());
   if msg==WM_ERASEBKGND{return LRESULT(1);}
   if msg==WM_PAINT{

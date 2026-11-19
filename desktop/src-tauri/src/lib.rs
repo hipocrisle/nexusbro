@@ -4,6 +4,8 @@
 //! выходом в сеть. Внутри неё человек открывает сколько угодно обычных
 //! вкладок, и весь сервис со всеми его адресами идёт через нужный выход.
 
+#[cfg(target_os = "windows")]
+mod cef_events;
 mod popup_menu;
 mod browser_lock;
 mod import_brauzera;
