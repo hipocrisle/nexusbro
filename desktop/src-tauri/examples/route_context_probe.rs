@@ -114,7 +114,10 @@ fn configure(
     let pref_type = context
         .preference(Some(&key))
         .map(|v| format!("{:?}", v.get_type()));
-    let mut error = CefString::default();
+    // CefString::default() converts to a NULL output pointer in cef-rs156.
+    // CEF's C-to-C++ trampoline rejects required NULL string_byref before
+    // SetPreference runs. Allocate writable output storage explicitly.
+    let mut error = CefString::from("probe-placeholder");
     let ok = context.set_preference(Some(&key), Some(&mut value), Some(&mut error)) != 0;
     println!(
         "{}",
@@ -122,7 +125,7 @@ fn configure(
             "mode_set_ok":mode_ok,"server_set_ok":server_ok,"bypass_set_ok":bypass_ok,
             "dict_valid":dict_valid,"dictionary_set_ok":dictionary_ok,"value_valid":value_valid,
             "value_type":value_type,"preference_type":pref_type,
-            "set_proxy_error":error.to_string().chars().take(250).collect::<String>()})
+            "set_proxy_error":if ok { String::new() } else { error.to_string().chars().take(250).collect::<String>() }})
     );
     // Only bounded CEF API errors and type diagnostics; never preference contents.
     Ok(())
