@@ -74,6 +74,19 @@ neither IPC nor CDP substitutes for rendering or input. Input receipts do not
 increment navigation hits. The default static benchmark and diagnostic-only probe
 remain unchanged when acceptance is not requested.
 
+`--visibility-probe --diagnostic-native-hide` is an optional **external Win32
+mechanism experiment**, never a product feature test. It runs after all five
+normal measured phases and cannot be combined with product acceptance. It selects
+only the fixture's proven-owned direct `Chrome_WidgetWin_<digits>` children of
+`CefBrowserWindow` parents, validates same PID/UI thread/WS_CHILD and process
+identity, records original WS_VISIBLE, and queues external `ShowWindowAsync`
+hide. After ten seconds of actual JavaScript reports it restores only originally
+visible widgets without activation and observes another ten seconds. Native
+trees and explicit `diagnostic_actions` remain in JSON; `product_feature_ready`
+is always false in this mode. This can establish whether the native mechanism
+notifies Chromium while a rebuilt application is pending; it cannot establish
+that the application itself manages background visibility correctly.
+
 `results.json` retains per-second samples and per-process identities, role,
 cumulative CPU seconds, working set, and private bytes. Roles distinguish shell,
 CEF browser/renderer/GPU/utility and WebView2. CPU **core percent** counts one busy

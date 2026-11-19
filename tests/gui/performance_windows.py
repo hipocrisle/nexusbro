@@ -95,6 +95,7 @@ def run(args):
     u.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
     u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
+    u.ShowWindowAsync.argtypes = [wintypes.HWND, ctypes.c_int]
     u.IsIconic.argtypes = [wintypes.HWND]
     u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
     u.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
@@ -316,7 +317,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             live += sum(not v.get("otlozhena") for v in tabs)
         return {"saved": saved, "live": live, "deferred": deferred, "available": True}
 
-    def measure(name):
+    def measure(name, duration_seconds=None):
         nonlocal current_phase
         with hit_lock:
             current_phase = name
@@ -324,7 +325,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         previous_time, previous = snapshot()
         phase_start = previous_time
         rows = []
-        while time.monotonic() - phase_start < args.seconds:
+        while time.monotonic() - phase_start < (args.seconds if duration_seconds is None else duration_seconds):
             until = time.monotonic() + 1
             while time.monotonic() < until:
                 if cover is not None:
@@ -502,6 +503,78 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         u.ShowWindow(hwnd, 9)
         window.set_focus()
         measure("warm_restored")
+        if args.diagnostic_native_hide:
+            # External Win32 experiment on our disposable fixture only. This is
+            # not an application fix and cannot satisfy product acceptance.
+            report["product_feature_ready"] = False
+            report["diagnostic_native_hide"] = True
+            actions = report.setdefault("diagnostic_actions", [])
+            native_window_tree("diagnostic_before")
+            trees = report["native_window_trees"]["diagnostic_before"]
+            if "error" in trees or len(trees.get("supers", [])) != args.supers:
+                raise AssertionError("Missing owned native trees for diagnostic-only hide")
+            targets = []
+            for tree in trees["supers"]:
+                if tree.get("truncated") or tree.get("container_missing"):
+                    raise AssertionError("Incomplete owned native tree; diagnostic hide refused")
+                rows = {row["hwnd"]: row for row in tree["windows"]}
+                container = rows[tree["container"]]
+                selected = []
+                for row in rows.values():
+                    parent = rows.get(row["parent"])
+                    if (re.fullmatch(r"Chrome_WidgetWin_[0-9]+", row["class_name"])
+                            and parent and parent["class_name"] == "CefBrowserWindow"
+                            and parent["parent"] == tree["container"]
+                            and row["pid"] == parent["pid"] == container["pid"]
+                            and row["tid"] == parent["tid"] == container["tid"]
+                            and row["own_ws_child"] and parent["own_ws_child"]):
+                        selected.append({**row, "super": tree["super"]})
+                if len(selected) != args.tabs:
+                    raise AssertionError("Expected exactly one owned direct Widget per visited fixture tab")
+                targets.extend(selected)
+            if not 0 < len(targets) <= 128:
+                raise AssertionError("Diagnostic native target count exceeds bound")
+
+            def diagnostic_still_owned(row):
+                check_limits()
+                pid = wintypes.DWORD()
+                tid = u.GetWindowThreadProcessId(row["hwnd"], ctypes.byref(pid))
+                name = ctypes.create_unicode_buffer(256)
+                u.GetClassNameW(row["hwnd"], name, len(name))
+                process = psutil.Process(pid.value)
+                return (pid.value == row["pid"] and tid == row["tid"]
+                        and (pid.value, process.create_time()) in owned
+                        and u.GetParent(row["hwnd"]) == row["parent"]
+                        and name.value == row["class_name"]
+                        and bool(int(get_style(row["hwnd"], -16)) & 0x40000000))
+
+            changed = []
+            try:
+                for row in targets:
+                    if not diagnostic_still_owned(row):
+                        raise AssertionError("Diagnostic target ownership changed before hide")
+                    action = {"action": "external_ShowWindowAsync_SW_HIDE", "super": row["super"],
+                              "hwnd": row["hwnd"], "pid": row["pid"], "tid": row["tid"],
+                              "parent": row["parent"], "class_name": row["class_name"],
+                              "original_own_ws_visible": row["own_ws_visible"],
+                              "received_seconds": time.monotonic() - started}
+                    changed.append(row)
+                    action["queued"] = bool(u.ShowWindowAsync(row["hwnd"], 0))
+                    actions.append(action)
+                    if not action["queued"]:
+                        raise AssertionError("Diagnostic external hide was not queued")
+                native_window_tree("diagnostic_hide_queued")
+                measure("diagnostic_hide", duration_seconds=10)
+                native_window_tree("diagnostic_hide_observed")
+            finally:
+                for row in changed:
+                    if row["own_ws_visible"] and diagnostic_still_owned(row):
+                        actions.append({"action": "external_ShowWindowAsync_SW_SHOWNOACTIVATE",
+                                        "hwnd": row["hwnd"], "original_own_ws_visible": True,
+                                        "queued": bool(u.ShowWindowAsync(row["hwnd"], 4)),
+                                        "received_seconds": time.monotonic() - started})
+            measure("diagnostic_restore", duration_seconds=10)
+            native_window_tree("diagnostic_restore_observed")
         if args.expect_background_throttled:
             import pyautogui
             journal = (data / "zhurnal.log").read_text(encoding="utf-8")
@@ -591,12 +664,15 @@ def main():
     parser.add_argument("--saved-tabs", type=int, help="Saved tabs per super; defaults to --tabs; at most 5000 total")
     parser.add_argument("--visibility-probe", action="store_true", help="Diagnostic JS visibility/rAF reporting; changes the static CPU workload")
     parser.add_argument("--expect-background-throttled", action="store_true", help="Require actual hidden/zero-rAF background pages and restored painted/trusted-input proof")
+    parser.add_argument("--diagnostic-native-hide", action="store_true", help="External Win32 mechanism experiment AFTER baseline phases; never product acceptance")
     parser.add_argument("--seconds", type=int, default=15, help="Per measured phase")
     parser.add_argument("--settle", type=int, default=5)
     parser.add_argument("--timeout", type=int, default=480)
     parser.add_argument("--max-processes", type=int, default=128)
     parser.add_argument("--max-memory-mb", type=int, default=8192)
     args = parser.parse_args()
+    if args.diagnostic_native_hide and (not args.visibility_probe or args.expect_background_throttled):
+        parser.error("--diagnostic-native-hide requires --visibility-probe and forbids --expect-background-throttled")
     if args.expect_background_throttled and (not args.visibility_probe or args.seconds < 8):
         parser.error("--expect-background-throttled requires --visibility-probe and --seconds >= 8")
     if args.saved_tabs is None:
