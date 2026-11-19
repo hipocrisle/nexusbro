@@ -68,6 +68,7 @@ jobs:
       - run: npm ci && npm run build
         working-directory: desktop
       - run: node --test tests/updater_visibility.cjs
+      - run: python3 tests/release_acceptance_test.py
       - run: |
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py
@@ -283,6 +284,7 @@ jobs:
         if: matrix.os == 'ubuntu-24.04'
         run: |
           node --test tests/updater_visibility.cjs
+          python3 tests/release_acceptance_test.py
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py
           python3 tests/browser_ui_0213.py
