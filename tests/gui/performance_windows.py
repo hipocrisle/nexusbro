@@ -60,6 +60,7 @@ def run(args):
     u.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
     u.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
     u.IsIconic.argtypes = [wintypes.HWND]
+    u.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_uint]
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -219,7 +220,8 @@ def run(args):
                           "NexusBro shell did not appear", 45)
         hwnd = window.handle
         u.ShowWindow(hwnd, 9)
-        window.move_window(x=20, y=20, width=1280, height=820)
+        if not u.SetWindowPos(hwnd, None, 20, 20, 1280, 820, 0x0040):
+            raise RuntimeError("Native SetWindowPos failed")
         window.set_focus()
 
         def click(name, kind):
