@@ -197,13 +197,13 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   useEffect(() => {
     let alive = true;
     memoryMountedRef.current = true;
-    const off = listen<{super_id: string; data: {tip: string; id: number; ok?: boolean; error?: string}}>("stranica-ui", event => {
+    const off = listen<{super_id: string; data: {tip: string; id: number; ok?: boolean; canceled?:boolean; error?: string}}>("stranica-ui", event => {
       const {super_id: owner, data} = event.payload;
       if (!alive || data.tip !== "memory-result") return;
       if (!memoryPendingRef.current.some(item => item.owner === owner && item.tab.id === data.id)) return;
       memoryPendingRef.current = memoryPendingRef.current.filter(item => item.owner !== owner || item.tab.id !== data.id);
       setMemoryPending([...memoryPendingRef.current]);
-      if (data.ok !== true && memoryOwnerRef.current === owner) setOshibka(data.error || "Не удалось выгрузить вкладку из памяти");
+      if (data.ok !== true && !data.canceled && memoryOwnerRef.current === owner) setOshibka(data.error || "Не удалось выгрузить вкладку из памяти");
     });
     return () => { alive = false; memoryMountedRef.current = false; void off.then(stop => stop()); };
   }, []);

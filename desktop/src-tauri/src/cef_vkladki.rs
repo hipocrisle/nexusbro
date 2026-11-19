@@ -572,7 +572,7 @@ fn memory_refused(id:u64,error:&str,s:&mut Sessiya,tx:&Sender<Sobytie>,requests:
         SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&attempt.identity);});
         if let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id){tab.memory_pending=false;}
         eprintln!("NEXUSBRO_MEMORY tab={id} browser={} automatic={} refused={error}",attempt.identity,attempt.automatic);
-        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":false,"automatic":attempt.automatic,"error":error})));
+        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"memory-result","id":id,"ok":false,"automatic":attempt.automatic,"canceled":error=="Выгрузка отменена: вкладка закрывается","error":error})));
     }
     registrations.remove(&id);
 }
@@ -853,8 +853,9 @@ impl Rabota {
                     }
                 }
                 Sobytie::Komanda(Komanda::MemorySettings{enabled,minutes})=>{
+                    let policy_changed=*memory_enabled!=enabled||*memory_minutes!=minutes.clamp(15,240);
                     *memory_enabled=enabled;*memory_minutes=minutes.clamp(15,240);
-                    if !enabled{let ids=sleep_requests.iter().filter(|(_,a)|a.automatic&&a.stage!=MemoryStage::Closing).map(|(id,_)|*id).collect::<Vec<_>>();for id in ids{memory_refused(id,"Экономия памяти отключена",s,tx,sleep_requests,memory_registrations,brauzery);}}
+                    if policy_changed{let ids=sleep_requests.iter().filter(|(_,a)|a.automatic&&a.stage!=MemoryStage::Closing).map(|(id,_)|*id).collect::<Vec<_>>();for id in ids{memory_refused(id,"Настройки экономии памяти изменились",s,tx,sleep_requests,memory_registrations,brauzery);}}
                     for extra in extras.values(){let _=extra.tx.send(Sobytie::Komanda(Komanda::MemorySettings{enabled,minutes}));}
                 }
                 Sobytie::Komanda(Komanda::MemoryKeep{id,keep})=>{
@@ -885,7 +886,7 @@ impl Rabota {
                     }}
                 }
                 Sobytie::Komanda(Komanda::Zakryt { id }) => {
-                    if let Some(attempt)=sleep_requests.remove(&id){SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&attempt.identity);});if let Some(b)=brauzery.get(&id){crate::memory_cef::resume(b);}memory_registrations.remove(&id);if let Some(v)=s.vkladki.iter_mut().find(|v|v.id==id){v.memory_pending=false;}}
+                    if sleep_requests.contains_key(&id){memory_refused(id,"Выгрузка отменена: вкладка закрывается",s,tx,sleep_requests,memory_registrations,brauzery);}
                     fokus_klaviatury |= s.aktivnaya == id;
                     if let Some(h) = brauzery.get(&id).and_then(|b| b.host()) {
                         h.close_browser(0);
@@ -894,16 +895,12 @@ impl Rabota {
                     }
                 }
                 Sobytie::Komanda(Komanda::ZakrytDrugie { id, sprava }) => {
-                    if let Some(poziciya) = s.vkladki.iter().position(|v| v.id == id) {
-                        for (i, v) in s.vkladki.iter().enumerate() {
-                            if v.id != id && !v.zakreplena && (!sprava || i > poziciya) {
-                                if let Some(attempt)=sleep_requests.remove(&v.id){SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&attempt.identity);});if let Some(b)=brauzery.get(&v.id){crate::memory_cef::resume(b);}memory_registrations.remove(&v.id);}
-                                if let Some(h) = brauzery.get(&v.id).and_then(|b| b.host()) {
-                                    h.close_browser(0);
-                                } else {
-                                    let _ = tx.send(Sobytie::Zakryta(v.id,None));
-                                }
-                            }
+                    if let Some(position)=s.vkladki.iter().position(|v|v.id==id){
+                        let ids=s.vkladki.iter().enumerate().filter(|(i,v)|v.id!=id&&!v.zakreplena&&(!sprava||*i>position)).map(|(_,v)|v.id).collect::<Vec<_>>();
+                        for id in ids{
+                            if sleep_requests.contains_key(&id){memory_refused(id,"Выгрузка отменена: вкладка закрывается",s,tx,sleep_requests,memory_registrations,brauzery);}
+                            if let Some(h)=brauzery.get(&id).and_then(|b|b.host()){h.close_browser(0);}
+                            else{let _=tx.send(Sobytie::Zakryta(id,None));}
                         }
                     }
                 }
@@ -952,6 +949,12 @@ impl Rabota {
                     if !matches!(attempt.stage,MemoryStage::Preflight|MemoryStage::Verify){continue;}
                     let automatic=attempt.automatic;
                     let reason=if *browser_locked||*closing{Some("Браузер заблокирован или закрывается".to_owned())}else{memory_blocked(id,automatic,s,brauzery,devtools_pending,*force_private).map(str::to_owned)}
+                        // Disk policy is an independent safety gate if delivery
+                        // of a just-saved disable/interval change was delayed.
+                        .or_else(||if automatic{match crate::nastrojki::zagruzit_sync(){
+                            Ok(value)=>{let prefs=value.unwrap_or_default();if !prefs.memory_saver||prefs.memory_saver_minutes.clamp(15,240)!=*memory_minutes{Some("Настройки экономии памяти изменились".into())}else{None}},
+                            Err(_)=>Some("Не удалось подтвердить настройки экономии памяти".into()),
+                        }}else{None})
                         .or_else(||if crate::memory_guard::token(identity).as_deref()!=Some(attempt.token.as_str()){Some("Документ изменился во время проверки".into())}else{None})
                         .or_else(||if data["known"]!=true{Some("Безопасность выгрузки страницы не подтверждена".into())}else{None})
                         .or_else(||data["reason"].as_str().map(str::to_owned));

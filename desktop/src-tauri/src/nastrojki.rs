@@ -119,7 +119,24 @@ pub async fn nastrojki_sohranit(app: tauri::AppHandle, nastrojki: Nastrojki) -> 
     use tauri::Manager;
     let state: tauri::State<crate::Sostoyanie> = app.state();
     let queues: Vec<_> = state.vkladki.lock().map_err(|e| e.to_string())?.values().filter_map(|v| v.kanal.clone()).collect();
-    for q in queues { let _ = q.try_send(crate::sessiya::Komanda::Masshtab { procent: saved.masshtab_stranic });let _=q.try_send(crate::sessiya::Komanda::MemorySettings{enabled:saved.memory_saver,minutes:saved.memory_saver_minutes}); }
+    let enabled=saved.memory_saver;let minutes=saved.memory_saver_minutes;let scale=saved.masshtab_stranic;
+    tauri::async_runtime::spawn_blocking(move||{
+        let mut failed=false;
+        for q in queues {
+            let mut command=crate::sessiya::Komanda::MemorySettings{enabled,minutes};
+            let mut applied=false;
+            for _ in 0..20 {
+                match q.try_send(command){
+                    Ok(())=>{applied=true;break;},
+                    Err(std::sync::mpsc::TrySendError::Full(returned))=>{command=returned;std::thread::sleep(std::time::Duration::from_millis(25));},
+                    Err(std::sync::mpsc::TrySendError::Disconnected(_))=>break,
+                }
+            }
+            failed|=!applied;
+            let _=q.try_send(crate::sessiya::Komanda::Masshtab{procent:scale});
+        }
+        if failed{Err("Настройки сохранены, но один из движков не принял их. Повторите сохранение.".to_owned())}else{Ok(())}
+    }).await.map_err(|e|e.to_string())??;
     use tauri::Emitter;let _=app.emit("nastrojki-izmenilis",&saved);
     Ok(saved)
 }
