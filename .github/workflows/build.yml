@@ -12,6 +12,10 @@ on:
         description: Build frontend and isolated security tests (no CEF)
         type: boolean
         default: false
+      performance_build:
+        description: Measure Windows CPU and memory using packages from this run (no build or publication)
+        required: false
+        default: ""
       runtime_build:
         description: Run only Windows screen test from an existing build run (empty = build)
         required: false
@@ -33,7 +37,7 @@ on:
 jobs:
   security:
     if: >-
-      !inputs.runtime_build && !inputs.linux_runtime_build &&
+      !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-22.04
     steps:
@@ -85,7 +89,7 @@ jobs:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
-      !inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build &&
+      !inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
       (github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
@@ -415,6 +419,56 @@ jobs:
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb.sig
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm.sig
+
+
+  performance:
+    name: Windows many-tab performance measurement
+    if: github.event_name == 'workflow_dispatch' && inputs.performance_build != ''
+    runs-on: windows-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record measured package provenance
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN: ${{ inputs.performance_build }}
+        run: |
+          New-Item -ItemType Directory -Force .dev-check/performance-provenance | Out-Null
+          gh api "repos/${{ github.repository }}/actions/runs/$env:BUILD_RUN" > .dev-check/performance-provenance/source-run.json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexusbro-windows
+          path: .dev-check/package
+          run-id: ${{ inputs.performance_build }}
+          github-token: ${{ github.token }}
+      - name: Measure real Windows process tree and page workload
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem .dev-check/package -Recurse -Filter *.exe)
+          if ($installers.Count -ne 1) { throw "Expected exactly one measured installer" }
+          Get-FileHash -Algorithm SHA256 $installers[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/installer-sha256.json
+          7z x -y $installers[0].FullName "-o.dev-check/installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install Pillow pyautogui pywinauto psutil
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-performance-measurement
+          path: |
+            .dev-check/performance-provenance/
+            .dev-check/performance/*.json
+            .dev-check/performance/*.png
+            .dev-check/performance/*.log
+            .dev-check/performance/data/zhurnal.log
+          retention-days: 14
 
   runtime:
     if: github.event_name == 'workflow_dispatch' && inputs.runtime_build != ''
