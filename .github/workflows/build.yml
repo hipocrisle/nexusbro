@@ -78,6 +78,9 @@ jobs:
           python3 tests/frontend_controls.py
           python3 tests/browser_ui_0213.py
           python3 tests/address_selection.py
+          git fetch --no-tags --depth=1 origin 097a6595440609f1a060bd5a9de2d6c51d40bfe6
+          node tests/reklama_stranicy.js
+          python3 tests/adblock_performance.py
           python3 tests/translation_dom.py
           python3 tests/library_state_0214.py
           python3 tests/super_colors_0214.py
@@ -293,6 +296,9 @@ jobs:
           python3 tests/frontend_controls.py
           python3 tests/browser_ui_0213.py
           python3 tests/address_selection.py
+          git fetch --no-tags --depth=1 origin 097a6595440609f1a060bd5a9de2d6c51d40bfe6
+          node tests/reklama_stranicy.js
+          python3 tests/adblock_performance.py
           python3 tests/translation_dom.py
           python3 tests/library_state_0214.py
           python3 tests/super_colors_0214.py
