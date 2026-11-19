@@ -396,6 +396,25 @@ jobs:
           python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Verify real background lifecycle and restored native input
+        if: matrix.os == 'windows-latest'
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-background --supers 2 --tabs 2 --saved-tabs 2 --visibility-probe --expect-background-throttled --timeout 300
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Retain native background lifecycle evidence
+        if: always() && matrix.os == 'windows-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-background-visibility
+          path: |
+            .dev-check/windows-background/*.json
+            .dev-check/windows-background/*.png
+            .dev-check/windows-background/*.log
+            .dev-check/windows-background/data/profili/*/cef*.log
+          retention-days: 14
+
       - name: Сохранить Windows runtime диагностику
         if: always() && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -547,7 +566,7 @@ jobs:
   runtime:
     if: github.event_name == 'workflow_dispatch' && inputs.runtime_build != ''
     runs-on: windows-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -573,6 +592,22 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Verify real background lifecycle of the exact measured installer
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-background --supers 2 --tabs 2 --saved-tabs 2 --visibility-probe --expect-background-throttled --timeout 300
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-background-visibility
+          path: |
+            .dev-check/windows-background/*.json
+            .dev-check/windows-background/*.png
+            .dev-check/windows-background/*.log
+            .dev-check/windows-background/data/profili/*/cef*.log
+          retention-days: 14
       - name: Save screen and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
