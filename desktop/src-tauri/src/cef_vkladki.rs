@@ -989,7 +989,7 @@ impl Rabota {
                         .or_else(||if crate::memory_guard::token(identity).as_deref()!=Some(attempt.token.as_str()){Some("Документ изменился во время проверки".into())}else{None})
                         .or_else(||if data["known"]!=true{Some("Безопасность выгрузки страницы не подтверждена".into())}else{None})
                         .or_else(||data["reason"].as_str().map(str::to_owned));
-                    if let Some(reason)=reason{memory_refused(id,&reason,s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;continue;}
+                    if let Some(reason)=reason{memory_refused(id,&reason,s,tx,sleep_requests,memory_registrations,brauzery);fokus=true;izmeneno=true;continue;}
                     let stage=attempt.stage;
                     let request=attempt.request.clone();
                     if stage==MemoryStage::Preflight {
