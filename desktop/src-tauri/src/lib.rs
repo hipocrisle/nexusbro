@@ -14,6 +14,7 @@ mod fon_konteynera;
 mod okna_app;
 mod brauzer;
 mod sessiya;
+mod tab_routes;
 mod nastrojki;
 mod cef_vkladki;
 mod cdp;

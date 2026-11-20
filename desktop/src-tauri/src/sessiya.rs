@@ -27,6 +27,16 @@ pub struct Obychnaya {
     pub memory_keep:bool,
     #[serde(default)]
     pub memory_pending:bool,
+    /// Local intent only; absent legacy state inherits the Super route.
+    #[serde(default)]
+    pub route: crate::tab_routes::RouteChoice,
+    #[serde(default)]
+    pub route_generation: u64,
+    /// Runtime state is never restored as an applied route.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub route_error: Option<String>,
+    #[serde(default)]
+    pub route_pending: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -118,6 +128,10 @@ impl Sessiya {
             privatnaya: false,
             memory_keep:false,
             memory_pending:false,
+            route: crate::tab_routes::RouteChoice::Inherit,
+            route_generation: 0,
+            route_error: None,
+            route_pending: false,
         });
         self.aktivnaya = id;
         id
@@ -163,6 +177,9 @@ impl Sessiya {
             v.zagruzka = false;
             v.otlozhena = true;
             v.memory_pending=false;
+            v.route_pending=false;
+            v.route_error=None;
+            v.route_generation=0;
             v.nazad = false;
             v.vpered = false;
         }
@@ -172,7 +189,12 @@ impl Sessiya {
 
     pub fn sohranit(&self, profil: &Path) -> anyhow::Result<()> {
         if profil.file_name().and_then(|s|s.to_str()).is_some_and(crate::privatnost::eto_id){return Ok(());}
-        let mut public=self.clone();for v in &mut public.vkladki{v.memory_pending=false;}public.vkladki.retain(|v|!v.privatnaya);public.zakrytye.retain(|v|!v.privatnaya);
+        let mut public=self.clone();for v in public.vkladki.iter_mut().chain(public.zakrytye.iter_mut()) {
+            v.memory_pending=false;
+            v.route_pending=false;
+            v.route_error=None;
+            v.route_generation=0;
+        }public.vkladki.retain(|v|!v.privatnaya);public.zakrytye.retain(|v|!v.privatnaya);
         if !public.vkladki.iter().any(|v|v.id==public.aktivnaya){public.aktivnaya=public.vkladki.first().map(|v|v.id).unwrap_or(0);}
         std::fs::create_dir_all(profil)?;
         let put = profil.join("obychnye.json");
@@ -215,6 +237,7 @@ mod tests {
         std::fs::write(p.0.join("obychnye.json"),r#"{"vkladki":[{"id":11,"adres":"about:blank","zagolovok":"One","zagruzka":true},{"id":22,"adres":"about:blank","zagolovok":"Two","zakreplena":true}],"aktivnaya":999,"sleduyushchaya":0}"#).unwrap();
         let mut s = Sessiya::zagruzit(&p.0);
         assert_eq!(s.aktivnaya, 11);
+        assert!(s.vkladki.iter().all(|v| v.route == crate::tab_routes::RouteChoice::Inherit));
         assert_eq!(s.vkladki[0].id, 22);
         assert!(!s.vkladki[1].zagruzka);
         assert_eq!(s.dobavit("about:blank"), 23);
@@ -222,6 +245,42 @@ mod tests {
         let s = Sessiya::zagruzit(&p.0);
         assert_eq!(s.vkladki.len(), 3);
         assert_eq!(s.aktivnaya, 23);
+    }
+
+    #[test]
+    fn route_roundtrip_preserves_intent_but_not_pending_runtime_state() {
+        let p = Papka::novaya();
+        let mut s = Sessiya::novaya("https://example.test");
+        s.vkladki[0].route = crate::tab_routes::RouteChoice::Connection {
+            id: crate::tab_routes::ConnectionId::parse("connection-1").unwrap(),
+        };
+        s.vkladki[0].route_generation = 7;
+        s.vkladki[0].route_pending = true;
+        s.vkladki[0].route_error = Some("Temporary failure".into());
+        s.zakrytye.push(s.vkladki[0].clone());
+        s.sohranit(&p.0).unwrap();
+        let restored = Sessiya::zagruzit(&p.0);
+        for tab in restored.vkladki.iter().chain(restored.zakrytye.iter()) {
+            assert_eq!(tab.route, s.vkladki[0].route);
+            assert_eq!(tab.route_generation, 0);
+            assert!(!tab.route_pending);
+            assert!(tab.route_error.is_none());
+        }
+    }
+
+    #[test]
+    fn unknown_route_survives_restore_as_blocked_without_resetting_session() {
+        let p = Papka::novaya();
+        let mut value = serde_json::to_value(Sessiya::novaya("https://example.test")).unwrap();
+        value["vkladki"][0]["route"] = serde_json::json!({"kind":"future-route","secret":"not-persisted"});
+        std::fs::write(p.0.join("obychnye.json"), serde_json::to_vec(&value).unwrap()).unwrap();
+        let s = Sessiya::zagruzit(&p.0);
+        assert_eq!(s.vkladki[0].adres, "https://example.test");
+        assert!(matches!(s.vkladki[0].route, crate::tab_routes::RouteChoice::Blocked { .. }));
+        s.sohranit(&p.0).unwrap();
+        let persisted = std::fs::read_to_string(p.0.join("obychnye.json")).unwrap();
+        assert!(!persisted.contains("not-persisted"));
+        assert!(!persisted.contains("future-route"));
     }
 
     #[test]
