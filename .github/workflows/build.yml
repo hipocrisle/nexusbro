@@ -82,6 +82,7 @@ jobs:
       - name: Test encrypted vault and independent account server
         run: |
           cargo test --manifest-path tests/security_vault_harness/Cargo.toml
+          cargo test --manifest-path tests/tab_route_contracts/Cargo.toml
           cargo test --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml --example live_acceptance
