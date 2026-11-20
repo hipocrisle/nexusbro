@@ -100,6 +100,86 @@ class WindowsClient(Client):
                         button={1: 'left', 2: 'middle', 3: 'right'}[button])
 
 
+def windows_token_elevated():
+    import ctypes
+    from ctypes import wintypes
+    kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+    advapi = ctypes.WinDLL('advapi32', use_last_error=True)
+    kernel.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+    advapi.OpenProcessToken.argtypes = [wintypes.HANDLE, wintypes.DWORD, ctypes.POINTER(wintypes.HANDLE)]
+    advapi.GetTokenInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p,
+                                         wintypes.DWORD, ctypes.POINTER(wintypes.DWORD)]
+    token, elevated, length = wintypes.HANDLE(), wintypes.DWORD(), wintypes.DWORD()
+    if not advapi.OpenProcessToken(kernel.GetCurrentProcess(), 0x0008, ctypes.byref(token)):
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        if not advapi.GetTokenInformation(token, 20, ctypes.byref(elevated), ctypes.sizeof(elevated), ctypes.byref(length)):
+            raise ctypes.WinError(ctypes.get_last_error())
+        return bool(elevated.value)
+    finally:
+        kernel.CloseHandle(token)
+
+
+class OwnedInspectorPolicy:
+    """Runner-only, exact-executable WebView2 override with typed restoration.
+
+    Microsoft documents that elevated hosts ignore env/HKCU overrides but honor
+    HKLM: https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security
+    ("For an elevated host app, use appropriate override flags"). No app change.
+    """
+    path = r'Software\Policies\Microsoft\Edge\WebView2\AdditionalBrowserArguments'
+
+    def __init__(self, executable, inspector, elevated):
+        require(sys.platform == 'win32' and os.environ.get('GITHUB_ACTIONS') == 'true',
+                'Inspector policy is limited to disposable GitHub Windows runners')
+        import winreg
+        require(executable.lower() == 'nexusbro.exe', 'Inspector policy must name only the owned NexusBro executable')
+        self.registry, self.name = winreg, executable
+        self.hive = winreg.HKEY_LOCAL_MACHINE if elevated else winreg.HKEY_CURRENT_USER
+        self.scope = 'HKLM' if elevated else 'HKCU'
+        self.access = winreg.KEY_QUERY_VALUE | winreg.KEY_SET_VALUE | winreg.KEY_WOW64_64KEY
+        self.value = '--remote-debugging-port=' + str(inspector)
+        self.previous, self.created_key, self.applied = None, False, False
+
+    def apply(self):
+        r = self.registry
+        try:
+            key = r.OpenKey(self.hive, self.path, 0, self.access)
+        except FileNotFoundError:
+            key = r.CreateKeyEx(self.hive, self.path, 0, self.access)
+            self.created_key = True
+        with key:
+            try:
+                self.previous = r.QueryValueEx(key, self.name)
+            except FileNotFoundError:
+                self.previous = None
+            self.applied = True  # Restore even if writing/readback fails.
+            r.SetValueEx(key, self.name, 0, r.REG_SZ, self.value)
+            current, kind = r.QueryValueEx(key, self.name)
+            require(current == self.value and kind == r.REG_SZ, 'Owned inspector policy readback mismatch')
+        return {'policy_scope': self.scope, 'policy_named_exe': self.name, 'policy_port_matches': True,
+                'previous_named_value_present': self.previous is not None}
+
+    def restore(self):
+        if not self.applied:
+            return
+        r = self.registry
+        with r.OpenKey(self.hive, self.path, 0, self.access) as key:
+            if self.previous is None:
+                try:
+                    r.DeleteValue(key, self.name)
+                except FileNotFoundError:
+                    pass
+            else:
+                value, kind = self.previous
+                r.SetValueEx(key, self.name, 0, kind, value)
+            empty = r.QueryInfoKey(key)[:2] == (0, 0)
+        if self.created_key and empty:
+            r.DeleteKeyEx(self.hive, self.path, r.KEY_WOW64_64KEY)
+        self.applied = False
+
+
 class WindowsDevice:
     def __init__(self, root, exe, cef):
         self.root, self.exe, self.cef = root, exe, cef
@@ -107,12 +187,25 @@ class WindowsDevice:
         self.data.mkdir(parents=True)
         self.inspector = port()
         self.app = self.client = self.log = None
+        self.inspector_policy = None
         self.inspector_diagnostic = {'port': self.inspector, 'attempts': 0,
                                      'proxy_policy': 'owned_loopback_direct'}
 
     def start(self):
         import ctypes
         from pywinauto import Desktop
+        require(sys.platform == 'win32' and os.environ.get('GITHUB_ACTIONS') == 'true',
+                'Native Windows inspector fixture requires a disposable GitHub runner')
+        elevated = windows_token_elevated()
+        self.inspector_diagnostic['token_elevated'] = elevated
+        self.inspector_policy = OwnedInspectorPolicy(self.exe.name, self.inspector, elevated)
+        self.inspector_diagnostic.update({'stage': 'policy_override', 'policy_scope': self.inspector_policy.scope,
+                                         'policy_named_exe': self.inspector_policy.name})
+        try:
+            self.inspector_diagnostic.update(self.inspector_policy.apply())
+        except Exception:
+            self.inspector_policy.restore()
+            raise
         ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
         env = {**os.environ, 'NEXUSBRO_TEST_DATA': str(self.data), 'NEXUSBRO_PROBA': '0',
                'CEF_PATH': str(self.cef), 'PATH': str(self.cef) + os.pathsep + os.environ.get('PATH', ''),
@@ -168,6 +261,13 @@ class WindowsDevice:
         return diagnostic
 
     def stop_app(self):
+        try:
+            self._stop_app()
+        finally:
+            if self.inspector_policy:
+                self.inspector_policy.restore()
+
+    def _stop_app(self):
         if self.client:
             self.client.close()
             self.client = None
