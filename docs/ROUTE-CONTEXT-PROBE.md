@@ -61,16 +61,16 @@ product's exact verified Windows CEF archive. No Rust/CEF runs on the DE-1 host.
 
 Three existing capability scenarios remain: independent, shared and CLI. An
 additional legacy sequence starts three distinct native engine processes while
-keeping one marked disposable root and the original `kesh` path:
+keeping one marked disposable root and the effective original cache path returned by CEF:
 
 1. `legacy_seed`: the original global context with CLI proxy A receives a real
    persistent HttpOnly cookie, a session HttpOnly cookie, and localStorage.
-2. `legacy_reopen`: no CLI proxy, context preference B, the exact same global
+2. `legacy_reopen`: no CLI proxy, context preference B, the exact same effective global
    root/cache. The server checks the actual Cookie header, and JS confirms
    HttpOnly cookies are not exposed through `document.cookie`. Persistent auth
    and localStorage must survive; session-cookie survival is measured, not
    assumed or silently enabled.
-3. `legacy_parallel`: original `kesh` context through A and a fresh override
+3. `legacy_parallel`: original effective default context through A and a fresh override
    subdirectory through B navigate concurrently. The original context must send
    its persistent HttpOnly auth; the override must see none of the original
    cookies/localStorage. No profile, Local State or cookie database is copied.
@@ -91,7 +91,7 @@ stays false even if the capability matrix passes. Build and runtime results are
 pending until the hosted Windows job completes.
 
 A fourth legacy phase, `legacy_explicit`, leaves the global disk cache empty and
-opens the original `root/kesh` through an explicit RequestContext with its own
+opens the recorded original effective cache through an explicit RequestContext with its own
 handler, alongside a second fresh override subdirectory. The same server-side
 auth/storage and concurrent-route assertions apply. This specifically measures
 whether old Windows encrypted cookie storage remains readable with an unchanged
@@ -113,3 +113,17 @@ as a global readiness barrier and separately requires the native global cache
 path to equal the original `root/kesh` directory after filesystem canonicalization.
 The actual server-side HttpOnly/auth and explicit-cache reopen gates remain
 unchanged; no authentication preservation was established by that failed run.
+
+Third Windows run `44728427390` measured a real effective-path distinction:
+CEF reports `global_cache_leaf:"Default"`, not the requested `kesh`. This follows
+the exact CEF156 [`CefSettings.cache_path` documentation](https://github.com/chromiumembedded/cef/blob/8078/include/internal/cef_types.h): a child value is ignored in favour
+of the default profile. It explains why a separately requested `kesh` context
+was not sharing the existing global profile. It is not evidence of lost cookies.
+
+The corrected probe records only the native effective cache leaf in a guarded
+metadata file under its own disposable root. Global reopen must resolve to the
+same canonical directory; explicit legacy contexts open that very directory
+when the global disk cache is empty. The path must remain an immediate child of
+the same root, with no profile/cookie/Local State moves or copies. Server-side
+HttpOnly authentication and storage-preservation assertions are unchanged.
+Partial server observations are retained even if a later legacy phase fails.

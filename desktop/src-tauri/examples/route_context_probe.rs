@@ -134,6 +134,29 @@ wrap_completion_callback! {
     struct Flushed { done: Arc<AtomicUsize> }
     impl CompletionCallback { fn on_complete(&self) { self.done.store(1,Ordering::SeqCst); } }
 }
+fn legacy_cache(root: &PathBuf) -> Result<PathBuf, String> {
+    let data = std::fs::read(root.join("legacy-native-cache.json"))
+        .map_err(|_| "legacy native cache metadata missing")?;
+    let value: serde_json::Value =
+        serde_json::from_slice(&data).map_err(|_| "legacy cache metadata invalid")?;
+    let leaf = value["cache_leaf"]
+        .as_str()
+        .ok_or("legacy cache leaf missing")?;
+    let mut components = std::path::Path::new(leaf).components();
+    if !matches!(components.next(), Some(std::path::Component::Normal(_)))
+        || components.next().is_some()
+    {
+        return Err("legacy cache leaf is not a child directory".into());
+    }
+    let candidate = root.join(leaf);
+    let actual =
+        std::fs::canonicalize(&candidate).map_err(|_| "legacy native cache directory missing")?;
+    let parent = std::fs::canonicalize(root).map_err(|_| "legacy root missing")?;
+    if actual.parent() != Some(parent.as_path()) {
+        return Err("legacy cache escaped its disposable root".into());
+    }
+    Ok(candidate)
+}
 fn legacy(root: &PathBuf, scenario: &str, a: &str, b: &str, target: &str) -> Result<bool, String> {
     let ready = Arc::new(AtomicUsize::new(0));
     // Initialize the actual global context through the documented shared
@@ -153,20 +176,32 @@ fn legacy(root: &PathBuf, scenario: &str, a: &str, b: &str, target: &str) -> Res
         return Err("legacy context initialization deadline exceeded".into());
     }
     let actual_path = CefString::from(&global.cache_path()).to_string();
-    let requested = std::fs::canonicalize(root.join("kesh")).ok();
     let actual = std::fs::canonicalize(&actual_path).ok();
-    let cache_matches = requested.is_some() && requested == actual;
+    let parent = std::fs::canonicalize(root).map_err(|_| "legacy root missing")?;
+    let owned = actual
+        .as_ref()
+        .is_some_and(|path| path.parent() == Some(parent.as_path()));
+    let leaf = std::path::Path::new(&actual_path)
+        .file_name()
+        .map(|p| p.to_string_lossy().into_owned());
+    if scenario == "legacy_seed" && owned {
+        std::fs::write(
+            root.join("legacy-native-cache.json"),
+            serde_json::json!({"cache_leaf":leaf}).to_string(),
+        )
+        .map_err(|_| "legacy cache metadata write failed")?;
+    }
+    let expected = legacy_cache(root)?;
+    let requested = std::fs::canonicalize(expected).ok();
+    let cache_matches = owned && requested.is_some() && requested == actual;
     let sharing = global.is_sharing_with(Some(&mut explicit)) != 0;
     println!(
         "{}",
         serde_json::json!({"legacy_phase":scenario,"global_cache_present":!actual_path.is_empty(),
-        "global_cache_leaf":std::path::Path::new(&actual_path).file_name().map(|p|p.to_string_lossy().into_owned()),
-        "canonical_cache_matches_requested":cache_matches,"global_readiness_context_shares":sharing})
+        "global_cache_leaf":leaf,"canonical_cache_matches_seed":cache_matches,"global_readiness_context_shares":sharing})
     );
     if !cache_matches || !sharing {
-        return Err(
-            "native global cache does not match the unchanged legacy kesh directory".into(),
-        );
+        return Err("native global cache does not match the unchanged effective seed cache".into());
     }
     if scenario == "legacy_reopen" {
         configure(&global, "legacy-default", b, false)?;
@@ -257,14 +292,13 @@ fn experiment(
 ) -> Result<bool, String> {
     let started = Instant::now();
     let ready = Arc::new(AtomicUsize::new(0));
+    let legacy_mode = scenario == "legacy_parallel" || scenario == "legacy_explicit";
     let mut ca = context(
-        root.join(
-            if (scenario == "legacy_parallel" || scenario == "legacy_explicit") {
-                "kesh"
-            } else {
-                "A"
-            },
-        ),
+        if legacy_mode {
+            legacy_cache(&root)?
+        } else {
+            root.join("A")
+        },
         ready.clone(),
     )?;
     let mut cb = if scenario == "shared" {
@@ -296,7 +330,7 @@ fn experiment(
     if scenario == "legacy_explicit" {
         println!(
             "{}",
-            serde_json::json!({"legacy_explicit_old_cache":true,"global_disk_cache_enabled":false})
+            serde_json::json!({"legacy_explicit_native_seed_cache":true,"global_disk_cache_enabled":false})
         );
     }
     configure(&ca, "A", a, sharing)?;

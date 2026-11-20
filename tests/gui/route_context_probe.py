@@ -166,6 +166,9 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
         matches = actual == expected and navigation_routes == expected and storage_expected and overlap and legacy_ok
         return {'scenario':kind,'actual_fetch_routes':actual,'actual_navigation_routes':navigation_routes,'expected_routes':expected,'storage_shared':shared,'storage_matches_expected':storage_expected,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'matches_expected_matrix':matches,'feature_ready':False,**({'persistent_http_only_auth_preserved':legacy_ok,'session_http_only_survived_restart':phase_receipts['legacy_reopen']['B']['session_http_only_sent'],'separate_process_restart':True,'same_root_and_cache':True,'explicit_old_cache_without_global_disk_cache':True,'native_process_count':len(processes),'server_auth_receipts':phase_receipts} if kind=='legacy' else {})}
     finally:
+        (workspace/(kind+'-observations.json')).write_text(json.dumps({'scenario':kind,'last_native_phase':native_phase,
+            'server_auth_receipts':phase_receipts,'actual_reports':reports,'actual_navigation':navigation,
+            'observations_only':True,'product_feature_ready':False},indent=2)+'\n')
         for process in processes:
             if sys.platform=='win32':
                 # The PID is our own subprocess. /T also kills its CEF children.
@@ -204,8 +207,9 @@ def main():
                 try:
                     row=scenario(args.exe.resolve(),workspace,kind,display); rows.append(row)
                 finally:
-                    for path in workspace.glob(kind+'*-native.*'):
-                        (args.out/path.name).write_bytes(path.read_bytes())
+                    for pattern in (kind+'*-native.*',kind+'-observations.json'):
+                        for path in workspace.glob(pattern):
+                            (args.out/path.name).write_bytes(path.read_bytes())
         assert all(row['matches_expected_matrix'] for row in rows), 'Actual routes or storage do not match the proposed capability matrix'
         (args.out/'results.json').write_text(json.dumps({'measurements':rows,'capability_measurement_passed':True,'product_feature_ready':False,'platform':sys.platform,'coverage':{'http':True,'https':False,'service_worker_startup':False,'product_integration':False}},indent=2)+'\n')
         print(json.dumps({'capability_measurement_passed':True,'product_feature_ready':False}))
