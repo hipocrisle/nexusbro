@@ -90,7 +90,7 @@ wrap_app! {
                 // Preserve its resolution while origins remain proxy-resolved.
                 // Chromium 156 MappedHostResolver recognizes ^NOTFOUND as a
                 // failing request, rather than resolving a replacement name.
-                ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP * ^NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]")));
+                ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP * ^NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE ::1")));
                 // Движок — тёмный, как вся программа.
                 ks.append_switch(Some(&CefString::from("force-dark-mode")));
             }
