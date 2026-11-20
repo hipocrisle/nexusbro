@@ -87,16 +87,7 @@ class Fixture:
                 if seed and seed not in owner.tokens:
                     self.send_error(400)
                     return
-                body = ("<!doctype html><title>Route fixture</title><input id='draft' style='position:absolute;left:20px;top:20px'>"
-                        "<button id='media' style='position:absolute;left:20px;top:70px'>Start media</button><audio id='audio' loop></audio>"
-                        "<script>const q=new URLSearchParams(location.search);"
-                        "if(q.has('seed'))localStorage.setItem('route-store',q.get('seed'));"
-                        "function beat(){fetch('/receipt/'+q.get('case')+'?storage='+encodeURIComponent(localStorage.getItem('route-store')||'empty'),{cache:'no-store'})}"
-                        "if(!location.pathname.startsWith('/receipt/')){beat();setInterval(beat,700)}"
-                        "document.querySelector('#draft').oninput=()=>fetch('/receipt/draft-typed');"
-                        "document.querySelector('#media').onclick=async()=>{const c=new AudioContext();await c.resume();"
-                        "const o=c.createOscillator(),g=c.createGain();g.gain.value=.02;o.connect(g);g.connect(c.destination);o.start();window.fixtureAudio=c;if(c.state==='running')fetch('/receipt/media-running')};"
-                        + owner.rtc_script() + "</script>").encode()
+                body = owner.page_html(q.get('case', [None])[0])
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.send_header('Cache-Control', 'no-store')
@@ -264,6 +255,24 @@ class Fixture:
                 "timer=setTimeout(()=>{if(done)return;done=true;void send('timeout');pc.close()},14000);"
                 "await pc.setLocalDescription(await pc.createOffer());finish();"
                 "}catch(e){clearTimeout(timer);if(pc)pc.close();void send('error')}})()}" )
+
+    def page_html(self, case):
+        # Protected controls belong only to the corresponding refusal case.
+        # Ordinary route changes must exercise a genuinely safe plain document.
+        controls = handlers = ''
+        if case == 'draft':
+            controls = "<input id='draft' style='position:absolute;left:20px;top:20px'>"
+            handlers = "document.querySelector('#draft').oninput=()=>fetch('/receipt/draft-typed');"
+        elif case == 'media':
+            controls = "<button id='media' style='position:absolute;left:20px;top:70px'>Start media</button><audio id='audio' loop></audio>"
+            handlers = ("document.querySelector('#media').onclick=async()=>{const c=new AudioContext();await c.resume();"
+                        "const o=c.createOscillator(),g=c.createGain();g.gain.value=.02;o.connect(g);g.connect(c.destination);o.start();window.fixtureAudio=c;if(c.state==='running')fetch('/receipt/media-running')};")
+        return ("<!doctype html><title>Route fixture</title><p>Owned route fixture</p>" + controls
+                + "<script>const q=new URLSearchParams(location.search);"
+                "if(q.has('seed'))localStorage.setItem('route-store',q.get('seed'));"
+                "function beat(){fetch('/receipt/'+q.get('case')+'?storage='+encodeURIComponent(localStorage.getItem('route-store')||'empty'),{cache:'no-store'})}"
+                "if(!location.pathname.startsWith('/receipt/')){beat();setInterval(beat,700)}"
+                + handlers + self.rtc_script() + "</script>").encode()
 
     def worker_script(self):
         # The page never receives this nonce or fabricates worker receipts.
