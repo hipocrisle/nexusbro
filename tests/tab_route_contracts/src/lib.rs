@@ -1,6 +1,8 @@
 // Import the real contract module; this harness has no CEF/Tauri dependency.
 #[path = "../../../desktop/src-tauri/src/tab_routes.rs"]
 pub mod tab_routes;
+#[path = "../../../desktop/src-tauri/src/memory_guard.rs"]
+pub mod memory_guard;
 
 #[cfg(test)]
 mod tests {
