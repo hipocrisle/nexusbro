@@ -7,7 +7,7 @@ use std::{
     collections::HashMap,
     sync::mpsc::Sender,
     sync::{
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
 };
@@ -28,7 +28,6 @@ impl Drop for Secret {
         self.password.zeroize();
     }
 }
-static NEXT: AtomicI32 = AtomicI32::new(3000000);
 static ENABLED: AtomicBool = AtomicBool::new(false);
 type Contexts = Arc<Mutex<HashMap<i32, (String, String)>>>;
 thread_local! {
@@ -106,34 +105,7 @@ fn runtime_contexts(b: &Browser, id: u64) -> Option<Contexts> {
 }
 thread_local! {static ACTIVE:std::cell::RefCell<HashMap<String,(std::time::Instant,u64,Registration)>>=Default::default();}
 fn command(b: &Browser, message: i32, method: &str, values: Value) -> bool {
-    let Some(host) = b.host() else {
-        return false;
-    };
-    let Some(params) = dictionary_value_create() else {
-        return false;
-    };
-    for (key, v) in values.as_object().into_iter().flatten() {
-        let key = CefString::from(key.as_str());
-        match v {
-            Value::String(s) => {
-                params.set_string(Some(&key), Some(&CefString::from(s.as_str())));
-            }
-            Value::Bool(v) => {
-                params.set_bool(Some(&key), *v as i32);
-            }
-            Value::Number(v) => {
-                if let Some(v) = v.as_i64() {
-                    params.set_int(Some(&key), v as i32);
-                }
-            }
-            _ => {}
-        }
-    }
-    host.execute_dev_tools_method(
-        message,
-        Some(&CefString::from(method)),
-        Some(&mut params.clone()),
-    ) != 0
+    crate::cdp::send(b, message, method, values)
 }
 fn origin(b: &Browser) -> Option<String> {
     let f = b.main_frame()?;
@@ -214,7 +186,9 @@ pub fn install(b: &Browser, id: u64, private: bool, tx: Sender<Sobytie>) {
     let Some(contexts) = runtime_contexts(b, id) else {
         return;
     };
-    let base = NEXT.fetch_add(8, Ordering::Relaxed);
+    let Some(base) = crate::cdp::reserve(8) else {
+        return;
+    };
     let state = Arc::new(Watch {
         base,
         id,
@@ -253,7 +227,9 @@ pub fn request(
     let Some(contexts) = runtime_contexts(b, id) else {
         return false;
     };
-    let base = NEXT.fetch_add(8, Ordering::Relaxed);
+    let Some(base) = crate::cdp::reserve(8) else {
+        return false;
+    };
     let js = if let Some(payload) = payload {
         include_str!("../scripts/password_fill.js")
             .replace("__ORIGIN__", &json!(expected).to_string())

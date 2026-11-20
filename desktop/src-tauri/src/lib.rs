@@ -16,6 +16,7 @@ mod brauzer;
 mod sessiya;
 mod nastrojki;
 mod cef_vkladki;
+mod cdp;
 mod memory_guard;
 mod memory_cef;
 mod memory_bootstrap;

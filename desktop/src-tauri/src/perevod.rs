@@ -28,14 +28,10 @@ pub fn nachat(b:&Browser,id:u64,token:String,tx:Sender<Sobytie>)->Option<Registr
     let f=b.main_frame()?;let url=reqwest::Url::parse(&CefString::from(&f.url()).to_string()).ok()?;
     if !matches!(url.scheme(),"http"|"https"){return None;}
     let h=b.host()?;
-    static NEXT:std::sync::atomic::AtomicI32=std::sync::atomic::AtomicI32::new(1_000_000);
-    let message=NEXT.fetch_add(1,std::sync::atomic::Ordering::Relaxed);
+    let message=crate::cdp::reserve(1)?;
     let registration=h.add_dev_tools_message_observer(Some(&mut Snimok::new(id,token.clone(),message,tx)))?;
     let expression=include_str!("../scripts/perevod.js").replace("__TOKEN__",&serde_json::to_string(&token).ok()?);
-    let params=dictionary_value_create()?;
-    params.set_string(Some(&CefString::from("expression")),Some(&CefString::from(expression.as_str())));
-    params.set_bool(Some(&CefString::from("returnByValue")),1);
-    let _=h.execute_dev_tools_method(message,Some(&CefString::from("Runtime.evaluate")),Some(&mut params.clone()));
+    if !crate::cdp::send(b,message,"Runtime.evaluate",json!({"expression":expression,"returnByValue":true})){return None;}
     Some(registration)
 }
 pub fn primenit(b:&Browser,token:&str,items:&[(u32,String)]){

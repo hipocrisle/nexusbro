@@ -3,11 +3,7 @@
 use crate::cef_vkladki::Sobytie;
 use cef::*;
 use serde_json::{json, Value};
-use std::{
-    sync::atomic::{AtomicI32, Ordering},
-    sync::mpsc::Sender,
-};
-static NEXT: AtomicI32 = AtomicI32::new(6_000_000);
+use std::sync::mpsc::Sender;
 pub fn receive(
     browser: &Browser,
     frame: &Frame,
@@ -72,21 +68,12 @@ wrap_dev_tools_message_observer! {
  }
 }
 fn lifecycle(browser: &Browser, message: i32, state: &str) -> bool {
-    let Some(host) = browser.host() else {
-        return false;
-    };
-    let Some(params) = dictionary_value_create() else {
-        return false;
-    };
-    params.set_string(
-        Some(&CefString::from("state")),
-        Some(&CefString::from(state)),
-    );
-    host.execute_dev_tools_method(
+    crate::cdp::send(
+        browser,
         message,
-        Some(&CefString::from("Page.setWebLifecycleState")),
-        Some(&mut params.clone()),
-    ) != 0
+        "Page.setWebLifecycleState",
+        json!({"state":state}),
+    )
 }
 pub fn freeze(
     browser: &Browser,
@@ -94,7 +81,7 @@ pub fn freeze(
     request: &str,
     tx: Sender<Sobytie>,
 ) -> Option<Registration> {
-    let message = NEXT.fetch_add(1, Ordering::Relaxed);
+    let message = crate::cdp::reserve(1)?;
     let registration =
         browser
             .host()?
@@ -108,5 +95,7 @@ pub fn freeze(
     lifecycle(browser, message, "frozen").then_some(registration)
 }
 pub fn resume(browser: &Browser) {
-    let _ = lifecycle(browser, NEXT.fetch_add(1, Ordering::Relaxed), "active");
+    if let Some(message) = crate::cdp::reserve(1) {
+        let _ = lifecycle(browser, message, "active");
+    }
 }

@@ -6,11 +6,10 @@ use std::{
     cell::RefCell,
     collections::HashMap,
     sync::{
-        atomic::{AtomicBool, AtomicI32, Ordering},
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex,
     },
 };
-static NEXT: AtomicI32 = AtomicI32::new(9_000_000);
 thread_local! {static REGISTRATIONS:RefCell<HashMap<i32,Registration>>=Default::default();}
 pub struct Bootstrap {
     pending: AtomicBool,
@@ -140,7 +139,10 @@ wrap_task! {
     impl Task{fn execute(&self){if self.setup.pending.load(Ordering::Acquire){eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=deadline browser={}",self.browser.identifier());}finish(&self.browser,&self.setup,false);}}
 }
 pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
-    let message = NEXT.fetch_add(1, Ordering::Relaxed);
+    let Some(message) = crate::cdp::reserve(1) else {
+        finish(browser, &setup, false);
+        return;
+    };
     let Some(host) = browser.host() else {
         eprintln!(
             "NEXUSBRO_MEMORY_BOOTSTRAP stage=host_missing browser={}",
@@ -149,19 +151,8 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
         finish(browser, &setup, false);
         return;
     };
-    let Some(params) = dictionary_value_create() else {
-        finish(browser, &setup, false);
-        return;
-    };
     let script = crate::cef_memory_renderer::new_document_script(&setup.name, &setup.nonce);
-    params.set_string(
-        Some(&CefString::from("source")),
-        Some(&CefString::from(script.as_str())),
-    );
-    params.set_bool(
-        Some(&CefString::from("runImmediately")),
-        (setup.target.lock().unwrap().as_str() == "about:blank") as i32,
-    );
+    let params = serde_json::json!({"source":script,"runImmediately":setup.target.lock().unwrap().as_str()=="about:blank"});
     let Some(registration) = host
         .add_dev_tools_message_observer(Some(&mut BootstrapObserver::new(setup.clone(), message)))
     else {
@@ -175,12 +166,12 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
     REGISTRATIONS.with(|r| {
         r.borrow_mut().insert(browser.identifier(), registration);
     });
-    if host.execute_dev_tools_method(
+    if !crate::cdp::send(
+        browser,
         message,
-        Some(&CefString::from("Page.addScriptToEvaluateOnNewDocument")),
-        Some(&mut params.clone()),
-    ) == 0
-    {
+        "Page.addScriptToEvaluateOnNewDocument",
+        params,
+    ) {
         eprintln!(
             "NEXUSBRO_MEMORY_BOOTSTRAP stage=command_rejected browser={}",
             browser.identifier()
