@@ -359,9 +359,10 @@ export default function App() {
   const cloudClosed=cloudSaved.filter(v=>!openedIds.has(v.id)&&cloud.selected(v.id,v.privatnaya));
   const localClosed=cloudSaved.filter(v=>!v.privatnaya&&!v.id.startsWith("pvt-")&&!openedIds.has(v.id)&&!cloud.selected(v.id,v.privatnaya));
   const hasCloud=cloudOpen.length+cloudClosed.length>0;
+  function syncCloud(){setOshibka("");void cloud.run().catch(error=>setOshibka(String(error)));}
   function renderSuper(v:Vidno){return (
-            <button
-              key={v.id}
+            <div className="super-cloud-row" data-super-row={v.id} key={v.id}><button
+              type="button"
               data-super-id={v.id}
               data-cloud-state={cloud.state(v.id,v.privatnaya)}
               className={"vkladka" + (v.id === aktivnaya ? " aktivna" : "") + (dragSuper === v.id ? " drop-before" : "") + (superColor(v.cvet) ? " super-colored" : "") + (v.privatnaya ? " super-private" : "") + (cloud.selected(v.id,v.privatnaya)?" super-cloud-selected":"")}
@@ -391,15 +392,14 @@ export default function App() {
                 data-pryamo={v.proxy ? "net" : "da"}
               />
               <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" title="Приватная супер-вкладка" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
-              {!v.privatnaya&&!v.id.startsWith("pvt-")&&<SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)}/>}
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
-            </button>
+            </button>{cloud.selected(v.id,v.privatnaya)&&<SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)} busy={cloud.busy} onSync={syncCloud}/>}</div>
   );}
-  function renderSaved(v:Nastrojki){return <button key={v.id} type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-saved"+(cloud.selected(v.id)?" super-cloud-selected":"")+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} title={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
-    <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span><SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)}/>
-  </button>;}
+  function renderSaved(v:Nastrojki){return <div className="super-cloud-row super-cloud-row-saved" data-super-row={v.id} key={v.id}><button type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-saved"+(cloud.selected(v.id)?" super-cloud-selected":"")+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} title={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
+    <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
+  </button>{cloud.selected(v.id,v.privatnaya)&&<SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)} busy={cloud.busy} onSync={syncCloud}/>}</div>;}
   return (
     <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
@@ -409,7 +409,7 @@ export default function App() {
           onClick={() => { void sohranitNastrojki({ ...nastrojkiRef.current, panel_svernuta: !nastrojkiRef.current.panel_svernuta }).catch((e) => setOshibka(String(e))); }}>{nastrojki.panel_svernuta ? "»" : "«"}</button></div>
         <div className="spisok" onDragOver={(e) => { if (e.dataTransfer.types.includes("application/nexusbro-super")) e.preventDefault(); }} onDrop={(e) => void perenestiSuper(null, e)}>
           {hasCloud&&<section className="super-cloud-group" data-cloud-group="cloud" aria-label="Облако — выбраны для синхронизации">
-            <SuperCloudHeading cloud receipt={cloud.lastSync} state={cloud.overall}/>
+            <SuperCloudHeading cloud receipt={cloud.lastSync} state={cloud.overall} busy={cloud.busy} onSync={syncCloud}/>
             {cloudOpen.map(renderSuper)}{cloudClosed.map(renderSaved)}
           </section>}
           <section className="super-cloud-group" data-cloud-group="local" aria-label="Супер-вкладки на этом устройстве"><SuperCloudHeading cloud={false}/>{localOpen.map(renderSuper)}{localClosed.map(renderSaved)}</section>

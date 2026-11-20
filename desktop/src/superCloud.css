@@ -13,6 +13,20 @@
 .super-cloud-saved-name small{font-size:10px;color:var(--tiho)}
 .panel-svernuta .super-cloud-heading{justify-content:center;padding:5px 0;gap:0}
 .panel-svernuta .super-cloud-heading-text,.panel-svernuta .super-cloud-saved-name{display:none}
-.panel-svernuta .vkladka:not(.super-private){position:relative;min-height:42px;padding-bottom:11px}
+.panel-svernuta .vkladka.super-cloud-selected{position:relative;min-height:42px;padding-bottom:11px}
 .panel-svernuta .super-cloud-badge{position:absolute;right:2px;bottom:2px;width:16px;height:16px;background:var(--fon);border:1px solid var(--kraj);border-radius:5px}
 .panel-svernuta .super-cloud-badge svg{width:12px;height:12px}
+
+/* Sync controls are siblings of the Super buttons, never interactive children. */
+.super-cloud-row{position:relative;min-width:0}
+.super-cloud-row>.vkladka.super-cloud-selected{padding-right:61px}
+.super-cloud-row>.vkladka.super-cloud-selected .krest{position:absolute;right:10px;top:50%;transform:translateY(-50%)}
+button.super-cloud-badge{position:absolute;right:29px;top:50%;transform:translateY(-50%);width:24px;height:26px;padding:3px;border:0;border-radius:6px;background:transparent;font:inherit;cursor:pointer}
+.super-cloud-row-saved>button.super-cloud-badge{right:8px}
+.super-cloud-row-saved>.vkladka.super-cloud-selected{padding-right:42px}
+button.super-cloud-heading-icon{width:24px;height:24px;padding:3px;border:0;border-radius:6px;background:transparent;font:inherit;cursor:pointer}
+button.super-cloud-badge:hover,button.super-cloud-heading-icon:hover{background:var(--fon3)}
+button.super-cloud-badge:focus-visible,button.super-cloud-heading-icon:focus-visible{outline:2px solid var(--akcent);outline-offset:1px}
+button.super-cloud-badge:disabled,button.super-cloud-heading-icon:disabled{cursor:progress;opacity:.7}
+.panel-svernuta .super-cloud-row>.vkladka.super-cloud-selected{padding:8px 2px 11px}
+.panel-svernuta button.super-cloud-badge{right:2px;top:auto;bottom:5px;transform:none;width:17px;height:17px;padding:1px;border:1px solid var(--kraj);background:var(--fon)}

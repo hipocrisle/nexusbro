@@ -25,7 +25,7 @@ window.__tabs=[
 window.__closed=[{id:'cloud-saved',nazvanie:'Облачная сохранённая',proxy:'',adres:'about:blank',cvet:'#d4ae55',privatnaya:false},structuredClone(window.__tabs[0]),{id:'pvt-saved',nazvanie:'Приватная сохранённая',proxy:'',adres:'about:blank',privatnaya:true}];
 window.__vault={exists:true,unlocked:true};window.__account={configured:true,logged_in:true,username:'browser-fixture',server:'https://browser-sync.fixture.invalid',totp_enabled:false,user_id:'account-one'};
 window.__selection={settings:false,bookmarks:false,supers:[],passwords:[]};window.__lastSync=null;window.__report={pushed:0,pulled:0,conflicts:[],errors:[]};window.__syncReads=0;window.__started=[];
-window.__deferSync=false;window.__deferredSync=[];
+window.__deferSync=false;window.__deferredSync=[];window.__holdRun=false;window.__runWaiters=[];window.__runCount=0;window.__runConflicts=false;
 window.__recordStates={};window.__omitAuthoritative=false;window.__runFails=false;
 window.__normalIds=()=>[...new Set([...window.__tabs,...window.__closed].filter(v=>!v.privatnaya&&!v.id.startsWith('pvt-')).map(v=>v.id))];
 window.__selected=id=>window.__selection.supers.some(key=>key==='*'||key===id);
@@ -48,6 +48,8 @@ window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
   if(args.action==='status'){window.__syncReads++;if(window.__deferSync)return new Promise(resolve=>window.__deferredSync.push(()=>resolve(snapshot)));return snapshot;}
   if(args.action==='configure'){window.__selection=structuredClone(args.data.selection);return window.__status();}
   if(args.action==='run'){
+   window.__runCount++;if(window.__holdRun)await new Promise(resolve=>window.__runWaiters.push(resolve));
+   if(window.__runConflicts){window.__recordStates['cloud-open']='conflict';window.__report={pushed:0,pulled:0,conflicts:['nexusbro.v1/super/cloud-open'],errors:[]};return structuredClone(window.__report);}
    for(const id of window.__normalIds().filter(window.__selected))window.__recordStates[id]=window.__runFails?'error':'ok';
    if(window.__runFails){window.__report={pushed:0,pulled:0,conflicts:[],errors:['Fixture transport failed']};throw Error('Fixture transport failed');}
    window.__lastSync=1795000000000;window.__report={pushed:2,pulled:0,conflicts:[],errors:[]};return structuredClone(window.__report);
@@ -63,6 +65,9 @@ window.__cloudChanged=(detail={})=>window.dispatchEvent(new CustomEvent('nexusbr
 
 class Quiet(http.server.SimpleHTTPRequestHandler):
  def log_message(self,*args):pass
+
+def cloud_badge(tab):
+ return tab.locator('..').locator('.super-cloud-badge')
 
 def color_kind(locator, expected):
  rgb=locator.evaluate('e=>getComputedStyle(e).color.match(/\\d+/g).slice(0,3).map(Number)')
@@ -92,7 +97,7 @@ try:
   page.wait_for_function('window.__syncReads>0')
   assert page.locator('[data-cloud-group="cloud"]').count()==0
   expect(page.locator('[data-cloud-group="local"]')).to_be_visible()
-  expect(opened.locator('.super-cloud-badge')).to_be_visible();color_kind(opened.locator('.super-cloud-badge'),'gray')
+  expect(cloud_badge(opened)).to_have_count(0);expect(cloud_badge(local)).to_have_count(0)
   before_fill=opened.evaluate('e=>getComputedStyle(e).backgroundColor')
   before_shadow=opened.evaluate('e=>getComputedStyle(e).boxShadow')
   assert not page.evaluate('window.__started.length')
@@ -110,22 +115,58 @@ try:
   expect(saved).to_have_attribute('data-cloud-saved','true')
   expect(saved).to_have_attribute('data-cloud-state','pending')
   expect(local).to_have_attribute('data-cloud-state','local');expect(private).to_have_attribute('data-cloud-state','local')
-  assert private.locator('.super-cloud-badge').count()==0
+  assert cloud_badge(private).count()==0
   assert page.locator('.vkladka[data-super-id="cloud-open"]').count()==1
   assert page.locator('.vkladka[data-super-id="pvt-saved"]').count()==0
   assert page.evaluate('window.__started.length')==0
   assert 'Подтверждена' not in opened.get_attribute('title')
-  dialog.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
+  dialog.get_by_role('button',name='Закрыть',exact=True).click()
+  heading_sync=page.get_by_role('button',name='Синхронизировать выбранные данные',exact=True)
+  selection_before=page.evaluate('JSON.stringify(window.__selection)')
+  active_before=page.evaluate('window.__active');args_before=page.evaluate('window.__args.length')
+  page.evaluate('window.__holdRun=true')
+  heading_sync.focus();heading_sync.press('Enter')
+  page.wait_for_function('window.__runCount===1')
+  expect(heading_sync).to_be_disabled();expect(heading_sync).to_have_attribute('aria-busy','true')
+  expect(cloud_badge(opened)).to_be_disabled();expect(cloud_badge(saved)).to_be_disabled()
+  expect(opened).to_have_attribute('data-cloud-state','pending')
+  box=cloud_badge(opened).bounding_box();page.mouse.click(box['x']+box['width']/2,box['y']+box['height']/2)
+  page.wait_for_timeout(80);assert page.evaluate('window.__runCount')==1
+  assert page.evaluate('JSON.stringify(window.__selection)')==selection_before
+  page.evaluate('window.__holdRun=false;window.__runWaiters.splice(0).forEach(resolve=>resolve())')
+  expect(opened).to_have_attribute('data-cloud-state','selected')
+  expect(heading_sync).to_be_enabled()
+  assert page.evaluate('window.__active')==active_before
+  assert not page.evaluate('(start)=>window.__args.slice(start).some(c=>["pereklyuchit","vosstanovit","pokazat_dvizhki"].includes(c.cmd))',args_before)
+  assert not page.evaluate('window.__started.length')
+  assert page.locator('button button').count()==0
+  runs=page.evaluate('window.__runCount');cloud_badge(saved).click()
+  page.wait_for_function('(before)=>window.__runCount===before+1',arg=runs)
+  expect(cloud_badge(saved)).to_be_enabled();assert not page.evaluate('window.__started.length')
+  assert page.evaluate('window.__active')==active_before
+  assert page.evaluate('JSON.stringify(window.__selection)')==selection_before
+  # Late duplicated window events may invalidate the immediate post-run read.
+  # Retain an unknown state until the newest authoritative read resolves.
+  page.evaluate('window.__deferSync=true;window.__holdRun=true')
+  runs=page.evaluate('window.__runCount');cloud_badge(opened).click()
+  page.wait_for_function('(before)=>window.__runCount===before+1',arg=runs)
+  page.wait_for_function('window.__deferredSync.length>=1')
+  page.evaluate('window.__holdRun=false;window.__runWaiters.splice(0).forEach(resolve=>resolve())')
+  page.wait_for_function('window.__deferredSync.length>=2')
+  page.evaluate("window.__cloudChanged({area:'sync',action:'run',phase:'end',opId:'late-window-event'})")
+  page.wait_for_function('window.__deferredSync.length>=3')
+  page.evaluate('window.__deferredSync.splice(0,2).forEach(resolve=>resolve())')
+  expect(heading_sync).to_be_enabled();expect(opened).to_have_attribute('data-cloud-state','paused')
+  page.evaluate('window.__deferSync=false;window.__deferredSync.splice(0).forEach(resolve=>resolve())')
   expect(opened).to_have_attribute('data-cloud-state','selected')
   receipt=page.get_by_test_id('cloud-last-account-sync')
   expect(receipt).to_have_attribute('data-last-sync','1795000000000')
   compact_header(page);color_kind(receipt.locator('.super-cloud-heading-icon'),'green')
   assert opened.get_attribute('data-cloud-state')!='synced'
-  dialog.get_by_role('button',name='Закрыть',exact=True).click()
-  expect(opened.locator('.super-cloud-badge')).to_be_visible()
+  expect(cloud_badge(opened)).to_be_visible()
   assert opened.evaluate('e=>getComputedStyle(e).backgroundColor')==before_fill
   assert opened.evaluate('e=>getComputedStyle(e).boxShadow')==before_shadow
-  color_kind(opened.locator('.super-cloud-badge'),'green');color_kind(local.locator('.super-cloud-badge'),'gray')
+  color_kind(cloud_badge(opened),'green');expect(cloud_badge(local)).to_have_count(0)
 
   # Opt out through actual SecuritySettings controls. A closed saved Super must
   # move to Local, preserving its data and staying dormant, with no delete IPC.
@@ -136,7 +177,7 @@ try:
   dialog.get_by_role('button',name='Сохранить выбор',exact=True).click()
   expect(saved).to_have_attribute('data-cloud-state','local')
   expect(page.locator('[data-cloud-group="local"] [data-super-id="cloud-saved"]')).to_have_count(1)
-  expect(saved).to_have_attribute('data-cloud-saved','true');color_kind(saved.locator('.super-cloud-badge'),'gray')
+  expect(saved).to_have_attribute('data-cloud-saved','true');expect(cloud_badge(saved)).to_have_count(0)
   assert page.evaluate('JSON.stringify(window.__closed)')==saved_before
   assert not page.evaluate('window.__started.length')
   assert not page.evaluate('window.__args.some(c=>/delete|udalit|zakryt/i.test(c.cmd))')
@@ -159,7 +200,7 @@ try:
   assert page.locator('[data-cloud-group="cloud"] .vkladka').count()==2
   page.get_by_role('button',name='Свернуть левую панель',exact=True).click()
   expect(opened.locator('.imya')).not_to_be_visible()
-  expect(opened.locator('.super-cloud-badge')).to_be_visible()
+  expect(cloud_badge(opened)).to_be_visible()
   expect(page.locator('[data-cloud-group="cloud"] .super-cloud-heading-icon svg')).to_be_visible()
   for button,short in [(opened,'Обл'),(local,'Лок'),(private,'При')]:
    expect(button.locator('.kratkoe-imya')).to_have_text(short)
@@ -167,11 +208,15 @@ try:
    assert box['x']>=row['x'] and box['x']+box['width']<=row['x']+row['width']
    assert button.locator('.kratkoe-imya').evaluate('(e)=>e.scrollWidth<=e.clientWidth')
   compact_header(page)
-  badge=opened.locator('.super-cloud-badge').bounding_box();row=opened.bounding_box()
+  runs=page.evaluate('window.__runCount');cloud_badge(opened).focus();cloud_badge(opened).press('Space')
+  page.wait_for_function('(before)=>window.__runCount===before+1',arg=runs)
+  expect(cloud_badge(opened)).to_be_enabled();assert page.evaluate('window.__active')=='cloud-saved'
+  expect(cloud_badge(local)).to_have_count(0);expect(cloud_badge(private)).to_have_count(0)
+  badge=cloud_badge(opened).bounding_box();row=opened.bounding_box()
   assert badge['x']>=row['x'] and badge['x']+badge['width']<=row['x']+row['width']
   assert badge['y']>=row['y'] and badge['y']+badge['height']<=row['y']+row['height']
   expect(private.locator('.super-private-badge')).to_be_visible()
-  assert private.locator('.super-cloud-badge').count()==0
+  assert cloud_badge(private).count()==0
   page.screenshot(path='/tmp/nexusbro-cloud-collapsed.png')
   page.get_by_role('button',name='Развернуть левую панель',exact=True).click()
 
@@ -180,7 +225,7 @@ try:
   page.evaluate("window.__recordStates['cloud-open']='pending';window.__cloudChanged()")
   expect(opened).to_have_attribute('data-cloud-state','pending')
   expect(saved).to_have_attribute('data-cloud-state','selected')
-  color_kind(opened.locator('.super-cloud-badge'),'gray')
+  color_kind(cloud_badge(opened),'gray')
   expect(receipt).to_have_attribute('data-cloud-state','pending')
   expect(receipt).to_have_attribute('data-last-sync','1795000000000')
   page.evaluate("window.__omitAuthoritative=true;window.__cloudChanged()")
@@ -192,8 +237,8 @@ try:
   # A conflict is per-record evidence; an account receipt alone never clears it.
   page.evaluate("window.__recordStates['cloud-open']='conflict';window.__report.conflicts=['nexusbro.v1/super/cloud-open'];window.__cloudChanged()")
   expect(opened).to_have_attribute('data-cloud-state','conflict')
-  assert 'Конфликт версий' in opened.locator('.super-cloud-badge').get_attribute('title')
-  color_kind(opened.locator('.super-cloud-badge'),'red');color_kind(receipt.locator('.super-cloud-heading-icon'),'red')
+  assert 'Конфликт версий' in cloud_badge(opened).get_attribute('title')
+  color_kind(cloud_badge(opened),'red');color_kind(receipt.locator('.super-cloud-heading-icon'),'red')
   page.screenshot(path='/tmp/nexusbro-cloud-red.png')
   expect(page.locator('.vkladka[data-super-id="cloud-saved"]')).to_have_attribute('data-cloud-state','selected')
 
@@ -204,37 +249,38 @@ try:
   page.evaluate("window.__cloudChanged({area:'sync',action:'run',phase:'end',opId:'native-operation',failed:false});window.__cloudChanged({area:'sync',action:'run',phase:'start',opId:'native-operation'})")
   expect(opened).to_have_attribute('data-cloud-state','selected')
 
-  # Run the real settings handler against a failed transport fixture, persist
+  # Run the sidebar sync handler against a failed transport fixture, persist
   # the returned authoritative error, and reopen a fresh renderer: it stays red.
-  page.evaluate("window.__runFails=true;window.dispatchEvent(new Event('nexusbro-security'))")
-  dialog.get_by_role('button',name='Синхронизация',exact=True).click()
-  dialog.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
+  page.evaluate('window.__runFails=true');cloud_badge(opened).click()
   expect(opened).to_have_attribute('data-cloud-state','error')
-  dialog.get_by_role('button',name='Закрыть',exact=True).click()
-  color_kind(opened.locator('.super-cloud-badge'),'red');color_kind(receipt.locator('.super-cloud-heading-icon'),'red')
+  expect(cloud_badge(opened)).to_be_enabled()
+  expect(page.locator('.oshibka')).to_contain_text('Fixture transport failed')
+  color_kind(cloud_badge(opened),'red');color_kind(receipt.locator('.super-cloud-heading-icon'),'red')
   persisted_error=page.evaluate('({__tabs:window.__tabs,__closed:window.__closed,__account:window.__account,__selection:window.__selection,__lastSync:window.__lastSync,__report:window.__report,__recordStates:window.__recordStates})')
   failed_context=browser.new_context(viewport={'width':1280,'height':850})
   failed_page=failed_context.new_page();failed_page.on('pageerror',lambda e:errors.append(str(e)))
   failed_page.add_init_script(mock+'\nObject.assign(window,'+json.dumps(persisted_error)+');')
   failed_page.goto(f'http://127.0.0.1:{server.server_port}')
   expect(failed_page.locator('[data-super-id="cloud-open"]')).to_have_attribute('data-cloud-state','error')
-  color_kind(failed_page.locator('[data-super-id="cloud-open"] .super-cloud-badge'),'red')
+  color_kind(failed_page.locator('[data-super-row="cloud-open"] .super-cloud-badge'),'red')
   failed_context.close()
-  page.evaluate("window.__runFails=false;window.dispatchEvent(new Event('nexusbro-security'))")
-  dialog.get_by_role('button',name='Синхронизация',exact=True).click()
-  dialog.get_by_role('button',name='Синхронизировать сейчас',exact=True).click()
+  page.evaluate('window.__runFails=false');cloud_badge(opened).click()
   expect(opened).to_have_attribute('data-cloud-state','selected')
-  dialog.get_by_role('button',name='Закрыть',exact=True).click()
+  page.evaluate('window.__runConflicts=true');cloud_badge(opened).click()
+  expect(opened).to_have_attribute('data-cloud-state','conflict');color_kind(cloud_badge(opened),'red')
+  expect(page.locator('.oshibka')).to_contain_text('Конфликт версий')
+  page.evaluate("window.__runConflicts=false;window.__recordStates['cloud-open']='pending'")
+  cloud_badge(opened).click();expect(opened).to_have_attribute('data-cloud-state','selected')
 
   # Wildcard membership excludes private definitions and adds no engine calls.
   page.evaluate("window.__selection.supers=['*'];window.__cloudChanged()")
   expect(local).to_have_attribute('data-cloud-state','pending')
   expect(private).to_have_attribute('data-cloud-state','local')
-  assert private.locator('.super-cloud-badge').count()==0
+  assert cloud_badge(private).count()==0
   page.evaluate("window.__account.logged_in=false;window.__cloudChanged({area:'account',action:'logout'})")
   expect(opened).to_have_attribute('data-cloud-state','local')
   expect(page.locator('[data-cloud-group="local"] [data-super-id="cloud-open"]')).to_have_count(1)
-  color_kind(opened.locator('.super-cloud-badge'),'gray')
+  expect(cloud_badge(opened)).to_have_count(0)
   page.evaluate("window.__account.logged_in=true;window.__cloudChanged({area:'account',action:'login'})")
   expect(opened).to_have_attribute('data-cloud-state','selected')
 
@@ -272,6 +318,6 @@ try:
   fresh_context.close()
   assert page.evaluate('localStorage.length')==0
   assert not errors,errors
-  print(json.dumps({'real_chromium':True,'tauri_ipc':'fixture','green_requires_authoritative_per_record_ack':True,'historical_account_date_and_legacy_status_do_not_turn_green':True,'compact_header_32px_date_tooltip_only':True,'green_red_gray_actual_computed_colors':True,'disabled_saved_moves_local_data_unchanged_no_delete_no_start':True,'expanded_collapsed_cloud_and_private_identity':True,'colors_and_active_indicator_preserved':True,'actual_settings_bridge_invalidates_sidebar':True,'failed_exchange_red_rehydrates_after_restart':True,'operation_events_ignore_late_duplicate_start':True,'no_protected_status_polling':True,'stale_account_status_rejected':True,'cold_renderer_rehydrates_backend_selection':True,'no_plaintext_browser_cache':True}))
+  print(json.dumps({'real_chromium':True,'tauri_ipc':'fixture','green_requires_authoritative_per_record_ack':True,'historical_account_date_and_legacy_status_do_not_turn_green':True,'compact_header_32px_date_tooltip_only':True,'green_red_gray_actual_computed_colors':True,'disabled_saved_moves_local_data_unchanged_no_delete_no_start':True,'expanded_collapsed_cloud_and_private_identity':True,'colors_and_active_indicator_preserved':True,'actual_settings_bridge_invalidates_sidebar':True,'failed_exchange_red_rehydrates_after_restart':True,'operation_events_ignore_late_duplicate_start':True,'no_protected_status_polling':True,'stale_account_status_rejected':True,'cold_renderer_rehydrates_backend_selection':True,'no_plaintext_browser_cache':True,'local_private_open_saved_have_no_cloud_badges':True,'direct_cloud_click_keyboard_retry_busy_dedup_no_switch_or_engine_start':True,'superseded_post_run_metadata_cannot_reuse_old_green':True}))
   browser.close()
 finally:server.shutdown()
