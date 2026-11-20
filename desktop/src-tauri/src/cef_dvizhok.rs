@@ -81,6 +81,12 @@ wrap_app! {
                 ] {
                     ks.append_switch(Some(&CefString::from(flag)));
                 }
+                // Route transports are HTTP CONNECT/SOCKS TCP; prohibit direct
+                // UDP paths that would otherwise bypass a per-context proxy.
+                ks.append_switch(Some(&CefString::from("disable-quic")));
+                // Proxy endpoints are loopback literals; unresolved origins must
+                // be resolved by the proxy, never by Chromium's direct resolver.
+                ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP * ~NOTFOUND , EXCLUDE localhost")));
                 // Движок — тёмный, как вся программа.
                 ks.append_switch(Some(&CefString::from("force-dark-mode")));
             }
@@ -145,14 +151,16 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     nastrojki.locales_dir_path =
         CefString::from(cef_dir.join("locales").to_string_lossy().as_ref());
     nastrojki.root_cache_path = CefString::from(profil.as_str());
-    nastrojki.cache_path = CefString::from(
-        std::path::Path::new(&profil)
-            .join("kesh")
-            .to_string_lossy()
-            .as_ref(),
-    );
-
-    if crate::privatnost::process_privatnyj(){nastrojki.cache_path=CefString::default();}
+    // Every Browser uses an explicit guarded context. Keep root (Windows key
+    // material), leave global disk cache empty, reopen actual old Default unchanged.
+    nastrojki.cache_path = CefString::default();
+    let bootstrap = (|| -> anyhow::Result<crate::tab_routes::RouteBootstrap> {
+        let path=znachenie("--nb-route-bootstrap=").ok_or_else(||anyhow::anyhow!("Нет начальных маршрутов"))?;
+        let file=std::fs::File::open(path)?;
+        anyhow::ensure!(file.metadata()?.len()<=131072,"Снимок маршрутов слишком велик");
+        Ok(serde_json::from_reader(file)?)
+    })();
+    let bootstrap=match bootstrap{Ok(value)=>value,Err(_)=>{eprintln!("cef: безопасный маршрут не подготовлен");return 1;}};
     // Журнал CEF глобален для процесса, а в нём могут быть приватные вкладки.
     // Наш журнал жизненного цикла не включает содержимое приватных страниц.
     nastrojki.log_severity=LogSeverity::DISABLE;
@@ -184,6 +192,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         },
         std::path::Path::new(&profil),
         url.as_deref(),
+        bootstrap,
     ) {
         Ok(()) => 0,
         Err(e) => {
@@ -193,20 +202,26 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     }
 }
 
-/// Запустить процесс супер-вкладки. Прокси движку — командной строкой
-/// (⛔ прокси в CEF только так: на весь процесс).
+/// Запустить процесс с подготовленным снимком локальных маршрутов.
+/// CLI proxy intentionally absent: it disables per-context preferences.
 pub fn zapustit_cep(
     id: &str,
-    proxy: &str,
+    _proxy: &str,
     url: Option<&str>,
     roditel: u64,
     rezat_reklamu: bool,
     m: crate::okna::Mesto,
+    bootstrap: &crate::tab_routes::RouteBootstrap,
 ) -> anyhow::Result<std::process::Child> {
     let exe = std::env::current_exe()?;
     let profil = crate::brauzer::papka_profilya(id);
     std::fs::create_dir_all(&profil)?;
     crate::brauzer::ochistit_blokirovki(id);
+    anyhow::ensure!(bootstrap.inherit.validate(),"Недопустимый начальный маршрут");
+    let snapshot=serde_json::to_vec(bootstrap)?;
+    anyhow::ensure!(snapshot.len()<=131072,"Снимок маршрутов слишком велик");
+    let snapshot_path=profil.join("route-bootstrap.json");
+    std::fs::write(&snapshot_path,snapshot)?;
     let stdout = std::process::Stdio::piped();
     // ⛔ stderr — в файл: при зависании/падении дочка причина видна
     // (раньше был null, и диагностика слепая).
@@ -216,7 +231,7 @@ pub fn zapustit_cep(
     let mut cmd = std::process::Command::new(exe);
     cmd.arg("--nb-dvizhok")
         .arg(format!("--user-data-dir={}", profil.display()))
-        .arg(format!("--proxy-server={}", proxy))
+        .arg(format!("--nb-route-bootstrap={}", snapshot_path.display()))
         .arg(format!("--nb-roditel={roditel}"))
         .arg(format!("--nb-rect={},{},{},{}", m.x, m.y, m.w, m.h))
         .stdout(stdout)
