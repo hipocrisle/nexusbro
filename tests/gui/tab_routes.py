@@ -267,7 +267,9 @@ def run(args):
                          and t['browser_id'] > 0 and not t['zagruzka'] and not t['route_pending']), None)
 
         blank = wait_for(owned_blank, 'New owned about:blank tab did not acquire a real browser', 30)
+        require(not blank['nazad'], 'Owned blank bootstrap added an artificial Back entry')
         apply_route_ack(client, 'routes-a', blank['id'], 'Fixture B', connection('B'))
+        require(not row(client, 'routes-a', blank['id'])['nazad'], 'Routed blank bootstrap added an artificial Back entry')
         blank_case = 'blank-to-b-' + str(time.time_ns())
         call(client, 'obychnaya_komanda', id='routes-a',
              komanda={'deystvie': 'pereyti', 'id': blank['id'], 'adres': fixture.url(blank_case)})

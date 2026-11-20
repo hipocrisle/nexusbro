@@ -113,7 +113,7 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
         // The first internal blank predates script registration. Recreate only
         // the explicitly requested owned blank, so it gets the same early
         // observer and full media/edit protections as a normal web document.
-        if let Some(frame)=browser.main_frame(){if CefString::from(&frame.url()).to_string()=="about:blank"{frame.load_url(Some(&CefString::from("about:blank")));}}
+        if let Some(frame)=browser.main_frame(){if CefString::from(&frame.url()).to_string()=="about:blank"{frame.execute_java_script(Some(&CefString::from("location.replace(\"about:blank\")")),None,0);}}
     }
     if !target.is_empty() && target != "about:blank" {
         if let Some(frame) = browser.main_frame() {
