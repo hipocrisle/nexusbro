@@ -189,6 +189,7 @@ def run(args):
                              'adres': 'http://127.0.0.1:' + str(fixture.proxies[lane]), 'proxy_uzel': ''} for lane in ('A', 'B')]
         write_json(device.data / 'nastrojki.json', config)
         supers = {name: super_record(name, name, 'about:blank', proxy=config['vyhody'][0]['adres']) for name in ('routes-a', 'routes-b')}
+        supers['routes-direct'] = super_record('routes-direct', 'routes-direct', 'about:blank', proxy='')
         write_json(device.data / 'vkladki.json', list(supers.values()))
 
         def tab(identifier, case, route, seed=None, tls=False):
@@ -207,6 +208,10 @@ def run(args):
         write_json(session_path, {'vkladki': tabs, 'aktivnaya': 1, 'sleduyushchaya': 10, 'zakrytye': []})
         write_json(device.data / 'profili' / 'routes-b' / 'obychnye.json',
                    {'vkladki': [tab(1, 'other-super', inherit)], 'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
+        write_json(device.data / 'profili' / 'routes-direct' / 'obychnye.json',
+                   {'vkladki': [tab(1, 'direct-super-seed', inherit, 'Direct'),
+                                {**tab(2, 'direct-super-share', direct), 'otlozhena': True}],
+                    'aktivnaya': 1, 'sleduyushchaya': 3, 'zakrytye': []})
         client = device.start()
         call(client, 'otkryt', nastrojki=supers['routes-a'])
         assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
@@ -230,6 +235,16 @@ def run(args):
         call(client, 'otkryt', nastrojki=supers['routes-b'])
         assert_receipt(fixture, 'other-super', 'A', None, 'empty')
         report['checks'].append('cross_super_profile_isolation')
+        call(client, 'otkryt', nastrojki=supers['routes-direct'])
+        assert_receipt(fixture, 'direct-super-seed', 'Direct', 'Direct', 'Direct')
+        select(client, 'routes-direct', 2)
+        assert_receipt(fixture, 'direct-super-share', 'Direct', 'Direct', 'Direct')
+        with fixture.lock:
+            first_direct = [r for r in fixture.receipts
+                            if r.get('case') == 'direct-super-seed' and r['path'] == '/page']
+            require(first_direct and first_direct[0]['auth'] is None,
+                    'Direct Super inherited another Super authentication profile')
+        report['checks'].append('direct_super_inherit_matches_explicit_direct_profile_and_network')
         select(client, 'routes-a', 7)
         wait_for(lambda: row(client, 'routes-a', 7).get('route_error'), 'Unknown saved ID was not explicitly unavailable')
         require(not fixture.requests('blocked-unknown'), 'Unknown ID fell back to a network route')
@@ -239,7 +254,16 @@ def run(args):
         before = row(client, 'routes-a', 5)
         apply_ui(client, 'Fixture B')
         js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route UI did not close after ACK', 40)
-        after = row(client, 'routes-a', 5)
+        def acknowledged_replacement():
+            current = row(client, 'routes-a', 5)
+            if (current['route'] == connection('B')
+                    and current['route_generation'] == before['route_generation'] + 1
+                    and current['browser_id'] != before['browser_id']
+                    and not current['route_pending'] and not current.get('route_error')):
+                return current
+            return None
+        after = wait_for(acknowledged_replacement,
+                         'Native ACK was not followed by the authoritative replacement session row', 40)
         require(after['route'] == connection('B') and after['route_generation'] == before['route_generation'] + 1
                 and after['browser_id'] != before['browser_id'] and not after['route_pending'] and not after.get('route_error'),
                 'Actual route UI did not commit an acknowledged replacement browser')
@@ -267,12 +291,24 @@ def run(args):
             require(after['route'] == before['route'] and after['browser_id'] == before['browser_id']
                     and after['route_generation'] == before['route_generation'] + 1 and not after['route_pending'],
                     'Refused route attempt changed protected page/profile or lost attempt generation')
-            require(client.js('!!document.querySelector("[data-tab-route-root] [role=alert]")'), 'Native refusal absent from actual route UI')
+            js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=alert]")',
+                    'Native refusal absent from actual route UI', 20)
             client.text_button('Отмена')
             report['checks'].append(case + '_route_change_refused_preserves_browser')
         report['coverage']['refusal'] = 'passed'
+        def persisted_selected_b():
+            # The native session callback updates RAM before writing disk. A
+            # forced process stop must wait for actual persisted route intent.
+            try:
+                saved = json.loads(session_path.read_text(encoding='utf-8'))
+                selected = next(t for t in saved['vkladki'] if t['id'] == 2)
+                return saved if saved['aktivnaya'] == 2 and selected['route'] == connection('B') else None
+            except (OSError, ValueError, KeyError, StopIteration, TypeError):
+                return None
+
         # Stop only our owned process tree, reorder IDs, and cold restore selected B.
         select(client, 'routes-a', 2)
+        wait_for(persisted_selected_b, 'Selected B route was not persisted before first cold restart', 30)
         device.stop_app()
         config['vyhody'].reverse()
         write_json(device.data / 'nastrojki.json', config)
@@ -282,6 +318,7 @@ def run(args):
         wait_for(lambda: any(r['time'] > restored_at and r['lane'] == 'B' for r in fixture.records('seed-b')), 'Cold restore lost opaque B connection ID')
         require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Restart rebound connection by list index')
         report['checks'].append('restart_opaque_id_survives_connection_reorder')
+        wait_for(persisted_selected_b, 'Selected B route was not persisted before deleted-ID restart', 30)
         device.stop_app()
         config['vyhody'] = [c for c in config['vyhody'] if c['id'] != 'lane-B']
         write_json(device.data / 'nastrojki.json', config)
