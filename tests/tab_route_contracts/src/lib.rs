@@ -269,3 +269,19 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+mod transport_validation {
+    use super::tab_routes::NativeRoute;
+    #[test]
+    fn only_local_http_transport_and_fixed_opaque_keys_are_allowed() {
+        let key = "a".repeat(64);
+        assert!(NativeRoute { key: key.clone(), proxy: "http://127.0.0.1:12345".into() }.validate());
+        for proxy in ["direct://", "http://127.0.0.1:0", "http://localhost:80", "http://127.0.0.1:65536", "http://127.0.0.1:80;direct://", "http://user:password@127.0.0.1:80", "http://127.0.0.1:+80", "http://127.0.0.1:80/"] {
+            assert!(!NativeRoute { key: key.clone(), proxy: proxy.into() }.validate());
+        }
+        for bad in ["../Default".to_string(), "g".repeat(64), "A".repeat(64), "a".repeat(63)] {
+            assert!(!NativeRoute { key: bad, proxy: "http://127.0.0.1:80".into() }.validate());
+        }
+    }
+}

@@ -37,6 +37,8 @@ pub struct Obychnaya {
     pub route_error: Option<String>,
     #[serde(default)]
     pub route_pending: bool,
+    #[serde(default)]
+    pub browser_id: i32,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,6 +59,15 @@ pub enum Komanda {
     ObnovitInterfeys,
     GlavnoeSkryto,
     GlavnoePokazat,
+    RouteApply {
+        id: u64,
+        route: crate::tab_routes::RouteChoice,
+        generation: u64,
+        prepared: crate::tab_routes::NativeRoute,
+        expected_browser: i32,
+    },
+    RouteFailed { id: u64, generation: u64, expected_browser: i32, error: String },
+    RoutePrepareSnapshot { snapshot: crate::tab_routes::RouteBootstrap, generation: u64 },
     Novaya { adres: String },
     NovayaPrivatnaya { adres:String },
     OpenLink { opener_id:u64, adres:String, privatnaya:bool, background:bool },
@@ -132,6 +143,7 @@ impl Sessiya {
             route_generation: 0,
             route_error: None,
             route_pending: false,
+            browser_id: 0,
         });
         self.aktivnaya = id;
         id
@@ -180,6 +192,7 @@ impl Sessiya {
             v.route_pending=false;
             v.route_error=None;
             v.route_generation=0;
+            v.browser_id=0;
             v.nazad = false;
             v.vpered = false;
         }
@@ -194,6 +207,7 @@ impl Sessiya {
             v.route_pending=false;
             v.route_error=None;
             v.route_generation=0;
+            v.browser_id=0;
         }public.vkladki.retain(|v|!v.privatnaya);public.zakrytye.retain(|v|!v.privatnaya);
         if !public.vkladki.iter().any(|v|v.id==public.aktivnaya){public.aktivnaya=public.vkladki.first().map(|v|v.id).unwrap_or(0);}
         std::fs::create_dir_all(profil)?;

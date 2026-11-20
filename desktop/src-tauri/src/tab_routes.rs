@@ -264,3 +264,41 @@ impl fmt::Display for RouteResolveError {
 }
 
 impl std::error::Error for RouteResolveError {}
+
+/// Parent-prepared transport only. No credentials or remote addresses cross IPC.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRoute {
+    pub key: String,
+    pub proxy: String,
+}
+impl fmt::Debug for NativeRoute {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("NativeRoute([local transport])")
+    }
+}
+impl NativeRoute {
+    /// Strict validation also protects profile path construction and bypass lists.
+    pub fn validate(&self) -> bool {
+        self.key.len() == 64
+            && self.key.bytes().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+            && self.proxy.strip_prefix("http://127.0.0.1:")
+                .and_then(|p| if p.bytes().all(|b| b.is_ascii_digit()) { p.parse::<u16>().ok() } else { None })
+                .is_some_and(|p| p != 0)
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NativeRouteBinding {
+    pub route: RouteChoice,
+    pub prepared: Option<NativeRoute>,
+    pub error: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteBootstrap {
+    pub inherit: NativeRoute,
+    pub bindings: Vec<NativeRouteBinding>,
+}
