@@ -1,0 +1,14 @@
+{
+  "app_source": "3b529f5d0c93edcd22c17a8e09e7f4b71fcc41a9",
+  "build_run": 44705290800,
+  "memory_acceptance_run": 44708384036,
+  "memory_test_source": "1e7e597",
+  "paired_performance_run": 44707899100,
+  "reference_version": "0.2.19",
+  "reference_build_run": 44545888529,
+  "full_build_conclusion": "failure",
+  "full_build_failure": "test driver used fractional Win32 wheel delta; app sources unchanged by test fixes",
+  "linux_full_job": "success",
+  "windows_ui_and_background": "success",
+  "fresh_publication_runtime": "pending"
+}
