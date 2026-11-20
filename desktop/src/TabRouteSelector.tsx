@@ -56,8 +56,8 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
  const busy=applying||!!tab.route_pending;
  useEffect(()=>{
   if(previousGeneration.current!==tab.route_generation){
-   previousGeneration.current=tab.route_generation;setDraft(routeKey(tab.route));
-   if(!running.current)setNotice('Путь изменён. Проверьте выбор перед применением.');
+   previousGeneration.current=tab.route_generation;
+   if(!running.current){setDraft(routeKey(tab.route));setNotice('Путь изменён. Проверьте выбор перед применением.');}
   }
  },[tab.route,tab.route_generation]);
  useEffect(()=>{
@@ -109,7 +109,7 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
     <option value="direct">Прямое соединение</option>
     {choices?.connections.map(value=><option key={value.id} value={'connection:'+value.id}>{value.name}</option>)}
    </Vybor></label>
-   <p id="tab-route-profile-warning" className="tab-route-warning">Страница откроется заново. Вкладки этой супервкладки с одинаковым путём используют общий профиль. У другого пути — свой профиль. При переходе на другой путь входы на сайты не копируются — может понадобиться новый вход. Несохранённый ввод и воспроизведение могут прерваться; завершите их перед сменой пути.</p>
+   <p id="tab-route-profile-warning" className="tab-route-warning">Страница откроется заново. Вкладки этой супервкладки с одинаковым путём используют общий профиль. У другого пути — свой профиль. При переходе на другой путь входы на сайты не копируются — может понадобиться новый вход. Перед сменой пути сохраните ввод и остановите воспроизведение.</p>
    <p className="tab-route-scope">Другие вкладки и другие супервкладки не меняют свой путь. Если выбранное подключение недоступно, прямое соединение вместо него не включается.</p>
    {!choices&&!choicesError&&<p role="status">Загружаю сохранённые подключения…</p>}
    {choicesError&&<div className="tab-route-error" role="alert"><span>{choicesError}</span><button type="button" disabled={busy} onClick={onRefresh}>Повторить получение подключений</button></div>}
