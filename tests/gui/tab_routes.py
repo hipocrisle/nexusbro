@@ -564,22 +564,53 @@ def run(args):
             except (OSError, ValueError, KeyError, IndexError):
                 return False
         wait_for(gap_state_persisted, 'Historical/worker non-seed URLs were not persisted before restart', 30)
-        def persistent_cookie_on_disk(owner):
-            # Force-killing an engine must not race Chromium's delayed cookie
-            # commit. Read metadata only, never encrypted/plain token values.
+        def cookie_metadata_snapshot(phase):
+            # Diagnostics only. Native post-restart cookieStats and the neighbor
+            # server's actual persistent auth are the functional requirements.
+            # Never inspect or serialize encrypted/plain cookie token values.
+            import contextlib
+            import itertools
             import sqlite3
-            profile = device.data / 'profili' / owner
-            for database in profile.rglob('Cookies'):
+            snapshot = {}
+            for owner in ('routes-historical', 'routes-neighbor'):
+                profile = device.data / 'profili' / owner
+                data = {'profile_exists': profile.is_dir(), 'cookie_files': []}
                 try:
-                    with sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=.1) as db:
-                        if db.execute("SELECT count(*) FROM cookies WHERE host_key='127.0.0.1' AND name='route_auth' AND is_persistent=1").fetchone()[0] > 0:
-                            return True
-                except (OSError, sqlite3.Error):
-                    # A live native writer may not have committed its schema yet.
-                    continue
-            return False
-        wait_for(lambda: persistent_cookie_on_disk('routes-historical') and persistent_cookie_on_disk('routes-neighbor'),
+                    candidates = [p for p in itertools.islice(profile.rglob('*'), 2000)
+                                  if p.is_file() and 'cookie' in p.name.lower()][:16]
+                    for database in candidates:
+                        entry = {'path': str(database.relative_to(profile)), 'bytes': database.stat().st_size}
+                        data['cookie_files'].append(entry)
+                        if database.name != 'Cookies':
+                            continue
+                        with database.open('rb') as stream:
+                            entry['sqlite_header'] = stream.read(16) == b'SQLite format 3\0'
+                        try:
+                            with contextlib.closing(sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=.1)) as db:
+                                columns = [r[1] for r in db.execute('PRAGMA table_info(cookies)').fetchall()]
+                                entry['columns'] = columns
+                                if {'host_key', 'name', 'is_persistent'} <= set(columns):
+                                    entry['fixture_cookie_count'] = db.execute("SELECT count(*) FROM cookies WHERE host_key IN ('127.0.0.1','.127.0.0.1') AND name='route_auth'").fetchone()[0]
+                                    entry['persistent_fixture_cookie_count'] = db.execute("SELECT count(*) FROM cookies WHERE host_key IN ('127.0.0.1','.127.0.0.1') AND name='route_auth' AND is_persistent=1").fetchone()[0]
+                        except sqlite3.Error as error:
+                            entry['sqlite_error_type'] = type(error).__name__
+                            entry['sqlite_error_name'] = getattr(error, 'sqlite_errorname', None)
+                except OSError as error:
+                    data['filesystem_error_type'] = type(error).__name__
+                snapshot[owner] = data
+            report.setdefault('cookie_metadata_diagnostics', {})[phase] = snapshot
+            return snapshot
+
+        def persistent_cookie_barrier():
+            snapshot = cookie_metadata_snapshot('live_before_restart')
+            # snapshot reads BOTH owners before these booleans are evaluated.
+            both = [any(entry.get('persistent_fixture_cookie_count', 0) > 0
+                        for entry in snapshot[owner]['cookie_files'])
+                    for owner in ('routes-historical', 'routes-neighbor')]
+            return all(both)
+        wait_for(persistent_cookie_barrier,
                  'Native persistent cookie writes were not durable before the owned restart', 40)
+
 
 
         def persisted_selected_b(address=None):
@@ -596,7 +627,9 @@ def run(args):
         # Stop only our owned process tree, reorder IDs, and cold restore selected B.
         select(client, 'routes-a', 2)
         wait_for(persisted_selected_b, 'Selected B route was not persisted before first cold restart', 30)
+        cookie_metadata_snapshot('before_restart')
         device.stop_app()
+        cookie_metadata_snapshot('after_stop')
         config['vyhody'].reverse()
         write_json(device.data / 'nastrojki.json', config)
         client = device.start()
@@ -612,12 +645,15 @@ def run(args):
         require(row(client, 'routes-historical', 2)['browser_id'] == 0, 'Historical B opened before clear')
         require(not [r for r in fixture.requests(historical_case) if r['time'] > restored_at],
                 'Historical B requested its origin before clear')
+        cookie_metadata_snapshot('after_restart_before_stats')
         before_clear = call(client, 'dannye_saytov_statistika', id='routes-historical', timeout=20)
+        report['historical_native_cookie_counts'] = {'before_clear': before_clear.get('cookies')}
         require(type(before_clear.get('cookies')) is int and before_clear['cookies'] > 0,
                 'No persistent historical cookie existed before the clear operation')
         cleared = call(client, 'ochistit_dannye_saytov', id='routes-historical', cookies=True, cache=False, timeout=20)
         require(cleared.get('cookies') is True and cleared.get('cache') is False, 'Actual cookie clear was not acknowledged')
         after_clear = call(client, 'dannye_saytov_statistika', id='routes-historical', timeout=20)
+        report['historical_native_cookie_counts']['after_clear'] = after_clear.get('cookies')
         require(after_clear.get('cookies') == 0, 'Historical native cookies remained after clear')
         require(row(client, 'routes-historical', 2)['browser_id'] == 0, 'Stats/clear opened the historical B Browser')
         require(not [r for r in fixture.requests(historical_case) if r['time'] > restored_at],
