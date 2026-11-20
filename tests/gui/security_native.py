@@ -569,6 +569,17 @@ def run(args):
     def cloud_painted(client, device, identifier, kind):
         from PIL import ImageGrab
         check_cloud_stroke_model()
+        # A physical cloud click leaves the pointer over a long native title.
+        # GTK can paint that tooltip over the next row's SVG. Move the real
+        # pointer to empty CEF content before requiring unobstructed glyph ink.
+        label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        origin = client.command('plugin:window|inner_position', label=label)
+        point = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();'
+                          'return {x:r.x+r.width*.85,y:r.y+r.height*.8,k:devicePixelRatio||1}})()')
+        subprocess.run(['xdotool', 'mousemove', str(round(origin['x'] + point['x'] * point['k'])),
+                        str(round(origin['y'] + point['y'] * point['k']))],
+                       env={**os.environ, 'DISPLAY': device.display}, check=True)
+        painted(client)
         value = client.js('(()=>{const e=document.querySelector(' +
                           json.dumps('[data-super-row="' + identifier + '"] .super-cloud-badge') + ');'
                           'const svg=e?.querySelector("svg");if(!svg)return null;const r=svg.getBoundingClientRect();'
