@@ -109,6 +109,12 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
         return;
     }
     let target = setup.target.lock().unwrap().clone();
+    if approved&&target=="about:blank"{
+        // The first internal blank predates script registration. Recreate only
+        // the explicitly requested owned blank, so it gets the same early
+        // observer and full media/edit protections as a normal web document.
+        if let Some(frame)=browser.main_frame(){if CefString::from(&frame.url()).to_string()=="about:blank"{frame.load_url(Some(&CefString::from("about:blank")));}}
+    }
     if !target.is_empty() && target != "about:blank" {
         if let Some(frame) = browser.main_frame() {
             if CefString::from(&frame.url()).to_string() == "about:blank" {

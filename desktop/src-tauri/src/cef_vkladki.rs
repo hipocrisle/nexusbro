@@ -67,6 +67,7 @@ wrap_load_handler! {
     struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl LoadHandler {
         fn on_load_end(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
+            if (200..600).contains(&_http_status_code)&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::memory_guard::load_succeeded(b.identifier());}}
             if self.bootstrap.waiting_for_target(){return;}
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier()));}}
             if !crate::borba_s_reklamoy::vklyuchena() { return; }
@@ -81,6 +82,7 @@ wrap_load_handler! {
         }
         fn on_load_error(&self, _browser: Option<&mut Browser>, frame: Option<&mut Frame>, error_code: Errorcode,
             error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
+            if error_code!=Errorcode::ABORTED&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let (Some(browser),Some(url))=(_browser.as_ref(),_failed_url){let accepted=crate::memory_guard::native_load_error(browser.identifier(),&url.to_string());eprintln!("NEXUSBRO_ROUTE_ERROR browser={} native_candidate={accepted}",browser.identifier());}}
             if !self.privatnaya && frame.map(|f| f.is_main() != 0).unwrap_or(false) {
                 eprintln!("cef: вкладка {} load_error {:?}: {}", self.id, error_code, error_text.map(|t| t.to_string()).unwrap_or_default());
             }
@@ -175,7 +177,7 @@ wrap_request_handler! {
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
                 if let Some(request)=request.as_ref(){let url=CefString::from(&request.url()).to_string();if self.bootstrap.allow_initial_blank(&url){return 0;}if self.bootstrap.defer(&url){return 1;}}
                 crate::cef_interfeys::cancel_context(browser.identifier());
-                crate::memory_guard::navigation(browser.identifier(),request.is_some_and(|r|CefString::from(&r.method()).to_string()=="GET"));
+                crate::memory_guard::navigation_to(browser.identifier(),request.as_ref().is_some_and(|r|CefString::from(&r.method()).to_string()=="GET"),&request.as_ref().map(|r|CefString::from(&r.url()).to_string()).unwrap_or_default());
             }}
             0
         }
@@ -223,11 +225,14 @@ wrap_client! {
                 }
                 if data["kind"]=="NB_MEMORY_DOCUMENT"{
                     let current=CefString::from(&f.url()).to_string();
+                    let Some(token)=data["token"].as_str().filter(|s|!s.is_empty()&&s.len()<128)else{return 1;};
                     let uri_matches=data["url"].as_str()==Some(current.as_str());
                     let initial_blank=self.bootstrap.rejects_initial_document(&current);
-                    if !uri_matches||initial_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=false uri_matches={uri_matches} initial_blank={initial_blank}",b.identifier());return 1;}
+                    let internal_error=!initial_blank&&crate::memory_guard::error_document(b.identifier(),&current,data["url"].as_str().unwrap_or(""),token.into());
+                    if (!uri_matches&&!internal_error)||initial_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=false uri_matches={uri_matches} initial_blank={initial_blank}",b.identifier());return 1;}
+                    if internal_error{eprintln!("NEXUSBRO_ROUTE_ERROR browser={} internal_document_confirmed=true",b.identifier());}
+                    else{crate::memory_guard::document(b.identifier(),token.into());}
                 }
-                if data["kind"]=="NB_MEMORY_DOCUMENT"{if let Some(token)=data["token"].as_str().filter(|s|!s.is_empty()&&s.len()<128){crate::memory_guard::document(b.identifier(),token.into());}}
                 let _=self.tx.send(Sobytie::MemoryMessage(self.id,b.identifier(),data));return 1;
             }0
         }
@@ -722,9 +727,15 @@ impl Rabota {
                             }
                             if !attempt.closed&&!attempt.closing{
                                 if self.sleep_requests.contains_key(&id)||self.pending_downloads.contains_key(&id)||self.devtools_pending.contains_key(&id)||self.devtools.contains_key(&id)||crate::zagruzki::tab_busy(id){failure=Some("Вкладка занята; завершите текущую операцию".into());}
-                                else if let Some(reason)=crate::memory_guard::reason(actual){failure=Some(reason.into());}
+                                else if let Some(reason)=self.brauzery.get(&id).and_then(|browser|{
+                                    let url=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
+                                    if crate::memory_guard::confirmed_error(actual,&url){crate::memory_guard::error_reason(actual,&url)}else{crate::memory_guard::reason(actual)}
+                                }){failure=Some(reason.into());}
                                 else if let Some(browser)=self.brauzery.get(&id){
                                     if browser.is_loading()!=0{failure=Some("Дождитесь загрузки страницы".into());}
+                                    else if browser.main_frame().is_some_and(|frame|crate::memory_guard::confirmed_error(actual,&CefString::from(&frame.url()).to_string())){
+                                        if let Some(host)=browser.host(){ROUTE_CLOSES.with(|m|{m.borrow_mut().insert(actual);});attempt.closing=true;host.close_browser(0);}else{failure=Some("Страница уже недоступна".into());}
+                                    }
                                     else if !attempt.verified{
                                         if attempt.stage.is_none(){
                                             if let Some(token)=crate::memory_guard::token(actual){
