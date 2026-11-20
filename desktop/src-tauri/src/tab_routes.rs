@@ -271,6 +271,9 @@ impl std::error::Error for RouteResolveError {}
 pub struct NativeRoute {
     pub key: String,
     pub proxy: String,
+    /// Only actual Direct permits WebRTC sockets outside the local HTTP proxy.
+    #[serde(default)]
+    pub allow_non_proxied_udp: bool,
 }
 impl fmt::Debug for NativeRoute {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
