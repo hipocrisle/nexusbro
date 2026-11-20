@@ -253,11 +253,22 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         except (OSError, ValueError):
             return {"vkladki": []}
 
-    def row(tab_id):
-        rows = [v for v in session()["vkladki"] if v["id"] == tab_id]
-        if len(rows) > 1:
-            raise AssertionError("Duplicate tab row appeared")
-        return rows[0] if rows else None
+    def snapshot(tab_ids, predicate=lambda state, rows: True):
+        # The persisted session can be temporarily unreadable while native CEF
+        # writes it. Read once per observation; never mix rows from different
+        # generations or interpret a missing row as a successful negative.
+        state = session()
+        observed = {}
+        for item in state["vkladki"]:
+            if item["id"] in observed:
+                raise AssertionError("Duplicate tab row appeared")
+            observed[item["id"]] = item
+        if any(tab_id not in observed for tab_id in tab_ids):
+            return None
+        return (state, observed) if predicate(state, observed) else None
+
+    def required_snapshot(tab_ids):
+        return wait(lambda: snapshot(tab_ids), "Required native session rows were unavailable")
 
     def memory(label):
         samples = []
@@ -381,8 +392,10 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
                     raise AssertionError("Removed manual memory control remains visible: " + name)
             gui.press("escape")
 
-        def assert_live(tab_id):
-            item = row(tab_id)
+        def assert_live(tab_id, observed=None):
+            if observed is None:
+                _, observed = required_snapshot([tab_id])
+            item = observed.get(tab_id)
             if not item or item.get("otlozhena"):
                 raise AssertionError(f"Automatically protected tab is not live: {tab_id}")
             return item
@@ -392,7 +405,8 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         wait(lambda: any(r.get("page") == "MemoryKeeper" for r in receipts), "Keeper did not actually load")
         if any(hits[path] for path in ["/unvisited", "/unvisited-other", "/auto-heap", "/audio"]):
             raise AssertionError("Saved dormant pages were loaded before selection")
-        if not row(1).get("otlozhena") or not row(10).get("otlozhena"):
+        _, dormant = required_snapshot([1, 10])
+        if not dormant[1].get("otlozhena") or not dormant[10].get("otlozhena"):
             raise AssertionError("Dormant fixture rows were not lazy")
         report["checks"].append({"saved_tabs_lazy_without_page_requests": True})
         # Omit memory_saver in the fresh settings file: prove the application
@@ -412,11 +426,11 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         report["checks"].append({"default_automatic_on_normal_30_minutes_without_settings_mutation": True})
         cold = memory("cold_keeper")
         tab("MemoryPinned")
-        wait(lambda: row(3) and not row(3).get("otlozhena") and not row(3).get("zagruzka"), "Pinned fixture did not load")
+        wait(lambda: snapshot([3], lambda _, r: not r[3].get("otlozhena") and not r[3].get("zagruzka")), "Pinned fixture did not load")
         tab("MemoryLoading")
-        wait(lambda: row(5) and row(5).get("zagruzka"), "Slow fixture did not remain loading")
+        wait(lambda: snapshot([5], lambda _, r: r[5].get("zagruzka")), "Slow fixture did not remain loading")
         tab("MemoryTools")
-        wait(lambda: row(4) and not row(4).get("otlozhena") and not row(4).get("zagruzka"), "Tools fixture did not load")
+        wait(lambda: snapshot([4], lambda _, r: not r[4].get("otlozhena") and not r[4].get("zagruzka")), "Tools fixture did not load")
         click("MemoryTools", ["TabItem"], "right")
         click("Инструменты разработчика", ["MenuItem", "Button"])
         wait(lambda: find("Закрыть инструменты разработчика", ["Button"]), "Actual DevTools did not open")
@@ -455,7 +469,7 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         for page, tab_id in [("MemoryAudio", 11), ("MemoryAudioPaused", 12),
                              ("MemoryWebAudio", 13), ("MemoryRTC", 14)]:
             tab(page)
-            wait(lambda: row(tab_id) and not row(tab_id).get("zagruzka") and not row(tab_id).get("otlozhena"),
+            wait(lambda: snapshot([tab_id], lambda _, r: not r[tab_id].get("zagruzka") and not r[tab_id].get("otlozhena")),
                  f"Real media fixture did not finish loading: {page}")
             value = actual_media_action(page, 103, "start")
             if page.startswith("MemoryAudio"):
@@ -471,7 +485,7 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
                 raise AssertionError("Actual local RTCPeerConnection was not created")
             media_before[page] = value
 
-        wait(lambda: time.monotonic() - download_started >= 10 and row(6) and not row(6).get("otlozhena"),
+        wait(lambda: time.monotonic() - download_started >= 10 and snapshot([6], lambda _, r: not r[6].get("otlozhena")),
              "Active download was not retained beyond the automatic idle interval", 20)
         assert_live(6)
         report["checks"].append({"active_download_retained_without_manual_exception": True})
@@ -485,9 +499,11 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
                       "MemoryDraft", "MemoryPrivate", "MemoryAudio"]:
             assert_no_memory_menu(title)
         report["checks"].append({"manual_memory_commands_absent_from_actual_tab_menus": True})
-        for tab_id in [2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14]:
-            assert_live(tab_id)
-        if not row(5).get("zagruzka"):
+        protected_ids = [2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14]
+        _, protected = required_snapshot(protected_ids)
+        for tab_id in protected_ids:
+            assert_live(tab_id, protected)
+        if not protected[5].get("zagruzka"):
             raise AssertionError("Loading guard was not actually in progress")
         # Every other loaded ordinary page has an intrinsic guard; unloaded
         # saved rows stay dormant. No unrelated safe page can create RAM gain.
@@ -498,7 +514,8 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         wait(lambda: any(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "allocated"
                          and r.get("bytes") == a.heap_mb * 1024**2 and r.get("first") == r.get("last") == 41 for r in receipts),
              "Safe automatic page did not actually allocate/touch its heap")
-        if row(9).get("nazad") or row(9).get("vpered"):
+        _, heap = required_snapshot([9])
+        if heap[9].get("nazad") or heap[9].get("vpered"):
             raise AssertionError("Automatic fixture unexpectedly has navigation history")
         # Native wheel scrolling, without keys/forms/sessionStorage/media.
         journal = (data / "zhurnal.log").read_text(encoding="utf-8")
@@ -533,19 +550,22 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         active_started = time.monotonic()
         while time.monotonic() - active_started < 10:
             processes()
-            if session().get("aktivnaya") != 9:
+            current, active_rows = required_snapshot([9])
+            if current.get("aktivnaya") != 9:
                 raise AssertionError("Automatic heap lost selection during active-page protection check")
-            assert_live(9)
-            if row(9).get("memory_pending"):
+            assert_live(9, active_rows)
+            if active_rows[9].get("memory_pending"):
                 raise AssertionError("Selected heap entered an automatic unload operation")
             time.sleep(.5)
         report["checks"].append({"active_heap_retained_beyond_idle_interval": True,
                                  "active_seconds": time.monotonic() - active_started})
-        if session().get("aktivnaya") != 9:
+        current, active_rows = required_snapshot([9])
+        if current.get("aktivnaya") != 9:
             raise AssertionError("Automatic heap must be selected while taking its pre-close baseline")
         auto_before = memory("before_automatic_sleep_active_heap")
-        assert_live(9)
-        if row(9).get("memory_pending"):
+        _, active_rows = required_snapshot([9])
+        assert_live(9, active_rows)
+        if active_rows[9].get("memory_pending"):
             raise AssertionError("Selected heap unexpectedly entered an unload operation")
         if auto_before - cold < a.min_drop_mb * 1024**2:
             raise AssertionError("Touched heap did not measurably increase application private commit")
@@ -566,7 +586,8 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
             processes()
             if not u.IsIconic(win.handle):
                 raise AssertionError("Native window restored itself during the minimize interval")
-            if row(9) and row(9).get("otlozhena"):
+            observed = snapshot([9])
+            if observed and observed[1][9].get("otlozhena"):
                 closed_while_minimized = True
                 if first_closed_minimized_at is None:
                     first_closed_minimized_at = time.monotonic() - started
@@ -586,7 +607,7 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         if not closed_while_minimized:
             raise AssertionError("Automatic heap did not close while the application was genuinely minimized")
         # No unload command, keep setting, or interaction with the inactive heap.
-        wait(lambda: row(9) and row(9).get("otlozhena") and not row(9).get("memory_pending"),
+        wait(lambda: snapshot([9], lambda _, r: r[9].get("otlozhena") and not r[9].get("memory_pending")),
              "Idle automatic fixture did not actually close into its retained sleeping row", 45)
         logs = native_logs()
         if not re.search(r'NEXUSBRO_MEMORY tab=9\b[^\n]*requested=automatic', logs):
@@ -622,12 +643,13 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
              "Automatic beforeunload protection was not retried safely", 30)
         report["coverage"]["beforeunload_refusal"] = "actual_automatic_refusal_and_retry"
         report["automatic_beforeunload_refusals"] = automatic_refusals(7)
-        for tab_id in [2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14]:
-            if not row(tab_id) or row(tab_id).get("otlozhena"):
+        _, retained = required_snapshot(protected_ids + [1, 10])
+        for tab_id in protected_ids:
+            if retained[tab_id].get("otlozhena"):
                 raise AssertionError(f"Protected pinned/media/resource tab was automatically unloaded: {tab_id}")
-        if hits["/unvisited"] or hits["/unvisited-other"] or not row(1).get("otlozhena") or not row(10).get("otlozhena"):
+        if hits["/unvisited"] or hits["/unvisited-other"] or not retained[1].get("otlozhena") or not retained[10].get("otlozhena"):
             raise AssertionError("Dormant saved pages were loaded by automatic memory saving")
-        if not row(5).get("zagruzka"):
+        if not retained[5].get("zagruzka"):
             raise AssertionError("The protected loading fixture unexpectedly completed")
         if time.monotonic() - started - report["download_paused_at_seconds"] < 8:
             raise AssertionError("Paused download was not observed beyond the automatic idle interval")
@@ -636,9 +658,10 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
             if hits[path] != before_hits:
                 raise AssertionError("Protected page navigated/reloaded during automatic idle window: " + path)
         media_after = {}
+        _, media_rows = required_snapshot([11, 12, 13, 14])
         for page, tab_id in [("MemoryAudio", 11), ("MemoryAudioPaused", 12),
                              ("MemoryWebAudio", 13), ("MemoryRTC", 14)]:
-            if row(tab_id).get("otlozhena"):
+            if media_rows[tab_id].get("otlozhena"):
                 raise AssertionError("Protected media row was sleeping before physical inspection")
             tab(page)
             after_state = actual_media_action(page, 148, "snapshot")
@@ -689,7 +712,7 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         if hits["/private"] != protected_hits["/private"]:
             raise AssertionError("Private page reloaded after automatic saver inspection")
         tab("MemoryAutoHeap")
-        wait(lambda: row(9) and not row(9).get("otlozhena") and not row(9).get("zagruzka"),
+        wait(lambda: snapshot([9], lambda _, r: not r[9].get("otlozhena") and not r[9].get("zagruzka")),
              "Automatic sleeping row did not wake")
         previous = sum(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "snapshot" for r in receipts)
         physical_page_click()
