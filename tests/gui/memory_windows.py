@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Real Windows manual/automatic tab-unload acceptance; no IPC or CEF/CDP mocks."""
+"""Real Windows automatic-only tab-unload and continuous-media acceptance; no IPC or CEF/CDP mocks."""
 import argparse
 import collections
 import http.server
@@ -52,8 +52,9 @@ def run(a):
     out.mkdir(parents=True, exist_ok=False)
     data = out / "data"
     data.mkdir()
-    report = {"schema": 1, "completed": False, "platform": platform.platform(),
+    report = {"schema": 2, "automatic_only": True, "completed": False, "platform": platform.platform(),
               "heap_mb": a.heap_mb, "min_private_drop_mb": a.min_drop_mb,
+              "normal_policy_minutes": 30, "isolated_idle_seconds": 8,
               "checks": [], "memory": {}, "coverage": {"beforeunload_refusal": "not_executed",
               "user_close_during_sleep": "not_executed", "automatic_unload": "not_executed",
               "fake_capture": "not_executed_no_fake_capture_interface"}}
@@ -77,7 +78,8 @@ def run(a):
         audio.setsampwidth(2)
         audio.setframerate(44100)
         one_second = b"".join(struct.pack("<h", round(160 * math.sin(2 * math.pi * 220 * i / 44100))) for i in range(44100))
-        audio.writeframes(one_second * 30)
+        # A 120-second loop avoids modulo-30 aliasing a whole background pause.
+        audio.writeframes(one_second * 120)
     tone = wav.getvalue()
 
     class Fixture(http.server.BaseHTTPRequestHandler):
@@ -108,10 +110,10 @@ def run(a):
                 except (BrokenPipeError, ConnectionResetError, OSError):
                     pass
                 return
-            names = {"/heap": "MemoryHeap", "/keeper": "MemoryKeeper", "/pinned": "MemoryPinned",
+            names = {"/unvisited": "MemoryUnvisited", "/keeper": "MemoryKeeper", "/pinned": "MemoryPinned",
                      "/tools": "MemoryTools", "/loading": "MemoryLoading", "/downloads": "MemoryDownload",
                      "/private": "MemoryPrivate", "/unload": "MemoryBeforeUnload", "/draft": "MemoryDraft",
-                     "/auto-heap": "MemoryAutoHeap", "/auto-keep": "MemoryAutoKeep", "/audio": "MemoryAudio",
+                     "/auto-heap": "MemoryAutoHeap", "/unvisited-other": "MemoryUnvisitedOther", "/audio": "MemoryAudio",
                      "/audio-paused": "MemoryAudioPaused", "/web-audio": "MemoryWebAudio", "/rtc": "MemoryRTC"}
             if path not in names:
                 self.send_error(404)
@@ -128,7 +130,10 @@ def run(a):
 document.getElementById('guard').onclick=e=>{if(e.isTrusted){window.onbeforeunload=e=>{e.preventDefault();e.returnValue='';};
 fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',guard:true,trusted:e.isTrusted})});}};</script>'''
             if path == "/draft":
-                body += b'<input aria-label="Actual unsaved draft" style="position:absolute;left:20px;top:130px;width:300px;height:40px">'
+                body += b'''<input id="actual-draft" aria-label="Actual unsaved draft" style="position:absolute;left:20px;top:130px;width:300px;height:40px">
+<button id="draft-snapshot" style="top:175px">Snapshot actual unsaved draft</button><script>
+document.getElementById('draft-snapshot').onclick=e=>{if(e.isTrusted)fetch('/receipt',{method:'POST',body:JSON.stringify({
+page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElementById('actual-draft').value})});};</script>'''
             if path == "/auto-heap":
                 body += ("<style>body{min-height:4000px}#auto-snapshot{position:fixed}</style>"
                          "<button id='auto-snapshot'>Snapshot real scroll/storage</button><script>"
@@ -167,15 +172,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                          "document.getElementById('media-snapshot').onclick=e=>{if(e.isTrusted)state('snapshot',true);};"
                          "document.getElementById('media-pause').onclick=e=>{if(e.isTrusted&&element){element.pause();state('pause',true);}};"
                          "</script>").encode()
-            if path == "/heap":
-                body += ("<script>const seen=localStorage.getItem('memory-fixture');"
-                         "const cookie=document.cookie;localStorage.setItem('memory-fixture','preserved');"
-                         "document.cookie='memoryfixture=preserved;path=/;max-age=86400;SameSite=Lax';"
-                         f"window.fixtureHeap=new Uint8Array({a.heap_mb}*1024*1024);window.fixtureHeap.fill(37);"
-                         "fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryHeap',seen,cookie,"
-                         "bytes:fixtureHeap.byteLength,first:fixtureHeap[0],last:fixtureHeap[fixtureHeap.length-1],"
-                         "url:location.href})});</script>").encode()
-            elif path not in ["/loading", "/auto-heap"]:
+            if path not in ["/loading", "/auto-heap"]:
                 body += ("<script>fetch('/receipt',{method:'POST',body:JSON.stringify({page:document.title})});</script>").encode()
             self.send_response(200)
             self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -185,7 +182,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
             self.wfile.write(body)
             self.wfile.flush()
             if path == "/loading":
-                release_loading.wait(90)
+                release_loading.wait(a.timeout)
                 try:
                     self.wfile.write(b" " * 4096)
                 except OSError:
@@ -288,12 +285,12 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         threading.Thread(target=server.serve_forever, daemon=True).start()
         base = f"http://127.0.0.1:{server.server_port}"
         tabs = [{"id": i, "adres": base + path, "zagolovok": title, "otlozhena": True,
-                 "zakreplena": i == 3} for i, path, title in [
-                    (1, "/heap", "MemoryHeap"), (2, "/keeper", "MemoryKeeper"),
+                 "zakreplena": i in (2, 3), **({"memory_keep": True} if i == 9 else {})} for i, path, title in [
+                    (1, "/unvisited", "MemoryUnvisited"), (2, "/keeper", "MemoryKeeper"),
                     (3, "/pinned", "MemoryPinned"), (4, "/tools", "MemoryTools"),
                     (5, "/loading", "MemoryLoading"), (6, "/downloads", "MemoryDownload"),
                     (7, "/unload", "MemoryBeforeUnload"), (8, "/draft", "MemoryDraft"),
-                    (9, "/auto-heap", "MemoryAutoHeap"), (10, "/auto-keep", "MemoryAutoKeep"),
+                    (9, "/auto-heap", "MemoryAutoHeap"), (10, "/unvisited-other", "MemoryUnvisitedOther"),
                     (11, "/audio", "MemoryAudio"), (12, "/audio-paused", "MemoryAudioPaused"),
                     (13, "/web-audio", "MemoryWebAudio"), (14, "/rtc", "MemoryRTC")]]
         folder = data / "profili" / "memory"
@@ -301,8 +298,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         (folder / "obychnye.json").write_text(json.dumps({"vkladki": tabs, "aktivnaya": 2, "sleduyushchaya": 15}), encoding="utf-8")
         (data / "vkladki.json").write_text(json.dumps([{"id": "memory", "nazvanie": "MemorySuper",
             "proxy": "", "adres": base + "/keeper", "pustaya": False, "rezat_reklamu": True}]), encoding="utf-8")
-        (data / "nastrojki.json").write_text(json.dumps({"avtoobnovleniya": False, "memory_saver": False,
-                                                         "memory_saver_minutes": 30}), encoding="utf-8")
+        (data / "nastrojki.json").write_text(json.dumps({"avtoobnovleniya": False, "memory_saver_minutes": 30}), encoding="utf-8")
         cef = pathlib.Path(a.cef).resolve()
         env = {**os.environ, "CEF_PATH": str(cef), "PATH": str(cef) + os.pathsep + os.environ["PATH"],
                "NEXUSBRO_TEST_DATA": str(data), "WEBVIEW2_USER_DATA_FOLDER": str(out / "webview2"),
@@ -367,161 +363,79 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 raise AssertionError("Actual CEF rectangle missing")
             gui.click(box.left + 100, box.top + y)
 
-        def open_sleep(title):
-            click(title, ["TabItem"], "right")
-            return wait(lambda: find("Выгрузить вкладку из памяти", ["MenuItem", "Button"]), "No actual sleep menu item")
-
-        def warning_confirm(title, cancel=False):
-            item = open_sleep(title)
-            if not item.is_enabled():
-                raise AssertionError("Sleep menu unexpectedly disabled for eligible inactive tab")
-            item.click_input()
-            wait(lambda: find("Выгрузить вкладку из памяти"), "No visible warning dialog")
-            text = " ".join(c.element_info.name for c in controls() if c.element_info.name)
-            if not all(word in text.lower() for word in ["перезагруз", "несохран", "история", "cookies"]):
-                raise AssertionError("Warning omits reload/internal-state/history/storage consequences")
-            ImageGrab.grab().save(out / ("warning-cancel.png" if cancel else "warning-confirm.png"))
-            click("Отмена" if cancel else "Выгрузить", ["Button"])
-
         def native_logs():
             return "\n".join(p.read_text(encoding="utf-8", errors="replace") for p in folder.glob("*.log"))
 
-        def refusal_events(tab_id):
-            return re.findall(rf'NEXUSBRO_MEMORY tab={tab_id}\b[^\n]*?refused=([^\n]+)', native_logs())
+        def automatic_refusals(tab_id):
+            return re.findall(rf'NEXUSBRO_MEMORY tab={tab_id}\b[^\n]*?automatic=true\b[^\n]*?refused=([^\n]+)', native_logs())
 
-        def protected(title, tab_id=None):
-            prior = len(refusal_events(tab_id)) if tab_id is not None else 0
-            item = open_sleep(title)
-            if not item.is_enabled():
-                gui.press("escape")
-                result = "native_menu_disabled"
-            else:
-                item.click_input()
-                click("Выгрузить", ["Button"])
-                if tab_id is not None:
-                    wait(lambda: len(refusal_events(tab_id)) > prior,
-                         "Actual engine did not log a protected-request refusal")
-                reason = refusal_events(tab_id)[-1] if tab_id is not None else None
-                def visible_refusal():
-                    if find("Выгрузить", ["Button"]):
-                        return False
-                    return any((reason in c.element_info.name if reason else
-                                any(w in c.element_info.name.lower() for w in ["нельзя", "в памяти", "откреп", "загруз", "инструмент", "сохран", "ввод"]))
-                               for c in controls() if c.element_info.control_type == "Text")
-                wait(visible_refusal, "Protected request did not report an actual refusal")
-                result = "backend_refusal_visible"
-            time.sleep(.5)
-            if tab_id is not None and (not row(tab_id) or row(tab_id).get("otlozhena")):
-                raise AssertionError("Protected live tab was unloaded")
-            report["checks"].append({"protected": title, "result": result})
-            checkpoint()
+        def assert_no_memory_menu(title):
+            click(title, ["TabItem"], "right")
+            wait(lambda: find("Новая вкладка", ["MenuItem", "Button"]), "Actual tab context menu did not open")
+            for name in ["Выгрузить вкладку из памяти", "Не выгружать автоматически",
+                         "Разрешить автоматическую выгрузку", "Выгрузить"]:
+                if find(name, ["MenuItem", "Button"]):
+                    raise AssertionError("Removed manual memory control remains visible: " + name)
+            gui.press("escape")
+
+        def assert_live(tab_id):
+            item = row(tab_id)
+            if not item or item.get("otlozhena"):
+                raise AssertionError(f"Automatically protected tab is not live: {tab_id}")
+            return item
 
         click("MemorySuper", ["Button"])
         tab("MemoryKeeper")
         wait(lambda: any(r.get("page") == "MemoryKeeper" for r in receipts), "Keeper did not actually load")
+        if any(hits[path] for path in ["/unvisited", "/unvisited-other", "/auto-heap", "/audio"]):
+            raise AssertionError("Saved dormant pages were loaded before selection")
+        if not row(1).get("otlozhena") or not row(10).get("otlozhena"):
+            raise AssertionError("Dormant fixture rows were not lazy")
+        report["checks"].append({"saved_tabs_lazy_without_page_requests": True})
+        # Omit memory_saver in the fresh settings file: prove the application
+        # default is ON, then save the unchanged real UI policy (no toggle).
+        click("Настройки NexusBro", ["Button"])
+        click("Вкладки и поиск", ["Button"])
+        checkbox = wait(lambda: find("Экономить память неактивных вкладок", ["CheckBox"]), "No actual automatic memory setting")
+        if checkbox.iface_toggle.CurrentToggleState != 1:
+            raise AssertionError("Automatic memory saving is not enabled by default")
+        click("Сохранить", ["Button"])
+        def normal_policy():
+            try:
+                settings = json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))
+                return settings.get("memory_saver") is True and settings.get("memory_saver_minutes") == 30
+            except (OSError, ValueError):
+                return False
+        wait(normal_policy, "Unchanged actual settings did not preserve normal ON/30-minute policy")
+        report["checks"].append({"default_automatic_on_normal_30_minutes_without_toggle": True})
         cold = memory("cold_keeper")
-        tab("MemoryHeap")
-        wait(lambda: any(r.get("bytes") == a.heap_mb * 1024**2 and r.get("first") == r.get("last") == 37 for r in receipts),
-             "Large heap was not allocated and touched by actual page")
-        navigate(base + "/heap?visit=next")
-        wait(lambda: row(1) and row(1).get("nazad") and sum(r.get("page") == "MemoryHeap" for r in receipts) >= 2,
-             "Real pre-unload back history not established")
-        protected("MemoryHeap", 1)  # Active page is never eligible.
-        tab("MemoryKeeper")
-        time.sleep(2)
-        before = memory("before_sleep")
-        if before - cold < a.min_drop_mb * 1024**2:
-            raise AssertionError("Fixture heap did not measurably increase total private commit")
-        warning_confirm("MemoryHeap", cancel=True)
-        if row(1).get("otlozhena"):
-            raise AssertionError("Cancel unloaded the live tab")
-        report["checks"].append({"warning_cancel_preserves_live": True})
-        warning_confirm("MemoryHeap")
-        wait(lambda: row(1) and row(1).get("otlozhena") and not row(1).get("nazad") and not row(1).get("vpered"),
-             "Native OnBeforeClose did not retain one sleeping row and clear tab history", 35)
-        dropped = False
-        for attempt in range(6):
-            after = memory(f"after_sleep_{attempt}")
-            if before - after >= a.min_drop_mb * 1024**2:
-                dropped = True
-                break
-            time.sleep(1)
-        if not dropped:
-            raise AssertionError("Closing the actual page did not reduce total private commit by the required amount")
-        report["checks"].append({"native_closed_memory_reclaimed": True, "drop_private_bytes": before - after})
-        loads = sum(r.get("page") == "MemoryHeap" for r in receipts)
-        tab("MemoryHeap")
-        wait(lambda: sum(r.get("page") == "MemoryHeap" for r in receipts) > loads
-             and row(1) and not row(1).get("otlozhena") and not row(1).get("zagruzka"), "Sleeping row did not actually reload")
-        wake = [r for r in receipts if r.get("page") == "MemoryHeap"][-1]
-        if wake.get("seen") != "preserved" or "memoryfixture=preserved" not in wake.get("cookie", ""):
-            raise AssertionError("Cookies/localStorage were lost across real unload/wake")
-        if row(1).get("nazad") or row(1).get("vpered"):
-            raise AssertionError("Woken browser unexpectedly retained pre-unload navigation history")
-        report["checks"].append({"same_row_woke_storage_preserved_history_reset": True})
         tab("MemoryPinned")
-        wait(lambda: row(3) and not row(3).get("otlozhena") and not row(3).get("zagruzka"), "Pinned tab did not load")
-        tab("MemoryKeeper")
-        protected("MemoryPinned", 3)
+        wait(lambda: row(3) and not row(3).get("otlozhena") and not row(3).get("zagruzka"), "Pinned fixture did not load")
         tab("MemoryLoading")
-        wait(lambda: row(5) and row(5).get("zagruzka"), "Slow page did not remain actually loading")
-        tab("MemoryKeeper")
-        protected("MemoryLoading", 5)
-        release_loading.set()
-        wait(lambda: row(5) and not row(5).get("zagruzka"), "Slow fixture did not finish")
+        wait(lambda: row(5) and row(5).get("zagruzka"), "Slow fixture did not remain loading")
         tab("MemoryTools")
         wait(lambda: row(4) and not row(4).get("otlozhena") and not row(4).get("zagruzka"), "Tools fixture did not load")
         click("MemoryTools", ["TabItem"], "right")
         click("Инструменты разработчика", ["MenuItem", "Button"])
         wait(lambda: find("Закрыть инструменты разработчика", ["Button"]), "Actual DevTools did not open")
-        tab("MemoryKeeper")
-        protected("MemoryTools", 4)
-        tab("MemoryTools")
-        click("Закрыть инструменты разработчика", ["Button"])
         tab("MemoryDownload")
-        wait(lambda: any(r.get("page") == "MemoryDownload" for r in receipts), "Download page did not load")
+        wait(lambda: any(r.get("page") == "MemoryDownload" for r in receipts), "Download fixture did not load")
         physical_page_click()
         wait(lambda: hits.get("/download", 0), "Actual download did not start")
-        tab("MemoryKeeper")
-        protected("MemoryDownload", 6)
-        gui.hotkey("ctrl", "j")
-        click("Пауза", ["Button"])
-        wait(lambda: find("Продолжить", ["Button"]), "Actual download did not pause")
-        click("Закрыть библиотеку", ["Button"])
-        protected("MemoryDownload", 6)
-        gui.hotkey("ctrl", "j")
-        click("Отменить", ["Button"])
-        click("Закрыть библиотеку", ["Button"])
-        stop_download.set()
+        download_started = time.monotonic()
         tab("MemoryBeforeUnload")
         wait(lambda: any(r.get("page") == "MemoryBeforeUnload" for r in receipts), "Beforeunload fixture did not load")
         physical_page_click()
-        wait(lambda: any(r.get("guard") and r.get("trusted") for r in receipts), "Beforeunload guard was not armed by an actual trusted gesture")
-        tab("MemoryKeeper")
-        for attempt in range(2):
-            prior = len(refusal_events(7))
-            warning_confirm("MemoryBeforeUnload")
-            wait(lambda: len(refusal_events(7)) > prior,
-                 "Actual native safety refusal/retry was not observed for the beforeunload page")
-            reason = refusal_events(7)[-1]
-            wait(lambda: any(reason in c.element_info.name for c in controls()),
-                 "Beforeunload refusal was not visible to the owner")
-            if not row(7) or row(7).get("otlozhena"):
-                raise AssertionError("Refused beforeunload removed or slept the live row")
-        report["coverage"]["beforeunload_refusal"] = "actual_native_safety_refusal_and_retry"
-        report["checks"].append({"actual_beforeunload_veto_live_retry": True})
+        wait(lambda: any(r.get("guard") and r.get("trusted") for r in receipts), "Actual trusted gesture did not arm beforeunload")
         tab("MemoryDraft")
         wait(lambda: any(r.get("page") == "MemoryDraft" for r in receipts), "Draft fixture did not load")
         physical_page_click(150)
         gui.write("actual unsaved draft", interval=.03)
-        tab("MemoryKeeper")
-        protected("MemoryDraft", 8)
         click("MemoryKeeper", ["TabItem"], "right")
         click("Новая приватная вкладка", ["MenuItem", "Button"])
         navigate(base + "/private")
-        wait(lambda: any(r.get("page") == "MemoryPrivate" for r in receipts), "Actual private tab did not load")
+        wait(lambda: any(r.get("page") == "MemoryPrivate" for r in receipts), "Actual private fixture did not load")
         tab("MemoryKeeper")
-        protected("MemoryPrivate")
 
         def actual_media_action(page, y, reason):
             previous = sum(r.get("page") == page and r.get("reason") == reason for r in receipts)
@@ -533,8 +447,8 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 raise AssertionError(f"Real media action did not execute: {value}")
             return value
 
-        # Arm genuine media/resource objects with physical gestures while auto
-        # is still OFF, retaining a clock receipt from before the idle period.
+        # Genuine media remains protected with automatic saving ON throughout;
+        # nobody enables per-tab exceptions or sends an unload command.
         media_before = {}
         for page, tab_id in [("MemoryAudio", 11), ("MemoryAudioPaused", 12),
                              ("MemoryWebAudio", 13), ("MemoryRTC", 14)]:
@@ -555,19 +469,29 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 raise AssertionError("Actual local RTCPeerConnection was not created")
             media_before[page] = value
 
-        # Keep previously tested ordinary pages live so unrelated closures do
-        # not manufacture the automatic heap's process-tree memory decrease.
-        for title, tab_id in [("MemoryHeap", 1), ("MemoryTools", 4), ("MemoryLoading", 5),
-                              ("MemoryDownload", 6), ("MemoryAutoKeep", 10)]:
-            tab(title)
-            wait(lambda: row(tab_id) and not row(tab_id).get("otlozhena") and not row(tab_id).get("zagruzka"),
-                 "Explicit keep fixture did not load: " + title)
-            click(title, ["TabItem"], "right")
-            click("Не выгружать автоматически", ["MenuItem", "Button"])
-            wait(lambda: row(tab_id) and row(tab_id).get("memory_keep") is True,
-                 "Actual per-tab keep command was not persisted: " + title)
-        report["automatic_isolation_keep_ids"] = [1, 4, 5, 6, 10]
-        report["checks"].append({"individual_keep_enabled_via_actual_tab_menu": True})
+        wait(lambda: time.monotonic() - download_started >= 10 and row(6) and not row(6).get("otlozhena"),
+             "Active download was not retained beyond the automatic idle interval", 20)
+        assert_live(6)
+        report["checks"].append({"active_download_retained_without_manual_exception": True})
+        gui.hotkey("ctrl", "j")
+        click("Пауза", ["Button"])
+        wait(lambda: find("Продолжить", ["Button"]), "Actual download did not pause")
+        click("Закрыть библиотеку", ["Button"])
+        report["download_paused_at_seconds"] = time.monotonic() - started
+        tab("MemoryKeeper")
+        for title in ["MemoryKeeper", "MemoryPinned", "MemoryLoading", "MemoryBeforeUnload",
+                      "MemoryDraft", "MemoryPrivate", "MemoryAudio"]:
+            assert_no_memory_menu(title)
+        report["checks"].append({"manual_memory_commands_absent_from_actual_tab_menus": True})
+        for tab_id in [2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14]:
+            assert_live(tab_id)
+        if not row(5).get("zagruzka"):
+            raise AssertionError("Loading guard was not actually in progress")
+        # Every other loaded ordinary page has an intrinsic guard; unloaded
+        # saved rows stay dormant. No unrelated safe page can create RAM gain.
+        baseline_closed = re.findall(r'NEXUSBRO_MEMORY tab=(\d+)\b[^\n]*closed=row-retained', native_logs())
+        if baseline_closed:
+            raise AssertionError("A guarded setup page was automatically unloaded before the baseline")
         tab("MemoryAutoHeap")
         wait(lambda: any(r.get("page") == "MemoryAutoHeap" and r.get("reason") == "allocated"
                          and r.get("bytes") == a.heap_mb * 1024**2 and r.get("first") == r.get("last") == 41 for r in receipts),
@@ -604,31 +528,51 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         scroll_before = [r for r in receipts if r.get("page") == "MemoryAutoHeap" and r.get("reason") == "native-scroll"][-1]
         if not scroll_before.get("trusted") or scroll_before.get("scroll_y", 0) < 200:
             raise AssertionError("Safe automatic fixture was not physically scrolled")
+        if session().get("aktivnaya") != 9:
+            raise AssertionError("Automatic heap must be selected while taking its pre-close baseline")
+        auto_before = memory("before_automatic_sleep_active_heap")
+        assert_live(9)
+        if row(9).get("memory_pending"):
+            raise AssertionError("Selected heap unexpectedly entered an unload operation")
+        if auto_before - cold < a.min_drop_mb * 1024**2:
+            raise AssertionError("Touched heap did not measurably increase application private commit")
         tab("MemoryKeeper")
-        auto_before = memory("before_automatic_sleep")
         protected_hits = {path: hits[path] for path in ["/audio", "/audio-paused", "/web-audio", "/rtc", "/private"]}
-        report["checks"].append({"automatic_initially_off": json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))["memory_saver"] is False})
-        if report["checks"][-1]["automatic_initially_off"] is not True:
-            raise AssertionError("Automatic saver was enabled during manual acceptance")
-        click("Настройки NexusBro", ["Button"])
-        click("Вкладки и поиск", ["Button"])
-        checkbox = wait(lambda: find("Экономить память неактивных вкладок", ["CheckBox"]), "No real memory saver checkbox")
-        if checkbox.iface_toggle.CurrentToggleState != 0:
-            raise AssertionError("Real memory saver checkbox did not reflect the initial OFF setting")
-        try:
-            checkbox.iface_scroll_item.ScrollIntoView()
-        except Exception:
-            pass
-        checkbox.click_input()
-        click("Сохранить", ["Button"])
-        def saver_enabled():
-            try:
-                settings = json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))
-                return settings.get("memory_saver") is True and settings.get("memory_saver_minutes") == 30
-            except (ValueError, OSError):
-                return False
-        wait(saver_enabled, "Real settings did not enable automatic saver with normal 30-minute policy")
-        # No manual unload command or interaction with this tab after enabling.
+        if not normal_policy():
+            raise AssertionError("Normal automatic saving policy changed during acceptance")
+        # Minimize the real native shell while media is playing and a different
+        # page is selected. Keep the actual OS minimized for at least 15 seconds.
+        u.IsIconic.argtypes = [wintypes.HWND]
+        u.IsIconic.restype = wintypes.BOOL
+        minimize_started = time.monotonic()
+        u.ShowWindow(win.handle, 6)
+        wait(lambda: bool(u.IsIconic(win.handle)), "Actual application did not minimize", 5)
+        closed_while_minimized = False
+        first_closed_minimized_at = None
+        while time.monotonic() - minimize_started < 15:
+            processes()
+            if not u.IsIconic(win.handle):
+                raise AssertionError("Native window restored itself during the minimize interval")
+            if row(9) and row(9).get("otlozhena"):
+                closed_while_minimized = True
+                if first_closed_minimized_at is None:
+                    first_closed_minimized_at = time.monotonic() - started
+            time.sleep(.5)
+        minimize_finished = time.monotonic()
+        u.ShowWindow(win.handle, 9)
+        wait(lambda: not u.IsIconic(win.handle), "Actual shell did not restore", 5)
+        win.set_focus()
+        report["actual_minimize_interval"] = {
+            "started_seconds": minimize_started - started,
+            "finished_seconds": minimize_finished - started,
+            "duration_seconds": minimize_finished - minimize_started,
+            "automatic_close_observed_while_minimized": closed_while_minimized,
+            "first_closed_observed_seconds": first_closed_minimized_at,
+            "selected_tab_id": 2,
+        }
+        if not closed_while_minimized:
+            raise AssertionError("Automatic heap did not close while the application was genuinely minimized")
+        # No unload command, keep setting, or interaction with the inactive heap.
         wait(lambda: row(9) and row(9).get("otlozhena") and not row(9).get("memory_pending"),
              "Idle automatic fixture did not actually close into its retained sleeping row", 45)
         logs = native_logs()
@@ -655,11 +599,26 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         report["automatic_media_refusal_proofs"] = {
             str(tab_id): {"kind": kind, "actual_native_automatic_refusals": automatic_media_refusals(native_logs(), tab_id, kind)}
             for tab_id, kind in media_kinds.items()}
-        for tab_id in [1, 3, 4, 5, 6, 10, 11, 12, 13, 14]:
+        closed = re.findall(r'NEXUSBRO_MEMORY tab=(\d+)\b[^\n]*closed=row-retained', native_logs())
+        if closed != ["9"]:
+            raise AssertionError("RAM decrease was contaminated by another automatic close: " + str(closed))
+        if re.search(r'NEXUSBRO_MEMORY[^\n]*requested=manual', native_logs()):
+            raise AssertionError("A manual unload was issued in automatic-only acceptance")
+        report["checks"].append({"only_heap_automatically_closed_legacy_exception_ignored": True})
+        wait(lambda: len(automatic_refusals(7)) >= 2,
+             "Automatic beforeunload protection was not retried safely", 30)
+        report["coverage"]["beforeunload_refusal"] = "actual_automatic_refusal_and_retry"
+        report["automatic_beforeunload_refusals"] = automatic_refusals(7)
+        for tab_id in [2, 3, 4, 5, 6, 7, 8, 11, 12, 13, 14]:
             if not row(tab_id) or row(tab_id).get("otlozhena"):
-                raise AssertionError(f"Protected pinned/keep/media/resource tab was automatically unloaded: {tab_id}")
-        if row(10).get("memory_keep") is not True:
-            raise AssertionError("Automatic saver discarded the individual keep preference")
+                raise AssertionError(f"Protected pinned/media/resource tab was automatically unloaded: {tab_id}")
+        if hits["/unvisited"] or hits["/unvisited-other"] or not row(1).get("otlozhena") or not row(10).get("otlozhena"):
+            raise AssertionError("Dormant saved pages were loaded by automatic memory saving")
+        if not row(5).get("zagruzka"):
+            raise AssertionError("The protected loading fixture unexpectedly completed")
+        if time.monotonic() - started - report["download_paused_at_seconds"] < 8:
+            raise AssertionError("Paused download was not observed beyond the automatic idle interval")
+        report["checks"].append({"pinned_loading_devtools_draft_private_active_and_paused_download_retained": True})
         for path, before_hits in protected_hits.items():
             if hits[path] != before_hits:
                 raise AssertionError("Protected page navigated/reloaded during automatic idle window: " + path)
@@ -671,6 +630,9 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
             tab(page)
             after_state = actual_media_action(page, 148, "snapshot")
             before_state = media_before[page]
+            if (before_state["received_seconds"] > report["actual_minimize_interval"]["started_seconds"]
+                    or after_state["received_seconds"] < report["actual_minimize_interval"]["finished_seconds"]):
+                raise AssertionError("Actual resource clock receipts do not span the native minimized interval")
             if page == "MemoryAudio":
                 first_after = after_state
                 time.sleep(.8)
@@ -682,10 +644,11 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 if after_state.get("paused") is not False:
                     raise AssertionError("Real HTML audio stopped during automatic idle period")
                 duration = after_state["duration"]
-                actual = (after_state["current_time"] - before_state["current_time"]) % duration
-                wall = (after_state["received_seconds"] - before_state["received_seconds"]) % duration
-                drift = abs(actual - wall)
-                if min(drift, duration - drift) > 3:
+                actual = after_state["current_time"] - before_state["current_time"]
+                wall = after_state["received_seconds"] - before_state["received_seconds"]
+                if not 1 <= wall < duration - 3 or actual < 0:
+                    raise AssertionError("HTML clock fixture exceeded its non-wrapping observation window")
+                if abs(actual - wall) > 3:
                     raise AssertionError("Actual HTML playback clock did not continue across automatic idle period")
             elif page == "MemoryAudioPaused":
                 if after_state.get("paused") is not True or abs(after_state["current_time"] - before_state["current_time"]) > .15:
@@ -699,6 +662,15 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
                 raise AssertionError("Retained local RTCPeerConnection was lost")
             media_after[page] = after_state
         report["media_clock_proofs"] = {"before": media_before, "after": media_after}
+        tab("MemoryDraft")
+        previous_draft = sum(r.get("reason") == "draft-snapshot" for r in receipts)
+        physical_page_click(193)
+        wait(lambda: sum(r.get("reason") == "draft-snapshot" for r in receipts) > previous_draft,
+             "Actual draft snapshot was not received")
+        draft = [r for r in receipts if r.get("reason") == "draft-snapshot"][-1]
+        if not draft.get("trusted") or draft.get("value") != "actual unsaved draft":
+            raise AssertionError("Automatic memory saving lost the real unsaved draft")
+        report["checks"].append({"actual_unsaved_draft_preserved_without_exception": True})
         tab("MemoryPrivate")
         time.sleep(.5)
         if hits["/private"] != protected_hits["/private"]:
@@ -716,7 +688,7 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
             raise AssertionError("Automatic wake lost actual cookie/localStorage/scroll state")
         report["checks"].append({"automatic_same_row_wake_cookie_storage_scroll_preserved": True})
         report["coverage"]["automatic_unload"] = "actual_native_two_phase_auto_close_private_commit_drop_and_wake"
-        report["coverage"]["media"] = "actual_html_playing_paused_webaudio_clocks_and_local_rtc_retained"
+        report["coverage"]["media"] = "actual_html_playing_paused_webaudio_clocks_and_local_rtc_retained_across_native_minimize"
         report["completed"] = True
         ImageGrab.grab().save(out / "completed.png")
     except Exception as error:
