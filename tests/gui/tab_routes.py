@@ -15,6 +15,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 
 import psutil
 import websocket
@@ -24,23 +25,55 @@ from stun_fixture import StunFixture
 from security_native import Device, call, js_wait, port, require, settings, super_record, wait_for
 
 
+class InspectorNoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args):
+        # An owned local inspector has no legitimate redirect destination.
+        return None
+
+
 class WindowsClient(Client):
     """WebView2 inspector reads shell IPC; all UI clicks are physical input."""
-    def __init__(self, inspector):
+    def __init__(self, inspector, diagnostic=None):
         self.seq = 0
-        with urllib.request.urlopen('http://127.0.0.1:' + str(inspector) + '/json/list', timeout=2) as response:
+        diagnostic = diagnostic if diagnostic is not None else {}
+        diagnostic['stage'] = 'http_target_list'
+        # A Python/WinINET proxy must never receive an owned inspector request.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), InspectorNoRedirect())
+        with opener.open('http://127.0.0.1:' + str(inspector) + '/json/list', timeout=2) as response:
+            diagnostic['http_status'] = response.status
             pages = json.load(response)
+        diagnostic['targets'] = [{'type': p.get('type'), 'title': str(p.get('title', ''))[:80],
+                                  'url_scheme': urllib.parse.urlsplit(p.get('url', '')).scheme,
+                                  'has_websocket': bool(p.get('webSocketDebuggerUrl'))} for p in pages[:10]]
         self.ws = None
         for page in pages:
             if page.get('type') != 'page' or not page.get('webSocketDebuggerUrl'):
                 continue
-            candidate = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=5, suppress_origin=True)
+            endpoint = urllib.parse.urlsplit(page['webSocketDebuggerUrl'])
+            require(endpoint.scheme == 'ws' and endpoint.hostname in ('127.0.0.1', 'localhost')
+                    and endpoint.port == inspector and not endpoint.username and not endpoint.password,
+                    'Inspector advertised a WebSocket outside the owned loopback port')
+            diagnostic['stage'] = 'websocket_connect'
+            # websocket-client can fall back to proxy environment variables
+            # even with http_proxy_host=None; its preconnected-socket path
+            # bypasses proxy discovery entirely. Never resolve a target host.
+            transport = socket.create_connection(('127.0.0.1', inspector), timeout=5)
+            try:
+                candidate = websocket.create_connection(page['webSocketDebuggerUrl'], socket=transport,
+                    timeout=5, suppress_origin=True, http_proxy_host=None,
+                    http_no_proxy=['127.0.0.1', 'localhost'])
+            except Exception:
+                transport.close()
+                raise
             self.ws = candidate
+            diagnostic['stage'] = 'shell_ipc_probe'
             try:
                 if self.js('!!window.__TAURI_INTERNALS__?.invoke'):
+                    diagnostic['stage'] = 'ready'
                     return
-            except (OSError, RuntimeError, websocket.WebSocketException):
-                pass
+                diagnostic['shell_ipc_present'] = False
+            except (OSError, RuntimeError, websocket.WebSocketException) as error:
+                diagnostic['probe_error_type'] = type(error).__name__
             candidate.close()
             self.ws = None
         raise ConnectionError('No real Tauri WebView2 shell inspector')
@@ -74,6 +107,8 @@ class WindowsDevice:
         self.data.mkdir(parents=True)
         self.inspector = port()
         self.app = self.client = self.log = None
+        self.inspector_diagnostic = {'port': self.inspector, 'attempts': 0,
+                                     'proxy_policy': 'owned_loopback_direct'}
 
     def start(self):
         import ctypes
@@ -88,10 +123,15 @@ class WindowsDevice:
 
         def ready():
             require(self.app.poll() is None, 'Owned native application exited during startup')
+            self.inspector_diagnostic['attempts'] += 1
             try:
-                self.client = WindowsClient(self.inspector)
+                self.client = WindowsClient(self.inspector, self.inspector_diagnostic)
                 return self.client
-            except (OSError, ValueError, websocket.WebSocketException):
+            except (OSError, ValueError, websocket.WebSocketException) as error:
+                self.inspector_diagnostic['last_error_type'] = type(error).__name__
+                # Only local transport/parser errors, never request headers or
+                # arbitrary process environment, enter the diagnostic artifact.
+                self.inspector_diagnostic['last_error'] = str(error)[:300]
                 return None
         client = wait_for(ready, 'WebView2 shell inspector did not become available', 45)
         windows = wait_for(lambda: Desktop(backend='uia').windows(process=self.app.pid, visible_only=True),
@@ -101,6 +141,31 @@ class WindowsDevice:
         window.move_window(x=20, y=20, width=1200, height=820)
         window.set_focus()
         return client
+
+    def startup_diagnostics(self):
+        diagnostic = dict(self.inspector_diagnostic)
+        diagnostic['owned_processes'] = []
+        if not self.app:
+            return diagnostic
+        try:
+            root = psutil.Process(self.app.pid)
+            for process in [root] + root.children(recursive=True):
+                try:
+                    relevant = ('--remote-debugging-port', '--remote-debugging-address',
+                                '--user-data-dir', '--type=', '--embedded-browser-webview=')
+                    flags = [arg[:500] for arg in process.cmdline() if arg.startswith(relevant)]
+                    entry = {'pid': process.pid, 'name': process.name(), 'flags': flags}
+                    try:
+                        entry['inspector_listeners'] = [c.laddr.port for c in process.net_connections(kind='tcp')
+                                                       if c.status == psutil.CONN_LISTEN and c.laddr.port == self.inspector]
+                    except (psutil.NoSuchProcess, psutil.AccessDenied) as error:
+                        entry['listener_error'] = type(error).__name__
+                    diagnostic['owned_processes'].append(entry)
+                except (psutil.NoSuchProcess, psutil.AccessDenied) as error:
+                    diagnostic['owned_processes'].append({'pid': process.pid, 'error': type(error).__name__})
+        except (psutil.NoSuchProcess, psutil.AccessDenied) as error:
+            diagnostic['process_error'] = type(error).__name__
+        return diagnostic
 
     def stop_app(self):
         if self.client:
@@ -549,12 +614,20 @@ def run(args):
     except Exception as error:
         # No credential/raw server receipts are written to artifacts.
         report['error'] = type(error).__name__ + ': ' + str(error)
+        if device and sys.platform == 'win32':
+            try:
+                report['inspector_on_failure'] = device.startup_diagnostics()
+            except Exception as diagnostic_error:
+                report['inspector_diagnostic_error'] = type(diagnostic_error).__name__
         if device and device.client:
             try:
                 report['shell_text_on_failure'] = device.client.js('document.body.innerText').strip()[:12000]
                 report['session_on_failure'] = rows(device.client, 'routes-a')
             except Exception as diagnostic_error:
                 report['diagnostic_error'] = type(diagnostic_error).__name__
+        if device:
+            # Startup/inspector failures need a native screen too, even before
+            # a CDP client exists. Capture before terminating the owned app.
             try:
                 from PIL import ImageGrab
                 (ImageGrab.grab() if sys.platform == 'win32' else ImageGrab.grab(xdisplay=device.display)).save(out / 'failure.png')
