@@ -240,11 +240,13 @@ fn experiment(
     let started = Instant::now();
     let ready = Arc::new(AtomicUsize::new(0));
     let mut ca = context(
-        root.join(if scenario == "legacy_parallel" {
-            "kesh"
-        } else {
-            "A"
-        }),
+        root.join(
+            if (scenario == "legacy_parallel" || scenario == "legacy_explicit") {
+                "kesh"
+            } else {
+                "A"
+            },
+        ),
         ready.clone(),
     )?;
     let mut cb = if scenario == "shared" {
@@ -255,7 +257,9 @@ fn experiment(
         .ok_or("shared context creation failed")?
     } else {
         context(
-            root.join(if scenario == "legacy_parallel" {
+            root.join(if scenario == "legacy_explicit" {
+                "override-new-explicit"
+            } else if scenario == "legacy_parallel" {
                 "override-new"
             } else {
                 "B"
@@ -271,6 +275,12 @@ fn experiment(
         return Err("context initialization deadline exceeded".into());
     }
     let sharing = ca.is_sharing_with(Some(&mut cb)) != 0;
+    if scenario == "legacy_explicit" {
+        println!(
+            "{}",
+            serde_json::json!({"legacy_explicit_old_cache":true,"global_disk_cache_enabled":false})
+        );
+    }
     configure(&ca, "A", a, sharing)?;
     configure(&cb, "B", b, sharing)?;
     let loaded = Arc::new(AtomicUsize::new(0));
@@ -353,7 +363,8 @@ fn run() -> Result<i32, String> {
     let scenario = arg("--scenario")?;
     if !root.is_absolute()
         || (root.exists()
-            && !((scenario == "legacy_reopen" || scenario == "legacy_parallel")
+            && !((scenario == "legacy_reopen"
+                || (scenario == "legacy_parallel" || scenario == "legacy_explicit"))
                 && root.join("owned-profile-probe").is_file()))
     {
         return Err(
@@ -367,6 +378,7 @@ fn run() -> Result<i32, String> {
         "legacy_seed",
         "legacy_reopen",
         "legacy_parallel",
+        "legacy_explicit",
     ]
     .contains(&scenario.as_str())
     {
@@ -397,6 +409,9 @@ fn run() -> Result<i32, String> {
         .to_string_lossy()
         .as_ref(),
     );
+    if scenario == "legacy_explicit" {
+        settings.cache_path = CefString::default();
+    }
     settings.resources_dir_path = CefString::from(cef_dir.to_string_lossy().as_ref());
     settings.locales_dir_path = CefString::from(cef_dir.join("locales").to_string_lossy().as_ref());
     settings.log_severity = LogSeverity::DISABLE;

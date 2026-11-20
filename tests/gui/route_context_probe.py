@@ -69,7 +69,7 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
                         session_http_only_sent='route_probe_session=session-fixture' in cookies,
                         script_cannot_read_http_only='route_probe_auth=' not in value.get('cookie', '') and 'route_probe_session=' not in value.get('cookie', ''))
                 if context == 'A': first_report.set()
-                if len(reports) == 2 or (kind == 'legacy' and native_phase != 'legacy_parallel'): (profile/'done').touch()
+                if len(reports) == 2 or (kind == 'legacy' and native_phase not in ('legacy_parallel','legacy_explicit')): (profile/'done').touch()
             self.send_response(204); self.end_headers()
 
     origin = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Origin)
@@ -111,11 +111,11 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
     processes=[]
     try:
         api=[]
-        for native_kind in (('legacy_seed', 'legacy_reopen', 'legacy_parallel') if kind=='legacy' else (kind,)):
+        for native_kind in (('legacy_seed', 'legacy_reopen', 'legacy_parallel', 'legacy_explicit') if kind=='legacy' else (kind,)):
             native_phase=native_kind
-            if native_kind=='legacy_parallel':
+            if native_kind in ('legacy_parallel','legacy_explicit'):
                 reports.clear();navigation.clear();first_report.clear()
-            if native_kind in ('legacy_reopen','legacy_parallel'):
+            if native_kind in ('legacy_reopen','legacy_parallel','legacy_explicit'):
                 (profile/'done').unlink()
             command = [str(exe), '--probe-root', str(profile), '--scenario', native_kind, '--proxy-a', proxy_a, '--proxy-b', proxy_b, '--target-base', 'http://127.0.0.1:'+str(origin.server_port)]
             process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -158,9 +158,13 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
             legacy_ok=(all(row['persistent_http_only_sent'] and row['script_cannot_read_http_only'] for row in [seed,reopened,inherited])
                 and seed['session_http_only_sent'] and reopened['storage']=='A' and inherited['storage']=='A'
                 and not override['persistent_http_only_sent'] and not override['session_http_only_sent'] and override['storage'] is None
-                and len(processes)==3 and processes[0].pid!=processes[1].pid)
+                and all(values['A']['persistent_http_only_sent'] and values['A']['storage']=='A'
+                        and not values['B']['persistent_http_only_sent'] and not values['B']['session_http_only_sent']
+                        and values['B']['storage'] is None for stage,values in phase_receipts.items()
+                        if stage in ('legacy_parallel','legacy_explicit'))
+                and len(processes)==4 and processes[0].pid!=processes[1].pid)
         matches = actual == expected and navigation_routes == expected and storage_expected and overlap and legacy_ok
-        return {'scenario':kind,'actual_fetch_routes':actual,'actual_navigation_routes':navigation_routes,'expected_routes':expected,'storage_shared':shared,'storage_matches_expected':storage_expected,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'matches_expected_matrix':matches,'feature_ready':False,**({'persistent_http_only_auth_preserved':legacy_ok,'session_http_only_survived_restart':phase_receipts['legacy_reopen']['B']['session_http_only_sent'],'separate_process_restart':True,'same_root_and_cache':True,'server_auth_receipts':phase_receipts} if kind=='legacy' else {})}
+        return {'scenario':kind,'actual_fetch_routes':actual,'actual_navigation_routes':navigation_routes,'expected_routes':expected,'storage_shared':shared,'storage_matches_expected':storage_expected,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'matches_expected_matrix':matches,'feature_ready':False,**({'persistent_http_only_auth_preserved':legacy_ok,'session_http_only_survived_restart':phase_receipts['legacy_reopen']['B']['session_http_only_sent'],'separate_process_restart':True,'same_root_and_cache':True,'explicit_old_cache_without_global_disk_cache':True,'native_process_count':len(processes),'server_auth_receipts':phase_receipts} if kind=='legacy' else {})}
     finally:
         for process in processes:
             if sys.platform=='win32':

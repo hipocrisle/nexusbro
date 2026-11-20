@@ -83,8 +83,9 @@ jobs:
           $exe=(Resolve-Path tests/route_context_probe/target/x86_64-pc-windows-msvc/release/route_context_probe.exe).Path
           $rule="NexusBroRouteProbe-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
           New-Item -ItemType Directory -Force .dev-check/route-probe | Out-Null
+          @{scope='own-probe-executable';non_loopback_outbound_blocked=$false;runtime_started=$false;product_feature_ready=$false} | ConvertTo-Json | Set-Content .dev-check/route-probe/network-guard.json
           try {
-            New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Outbound -Action Block -Enabled True -Profile Any -Program $exe -RemoteAddress @('0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255','::/0') -ErrorAction Stop | Out-Null
+            New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Outbound -Action Block -Enabled True -Profile Any -Program $exe -RemoteAddress @('128.0.0.0/1','0.0.0.0/2','64.0.0.0/3','96.0.0.0/4','112.0.0.0/5','120.0.0.0/6','124.0.0.0/7','126.0.0.0/8','::/1','8000::/1') -ErrorAction Stop | Out-Null
             $actual=Get-NetFirewallRule -Name $rule -ErrorAction Stop
             if ($actual.Enabled -ne 'True' -or $actual.Action -ne 'Block' -or $actual.Direction -ne 'Outbound') { throw 'Program network guard was not installed' }
             $program=($actual | Get-NetFirewallApplicationFilter).Program

@@ -89,3 +89,17 @@ HTTPS, service-worker startup leakage, actual VPNs, product integration and real
 user profile migration remain explicitly unverified. `product_feature_ready`
 stays false even if the capability matrix passes. Build and runtime results are
 pending until the hosted Windows job completes.
+
+A fourth legacy phase, `legacy_explicit`, leaves the global disk cache empty and
+opens the original `root/kesh` through an explicit RequestContext with its own
+handler, alongside a second fresh override subdirectory. The same server-side
+auth/storage and concurrent-route assertions apply. This specifically measures
+whether old Windows encrypted cookie storage remains readable with an unchanged
+root and cache path when the global context no longer owns the disk cache. It
+does not itself implement or prove a service-worker network admission gate.
+
+First Windows run `44726414717` (source `fee5954`) compiled successfully. The
+measurement did not start because the per-program firewall rejected an address
+prefix/range. The follow-up uses a full CIDR decomposition excluding127/8 and no
+`/0` prefixes, preserving the outbound block rather than dropping isolation.
+No routing or authentication success is claimed from that first run.
