@@ -37,6 +37,7 @@ wrap_request_context_handler! {
 fn configure(context: &RequestContext, proxy: &str, allow_non_proxied_udp: bool) -> bool {
     let policy = CefString::from("webrtc.ip_handling_policy");
     if context.can_set_preference(Some(&policy)) == 0 {
+        eprintln!("route-context: WebRTC policy preference is unavailable; admission denied");
         return false;
     }
     let Some(mut rtc) = value_create() else {
@@ -52,11 +53,13 @@ fn configure(context: &RequestContext, proxy: &str, allow_non_proxied_udp: bool)
     }
     let mut rtc_error = CefString::from("route rtc policy");
     if context.set_preference(Some(&policy), Some(&mut rtc), Some(&mut rtc_error)) == 0 {
+        eprintln!("route-context: WebRTC policy preference was rejected; admission denied");
         return false;
     }
 
     let key = CefString::from("proxy");
     if context.can_set_preference(Some(&key)) == 0 {
+        eprintln!("route-context: proxy preference is locked; admission denied");
         return false;
     }
     let Some(mut dict) = dictionary_value_create() else {
@@ -85,7 +88,9 @@ fn configure(context: &RequestContext, proxy: &str, allow_non_proxied_udp: bool)
     }
     // cef-rs requires allocated output storage, not CefString::default().
     let mut error = CefString::from("route preference");
-    context.set_preference(Some(&key), Some(&mut value), Some(&mut error)) != 0
+    let accepted = context.set_preference(Some(&key), Some(&mut value), Some(&mut error)) != 0;
+    if !accepted { eprintln!("route-context: proxy preference was rejected; admission denied"); }
+    accepted
 }
 struct Entry {
     context: RequestContext,

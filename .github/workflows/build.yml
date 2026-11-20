@@ -220,7 +220,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config \
-            libxcb1-dev patchelf rpm xvfb xdotool
+            libxcb1-dev patchelf rpm xvfb xdotool libnss3-tools
 
       # Движок CEF кладём внутрь установщика (замена ungoogled-chromium,
       # ветка cef-migration). Архивные файлы лежат в Release/ и Resources/ —
@@ -350,7 +350,7 @@ jobs:
       - name: Проверить CEF и окна Linux под Xvfb
         if: matrix.os == 'ubuntu-24.04'
         run: |
-          python3 -m pip install --break-system-packages websocket-client psutil Pillow
+          python3 -m pip install --break-system-packages websocket-client psutil Pillow cryptography
           BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
           readelf --dyn-syms --wide "$BIN" | awk '$5=="GLOBAL" && $6=="DEFAULT" && $7!="UND" && $8 ~ /^sqlite3_/ {bad=1} END {exit bad}'
           python3 tests/gui/linux_smoke.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/linux-runtime
@@ -366,6 +366,26 @@ jobs:
         run: |
           sha256sum -c SHA256SUMS
           chmod +x nexusbro-sync-server
+      - name: Native per-tab routes, isolated profiles and trusted HTTPS
+        if: matrix.os == 'ubuntu-24.04'
+        timeout-minutes: 10
+        run: |
+          python3 tests/gui/route_ca.py --out .dev-check/routes-ca
+          sudo cp .dev-check/routes-ca/ca.crt /usr/local/share/ca-certificates/nexusbro-route-fixture.crt
+          sudo update-ca-certificates
+          mkdir -p "$HOME/.pki/nssdb"
+          if [ ! -f "$HOME/.pki/nssdb/cert9.db" ]; then certutil -N -d "sql:$HOME/.pki/nssdb" --empty-password; fi
+          certutil -A -d "sql:$HOME/.pki/nssdb" -n nexusbro-route-fixture -t 'C,,' -i .dev-check/routes-ca/ca.crt
+          python3 tests/gui/tab_routes.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.os == 'ubuntu-24.04'
+        with:
+          name: linux-route-verification
+          path: |
+            .dev-check/native-routes/*.json
+            .dev-check/native-routes/device/*.log
+            .dev-check/native-routes/device/data/profili/*/cef*.log
+          retention-days: 14
       - name: Native encrypted vault, CEF credentials and two-device sync
         if: matrix.os == 'ubuntu-24.04'
         timeout-minutes: 10
@@ -400,7 +420,7 @@ jobs:
         timeout-minutes: 10
         shell: pwsh
         run: |
-          python -m pip install Pillow pyautogui pywinauto psutil
+          python -m pip install Pillow pyautogui pywinauto psutil websocket-client cryptography
           $installer = Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe | Select-Object -First 1
           7z x -y $installer.FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
@@ -409,6 +429,26 @@ jobs:
           python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
+      - name: Native Windows per-tab routes and trusted HTTPS
+        if: matrix.os == 'windows-latest'
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          python tests/gui/route_ca.py --out .dev-check/routes-ca
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          certutil -user -addstore Root .dev-check/routes-ca/ca.crt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/gui/tab_routes.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always() && matrix.os == 'windows-latest'
+        with:
+          name: windows-route-verification
+          path: |
+            .dev-check/native-routes/*.json
+            .dev-check/native-routes/device/*.log
+            .dev-check/native-routes/device/data/profili/*/cef*.log
+          retention-days: 14
       - name: Verify real background lifecycle and restored native input
         if: matrix.os == 'windows-latest'
         timeout-minutes: 6
@@ -566,7 +606,7 @@ jobs:
           Get-FileHash -Algorithm SHA256 $installers[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/installer-sha256.json
           7z x -y $installers[0].FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install Pillow pyautogui pywinauto psutil
+          python -m pip install Pillow pyautogui pywinauto psutil websocket-client cryptography
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($env:REFERENCE_RUN) {
             $reference = @(Get-ChildItem .dev-check/reference-package -Recurse -Filter *.exe)
@@ -636,7 +676,7 @@ jobs:
           if (-not $installer) { throw "Installer missing" }
           7z x -y $installer.FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          python -m pip install Pillow pyautogui pywinauto psutil
+          python -m pip install Pillow pyautogui pywinauto psutil websocket-client cryptography
           $extra = @()
           if ("${{ inputs.runtime_baseline }}" -eq "true") { $extra += "--baseline" }
           python tests/xray_assets.py --bin .dev-check/installed/binaries/xray.exe
@@ -645,6 +685,26 @@ jobs:
             python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Native Windows per-tab routes and trusted HTTPS
+        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        timeout-minutes: 10
+        shell: pwsh
+        run: |
+          python tests/gui/route_ca.py --out .dev-check/routes-ca
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          certutil -user -addstore Root .dev-check/routes-ca/ca.crt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python tests/gui/tab_routes.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
+        with:
+          name: windows-route-verification
+          path: |
+            .dev-check/native-routes/*.json
+            .dev-check/native-routes/device/*.log
+            .dev-check/native-routes/device/data/profili/*/cef*.log
+          retention-days: 14
       - name: Verify real background lifecycle of the exact measured installer
         if: ${{ !inputs.runtime_memory_only }}
         timeout-minutes: 6
@@ -804,8 +864,8 @@ jobs:
             sudo sed -i -E -e 's@https?://([a-z0-9.-]+\.)?archive\.ubuntu\.com/ubuntu/?@https://archive.ubuntu.com/ubuntu/@g' -e 's@http://security\.ubuntu\.com/ubuntu/?@https://security.ubuntu.com/ubuntu/@g' /etc/apt/sources.list.d/ubuntu.sources
           fi
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 xvfb xdotool
-          python3 -m pip install --break-system-packages websocket-client psutil Pillow
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 xvfb xdotool libnss3-tools
+          python3 -m pip install --break-system-packages websocket-client psutil Pillow cryptography
           curl -fSL --connect-timeout 20 --max-time 180 --retry 3 --retry-max-time 240 -o /tmp/cef.tar.bz2 'https://cef-builds.spotifycdn.com/cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88_linux64_minimal.tar.bz2'
           echo 'cacfbb7d7261fea682fb67c108de7e4347519ff7 /tmp/cef.tar.bz2' | sha1sum -c -
           mkdir -p .dev-check/cef
@@ -825,6 +885,26 @@ jobs:
         with:
           name: native-memory-bootstrap-diagnostic
           path: .dev-check/native-memory-diagnostic/results.json
+          retention-days: 14
+      - name: Native per-tab routes, isolated profiles and trusted HTTPS
+        if: ${{ !inputs.linux_memory_diagnostic }}
+        timeout-minutes: 10
+        run: |
+          python3 tests/gui/route_ca.py --out .dev-check/routes-ca
+          sudo cp .dev-check/routes-ca/ca.crt /usr/local/share/ca-certificates/nexusbro-route-fixture.crt
+          sudo update-ca-certificates
+          mkdir -p "$HOME/.pki/nssdb"
+          if [ ! -f "$HOME/.pki/nssdb/cert9.db" ]; then certutil -N -d "sql:$HOME/.pki/nssdb" --empty-password; fi
+          certutil -A -d "sql:$HOME/.pki/nssdb" -n nexusbro-route-fixture -t 'C,,' -i .dev-check/routes-ca/ca.crt
+          python3 tests/gui/tab_routes.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.linux_memory_diagnostic
+        with:
+          name: linux-route-verification
+          path: |
+            .dev-check/native-routes/*.json
+            .dev-check/native-routes/device/*.log
+            .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14
       - name: Native encrypted vault, UI lock and two-device sync
         if: ${{ !inputs.linux_memory_diagnostic }}

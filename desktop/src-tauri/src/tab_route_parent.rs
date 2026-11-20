@@ -194,7 +194,11 @@ pub async fn tab_route_set(
         key: key.clone(),
         token,
     };
-    let descriptor = prepare(&app, &id, engine, &route).await?;
+    crate::zapisat_v_zhurnal(format!("route-prepare engine={engine} tab={tab_id} attempt={generation} begin"));
+    let descriptor = prepare(&app, &id, engine, &route).await.map_err(|error| {
+        crate::zapisat_v_zhurnal(format!("route-prepare engine={engine} tab={tab_id} attempt={generation} denied"));
+        error
+    })?;
     let (current_engine, current) = session_tab(&s, &label, &id, tab_id)?;
     if current_engine != engine
         || current.browser_id != tab.browser_id
