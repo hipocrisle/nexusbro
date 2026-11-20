@@ -528,6 +528,17 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         scroll_before = [r for r in receipts if r.get("page") == "MemoryAutoHeap" and r.get("reason") == "native-scroll"][-1]
         if not scroll_before.get("trusted") or scroll_before.get("scroll_y", 0) < 200:
             raise AssertionError("Safe automatic fixture was not physically scrolled")
+        active_started = time.monotonic()
+        while time.monotonic() - active_started < 10:
+            processes()
+            if session().get("aktivnaya") != 9:
+                raise AssertionError("Automatic heap lost selection during active-page protection check")
+            assert_live(9)
+            if row(9).get("memory_pending"):
+                raise AssertionError("Selected heap entered an automatic unload operation")
+            time.sleep(.5)
+        report["checks"].append({"active_heap_retained_beyond_idle_interval": True,
+                                 "active_seconds": time.monotonic() - active_started})
         if session().get("aktivnaya") != 9:
             raise AssertionError("Automatic heap must be selected while taking its pre-close baseline")
         auto_before = memory("before_automatic_sleep_active_heap")
