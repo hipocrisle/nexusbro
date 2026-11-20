@@ -532,6 +532,8 @@ async fn apply(
                             okno: None,
                             zapas_pid: None,
                             nash_proxy: None,
+                            inherit_route: None,
+                            route_settings: None,
                             tunnel: None,
                             zapusk_idet: false,
                             zapusk_id: 0,
