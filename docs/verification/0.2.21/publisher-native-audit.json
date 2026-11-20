@@ -1,0 +1,41 @@
+{
+  "run": 44779555506,
+  "route_artifact": 14651667640,
+  "memory_artifact": 14650942143,
+  "completed_routes": 18,
+  "completed_memory_checks": 10,
+  "cookie_count_before_clear": 1,
+  "cookie_count_after_clear": 0,
+  "minimized_seconds": 15.140999999999963,
+  "only_auto_closed_tab": 9,
+  "manual_unload": false,
+  "private_commit_before": 882221056,
+  "private_commit_after": 664268800,
+  "drop_bytes": 217952256,
+  "drop_mib": 207.85546875,
+  "media_clock_proofs": {
+    "MemoryAudio": {
+      "clock_delta": 47.795108,
+      "wall_delta": 47.68700000000001
+    },
+    "MemoryAudioPaused": {
+      "paused_clock_unchanged": true,
+      "time": 0.038347
+    },
+    "MemoryWebAudio": {
+      "clock_delta": 47.81278911564626,
+      "wall_delta": 47.79600000000005
+    },
+    "MemoryRTC": {
+      "local_rtc_new_stable": true
+    }
+  },
+  "four_media_native_automatic_refusals": true,
+  "wake_same_id9_cookie_localstorage_scroll600": true,
+  "unexecuted": [
+    "worker_startup_pre_admission",
+    "user_close_during_sleep",
+    "fake_capture"
+  ],
+  "public_crypto": "separate root verification"
+}

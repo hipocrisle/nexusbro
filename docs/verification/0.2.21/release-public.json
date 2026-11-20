@@ -1,0 +1,36 @@
+{
+  "version": "0.2.21",
+  "source": "1e0a5d8",
+  "release": "https://github.com/hipocrisle/nexusbro/releases/tag/v0.2.21",
+  "run": 44779555506,
+  "published": true,
+  "latest_endpoint_verified": true,
+  "public_packages_downloaded_and_crypto_verified": true,
+  "publication_receipt_matches": true,
+  "packages": [
+    {
+      "file": "NexusBro_0.2.21_x64-setup.exe",
+      "bytes": 157367205,
+      "sha256": "6a6f0edbbd9dcef6ad60dc8e34fe94e5371cc4834a40c45b39727198be5142bd",
+      "ed25519_payload_and_comment_verified": true,
+      "manifest_signature_matches": true,
+      "public_download_http": 200
+    },
+    {
+      "file": "NexusBro_0.2.21_amd64.deb",
+      "bytes": 403331950,
+      "sha256": "332e98dc0d45279bc1d0e39bd4258b5cf9b35659ff8579bdc7992f2a7917bc2b",
+      "ed25519_payload_and_comment_verified": true,
+      "manifest_signature_matches": true,
+      "public_download_http": 200
+    },
+    {
+      "file": "NexusBro-0.2.21-1.x86_64.rpm",
+      "bytes": 403318523,
+      "sha256": "7a8b5aafb56983e4efdabed3d71972302ed51037664c2a6488a121831c6aaf2d",
+      "ed25519_payload_and_comment_verified": true,
+      "manifest_signature_matches": true,
+      "public_download_http": 200
+    }
+  ]
+}

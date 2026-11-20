@@ -1,6 +1,6 @@
-# NexusBro 0.2.21 — кандидат на публикацию
+# NexusBro 0.2.21 — опубликован и публично проверен
 
-Публичная версия пока 0.2.20. Исходник приложения: `1e0a5d8`, пакеты собраны в [44771343618](https://github.com/hipocrisle/nexusbro/actions/runs/44771343618). Последующие изменения тестов не меняют `desktop`; runtime workflow проверяет это сравнением Git. Измеренный Windows installer: SHA256 `6a6f0edbbd9dcef6ad60dc8e34fe94e5371cc4834a40c45b39727198be5142bd`.
+Публичная версия — 0.2.21, опубликована 20.11.2026 в 17:14:41 UTC. Исходник приложения: `1e0a5d8`, пакеты собраны в [44771343618](https://github.com/hipocrisle/nexusbro/actions/runs/44771343618). Последующие изменения тестов не меняют `desktop`; runtime workflow проверяет это сравнением Git. Измеренный Windows installer: SHA256 `6a6f0edbbd9dcef6ad60dc8e34fe94e5371cc4834a40c45b39727198be5142bd`.
 
 ## Поведение
 
@@ -29,7 +29,7 @@
 | Windows: настоящие visibility/rAF, восстановленный ввод и отрисовка | PASS | [windows-background.json](verification/0.2.21/windows-background.json) |
 | Windows: автоматическая выгрузка и media clocks | PASS | [44778487077](https://github.com/hipocrisle/nexusbro/actions/runs/44778487077), [raw](verification/0.2.21/windows-memory.json), [audit](verification/0.2.21/windows-memory-audit.json) |
 | Парное измерение точного финального installer против публичной 0.2.20 | PASS | [44774520973](https://github.com/hipocrisle/nexusbro/actions/runs/44774520973), [comparison](verification/0.2.21/performance-comparison.json) |
-| Публикация и публичные подписи трёх пакетов | Не выполнены | Обновление ещё не объявлено готовым |
+| Свежая Windows-приёмка, публикация и публичные подписи трёх пакетов | PASS | [publisher 44779555506](https://github.com/hipocrisle/nexusbro/actions/runs/44779555506), [public crypto proof](verification/0.2.21/release-public.json), [signatures](verification/0.2.21/release-signatures.json) |
 
 Windows runtime [44774513843](https://github.com/hipocrisle/nexusbro/actions/runs/44774513843) принял physical/routes/background, но AUTO-тест остановился на повторном чтении изменяемого JSON: между чтениями строка становилась временно недоступной. Test-only `fa5cf49` использует один снимок на predicate/iteration; отсутствие строки не считается успехом. После восстановления строгого read-only `normal_policy` и проверки единого снимка AUTO/media принят настоящим прогоном `44778487077`. Промежуточный запуск остановился на начальном экране проверки защиты до любых AUTO-действий; повтор на свежей VM без изменения приложения прошёл. Точная причина той задержки старта не установлена.
 
@@ -57,3 +57,11 @@ Windows runtime [44774513843](https://github.com/hipocrisle/nexusbro/actions/run
 Окно действительно минимизировано 15,172 секунды. Native журнал подтверждает автоматический запрос, две проверки с freeze и graceful close только вкладки 9/browser14 с сохранением строки. Private commit: 882139136 → 639361024 байт, освобождено 231,53 MiB. Ни ручного unload, ни ручного keep, ни включения политики через Save в тесте нет.
 
 HTML audio clock продвинулся на 53,415 секунды при wall53,391; WebAudio — на 53,031 при wall53,032, состояние running. Paused HTML audio сохранило currentTime0,023598. Все четыре media/API страницы получили несколько native automatic refusal, сохранились RTC new/stable, pinned/devtools/loading/download/private/draft. После wake осталась та же строка id9, cookie/localStorage preserved и scroll600. Проверка capture и пользовательского закрытия во время sleep отдельно не выполнялась; они не объявляются принятыми этим тестом.
+
+## Публикация
+
+Лёгкий тег `v0.2.21` указывает точно на принятый исходник `1e0a5d89f9c2ee75d3b67ea680404ffc696a20f6`. Автоматическая дублирующая сборка по тегу отменена намеренно; публикатор `44779555506` повторно принял тот же installer через physical/routes/background/AUTO и проверил исходный успешный Linux job, подписи и манифест до выкладки.
+
+Свежий publisher AUTO повторно освободил 207,86 MiB, окно реально минимизировано 15,141 с, HTML audio/WebAudio clocks продолжались, paused audio и RTC сохранены; wake вернул cookies/localStorage и scroll600. Свежие доказательства: [routes](verification/0.2.21/windows-routes-release.json), [memory](verification/0.2.21/windows-memory-release.json), [audit](verification/0.2.21/publisher-native-audit.json).
+
+Публичный unauthenticated `latest.json` вернул 0.2.21. EXE/DEB/RPM целиком прочитаны потоково с ограничением 8 MiB/s: размер и SHA256 совпали с receipt, Ed25519 payload/trusted comment и manifest signatures проверены. Публичный EXE SHA256 совпал с измеренным `6a6f0edb…5142bd`; тег совпал с принятым build source. Встроенный updater готов; уведомление владельцу отправлено в Telegram после криптографической проверки.

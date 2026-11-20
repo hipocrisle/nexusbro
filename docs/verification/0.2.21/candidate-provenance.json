@@ -1,6 +1,6 @@
 {
-  "candidate": true,
-  "published": false,
+  "candidate": false,
+  "published": true,
   "version": "0.2.21",
   "build_run": 44771343618,
   "build_source": "1e0a5d89f9c2ee75d3b67ea680404ffc696a20f6",
@@ -11,12 +11,18 @@
   "coverage_limits": [
     "Autonomous Service Worker startup before admission was not executed."
   ],
-  "windows_runtime_run": 44774513843,
+  "windows_runtime_run": 44779555506,
   "windows_routes_passed": true,
   "windows_background_passed": true,
   "windows_media_auto_passed": true,
   "performance_run": 44774520973,
   "measured_installer_sha256": "6a6f0edbbd9dcef6ad60dc8e34fe94e5371cc4834a40c45b39727198be5142bd",
-  "windows_memory_run": 44778487077,
-  "functional_component_acceptance": true
+  "windows_memory_run": 44779555506,
+  "functional_component_acceptance": true,
+  "release_tag": "v0.2.21",
+  "published_at": "2026-11-20T17:14:41Z",
+  "publisher_run": 44779555506,
+  "component_windows_runtime_run": 44774513843,
+  "component_memory_run": 44778487077,
+  "public_signature_verification": "release-public.json"
 }
