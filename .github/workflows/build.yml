@@ -157,6 +157,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Refuse publication from a Linux-only diagnostic
+        if: inputs.linux_build_only
+        env:
+          DIAGNOSTIC_PUBLISH_TAG: ${{ inputs.publish_tag }}
+        run: |
+          test "$GITHUB_REF_TYPE" != tag
+          test -z "$DIAGNOSTIC_PUBLISH_TAG"
+
       - name: Node.js
         uses: actions/setup-node@v4
         with:
@@ -924,7 +932,7 @@ jobs:
     needs: [runtime, linux-runtime]
     if: >-
       always() && github.event_name == 'workflow_dispatch' &&
-      inputs.runtime_build != '' && inputs.publish_tag != '' &&
+      inputs.runtime_build != '' && inputs.publish_tag != '' && !inputs.linux_build_only &&
       !inputs.runtime_memory_only && !inputs.linux_memory_diagnostic &&
       needs.runtime.result == 'success' &&
       (inputs.linux_runtime_build == '' ||
