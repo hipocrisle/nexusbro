@@ -16,6 +16,7 @@ pub struct Bootstrap {
     approved: AtomicBool,
     closed: AtomicBool,
     seen_real: AtomicBool,
+    initial_target_failed: AtomicBool,
     initial_blank_pending: AtomicBool,
     target: Mutex<String>,
     name: String,
@@ -33,6 +34,7 @@ impl Bootstrap {
             approved: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             seen_real: AtomicBool::new(false),
+            initial_target_failed: AtomicBool::new(false),
             initial_blank_pending: AtomicBool::new(true),
             target: Mutex::new(target.into()),
             name: format!("__nb_memory_{}", hex(&bytes[..16])),
@@ -89,8 +91,17 @@ impl Bootstrap {
         !self.seen_real.load(Ordering::Acquire)
             && self.target.lock().unwrap().as_str() != "about:blank"
     }
+    /// Terminal network failure ends the initial loading wait, not the initial
+    /// blank/history suppression. Called only after a native latest-URL error.
+    pub fn mark_terminal_failure(&self,browser:i32,failed_url:&str,epoch:u64)->Option<String>{
+        if self.closed.load(Ordering::Acquire)||self.pending.load(Ordering::Acquire)
+            ||crate::memory_guard::native_error_epoch(browser,failed_url)!=Some(epoch){return None;}
+        let logical_target=self.target.lock().unwrap().clone();
+        self.initial_target_failed.store(true,Ordering::Release);Some(logical_target)
+    }
     pub fn waiting_for_target(&self) -> bool {
-        !self.seen_real.load(Ordering::Acquire)
+        !self.initial_target_failed.load(Ordering::Acquire)
+            && !self.seen_real.load(Ordering::Acquire)
             && self.target.lock().unwrap().as_str() != "about:blank"
     }
     pub fn close(&self, identity: i32) {
@@ -252,6 +263,44 @@ mod owned_blank_tests {
             let source=params["source"].as_str().unwrap();
             assert!(source.contains(if target=="about:blank"{"const nativeOwnedBlank=true;"}else{"const nativeOwnedBlank=false;"}));
         }
+    }
+
+    #[test]
+    fn terminal_error_releases_loading_wait_without_arming_initial_blank(){
+        let browser=908;let target="https://logical.test/";let failed="https://redirected.test/";
+        let setup=Bootstrap::new(target).unwrap();
+        crate::memory_guard::navigation_to(browser,true,failed);
+        assert!(crate::memory_guard::native_load_error(browser,failed));
+        let epoch=crate::memory_guard::native_error_epoch(browser,failed).unwrap();
+        assert!(setup.waiting_for_target());assert!(setup.mark_terminal_failure(browser,failed,epoch).is_none());
+        setup.approved.store(true,Ordering::Release);
+        assert!(setup.mark_terminal_failure(browser,failed,epoch).is_none()); // registration pending
+        setup.pending.store(false,Ordering::Release);
+        assert!(setup.mark_terminal_failure(browser,"https://different.test/",epoch).is_none());
+        assert!(setup.mark_terminal_failure(browser,failed,epoch+1).is_none());assert!(setup.waiting_for_target());
+        assert_eq!(setup.mark_terminal_failure(browser,failed,epoch).as_deref(),Some(target));
+        assert!(!setup.waiting_for_target());assert!(!setup.seen_real.load(Ordering::Acquire));
+        assert!(setup.skip_address("about:blank"));assert!(setup.rejects_initial_document("about:blank"));
+        assert!(!setup.owned_blank_navigation("about:blank"));
+        crate::memory_guard::navigation_to(browser,true,failed); // same-URL retry invalidates old event
+        assert!(setup.mark_terminal_failure(browser,failed,epoch).is_none());
+        assert!(crate::memory_guard::native_load_error(browser,failed));
+        let next=crate::memory_guard::native_error_epoch(browser,failed).unwrap();
+        setup.closed.store(true,Ordering::Release);assert!(setup.mark_terminal_failure(browser,failed,next).is_none());
+        crate::memory_guard::closed(browser);
+    }
+
+    #[test]
+    fn unknown_safety_can_stop_loading_without_granting_document_approval(){
+        let browser=909;let url="https://failed.test/";let setup=Bootstrap::new(url).unwrap();
+        crate::memory_guard::navigation_to(browser,true,url);assert!(crate::memory_guard::native_load_error(browser,url));
+        let epoch=crate::memory_guard::native_error_epoch(browser,url).unwrap();
+        setup.pending.store(false,Ordering::Release); // finish(approved=false), safety remains unknown
+        assert!(!setup.approved());assert!(crate::memory_guard::reason(browser).is_some());
+        assert!(setup.mark_terminal_failure(browser,url,epoch).is_some());assert!(!setup.waiting_for_target());
+        assert!(!setup.approved());assert!(crate::memory_guard::reason(browser).is_some());
+        assert!(setup.rejects_initial_document("about:blank"));assert!(setup.skip_address("about:blank"));
+        crate::memory_guard::closed(browser);
     }
 
 }

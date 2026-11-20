@@ -83,6 +83,20 @@ pub fn native_load_error(browser: i32, failed_url: &str) -> bool {
         true
     })
 }
+/// A queued loading-failure event cannot settle a newer navigation, including
+/// a same-URL retry. This is a candidate epoch, not a safe-to-close approval.
+pub fn native_error_epoch(browser: i32, failed_url: &str) -> Option<u64> {
+    DOCUMENTS.with(|m| {
+        let m = m.borrow();
+        let p = m.get(&browser)?;
+        let error = p.error.as_ref().filter(|e| {
+            e.epoch == p.navigation_epoch
+                && e.failed_url == failed_url
+                && e.failed_url == p.navigation_url
+        })?;
+        Some(error.epoch)
+    })
+}
 pub fn load_succeeded(browser: i32) {
     DOCUMENTS.with(|m| {
         if let Some(p) = m.borrow_mut().get_mut(&browser) {
@@ -367,5 +381,26 @@ mod tests {
         document(b, "explicit-post-document".into());
         assert!(reason(b).is_some());
         closed(b);
+    }
+    #[test]
+    fn terminal_error_epoch_rejects_stale_same_url_retry_success_and_close() {
+        let b = 907;
+        let url = "https://failed.test/";
+        navigation_to(b, true, url);
+        assert!(native_load_error(b, url));
+        let first = native_error_epoch(b, url).unwrap();
+        assert!(native_error_epoch(b, "https://other.test/").is_none());
+        navigation_to(b, true, url);
+        assert!(native_error_epoch(b, url).is_none());
+        assert!(native_load_error(b, url));
+        let second = native_error_epoch(b, url).unwrap();
+        assert_ne!(first, second);
+        load_succeeded(b);
+        assert!(native_error_epoch(b, url).is_none());
+        assert!(!native_load_error(b, url));
+        navigation_to(b, true, url);
+        assert!(native_load_error(b, url));
+        closed(b);
+        assert!(native_error_epoch(b, url).is_none());
     }
 }
