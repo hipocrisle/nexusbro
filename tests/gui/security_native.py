@@ -524,8 +524,8 @@ def run(args):
                           'privateRow=document.querySelector(`[data-super-id="pvt-cloud-ui"]`);'
                           'return [ordinary,privateRow].every(e=>e&&e.dataset.cloudState==="local"&&'
                           'e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local")&&'
-                          'ordinary.querySelector(`.super-cloud-badge[data-cloud-state="local"]`)&&'
-                          '!privateRow.querySelector(".super-cloud-badge")})()'),
+                          '!ordinary.closest("[data-super-row]").querySelector(".super-cloud-badge")&&'
+                          '!privateRow.closest("[data-super-row]").querySelector(".super-cloud-badge")})()'),
                 'Unselected or private Super was presented as cloud-selected')
         if selected != 'local':
             saved_state = saved_state or selected
@@ -546,11 +546,31 @@ def run(args):
                               'e.title.includes("синхронизац")})()'),
                     'Cloud header is not one compact row with its date confined to tooltip metadata')
 
+    def cloud_click_sync(client, *, device=None, selector='[data-testid="cloud-last-account-sync"] button.super-cloud-heading-icon', expected='selected'):
+        selection = call(client, 'security_sync', action='status')['selection']
+        active = call(client, 'aktivnaya')
+        open_ids = [row['id'] for row in call(client, 'spisok')]
+        require(client.js('!document.querySelector(".security-panel,.security-overlay")'),
+                'Cloud click should be accepted without opening security settings')
+        client.click(selector)
+        js_wait(client, '(()=>{const e=document.querySelector(`[data-testid="cloud-last-account-sync"]`);'
+                'return e?.dataset.cloudState===' + json.dumps(expected) +
+                '&&!e.querySelector("button").disabled})()', 'Cloud click did not complete with honest native status', 90)
+        status = call(client, 'security_sync', action='status')
+        require(status['selection'] == selection, 'Cloud click silently changed sync selection')
+        require(call(client, 'aktivnaya') == active and [row['id'] for row in call(client, 'spisok')] == open_ids,
+                'Cloud click switched a Super or started a dormant engine')
+        require(client.js('!document.querySelector(".security-panel,.security-overlay")'),
+                'Cloud click opened security settings instead of running synchronization')
+        if device is not None:
+            visible_cef(client, device, 'cloud-click-keeps-cef-' + expected)
+        return status.get('report', {})
+
     def cloud_painted(client, device, identifier, kind):
         from PIL import ImageGrab
         check_cloud_stroke_model()
         value = client.js('(()=>{const e=document.querySelector(' +
-                          json.dumps('[data-super-id="' + identifier + '"] .super-cloud-badge') + ');'
+                          json.dumps('[data-super-row="' + identifier + '"] .super-cloud-badge') + ');'
                           'const svg=e?.querySelector("svg");if(!svg)return null;const r=svg.getBoundingClientRect();'
                           'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1,'
                           'rgb:getComputedStyle(svg).color.match(/\\d+/g).slice(0,3).map(Number)}})()')
@@ -588,13 +608,14 @@ def run(args):
                 client.click('[aria-label="' + ('Свернуть левую панель' if collapsed else 'Развернуть левую панель') + '"]')
             js_wait(client, '!!document.querySelector(' + json.dumps(desired) + ')', 'Panel did not change layout')
             painted(client)
-            require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"] .super-cloud-badge`);'
+            require(client.js('(()=>{const e=document.querySelector(`[data-super-row="native-credentials"] .super-cloud-badge`);'
                               'if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);'
                               'return r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
                               's.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity)>0&&!!e.querySelector("svg")})()'),
                     'Cloud marker is not visible in ' + ('collapsed' if collapsed else 'expanded') + ' panel')
             cloud_painted(client, device, 'native-credentials', kind)
-            cloud_painted(client, device, 'local-cloud-ui', 'gray')
+            require(client.js('!document.querySelector(`[data-super-row="local-cloud-ui"] .super-cloud-badge`)'),
+                    'Local Super has an unwanted cloud control')
             require(client.js('(()=>{const collapsed=' + json.dumps(collapsed) + ';'
                               'const ids=["native-credentials","retained-super","local-cloud-ui","pvt-cloud-ui"];'
                               'return ids.every(id=>{const row=document.querySelector(`[data-super-id="${id}"]`);'
@@ -964,7 +985,7 @@ def run(args):
         cloud_state(ca, selected='pending')
         private_selection = {**selection_a, 'supers': ['pvt-native-private']}
         call(ca, 'security_sync', action='configure', data={'selection': private_selection}, error=True)
-        first_report = call(ca, 'security_sync', action='run', timeout=90)
+        first_report = cloud_click_sync(ca, device=a)
         report_ok(first_report)
         require(first_report['pushed'] >= 5, 'Selected native records were not actually uploaded')
         cloud_refresh(ca)
@@ -1004,7 +1025,7 @@ def run(args):
                     'Real imported Super conflict did not reach the sidebar')
             painted(cb)
             require(cb.js('(()=>{const row=document.querySelector(`[data-super-id="retained-super"]`);'
-                          'const badge=row?.querySelector(`.super-cloud-badge[data-cloud-state="conflict"]`);'
+                          'const badge=row?.closest(`[data-super-row]`)?.querySelector(`.super-cloud-badge[data-cloud-state="conflict"]`);'
                           'if(!badge)return false;const r=badge.getBoundingClientRect(),style=getComputedStyle(badge);'
                           'return row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
                           'r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
@@ -1211,7 +1232,7 @@ def run(args):
                 'Local Super edit fabricated a new account receipt')
         painted(ca)
         cloud_painted(ca, a, normal_id, 'gray')
-        changed_report = call(ca, 'security_sync', action='run', timeout=90)
+        changed_report = cloud_click_sync(ca, device=a, selector='[data-super-row="native-credentials"] button.super-cloud-badge')
         report_ok(changed_report)
         require(changed_report['pushed'] >= 1, 'Changed portable Super was not actually sent to the server')
         cloud_refresh(ca)
@@ -1239,7 +1260,8 @@ def run(args):
                     'e.closest("[data-cloud-group]")?.dataset.cloudGroup==="local"})()',
                 'Disabled saved Super disappeared instead of moving to the local group')
         painted(ca)
-        cloud_painted(ca, a, 'retained-super', 'gray')
+        require(ca.js('!document.querySelector(`[data-super-row="retained-super"] .super-cloud-badge`)'),
+                'Disabled local saved Super retained a cloud button')
         report_ok(call(ca, 'security_sync', action='run', timeout=90))
         require(call(ca, 'sohranennye') == saved_before and
                 all((a.data / name).read_bytes() == raw for name, raw in local_before.items()),
@@ -1252,7 +1274,7 @@ def run(args):
         report_ok(call(ca, 'security_sync', action='run', timeout=90))
         cloud_refresh(ca)
         cloud_state(ca, selected='selected', receipt=True)
-        checkpoint('native_disabled_closed_saved_super_remains_local_gray_no_local_or_remote_delete_reenable_actual_ack_green')
+        checkpoint('native_disabled_closed_saved_super_remains_local_no_cloud_no_delete_reenable_actual_ack_green')
         phase = 'cloud-real-network-error'
         server_process.terminate()
         try:
@@ -1260,8 +1282,8 @@ def run(args):
         except subprocess.TimeoutExpired:
             server_process.kill()
             server_process.wait(timeout=3)
-        network_error = call(ca, 'security_sync', action='run', error=True, timeout=45)
-        require('ACCOUNT_SESSION_EXPIRED' not in network_error, 'Network outage unexpectedly revoked the account session')
+        cloud_click_sync(ca, device=a, expected='error')
+        require(call(ca, 'security_account', action='status')['logged_in'], 'Network outage unexpectedly revoked the account session')
         cloud_refresh(ca)
         cloud_state(ca, selected='error', receipt=True)
         cloud_layouts(ca, a, 'cloud-real-network-error', kind='red')
@@ -1282,7 +1304,7 @@ def run(args):
                                           stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append(server_process)
         wait_for(health, 'Same isolated server DB and deployment key did not restart', 20)
-        report_ok(call(ca, 'security_sync', action='run', timeout=90))
+        report_ok(cloud_click_sync(ca, device=a, selector='[data-super-row="retained-super"] button.super-cloud-badge'))
         cloud_refresh(ca)
         cloud_state(ca, selected='selected', receipt=True)
         cloud_layouts(ca, a, 'cloud-real-network-recovered')

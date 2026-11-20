@@ -1,6 +1,10 @@
 # Memory scaling: next changes and acceptance gates
 
-This is an implementation plan, not a shipped feature. The initial performance candidate changes cosmetic scanning and Windows command scheduling; it does not yet discard visited pages or merge existing profiles.
+Status: 0.2.20 shipped and natively verified automatic unloading of individual safe pages. It does not merge profiles or stop whole Supers. See REVIEW-0.2.20.md for measured acceptance.
+
+Owner follow-up: remove manual unload/keep controls entirely; memory handling must be automatic, including uninterrupted background/minimized media. Cloud-click fixes and per-ordinary-tab route priority come before whole-Super hibernation. The acceptance UI must not require clicking keep or unload.
+
+The sections below retain the architecture/guard contracts. The first individual-page phase is implemented; whole-Super and shared-pool phases are future work, not released features.
 
 ## Evidence
 
