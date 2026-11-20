@@ -1,0 +1,251 @@
+{
+  "schema": 1,
+  "completed": true,
+  "checks": [
+    "http_https_connect_same_effective_key_shares_different_key_isolates",
+    "owned_about_blank_actual_route_selector_b_ack_then_b_auth_storage_network",
+    "two_native_pages_concurrent_different_routes",
+    "cross_super_profile_isolation",
+    "direct_super_inherit_matches_explicit_direct_profile_and_network",
+    "direct_hostname_rtc_real_udp_and_srflx_positive_control",
+    "vpn_hostname_rtc_completed_no_udp_at_least_five_seconds",
+    "unknown_connection_id_fail_closed",
+    "actual_route_selector_native_ack_network_and_profile",
+    "draft_route_change_refused_preserves_browser",
+    "media_route_change_refused_preserves_browser",
+    "restart_opaque_id_survives_connection_reorder",
+    "historical_unopened_route_cookies_clear_no_network_ls_preserved_neighbor_untouched",
+    "actual_service_worker_fetch_b_only_persisted_registration_after_restart",
+    "native_network_error_actual_route_selector_a_recovers_same_url_auth_storage",
+    "network_error_recovery_can_reselect_unavailable_b_without_direct",
+    "configured_transport_down_no_direct_fallback_unaffected_a_live",
+    "deleted_connection_cold_restore_fail_closed"
+  ],
+  "platform": "win32",
+  "coverage": {
+    "http_ui": "passed",
+    "https_connect": "passed",
+    "refusal": "passed",
+    "cold_restore": "passed",
+    "transport_down": "passed",
+    "rtc_dns_udp": "passed",
+    "historical_cookies": "passed",
+    "worker_ready_context": "passed",
+    "worker_startup_pre_admission": "not_executed"
+  },
+  "cookie_observation_strategy": {
+    "pre_stop": "live_unobservable",
+    "post_stop": "actual_both_disk_positives_observed"
+  },
+  "cookie_metadata_diagnostics": {
+    "live_before_restart": {
+      "routes-historical": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480
+          }
+        ],
+        "filesystem_error_type": "PermissionError"
+      },
+      "routes-neighbor": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480
+          }
+        ],
+        "filesystem_error_type": "PermissionError"
+      }
+    },
+    "before_restart": {
+      "routes-historical": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480
+          }
+        ],
+        "filesystem_error_type": "PermissionError"
+      },
+      "routes-neighbor": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480
+          }
+        ],
+        "filesystem_error_type": "PermissionError"
+      }
+    },
+    "after_stop": {
+      "routes-historical": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480,
+            "sqlite_header": true,
+            "columns": [
+              "creation_utc",
+              "host_key",
+              "top_frame_site_key",
+              "name",
+              "value",
+              "encrypted_value",
+              "path",
+              "expires_utc",
+              "is_secure",
+              "is_httponly",
+              "last_access_utc",
+              "has_expires",
+              "is_persistent",
+              "priority",
+              "samesite",
+              "source_scheme",
+              "source_port",
+              "last_update_utc",
+              "source_type",
+              "has_cross_site_ancestor"
+            ],
+            "fixture_cookie_count": 0,
+            "persistent_fixture_cookie_count": 0
+          },
+          {
+            "path": "Default\\Network\\Cookies-journal",
+            "bytes": 0
+          },
+          {
+            "path": "route-9f486851b2309f4b17c68cb6b5691a4d8e371c3c29c59f8e60b40816e6e0826d\\Network\\Cookies",
+            "bytes": 20480,
+            "sqlite_header": true,
+            "columns": [
+              "creation_utc",
+              "host_key",
+              "top_frame_site_key",
+              "name",
+              "value",
+              "encrypted_value",
+              "path",
+              "expires_utc",
+              "is_secure",
+              "is_httponly",
+              "last_access_utc",
+              "has_expires",
+              "is_persistent",
+              "priority",
+              "samesite",
+              "source_scheme",
+              "source_port",
+              "last_update_utc",
+              "source_type",
+              "has_cross_site_ancestor"
+            ],
+            "fixture_cookie_count": 1,
+            "persistent_fixture_cookie_count": 1
+          },
+          {
+            "path": "route-9f486851b2309f4b17c68cb6b5691a4d8e371c3c29c59f8e60b40816e6e0826d\\Network\\Cookies-journal",
+            "bytes": 0
+          }
+        ]
+      },
+      "routes-neighbor": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480,
+            "sqlite_header": true,
+            "columns": [
+              "creation_utc",
+              "host_key",
+              "top_frame_site_key",
+              "name",
+              "value",
+              "encrypted_value",
+              "path",
+              "expires_utc",
+              "is_secure",
+              "is_httponly",
+              "last_access_utc",
+              "has_expires",
+              "is_persistent",
+              "priority",
+              "samesite",
+              "source_scheme",
+              "source_port",
+              "last_update_utc",
+              "source_type",
+              "has_cross_site_ancestor"
+            ],
+            "fixture_cookie_count": 1,
+            "persistent_fixture_cookie_count": 1
+          },
+          {
+            "path": "Default\\Network\\Cookies-journal",
+            "bytes": 0
+          }
+        ]
+      }
+    },
+    "after_restart_before_stats": {
+      "routes-historical": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480
+          }
+        ],
+        "filesystem_error_type": "PermissionError"
+      },
+      "routes-neighbor": {
+        "profile_exists": true,
+        "cookie_files": [
+          {
+            "path": "Default\\Network\\Cookies",
+            "bytes": 20480,
+            "sqlite_header": true,
+            "columns": [
+              "creation_utc",
+              "host_key",
+              "top_frame_site_key",
+              "name",
+              "value",
+              "encrypted_value",
+              "path",
+              "expires_utc",
+              "is_secure",
+              "is_httponly",
+              "last_access_utc",
+              "has_expires",
+              "is_persistent",
+              "priority",
+              "samesite",
+              "source_scheme",
+              "source_port",
+              "last_update_utc",
+              "source_type",
+              "has_cross_site_ancestor"
+            ],
+            "fixture_cookie_count": 1,
+            "persistent_fixture_cookie_count": 1
+          },
+          {
+            "path": "Default\\Network\\Cookies-journal",
+            "bytes": 0
+          }
+        ]
+      }
+    }
+  },
+  "historical_native_cookie_counts": {
+    "before_clear": 1,
+    "after_clear": 0
+  }
+}

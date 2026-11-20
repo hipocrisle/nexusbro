@@ -1,0 +1,96 @@
+{
+  "run": 44774520973,
+  "candidate_build_run": 44771343618,
+  "candidate_source": "1e0a5d8",
+  "candidate_installer_sha256": "6a6f0edbbd9dcef6ad60dc8e34fe94e5371cc4834a40c45b39727198be5142bd",
+  "reference_build_run": 44705290800,
+  "reference_installer_sha256": "18952dfcef0b6c4364d6a35e424cc1e1e16bc45699d1040f4b1a8e601a02d682",
+  "same_vm": true,
+  "supers": 8,
+  "saved_tabs": 1000,
+  "live_tabs": 24,
+  "phase_page_checks_passed": 72,
+  "hidden_frame_violations": 0,
+  "restored_trusted_input_and_paint_verified": true,
+  "phases": [
+    {
+      "phase": "cold_saved_lazy",
+      "reference": {
+        "cpu_machine_percent": 1.1293448978250875,
+        "peak_private_bytes": 123219968,
+        "peak_working_set_bytes": 337489920,
+        "peak_processes": 7
+      },
+      "candidate": {
+        "cpu_machine_percent": 0.8772291941875834,
+        "peak_private_bytes": 122638336,
+        "peak_working_set_bytes": 346619904,
+        "peak_processes": 7
+      }
+    },
+    {
+      "phase": "warm_active",
+      "reference": {
+        "cpu_machine_percent": 2.8345018631104093,
+        "peak_private_bytes": 1416720384,
+        "peak_working_set_bytes": 4026847232,
+        "peak_processes": 71
+      },
+      "candidate": {
+        "cpu_machine_percent": 2.3006511353968886,
+        "peak_private_bytes": 1372581888,
+        "peak_working_set_bytes": 4035198976,
+        "peak_processes": 71
+      }
+    },
+    {
+      "phase": "warm_covered",
+      "reference": {
+        "cpu_machine_percent": 1.7674180327868851,
+        "peak_private_bytes": 1391329280,
+        "peak_working_set_bytes": 3815960576,
+        "peak_processes": 73
+      },
+      "candidate": {
+        "cpu_machine_percent": 2.044889412380573,
+        "peak_private_bytes": 1380442112,
+        "peak_working_set_bytes": 3862310912,
+        "peak_processes": 71
+      }
+    },
+    {
+      "phase": "warm_minimized",
+      "reference": {
+        "cpu_machine_percent": 1.4826418428113337,
+        "peak_private_bytes": 1389264896,
+        "peak_working_set_bytes": 3650473984,
+        "peak_processes": 71
+      },
+      "candidate": {
+        "cpu_machine_percent": 1.128232900091897,
+        "peak_private_bytes": 1373515776,
+        "peak_working_set_bytes": 3672440832,
+        "peak_processes": 71
+      }
+    },
+    {
+      "phase": "warm_restored",
+      "reference": {
+        "cpu_machine_percent": 0.9221311475409836,
+        "peak_private_bytes": 1366876160,
+        "peak_working_set_bytes": 3601666048,
+        "peak_processes": 71
+      },
+      "candidate": {
+        "cpu_machine_percent": 1.0245901639344261,
+        "peak_private_bytes": 1356431360,
+        "peak_working_set_bytes": 3625050112,
+        "peak_processes": 71
+      }
+    }
+  ],
+  "limits": [
+    "One paired synthetic measurement; phase deltas vary.",
+    "Working sets summed across processes include shared pages and are not unique RAM."
+  ]
+}
