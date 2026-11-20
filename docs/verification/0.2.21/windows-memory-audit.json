@@ -1,0 +1,28 @@
+{
+  "artifact_id": 14650234968,
+  "run": 44778487077,
+  "completed": true,
+  "checks": 10,
+  "minimized_seconds": 15.172000000000025,
+  "auto_closed_only_tab": 9,
+  "actual_native_two_phase_graceful": true,
+  "manual_unload_requested": false,
+  "private_bytes_before": 882139136,
+  "private_bytes_after": 639361024,
+  "drop_private_bytes": 242778112,
+  "drop_mib": 231.53125,
+  "html_audio_clock_delta_seconds": 53.414914,
+  "html_audio_wall_seconds": 53.39100000000002,
+  "paused_html_clock_unchanged": true,
+  "webaudio_clock_delta_seconds": 53.0314739229025,
+  "webaudio_wall_seconds": 53.03199999999998,
+  "local_rtc_preserved_new_stable": true,
+  "native_automatic_media_refusals_all_four": true,
+  "wake_same_row_cookie_localstorage_scroll600_preserved": true,
+  "beforeunload_automatic_refusals": 7,
+  "not_executed": [
+    "user_close_during_sleep",
+    "fake_capture"
+  ],
+  "publication": "NoPublish component proof; public updater not changed by this run"
+}

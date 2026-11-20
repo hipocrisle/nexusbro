@@ -27,11 +27,11 @@
 | Windows: физический интерфейс | PASS | [windows-physical.json](verification/0.2.21/windows-physical.json) |
 | Windows: все 18 маршрутов, включая строгие disk cookies после остановки процессов | PASS | [windows-routes.json](verification/0.2.21/windows-routes.json) |
 | Windows: настоящие visibility/rAF, восстановленный ввод и отрисовка | PASS | [windows-background.json](verification/0.2.21/windows-background.json) |
-| Windows: автоматическая выгрузка и media clocks | Ожидается повтор после исправления test snapshot race | [44776637098](https://github.com/hipocrisle/nexusbro/actions/runs/44776637098) |
+| Windows: автоматическая выгрузка и media clocks | PASS | [44778487077](https://github.com/hipocrisle/nexusbro/actions/runs/44778487077), [raw](verification/0.2.21/windows-memory.json), [audit](verification/0.2.21/windows-memory-audit.json) |
 | Парное измерение точного финального installer против публичной 0.2.20 | PASS | [44774520973](https://github.com/hipocrisle/nexusbro/actions/runs/44774520973), [comparison](verification/0.2.21/performance-comparison.json) |
 | Публикация и публичные подписи трёх пакетов | Не выполнены | Обновление ещё не объявлено готовым |
 
-Windows runtime [44774513843](https://github.com/hipocrisle/nexusbro/actions/runs/44774513843) принял physical/routes/background, но AUTO-тест остановился на повторном чтении изменяемого JSON: между чтениями строка становилась временно недоступной. Test-only `fa5cf49` использует один снимок на predicate/iteration; отсутствие строки не считается успехом. Native AUTO/media acceptance этим не подменяется.
+Windows runtime [44774513843](https://github.com/hipocrisle/nexusbro/actions/runs/44774513843) принял physical/routes/background, но AUTO-тест остановился на повторном чтении изменяемого JSON: между чтениями строка становилась временно недоступной. Test-only `fa5cf49` использует один снимок на predicate/iteration; отсутствие строки не считается успехом. После восстановления строгого read-only `normal_policy` и проверки единого снимка AUTO/media принят настоящим прогоном `44778487077`. Промежуточный запуск остановился на начальном экране проверки защиты до любых AUTO-действий; повтор на свежей VM без изменения приложения прошёл. Точная причина той задержки старта не установлена.
 
 Другие исправления теста не ослабляют проверки: живой Windows Cookies DB может быть заблокирован, поэтому фактические SQLite persistent positives обязательны после остановки собственных процессов до рестарта. Inspector использует [документированный Microsoft механизм для elevated host](https://learn.microsoft.com/en-us/microsoft-edge/webview2/concepts/security#for-an-elevated-host-app-use-appropriate-override-flags): exact-executable policy только на disposable runner с восстановлением прежнего значения. Настройки приложения и DE1 этим не меняются.
 
@@ -51,3 +51,9 @@ Windows runtime [44774513843](https://github.com/hipocrisle/nexusbro/actions/run
 ## Практические границы
 
 Восемь effective путей на движок; глобальный лимит override Xray не включает старые базовые туннели. Whole-Super hibernation не внедрена. Автономный старт Service Worker до admission не был воспроизведён; готовый worker и его регистрация после рестарта проверены настоящими B-only запросами. Полная DNS-анонимность не заявляется: explicit TURN hostname lookup остаётся upstream ограничением. Нормальный media test не заменяет проверку сетевого звонка или capture. Контракты и primary sources: [TAB-ROUTES-PLAN.md](TAB-ROUTES-PLAN.md).
+
+## Автоматическая память: фактическое доказательство
+
+Окно действительно минимизировано 15,172 секунды. Native журнал подтверждает автоматический запрос, две проверки с freeze и graceful close только вкладки 9/browser14 с сохранением строки. Private commit: 882139136 → 639361024 байт, освобождено 231,53 MiB. Ни ручного unload, ни ручного keep, ни включения политики через Save в тесте нет.
+
+HTML audio clock продвинулся на 53,415 секунды при wall53,391; WebAudio — на 53,031 при wall53,032, состояние running. Paused HTML audio сохранило currentTime0,023598. Все четыре media/API страницы получили несколько native automatic refusal, сохранились RTC new/stable, pinned/devtools/loading/download/private/draft. После wake осталась та же строка id9, cookie/localStorage preserved и scroll600. Проверка capture и пользовательского закрытия во время sleep отдельно не выполнялась; они не объявляются принятыми этим тестом.
