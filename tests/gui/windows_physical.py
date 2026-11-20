@@ -534,7 +534,12 @@ try:
     subscription=(dead+'\n'+local+'\n').encode()
     config={'log':{'loglevel':'debug'},'inbounds':[{'listen':'127.0.0.1','port':vless_port,'protocol':'vless','settings':{'clients':[{'id':uid}],'decryption':'none'}}],
             'outbounds':[{'tag':'deny','protocol':'blackhole'},{'tag':'fixture','protocol':'freedom','settings':{'redirect':f'127.0.0.1:{server.server_port}','finalRules':[{'action':'allow','ip':['127.0.0.1'],'port':str(server.server_port)}]}}],
-            'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test','full:yandex.ru'],'outboundTag':'fixture'}]}}
+            'routing':{'rules':[{'type':'field','domain':['full:vpn-fixture.test','full:yandex.ru'],'outboundTag':'fixture'},
+                                # Per-context proxying intentionally includes loopback.
+                                # Permit only our owned origin through this real VPN;
+                                # all other destinations retain the default deny.
+                                {'type':'field','ip':['127.0.0.1'],'port':str(server.server_port),
+                                 'network':'tcp','outboundTag':'fixture'}]}}
     config_file=run/'local-vless.json';config_file.write_text(json.dumps(config),encoding='utf-8')
     server_log=(run/'vless-server.txt').open('w',encoding='utf-8')
     vpn_server=subprocess.Popen([str(xray),'run','-c',str(config_file)],creationflags=subprocess.CREATE_NO_WINDOW,stdout=server_log,stderr=server_log)
