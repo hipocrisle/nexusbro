@@ -393,21 +393,20 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
             raise AssertionError("Dormant fixture rows were not lazy")
         report["checks"].append({"saved_tabs_lazy_without_page_requests": True})
         # Omit memory_saver in the fresh settings file: prove the application
-        # default is ON, then save the unchanged real UI policy (no toggle).
+        # default is ON without a Save/toggle that could initialize the child.
+        initial_policy_bytes = (data / "nastrojki.json").read_bytes()
+        initial_policy = json.loads(initial_policy_bytes)
+        if initial_policy.get("memory_saver", True) is not True or initial_policy.get("memory_saver_minutes", 30) != 30:
+            raise AssertionError("Startup did not retain the default automatic policy")
         click("Настройки NexusBro", ["Button"])
         click("Вкладки и поиск", ["Button"])
         checkbox = wait(lambda: find("Экономить память неактивных вкладок", ["CheckBox"]), "No actual automatic memory setting")
         if checkbox.iface_toggle.CurrentToggleState != 1:
             raise AssertionError("Automatic memory saving is not enabled by default")
-        click("Сохранить", ["Button"])
-        def normal_policy():
-            try:
-                settings = json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))
-                return settings.get("memory_saver") is True and settings.get("memory_saver_minutes") == 30
-            except (OSError, ValueError):
-                return False
-        wait(normal_policy, "Unchanged actual settings did not preserve normal ON/30-minute policy")
-        report["checks"].append({"default_automatic_on_normal_30_minutes_without_toggle": True})
+        click("Отмена", ["Button"])
+        if (data / "nastrojki.json").read_bytes() != initial_policy_bytes:
+            raise AssertionError("Read-only automatic policy inspection modified settings")
+        report["checks"].append({"default_automatic_on_normal_30_minutes_without_settings_mutation": True})
         cold = memory("cold_keeper")
         tab("MemoryPinned")
         wait(lambda: row(3) and not row(3).get("otlozhena") and not row(3).get("zagruzka"), "Pinned fixture did not load")
