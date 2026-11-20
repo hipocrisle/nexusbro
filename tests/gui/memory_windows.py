@@ -581,7 +581,16 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         if not u.GetWindowRect(container, ctypes.byref(box)):
             raise AssertionError("Automatic fixture viewport missing")
         gui.moveTo(box.left + 400, box.top + 300)
-        gui.scroll(-6)
+        # PyAutoGUI's Windows backend passes clicks as raw dwData. Win32
+        # requires WHEEL_DELTA=120 per notch; -6 raw units moved only 5px.
+        # https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-mouse_event
+        u.mouse_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                                 wintypes.DWORD, ctypes.c_size_t]
+        u.mouse_event.restype = None
+        wheel_delta = -6 * 120
+        u.mouse_event(0x0800, 0, 0, ctypes.c_uint32(wheel_delta).value, 0)
+        report["automatic_wheel_input"] = {"transport": "win32_mouse_event", "delta": wheel_delta,
+                                            "notches": 6, "required_scroll_pixels": 200}
         # Do not click this safe page before auto: the conservative early hook
         # deliberately protects trusted pointer/click interactions. The native
         # wheel's own scroll event supplies real scroll evidence without a click.
