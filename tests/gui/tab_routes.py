@@ -736,17 +736,38 @@ def run(args):
             report.setdefault('cookie_metadata_diagnostics', {})[phase] = snapshot
             return snapshot
 
+        def both_persistent_cookies(snapshot):
+            return all([any(entry.get('persistent_fixture_cookie_count', 0) > 0
+                            for entry in snapshot[owner]['cookie_files'])
+                        for owner in ('routes-historical', 'routes-neighbor')])
+
         def persistent_cookie_barrier():
-            snapshot = cookie_metadata_snapshot('live_before_restart')
-            # snapshot reads BOTH owners before these booleans are evaluated.
-            both = [any(entry.get('persistent_fixture_cookie_count', 0) > 0
-                        for entry in snapshot[owner]['cookie_files'])
-                    for owner in ('routes-historical', 'routes-neighbor')]
-            return all(both)
-        wait_for(persistent_cookie_barrier,
-                 'Native persistent cookie writes were not durable before the owned restart', 40)
+            return both_persistent_cookies(cookie_metadata_snapshot('live_before_restart'))
 
-
+        report['cookie_observation_strategy'] = {'pre_stop': 'strict_live_positive', 'post_stop': 'diagnostic'}
+        if sys.platform == 'win32':
+            # Chromium can deny READ sharing while a Windows profile is live.
+            # Preserve the full commit window, but do not call a locked file a
+            # durable cookie. The post-stop disk positive below is mandatory.
+            deadline = time.monotonic() + 40
+            live_positive = False
+            while time.monotonic() < deadline:
+                live = cookie_metadata_snapshot('live_before_restart')
+                if both_persistent_cookies(live):
+                    live_positive = True
+                    break
+                time.sleep(.2)
+            if not live_positive:
+                both_locked = [live[owner].get('filesystem_error_type') == 'PermissionError'
+                               and any(pathlib.PureWindowsPath(entry['path']).name == 'Cookies' and entry['bytes'] > 0
+                                       for entry in live[owner]['cookie_files'])
+                               for owner in ('routes-historical', 'routes-neighbor')]
+                require(all(both_locked), 'Live Windows cookies were neither readable persistent positives nor two observed locked databases')
+                report['cookie_observation_strategy']['pre_stop'] = 'live_unobservable'
+            report['cookie_observation_strategy']['post_stop'] = 'strict_both_disk_positives_required'
+        else:
+            wait_for(persistent_cookie_barrier,
+                     'Native persistent cookie writes were not durable before the owned restart', 40)
 
         def persisted_selected_b(address=None):
             # The native session callback updates RAM before writing disk. A
@@ -764,7 +785,11 @@ def run(args):
         wait_for(persisted_selected_b, 'Selected B route was not persisted before first cold restart', 30)
         cookie_metadata_snapshot('before_restart')
         device.stop_app()
-        cookie_metadata_snapshot('after_stop')
+        post_stop_cookies = cookie_metadata_snapshot('after_stop')
+        if sys.platform == 'win32':
+            require(both_persistent_cookies(post_stop_cookies),
+                    'After all owned processes stopped, both actual persistent cookie disk positives were required before restart')
+            report['cookie_observation_strategy']['post_stop'] = 'actual_both_disk_positives_observed'
         config['vyhody'].reverse()
         write_json(device.data / 'nastrojki.json', config)
         client = device.start()
