@@ -7,26 +7,34 @@ import {shortcutKey} from "./shortcuts";
 import {addressDown,addressUp,type AddressPointer} from "./addressSelection";
 import {addressCompletion} from "./addressCompletion";
 import SetStatus from "./SetStatus";
+import {TabRouteButton,TabRouteDialog,useTabRouteChoices} from "./TabRouteSelector";
+import {routeLabel,routeStateKnown,type SelectableTabRoute,type TabRouteState} from "./tabRouteTypes";
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import {listenWindow as listen} from "./windowEvents";
 import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
-type Vkladka = { memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
+type Vkladka = TabRouteState & { memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
 type Komanda = { deystvie: string;enabled?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
 export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta,panelZakladok=false,onToggleBookmarks=()=>{} }: {panelZakladok?:boolean;onToggleBookmarks?:()=>void; id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
   const [receivedSession,setReceivedSession]=useState<{owner:string|null;data:Sessiya}|null>(null);
   const sessiya=receivedSession?.owner===id?receivedSession.data:null;
-  const setSessiya=(data:Sessiya|null)=>setReceivedSession(data?{owner:id,data}:null);
+  const routeSessionRevision=useRef(0);
+  const setSessiya=(data:Sessiya|null)=>{routeSessionRevision.current++;setReceivedSession(data?{owner:id,data}:null);};
   const [adres, setAdres] = useState("");
   const [pravka, setPravka] = useState(false);
   const [suggestions,setSuggestions]=useState<{adres:string;nazvanie:string;istochnik:string}[]>([]);
   const [suggestionIndex,setSuggestionIndex]=useState(-1);
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
+  const [routeDialog,setRouteDialog]=useState<{owner:string;tabId:number}|null>(null);
+  const routeOwner=useRef(id),routesAlive=useRef(true);
+  routeOwner.current=id;
+  useEffect(()=>{routesAlive.current=true;return()=>{routesAlive.current=false;};},[]);
+  useEffect(()=>{setRouteDialog(null);},[id]);
   const [dragOver, setDragOver] = useState<number | null>(null);
   const addressPointer=useRef<AddressPointer>(null);
   const addressMenuOpen=useRef(false);
@@ -97,6 +105,19 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   }, [id]);
   sessiyaRef.current = sessiya;
   const aktivnaya = sessiya?.vkladki.find((v) => v.id === sessiya.aktivnaya);
+  const routeOptions=useTabRouteChoices(id,aktivnaya?.route_generation);
+  const routeTarget=routeDialog?.owner===id?sessiya?.vkladki.find(tab=>tab.id===routeDialog.tabId):undefined;
+  useEffect(()=>{if(routeDialog&&!routeTarget)setRouteDialog(null);},[routeDialog,routeTarget]);
+  function openTabRoute(tab:Vkladka){if(id&&routeStateKnown(tab)&&!tab.memory_pending&&!tab.route_pending)setRouteDialog({owner:id,tabId:tab.id});}
+  async function applyTabRoute(tabId:number,route:SelectableTabRoute,expectedGeneration:number){
+    const owner=id,current=sessiyaRef.current?.vkladki.find(tab=>tab.id===tabId);
+    if(!owner||routeOwner.current!==owner||!current||current.memory_pending||current.route_pending||current.route_generation!==expectedGeneration)throw Error("Состояние вкладки изменилось. Откройте выбор пути заново.");
+    await invoke('tab_route_set',{id:owner,tabId,route,expectedGeneration});
+    if(!routesAlive.current||routeOwner.current!==owner)return;
+    const revision=routeSessionRevision.current;
+    const latest=await invoke<Sessiya>('obychnye_spisok',{id:owner});
+    if(routesAlive.current&&routeOwner.current===owner&&routeSessionRevision.current===revision){routeSessionRevision.current++;setReceivedSession({owner,data:latest});}
+  }
   useEffect(()=>{
     let alive=true;
     type PageMenu={tip:string;id:number;token:string;x:number;y:number;items:({command_id:number;text:string;enabled:boolean}|null)[]};
@@ -162,6 +183,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {text:"Вернуть закрытую вкладку",enabled:!!sessiya?.zakrytye?.length,action:action({deystvie:"vosstanovit_zakrytuyu"})},
       {text:"Обновить",action:action({deystvie:"obnovit",id:v.id})},
       {text:"Дублировать",action:action({deystvie:"novaya",adres:v.adres})},
+      {text:"Путь вкладки…",enabled:routeStateKnown(v)&&!v.memory_pending&&!v.route_pending,action:()=>openTabRoute(v)},
       {text:v.zakreplena?"Открепить":"Закрепить",action:action({deystvie:"zakrepit",id:v.id,zakreplena:!v.zakreplena})},
       {text:"Исходный код страницы",action:action({deystvie:"iskhodnik",id:v.id})},
       {text:"Инструменты разработчика",action:action({deystvie:"instrumenty",id:v.id})},null,
@@ -279,7 +301,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); } }}
           onContextMenu={e=>{e.preventDefault();e.stopPropagation();tabMenu(v,e.clientX,e.clientY);}}
-          title={(v.memory_pending ? "Завершаем выгрузку…\n" : v.otlozhena ? "Страница не загружена в память — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
+          title={(v.memory_pending ? "Завершаем выгрузку…\n" : v.otlozhena ? "Страница не загружена в память — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "") + "\nПуть: " + routeLabel(v.route,routeOptions.choices) + (v.route_pending ? " · Применяем…" : v.route_error ? " · " + v.route_error : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
           onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void poslat({ deystvie: "vybrat", id: v.id }); } }}>
           {v.privatnaya&&<span title="Приватная вкладка" aria-label="Приватная вкладка" className="private-mark">◐</span>}<span className={"favicon" + (v.zagruzka ? " loading" : "")}>{v.zagruzka ? <span className="spinner" /> : v.ikonka?.startsWith("data:image/png;base64,") ? <img src={v.ikonka} alt="" draggable={false} /> : <Icon name="globe" size={16} />}</span>
           {!v.zakreplena && <span className="obychnaya-imya">{v.zagolovok || "Новая вкладка"}</span>}
@@ -321,7 +343,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onChange={e=>{setPravka(true);setSuggestionIndex(-1);completedValue.current=null;completionAllowed.current=(e.nativeEvent as InputEvent).inputType==='insertText';setAdres(e.target.value);}} />
 
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
-      <SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
+      <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/><SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
        {label:"Новое окно",shortcut:"Ctrl+N",action:()=>invoke("novoe_okno",{id,privatnaya:false})},
        {label:"Новое приватное окно",shortcut:"Ctrl+Shift+N",action:()=>invoke("novoe_okno",{id,privatnaya:true})},null,
@@ -338,6 +360,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </div>}
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
+    {routeTarget&&routeDialog?.owner===id&&id&&<TabRouteDialog key={`${id}:${routeTarget.id}`} owner={id} tab={routeTarget} choices={routeOptions.choices} choicesError={routeOptions.error} onRefresh={()=>void routeOptions.refresh()} onApply={(route,generation)=>applyTabRoute(routeTarget.id,route,generation)} onClose={()=>setRouteDialog(null)} onError={setOshibka}/>}
     {passwordOffer&&<div className="password-offer" role="status"><span>Сохранить логин <strong>{passwordOffer.username}</strong> для {passwordOffer.origin}?</span><button disabled={savingPassword} onClick={async()=>{setSavingPassword(true);try{await invoke('security_passwords',{action:'save_draft',data:{draft_id:passwordOffer.draft_id,username:passwordOffer.username}});setPasswordOffer(null);}catch(e){setOshibka(String(e));}finally{setSavingPassword(false);}}}>Сохранить пароль</button><button onClick={()=>{void invoke('security_passwords',{action:'discard_draft',data:{draft_id:passwordOffer.draft_id}}).catch(()=>{});setPasswordOffer(null);}}>Не сейчас</button></div>}
     {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<label className="translation-auto" title="Переводить страницы этого сайта в этой вкладке до выключения режима или закрытия вкладки"><input type="checkbox" checked={!!translation.auto} onChange={e=>{if(aktivnaya)void poslat({deystvie:"perevod_avto",id:aktivnaya.id,enabled:e.target.checked});}}/>Автоперевод этого сайта</label><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал и выключить</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
