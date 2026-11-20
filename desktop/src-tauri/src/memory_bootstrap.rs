@@ -144,6 +144,16 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
         }
     }
 }
+fn registration_params(setup:&Bootstrap)->serde_json::Value{
+    let owned_blank={setup.target.lock().unwrap().as_str()=="about:blank"};
+    serde_json::json!({
+        "source":crate::cef_memory_renderer::new_document_script(&setup.name,&setup.nonce,owned_blank),
+        // finish() performs a fresh history-neutral navigation AFTER this ACK.
+        // Capturing the initial empty document as well creates a second native
+        // token whose delayed IPC can consume that fresh navigation's GET epoch.
+        "runImmediately":false
+    })
+}
 wrap_dev_tools_message_observer! {
     struct BootstrapObserver{setup:Arc<Bootstrap>,message:i32,enable:i32}
     impl DevToolsMessageObserver{
@@ -154,11 +164,7 @@ wrap_dev_tools_message_observer! {
             if message_id==self.enable{
                 eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=page_enable browser={} success={}",browser.identifier(),success!=0);
                 if success==0{finish(browser,&self.setup,false);return;}
-                let owned_blank={self.setup.target.lock().unwrap().as_str()=="about:blank"};
-                let params=serde_json::json!({
-                    "source":crate::cef_memory_renderer::new_document_script(&self.setup.name,&self.setup.nonce,owned_blank),
-                    "runImmediately":owned_blank
-                });
+                let params=registration_params(&self.setup);
                 if !crate::cdp::send(browser,self.message,"Page.addScriptToEvaluateOnNewDocument",params){finish(browser,&self.setup,false);}
                 return;
             }
@@ -237,4 +243,15 @@ mod owned_blank_tests {
         let closed=Bootstrap::new("about:blank").unwrap();closed.approved.store(true,Ordering::Release);closed.closed.store(true,Ordering::Release);
         assert!(!closed.owned_blank_navigation("about:blank"));
     }
+    #[test]
+    fn registration_never_captures_the_old_initial_document(){
+        for target in ["about:blank","https://site.test/","about:blank#fragment",""]{
+            let setup=Bootstrap::new(target).unwrap();
+            let params=registration_params(&setup);
+            assert_eq!(params["runImmediately"],false);
+            let source=params["source"].as_str().unwrap();
+            assert!(source.contains(if target=="about:blank"{"const nativeOwnedBlank=true;"}else{"const nativeOwnedBlank=false;"}));
+        }
+    }
+
 }

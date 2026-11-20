@@ -345,4 +345,27 @@ mod tests {
         assert!(!confirmed_error(b, url));
         closed(b);
     }
+    #[test]
+    fn two_blank_document_tokens_require_two_native_get_epochs() {
+        let b = 906;
+        navigation_to(b, true, "about:blank");
+        document(b, "first-initial-document".into());
+        assert!(reason(b).is_none());
+        // A duplicate notification of the SAME document is idempotent.
+        document(b, "first-initial-document".into());
+        assert!(reason(b).is_none());
+        // A different document cannot infer GET from the previous blank token.
+        document(b, "unsolicited-second-document".into());
+        assert!(reason(b).is_some());
+        // The actual fresh navigation supplies its own native GET epoch.
+        navigation_to(b, true, "about:blank");
+        document(b, "fresh-owned-document".into());
+        assert!(reason(b).is_none());
+        edited(b);
+        assert!(reason(b).is_some());
+        navigation_to(b, false, "about:blank");
+        document(b, "explicit-post-document".into());
+        assert!(reason(b).is_some());
+        closed(b);
+    }
 }
