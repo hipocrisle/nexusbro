@@ -413,6 +413,21 @@ mod tests {
         .validate());
     }
     #[test]
+    fn cancellation_survives_without_waiters() {
+        let (cancel, receiver) = watch::channel(false);
+        drop(receiver);
+        let owner = Engine {
+            inherit: NativeRoute {
+                key: effective_key("", ""),
+                proxy: "http://127.0.0.1:1".into(),
+            },
+            slots: Mutex::new(HashMap::new()),
+            cancel,
+        };
+        owner.stop();
+        assert!(*owner.cancel.subscribe().borrow());
+    }
+    #[test]
     fn unknown_transport_never_falls_back() {
         let registry = Registry::default();
         assert_eq!(
