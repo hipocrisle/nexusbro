@@ -175,7 +175,7 @@ def assert_receipt(fixture, case, lane, auth, storage, *, tls=False):
 def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed'}}
+    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed'}}
     device = fixture = None
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Only an ephemeral GitHub runner may run this native test')
@@ -296,13 +296,14 @@ def run(args):
             client.text_button('Отмена')
             report['checks'].append(case + '_route_change_refused_preserves_browser')
         report['coverage']['refusal'] = 'passed'
-        def persisted_selected_b():
+        def persisted_selected_b(address=None):
             # The native session callback updates RAM before writing disk. A
             # forced process stop must wait for actual persisted route intent.
             try:
                 saved = json.loads(session_path.read_text(encoding='utf-8'))
                 selected = next(t for t in saved['vkladki'] if t['id'] == 2)
-                return saved if saved['aktivnaya'] == 2 and selected['route'] == connection('B') else None
+                return saved if (saved['aktivnaya'] == 2 and selected['route'] == connection('B')
+                                 and (address is None or selected['adres'] == address)) else None
             except (OSError, ValueError, KeyError, StopIteration, TypeError):
                 return None
 
@@ -318,6 +319,47 @@ def run(args):
         wait_for(lambda: any(r['time'] > restored_at and r['lane'] == 'B' for r in fixture.records('seed-b')), 'Cold restore lost opaque B connection ID')
         require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Restart rebound connection by list index')
         report['checks'].append('restart_opaque_id_survives_connection_reorder')
+        # Existing configured B remains selected when its actual transport dies.
+        # A fresh URL makes every origin hit (even before page JS) a failure.
+        select(client, 'routes-a', 1)
+        healthy_at = time.monotonic()
+        wait_for(lambda: any(r['time'] > healthy_at and r['lane'] == 'A' for r in fixture.records('seed-a')),
+                 'A route was not live before B transport failure', 20)
+        select(client, 'routes-a', 2)
+        before_transport = row(client, 'routes-a', 2)
+        fixture.stop_proxy('B')
+        transport_down_at = time.monotonic()
+        down_case = 'transport-down-' + str(time.time_ns())
+        down_url = fixture.url(down_case)
+        call(client, 'obychnaya_komanda', id='routes-a',
+             komanda={'deystvie': 'pereyti', 'id': 2, 'adres': down_url})
+
+        def failed_load_settled():
+            current = row(client, 'routes-a', 2)
+            return current if current['adres'] == down_url and not current['zagruzka'] else None
+
+        after_transport = wait_for(failed_load_settled, 'B transport failure did not settle its real navigation', 40)
+        require(after_transport['route'] == connection('B')
+                and after_transport['browser_id'] == before_transport['browser_id']
+                and after_transport['route_generation'] == before_transport['route_generation'],
+                'Transport failure changed B route intent/profile/browser')
+        # Keep observing while A makes multiple real requests, catching delayed
+        # Direct fallback as well as proving unrelated route continuity.
+        wait_for(lambda: len([r for r in fixture.records('seed-a')
+                              if r['time'] > transport_down_at and r['lane'] == 'A']) >= 2,
+                 'Healthy A page stopped when B transport failed', 20)
+        time.sleep(2)
+        require(not fixture.requests(down_case), 'Dead configured B transport leaked a request through Direct/another route')
+        require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Dead transport silently changed saved B intent')
+        report['coverage']['transport_down'] = 'pending_final_no_fallback_check'
+        # Restore the original URL while B is still down, preserving the
+        # deleted-ID cold-restore test's unique prior URL and B selection.
+        seed_b_url = tabs[1]['adres']
+        call(client, 'obychnaya_komanda', id='routes-a',
+             komanda={'deystvie': 'pereyti', 'id': 2, 'adres': seed_b_url})
+        wait_for(lambda: row(client, 'routes-a', 2)['adres'] == seed_b_url
+                 and not row(client, 'routes-a', 2)['zagruzka'], 'B URL restore did not settle while transport stayed down', 40)
+        wait_for(lambda: persisted_selected_b(seed_b_url), 'Selected B URL/intent was not persisted while its transport was down', 30)
         wait_for(persisted_selected_b, 'Selected B route was not persisted before deleted-ID restart', 30)
         device.stop_app()
         config['vyhody'] = [c for c in config['vyhody'] if c['id'] != 'lane-B']
@@ -328,6 +370,9 @@ def run(args):
         wait_for(lambda: row(client, 'routes-a', 2).get('route_error'), 'Deleted ID was not blocked on cold restore', 40)
         time.sleep(2)
         require(len(fixture.requests('seed-b')) == before_restart and not fixture.requests('blocked-unknown'), 'Removed/unknown ID silently used Direct or stale proxy')
+        require(not fixture.requests(down_case), 'Delayed dead-transport fallback reached the origin')
+        report['coverage']['transport_down'] = 'passed'
+        report['checks'].append('configured_transport_down_no_direct_fallback_unaffected_a_live')
         report['checks'].append('deleted_connection_cold_restore_fail_closed')
         report['coverage']['cold_restore'] = 'passed'
         report['completed'] = True

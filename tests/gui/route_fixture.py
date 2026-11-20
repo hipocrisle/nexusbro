@@ -25,6 +25,7 @@ class Fixture:
         self.receipts, self.tunnels, self.peers = [], [], {}
         self.tokens = {lane: secrets.token_hex(20) for lane in ('A', 'B', 'Direct')}
         self.servers = []
+        self.proxy_servers, self.proxy_sockets, self.stopped_proxies = {}, {}, set()
         owner = self
 
         class Origin(http.server.BaseHTTPRequestHandler):
@@ -86,12 +87,25 @@ class Fixture:
 
     def _proxy(self, lane):
         owner = self
+        self.proxy_sockets[lane] = set()
+
+        class ProxyServer(Server):
+            def get_request(self):
+                connection, address = super().get_request()
+                owner._track(lane, connection)
+                return connection, address
 
         class Proxy(http.server.BaseHTTPRequestHandler):
             protocol_version = 'HTTP/1.1'
 
             def log_message(self, *_):
                 pass
+
+            def finish(self):
+                try:
+                    super().finish()
+                finally:
+                    owner._untrack(lane, self.connection)
 
             def target(self, address):
                 parsed = urllib.parse.urlsplit(address if '://' in address else '//' + address)
@@ -100,9 +114,13 @@ class Fixture:
                 return parsed
 
             def do_GET(self):
+                conn = upstream = None
                 try:
                     p = self.target(self.path)
                     conn = http.client.HTTPConnection(p.hostname, p.port, timeout=8)
+                    conn.connect()
+                    upstream = conn.sock
+                    owner._track(lane, upstream)
                     headers = {k: v for k, v in self.headers.items()
                                if k.lower() not in ('proxy-connection', 'connection', 'x-fixture-route')}
                     headers['X-Fixture-Route'] = lane
@@ -115,17 +133,27 @@ class Fixture:
                             self.send_header(k, v)
                     self.end_headers()
                     self.wfile.write(body)
-                    conn.close()
                 except (ValueError, OSError, http.client.HTTPException):
-                    self.send_error(502)
+                    try:
+                        self.send_error(502)
+                    except OSError:
+                        pass
+                finally:
+                    if upstream:
+                        owner._untrack(lane, upstream)
+                    if conn:
+                        conn.close()
 
             def do_CONNECT(self):
                 upstream = None
+                peer_port = None
                 try:
                     p = self.target(self.path)
                     upstream = socket.create_connection((p.hostname, p.port), timeout=8)
+                    owner._track(lane, upstream)
+                    peer_port = upstream.getsockname()[1]
                     with owner.lock:
-                        owner.peers[upstream.getsockname()[1]] = lane
+                        owner.peers[peer_port] = lane
                         owner.tunnels.append({'lane': lane, 'port': p.port})
                     self.send_response(200, 'Connection established')
                     self.end_headers()
@@ -147,12 +175,43 @@ class Fixture:
                 finally:
                     if upstream:
                         with owner.lock:
-                            owner.peers.pop(upstream.getsockname()[1], None)
+                            owner.peers.pop(peer_port, None)
+                        owner._untrack(lane, upstream)
                         upstream.close()
 
-        server = Server(('127.0.0.1', 0), Proxy)
+        server = ProxyServer(('127.0.0.1', 0), Proxy)
+        self.proxy_servers[lane] = server
         self.servers.append(server)
         return server.server_port
+
+    def _track(self, lane, connection):
+        with self.lock:
+            if lane in self.stopped_proxies:
+                connection.close()
+                raise ConnectionAbortedError('Fixture proxy has been stopped')
+            self.proxy_sockets[lane].add(connection)
+
+    def _untrack(self, lane, connection):
+        with self.lock:
+            self.proxy_sockets[lane].discard(connection)
+
+    def stop_proxy(self, lane):
+        """Close this owned listener AND all accepted HTTP/CONNECT transports."""
+        with self.lock:
+            if lane in self.stopped_proxies:
+                return
+            self.stopped_proxies.add(lane)
+            connections = list(self.proxy_sockets[lane])
+            self.proxy_sockets[lane].clear()
+        for connection in connections:
+            try:
+                connection.shutdown(socket.SHUT_RDWR)
+            except OSError:
+                pass
+            connection.close()
+        server = self.proxy_servers[lane]
+        server.shutdown()
+        server.server_close()
 
     def url(self, case, seed=None, tls=False):
         query = {'case': case}
@@ -170,6 +229,10 @@ class Fixture:
                     if item.get('case') == case or item['path'] == '/receipt/' + case]
 
     def close(self):
+        for lane in self.proxy_servers:
+            self.stop_proxy(lane)
         for server in self.servers:
+            if server in self.proxy_servers.values():
+                continue
             server.shutdown()
             server.server_close()
