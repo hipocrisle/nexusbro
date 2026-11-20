@@ -4,6 +4,9 @@ pub mod tab_routes;
 #[path = "../../../desktop/src-tauri/src/memory_guard.rs"]
 pub mod memory_guard;
 
+#[path = "../../../desktop/src-tauri/src/route_profile_paths.rs"]
+pub mod route_profile_paths;
+
 #[cfg(test)]
 mod tests {
     use super::tab_routes::*;

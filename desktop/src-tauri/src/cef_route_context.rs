@@ -1,5 +1,7 @@
 //! Per-Super contexts. A route is admitted only after its proxy preference is set.
 //! The legacy Default directory stays bound to its first effective route key.
+#[path = "route_profile_paths.rs"]
+mod profile_paths;
 use crate::tab_routes::{NativeRoute, RouteBootstrap, RouteChoice};
 use cef::*;
 use std::{
@@ -236,28 +238,7 @@ impl Registry {
             );
             let mut settings = RequestContextSettings::default();
             if !private {
-                let path = if route.key == self.legacy_key {
-                    self.root.join("Default")
-                } else {
-                    self.root.join("routes").join(&route.key)
-                };
-                let canonical_root = self.root.canonicalize()?;
-                if route.key != self.legacy_key {
-                    let routes = self.root.join("routes");
-                    std::fs::create_dir_all(&routes)?;
-                    anyhow::ensure!(
-                        routes.canonicalize()? == canonical_root.join("routes"),
-                        "Каталог профилей перенаправлен"
-                    );
-                }
-                std::fs::create_dir_all(&path)?;
-                let canonical = path.canonicalize()?;
-                anyhow::ensure!(
-                    canonical.starts_with(&canonical_root)
-                        && canonical != canonical_root
-                        && canonical == canonical_root.join(path.strip_prefix(&self.root)?),
-                    "Путь профиля выходит за границы Super"
-                );
+                let path=profile_paths::create_profile(&self.root,&route.key,&self.legacy_key)?;
                 settings.cache_path = CefString::from(path.to_string_lossy().as_ref());
             }
             let state = Arc::new(AtomicU8::new(0));
@@ -323,48 +304,12 @@ impl Registry {
                 self.entries.values().map(|e| e.context.clone()).collect(),
             ));
         }
-        let mut owned = Vec::new();
-        if self.root.join("Default").is_dir() {
-            owned.push((self.legacy_key.clone(), self.root.join("Default")));
-        }
-        let routes = self.root.join("routes");
-        if routes.exists() {
-            anyhow::ensure!(
-                routes
-                    .canonicalize()?
-                    .starts_with(self.root.canonicalize()?),
-                "Каталог маршрутов вне Super"
-            );
-            for (index, entry) in std::fs::read_dir(routes)?.enumerate() {
-                anyhow::ensure!(index < 128, "Слишком много каталогов маршрутов");
-                let entry = entry?;
-                let key = entry.file_name().to_string_lossy().into_owned();
-                if key.len() == 64
-                    && key
-                        .bytes()
-                        .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
-                    && entry.path().is_dir()
-                {
-                    owned.push((key, entry.path()));
-                }
-                anyhow::ensure!(
-                    owned.len() <= 128,
-                    "Слишком много профилей для одной операции"
-                );
-            }
-        }
+        let owned=profile_paths::owned_profiles(&self.root,&self.legacy_key)?;
         for (key, path) in owned {
             if self.entries.contains_key(&(key.clone(), false)) {
                 continue;
             }
-            let root = self.root.canonicalize()?;
-            let canonical = path.canonicalize()?;
-            anyhow::ensure!(
-                canonical.starts_with(&root)
-                    && canonical != root
-                    && canonical == root.join(path.strip_prefix(&self.root)?),
-                "Профиль вне Super"
-            );
+            profile_paths::validate_existing(&self.root,&path)?;
             let state = Arc::new(AtomicU8::new(0));
             let mut settings = RequestContextSettings::default();
             settings.cache_path = CefString::from(path.to_string_lossy().as_ref());
