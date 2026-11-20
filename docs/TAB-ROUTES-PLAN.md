@@ -4,7 +4,7 @@ Owner priority: each ordinary tab can inherit its Super route, use Direct, or se
 
 ## Existing evidence
 
-Reuse `probe/route-context`, source `5a26686601ec056e2960246558e34273dafb4652`, successful GitHub native probe [44526165115](https://github.com/hipocrisle/nexusbro/actions/runs/44526165115). Independent RequestContexts used proxy A and B concurrently and isolated cookies/localStorage; shared contexts shared storage but both used the last proxy B. A process CLI proxy overrode both contexts and prevented preference changes. This is Linux HTTP capability, explicitly product_feature_ready:false; Windows/HTTPS/service-worker startup are not accepted.
+Reuse `probe/route-context`, source `5a26686601ec056e2960246558e34273dafb4652`, successful GitHub native probe [44526165115](https://github.com/hipocrisle/nexusbro/actions/runs/44526165115). Independent RequestContexts used proxy A and B concurrently and isolated cookies/localStorage; shared contexts shared storage but both used the last proxy B. A process CLI proxy overrode both contexts and prevented preference changes. That original run was Linux HTTP capability, explicitly product_feature_ready:false. The later Windows capability result is recorded below; HTTPS/service-worker admission and product integration remain unaccepted.
 
 Do not merge its special build.yml launcher into a product branch.
 
@@ -26,7 +26,7 @@ Ordinary tabs are not currently part of the cloud Super payload. Do not promise 
 
 ## Next acceptance
 
-Extend the existing probe on Windows with legacy root/kesh: seed real persistent + HttpOnly cookies and localStorage, restart without CLI proxy using context preferences, validate actual server Cookie headers and unchanged inherited auth. Measure session cookies honestly. Then native simultaneous Direct/inherited/VPN, HTTPS CONNECT, downloads, restart, failure/no-Direct-leak and unchanged neighboring-tab routes. Keep native capability distinct from product readiness.
+The Windows legacy-profile capability probe below is complete. Continue product integration with the measured native effective profile path, then native simultaneous Direct/inherited/VPN, HTTPS CONNECT, downloads, restart, failure/no-Direct-leak, startup browserless/worker admission and unchanged neighboring-tab routes. Keep native capability distinct from product readiness.
 
 ## Windows capability result
 

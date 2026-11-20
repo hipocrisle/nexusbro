@@ -1,0 +1,10 @@
+{
+  "native_source": "a7544566a3e1ecb3714ecceda1e0cba4b193edce",
+  "native_run": 44729558840,
+  "report_commit": "9672232",
+  "branch": "probe/route-windows",
+  "product_feature_ready": false,
+  "profile_data_copied_or_moved": false,
+  "actual_legacy_cache_leaf": "Default",
+  "scope": "isolated native Windows HTTP contexts and persistent HttpOnly auth/localStorage; not app routing/HTTPS/worker admission"
+}
