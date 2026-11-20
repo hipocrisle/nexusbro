@@ -10,7 +10,7 @@ Do not merge its special build.yml launcher into a product branch.
 
 ## Profile and routing contract
 
-- Keep the existing Super root and `kesh` unchanged for inherited traffic. Add override caches only inside that root; no directory merging or Windows Local State migration.
+- Keep the existing Super root and the **native effective legacy cache path** unchanged for inherited traffic. Do not assume `kesh`: CEF156 ignores a child Settings.cache_path and uses its default global profile. The Windows probe measured `root/Default`. Discover/canonicalize the native path under the owned unchanged root, then reopen that exact path; never move Default to kesh or copy Windows Local State. Add override caches only inside that root.
 - `RouteChoice = Inherit | Direct | Connection{id}` in local ordinary-tab state. Persist IDs, never subscription URLs, credentials, local ports or keys. Missing/removed IDs fail closed, without implicit Direct fallback.
 - The CLI proxy must not defeat context preferences. Each context is blocked from navigation until its actual proxy preference is accepted; test startup workers/restored caches before product use.
 - Reuse existing connection/tunnel/filtering infrastructure with bounded leases. Direct still uses the local filtering proxy; do not spawn one Xray per tab.
@@ -27,3 +27,9 @@ Ordinary tabs are not currently part of the cloud Super payload. Do not promise 
 ## Next acceptance
 
 Extend the existing probe on Windows with legacy root/kesh: seed real persistent + HttpOnly cookies and localStorage, restart without CLI proxy using context preferences, validate actual server Cookie headers and unchanged inherited auth. Measure session cookies honestly. Then native simultaneous Direct/inherited/VPN, HTTPS CONNECT, downloads, restart, failure/no-Direct-leak and unchanged neighboring-tab routes. Keep native capability distinct from product readiness.
+
+## Windows capability result
+
+[44729558840](https://github.com/hipocrisle/nexusbro/actions/runs/44729558840), native source `a7544566a3e1ecb3714ecceda1e0cba4b193edce`, passed the real Windows context probe. Independent contexts routed A/B concurrently and isolated storage; shared contexts routed both to B and shared storage; CLI proxy A prevented preference changes. Legacy CLI/global profile → context preferences preserved persistent HttpOnly server-auth and localStorage at the actual `root/Default`. An additional process with empty global disk cache and explicit RequestContext to that exact legacy directory plus a new override also preserved old auth only in the inherited context, routing A/B simultaneously. No copying or moving cookies, Local State or profiles. Session HttpOnly cookies did not survive engine restart with existing defaults.
+
+This result remains `product_feature_ready:false`: HTTP capability only; HTTPS/CONNECT, service-worker early admission, real VPN/UDP and integration into the application still require acceptance. The owner decision about separate/mandatory-shared auth remains open.

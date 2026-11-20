@@ -547,6 +547,13 @@ def run(args):
                     'Cloud header is not one compact row with its date confined to tooltip metadata')
 
     def cloud_click_sync(client, *, device=None, selector='[data-testid="cloud-last-account-sync"] button.super-cloud-heading-icon', expected='selected'):
+        # After app restart the selected row is deliberately lazy. Open it by
+        # the same real tab click as an owner before asserting that sync keeps
+        # an already working CEF page visible; sync itself must not wake it.
+        if device is not None:
+            client.click('[role="tab"][aria-selected="true"]')
+            device.loaded('native-credentials')
+            visible_cef(client, device, 'before-cloud-click-working-page')
         selection = call(client, 'security_sync', action='status')['selection']
         active = call(client, 'aktivnaya')
         open_ids = [row['id'] for row in call(client, 'spisok')]
