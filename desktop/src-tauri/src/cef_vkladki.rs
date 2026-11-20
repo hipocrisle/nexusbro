@@ -602,7 +602,7 @@ fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser
     if s.aktivnaya==id{return Some("Активную вкладку нельзя выгрузить");}
     if tab.privatnaya||force_private{return Some("Приватная вкладка остаётся в памяти");}
     if tab.zakreplena{return Some("Сначала открепите вкладку");}
-    if automatic&&tab.memory_keep{return Some("Для вкладки отключена автоматическая выгрузка");}
+    // Legacy per-tab keep flags no longer override the automatic browser policy.
     if tab.zagruzka||browser.is_loading()!=0{return Some("Дождитесь загрузки страницы");}
     if browser.frame_count()!=1{return Some("Вкладка содержит вложенные документы и остаётся в памяти");}
     // The navigation controller is authoritative even if a late document

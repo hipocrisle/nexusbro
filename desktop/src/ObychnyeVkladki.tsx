@@ -13,22 +13,9 @@ import {listenWindow as listen} from "./windowEvents";
 import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
-type Vkladka = { memory_keep?: boolean; memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
+type Vkladka = { memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
-// Serialize this dialog's visibility writes. A dismissed dialog's late hide
-// must not outlive a newer dialog or its final restore in this WebView.
-let memoryVisibilityEpoch = 0;
-let memoryVisibilityQueue: Promise<unknown> = Promise.resolve();
-function memoryVisibility(vidno: boolean) {
-  const result = memoryVisibilityQueue.catch(() => {}).then(() => invoke("pokazat_dvizhki", {vidno}));
-  memoryVisibilityQueue = result.catch(() => {});
-  return result;
-}
-
-type MemoryRequest = { owner: string; tab: Vkladka };
-const canUnload = (tab: Vkladka, session: Sessiya | null, owner: string | null) => !!owner && !!session && !owner.startsWith("pvt-") && tab.id !== session.aktivnaya && !tab.zakreplena && !tab.privatnaya && !tab.zagruzka && !tab.otlozhena && !tab.memory_pending;
-
-type Komanda = { deystvie: string;enabled?:boolean; keep?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
+type Komanda = { deystvie: string;enabled?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
 export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica, poisk, poleKontenta,panelZakladok=false,onToggleBookmarks=()=>{} }: {panelZakladok?:boolean;onToggleBookmarks?:()=>void; id: string | null; nazvanie: string; children: ReactNode; novayaStranica: string; poisk: string; poleKontenta: React.RefObject<HTMLDivElement> }) {
   const [receivedSession,setReceivedSession]=useState<{owner:string|null;data:Sessiya}|null>(null);
@@ -40,14 +27,6 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [suggestionIndex,setSuggestionIndex]=useState(-1);
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
-  const [memoryDialog, setMemoryDialog] = useState<MemoryRequest | null>(null);
-  const [memoryPending, setMemoryPending] = useState<MemoryRequest[]>([]);
-  const memoryPendingRef = useRef<MemoryRequest[]>([]);
-  const memoryMountedRef = useRef(true);
-  const memoryOwnerRef = useRef(id);
-  memoryOwnerRef.current = id;
-  useEffect(() => { setMemoryDialog(null); }, [id]);
-
   const [dragOver, setDragOver] = useState<number | null>(null);
   const addressPointer=useRef<AddressPointer>(null);
   const addressMenuOpen=useRef(false);
@@ -183,8 +162,6 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {text:"Вернуть закрытую вкладку",enabled:!!sessiya?.zakrytye?.length,action:action({deystvie:"vosstanovit_zakrytuyu"})},
       {text:"Обновить",action:action({deystvie:"obnovit",id:v.id})},
       {text:"Дублировать",action:action({deystvie:"novaya",adres:v.adres})},
-      {text:"Выгрузить вкладку из памяти",enabled:canUnload(v,sessiya,id)&&!memoryPendingRef.current.some(item=>item.owner===id&&item.tab.id===v.id),action:()=>{if(id)setMemoryDialog({owner:id,tab:v});}},
-      {text:v.memory_keep?"Разрешить автоматическую выгрузку":"Не выгружать автоматически",enabled:!!id&&!id.startsWith("pvt-")&&!v.privatnaya&&!v.memory_pending,action:action({deystvie:"memory_keep",id:v.id,keep:!v.memory_keep})},
       {text:v.zakreplena?"Открепить":"Закрепить",action:action({deystvie:"zakrepit",id:v.id,zakreplena:!v.zakreplena})},
       {text:"Исходный код страницы",action:action({deystvie:"iskhodnik",id:v.id})},
       {text:"Инструменты разработчика",action:action({deystvie:"instrumenty",id:v.id})},null,
@@ -192,38 +169,6 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {text:"Закрыть другие вкладки",enabled:!!sessiya?.vkladki.some(t=>t.id!==v.id&&!t.zakreplena),action:action({deystvie:"zakryt_drugie",id:v.id,sprava:false})},
       {text:"Закрыть вкладки справа",enabled:!!sessiya?.vkladki.slice(sessiya.vkladki.findIndex(t=>t.id===v.id)+1).some(t=>!t.zakreplena),action:action({deystvie:"zakryt_drugie",id:v.id,sprava:true})}
     ],x,y,setOshibka).catch(e=>setOshibka(String(e)));
-  }
-  // IPC acceptance enqueues a command; only its owner-bound result completes it.
-  useEffect(() => {
-    let alive = true;
-    memoryMountedRef.current = true;
-    const off = listen<{super_id: string; data: {tip: string; id: number; ok?: boolean; canceled?:boolean; error?: string}}>("stranica-ui", event => {
-      const {super_id: owner, data} = event.payload;
-      if (!alive || data.tip !== "memory-result") return;
-      if (!memoryPendingRef.current.some(item => item.owner === owner && item.tab.id === data.id)) return;
-      memoryPendingRef.current = memoryPendingRef.current.filter(item => item.owner !== owner || item.tab.id !== data.id);
-      setMemoryPending([...memoryPendingRef.current]);
-      if (data.ok !== true && !data.canceled && memoryOwnerRef.current === owner) setOshibka(data.error || "Не удалось выгрузить вкладку из памяти");
-    });
-    return () => { alive = false; memoryMountedRef.current = false; void off.then(stop => stop()); };
-  }, []);
-  function requestUnload(request: MemoryRequest) {
-    const current = sessiyaRef.current?.vkladki.find(tab => tab.id === request.tab.id);
-    if (memoryOwnerRef.current !== request.owner || !current || !canUnload(current, sessiyaRef.current, request.owner)) {
-      setOshibka("Вкладка изменилась. Выгрузить можно только неактивную обычную вкладку без загрузки.");
-      return;
-    }
-    if (memoryPendingRef.current.some(item => item.owner === request.owner && item.tab.id === current.id)) return;
-    setOshibka("");
-    const pending = {...request, tab: current};
-    memoryPendingRef.current = [...memoryPendingRef.current, pending];
-    setMemoryPending([...memoryPendingRef.current]);
-    void invoke("obychnaya_komanda", {id: request.owner, komanda: {deystvie: "usypit", id: current.id}}).catch(error => {
-      memoryPendingRef.current = memoryPendingRef.current.filter(item => item !== pending);
-      if (!memoryMountedRef.current) return;
-      setMemoryPending([...memoryPendingRef.current]);
-      if (memoryOwnerRef.current === request.owner) setOshibka(String(error));
-    });
   }
   async function poslat(komanda: Komanda) {
     if (!id) return;
@@ -334,7 +279,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
           onMouseDown={(e) => { if (e.button === 1) e.preventDefault(); }}
           onAuxClick={(e) => { if (e.button === 1) { e.preventDefault(); e.stopPropagation(); void poslat({ deystvie: "zakryt", id: v.id }); } }}
           onContextMenu={e=>{e.preventDefault();e.stopPropagation();tabMenu(v,e.clientX,e.clientY);}}
-          title={(v.memory_pending ? "Завершаем выгрузку…\n" : v.otlozhena ? "Страница не загружена в память — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "") + (v.memory_keep ? "\nНе выгружается автоматически" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
+          title={(v.memory_pending ? "Завершаем выгрузку…\n" : v.otlozhena ? "Страница не загружена в память — нажмите, чтобы загрузить\n" : "") + v.zagolovok + "\n" + v.adres + (v.zakreplena ? "\nЗакреплена" : "")} onClick={() => void poslat({ deystvie: "vybrat", id: v.id })}
           onKeyDown={(e) => { if (e.target !== e.currentTarget) return; if (e.key === "Enter" || e.key === " ") { e.preventDefault(); void poslat({ deystvie: "vybrat", id: v.id }); } }}>
           {v.privatnaya&&<span title="Приватная вкладка" aria-label="Приватная вкладка" className="private-mark">◐</span>}<span className={"favicon" + (v.zagruzka ? " loading" : "")}>{v.zagruzka ? <span className="spinner" /> : v.ikonka?.startsWith("data:image/png;base64,") ? <img src={v.ikonka} alt="" draggable={false} /> : <Icon name="globe" size={16} />}</span>
           {!v.zakreplena && <span className="obychnaya-imya">{v.zagolovok || "Новая вкладка"}</span>}
@@ -393,8 +338,6 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     </div>}
     <BookmarkBar visible={panelZakladok} onOpen={(url,newTab)=>poslat(newTab||!aktivnaya?{deystvie:"novaya",adres:url}:{deystvie:"pereyti",id:aktivnaya.id,adres:url})}/>
     <AddressMenu input={pole} onChange={setAdres} onError={setOshibka} onMenuState={open=>{addressMenuOpen.current=open;}}/>
-    {memoryPending.some(item=>item.owner===id)&&<div className="password-offer" role="status" aria-live="polite"><span>Запрошена выгрузка: {memoryPending.filter(item=>item.owner===id).map(item=>`«${item.tab.zagolovok||item.tab.adres||"Новая вкладка"}»`).join(", ")}. Ожидаем подтверждение страницы…</span></div>}
-    {memoryDialog?.owner===id&&<MemoryUnloadDialog key={`${memoryDialog.owner}:${memoryDialog.tab.id}`} request={memoryDialog} enabled={!!sessiya?.vkladki.some(tab=>tab.id===memoryDialog.tab.id&&canUnload(tab,sessiya,id))} onConfirm={()=>requestUnload(memoryDialog)} onClose={()=>setMemoryDialog(previous=>previous===memoryDialog?null:previous)} onError={message=>{if(memoryMountedRef.current&&memoryOwnerRef.current===memoryDialog.owner)setOshibka(message);}}/>}
     {passwordOffer&&<div className="password-offer" role="status"><span>Сохранить логин <strong>{passwordOffer.username}</strong> для {passwordOffer.origin}?</span><button disabled={savingPassword} onClick={async()=>{setSavingPassword(true);try{await invoke('security_passwords',{action:'save_draft',data:{draft_id:passwordOffer.draft_id,username:passwordOffer.username}});setPasswordOffer(null);}catch(e){setOshibka(String(e));}finally{setSavingPassword(false);}}}>Сохранить пароль</button><button onClick={()=>{void invoke('security_passwords',{action:'discard_draft',data:{draft_id:passwordOffer.draft_id}}).catch(()=>{});setPasswordOffer(null);}}>Не сейчас</button></div>}
     {translation && <div className="translation-bar" role="status"><strong>Перевод на русский</strong><span>{translation.error || (translation.total ? `${translation.done} из ${translation.total}` : "Подготавливаю текст…")}</span>{translation.error&&<button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevesti",id:aktivnaya.id});}}>Повторить</button>}<label className="translation-auto" title="Переводить страницы этого сайта в этой вкладке до выключения режима или закрытия вкладки"><input type="checkbox" checked={!!translation.auto} onChange={e=>{if(aktivnaya)void poslat({deystvie:"perevod_avto",id:aktivnaya.id,enabled:e.target.checked});}}/>Автоперевод этого сайта</label><button onClick={()=>{if(aktivnaya)void poslat({deystvie:"perevod_original",id:aktivnaya.id});}}>Показать оригинал и выключить</button></div>}
     {toolsOpen && <div className="tools-bar"><strong>Инструменты: {aktivnaya?.zagolovok}</strong><span title={aktivnaya?.adres}>Супер-вкладка «{nazvanie}» · {aktivnaya?.adres}</span><button aria-label="Закрыть инструменты разработчика" onClick={()=>{if(aktivnaya)void poslat({deystvie:"instrumenty",id:aktivnaya.id});}}>×</button></div>}
@@ -408,64 +351,4 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     {(aktivnaya?.otlozhena||aktivnaya?.memory_pending) && poleKontenta.current && createPortal(<div className="pusto" role={aktivnaya.memory_pending?"status":undefined}><Icon name="tabs" size={36} /><h1>{aktivnaya.memory_pending?"Завершаем выгрузку…":"Вкладка ждёт открытия"}</h1><p>{aktivnaya.memory_pending?"Страница откроется после завершения выгрузки.":"Страница сейчас не загружена в память. Нажмите вкладку или кнопку ниже, когда она понадобится."}</p>{!aktivnaya.memory_pending&&<button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button>}</div>, poleKontenta.current)}
 
   </>;
-}
-
-
-function MemoryUnloadDialog({request, enabled, onConfirm, onClose, onError}: {
-  request: MemoryRequest; enabled: boolean; onConfirm: () => void; onClose: () => void; onError: (message: string) => void;
-}) {
-  const [ready, setReady] = useState(false);
-  const cancel = useRef<HTMLButtonElement>(null);
-  const actions = useRef({onClose, onError});
-  actions.current = {onClose, onError};
-  useEffect(() => {
-    let alive = true;
-    const otherModal = () => Array.from(document.querySelectorAll(".zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay"))
-      .some(element => !element.closest("[data-memory-unload-root]"));
-    if (otherModal()) { actions.current.onClose(); return; }
-    ++memoryVisibilityEpoch;
-    const hidden = memoryVisibility(false);
-    void hidden.then(() => {
-      if (!alive) return;
-      if (otherModal()) { actions.current.onClose(); return; }
-      setReady(true);
-    }).catch(error => {
-      if (!alive) return;
-      actions.current.onError(String(error));
-      actions.current.onClose();
-    });
-    return () => {
-      alive = false;
-      const restoreEpoch = ++memoryVisibilityEpoch;
-      // Await our hide so a late hide cannot override cleanup. React removes
-      // this portal before the next frame; other overlays keep their ownership.
-      void hidden.catch(() => {}).then(() => requestAnimationFrame(() => {
-        if (restoreEpoch !== memoryVisibilityEpoch || document.querySelector(".zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay")) return;
-        void memoryVisibility(true).then(() => {
-          // Reassert a different overlay opened during the async restore.
-          if (document.querySelector(".zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay")) {
-            void memoryVisibility(false).catch(() => {});
-          }
-        }).catch(() => {});
-      }));
-    };
-  }, [request.owner, request.tab.id]);
-  useEffect(() => { if (ready) cancel.current?.focus(); }, [ready]);
-  if (!ready) return null;
-  return createPortal(<div className="zatemnenie" data-memory-unload-root="true" onClick={onClose}>
-    <section className="dialog" role="dialog" aria-modal="true" aria-label="Выгрузить вкладку из памяти" aria-describedby="memory-unload-warning" onClick={event=>event.stopPropagation()} onKeyDown={event=>{
-      if(event.key==="Escape"){event.preventDefault();event.stopPropagation();onClose();}
-      if(event.key==="Tab"){
-        const buttons=Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
-        const current=buttons.indexOf(document.activeElement as HTMLButtonElement);
-        event.preventDefault();buttons[(current+(event.shiftKey?-1:1)+buttons.length)%buttons.length]?.focus();
-      }
-    }}>
-      <h2>Выгрузить вкладку из памяти</h2>
-      <strong style={{overflowWrap:"anywhere"}} title={request.tab.adres}>{request.tab.zagolovok||request.tab.adres||"Новая вкладка"}</strong>
-      <p id="memory-unload-warning" style={{margin:0,lineHeight:1.5}}>При следующем открытии страница перезагрузится. Несохранённый ввод, внутреннее состояние страницы и история переходов этой вкладки будут потеряны. Cookies и данные сайтов сохранятся. Прокрутка и временные данные вкладки (sessionStorage) сбросятся; воспроизведение и другие фоновые действия остановятся.</p>
-      {!enabled&&<p role="alert">Состояние вкладки изменилось. Сейчас её нельзя выгрузить из памяти.</p>}
-      <div className="knopki"><button ref={cancel} type="button" onClick={onClose}>Отмена</button><button type="button" className="glavnaya" disabled={!enabled} onClick={()=>{onConfirm();onClose();}}>Выгрузить</button></div>
-    </section>
-  </div>, document.body);
 }
