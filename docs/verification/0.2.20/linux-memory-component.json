@@ -1,0 +1,100 @@
+{
+  "diagnostic_only": true,
+  "feature_acceptance": false,
+  "scope": "native-engine-component",
+  "safe_unload": true,
+  "observed_native_refusal": false,
+  "lines": [
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=observer_ready browser=1",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_binding installed=true",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=page_enable browser=1 success=true",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=method_result browser=1 success=true identifier_present=true error_code=0",
+    "NEXUSBRO_MEMORY_BOOTSTRAP browser=1 registered=true safety=early",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_binding installed=true",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_capture_success",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=observer_ready browser=2",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_binding installed=true",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=page_enable browser=2 success=true",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_capture_success",
+    "NEXUSBRO_MEMORY_DOCUMENT browser=2 accepted=false bootstrap_approved=false",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=method_result browser=2 success=true identifier_present=true error_code=0",
+    "NEXUSBRO_MEMORY_BOOTSTRAP browser=2 registered=true safety=early",
+    "NEXUSBRO_MEMORY tab=1 browser=1 requested=manual",
+    "NEXUSBRO_MEMORY_RENDERER stage=probe_js known=true reason_code=none",
+    "NEXUSBRO_MEMORY_RENDERER stage=probe_js known=true reason_code=none",
+    "NEXUSBRO_MEMORY tab=1 browser=1 verified=two-phase close=graceful automatic=false",
+    "NEXUSBRO_MEMORY tab=1 browser=1 closed=row-retained",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=observer_ready browser=3",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_binding installed=true",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=page_enable browser=3 success=true",
+    "NEXUSBRO_MEMORY_BOOTSTRAP stage=method_result browser=3 success=true identifier_present=true error_code=0",
+    "NEXUSBRO_MEMORY_BOOTSTRAP browser=3 registered=true safety=early",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_binding installed=true",
+    "NEXUSBRO_MEMORY_RENDERER stage=native_capture_success"
+  ],
+  "phase": "done",
+  "initial_history_empty": true,
+  "initial_allocation_receipt": {
+    "bytes": 67108864,
+    "first": 37,
+    "last": 91,
+    "cookie_before": false,
+    "storage_before": false
+  },
+  "before_close": {
+    "metric": "linux_process_tree_uss_bytes",
+    "samples": [
+      570982400,
+      571236352,
+      570769408,
+      569942016,
+      569880576
+    ],
+    "median": 570769408,
+    "process_counts": [
+      14,
+      14,
+      14,
+      14,
+      14
+    ]
+  },
+  "observed_native_close": true,
+  "retained_row": true,
+  "after_close": {
+    "metric": "linux_process_tree_uss_bytes",
+    "samples": [
+      506753024,
+      506646528,
+      506634240,
+      506634240,
+      506634240
+    ],
+    "median": 506634240,
+    "process_counts": [
+      13,
+      13,
+      13,
+      13,
+      13
+    ]
+  },
+  "uss_drop_bytes": 64135168,
+  "observed_uss_recovery": true,
+  "restored_allocation_receipt": {
+    "bytes": 67108864,
+    "first": 37,
+    "last": 91,
+    "cookie_before": true,
+    "storage_before": true
+  },
+  "same_row_restored": true,
+  "persistent_storage_preserved": true,
+  "component_steps_observed": true,
+  "provenance": {
+    "binary_source": "811bf608",
+    "binary_run": 44702802380,
+    "diagnostic_run": 44703860129,
+    "source_match_verified": true
+  }
+}
