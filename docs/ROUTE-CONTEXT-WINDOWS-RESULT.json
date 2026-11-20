@@ -1,0 +1,410 @@
+{
+  "measurements": [
+    {
+      "scenario": "independent",
+      "actual_fetch_routes": {
+        "A": "A",
+        "B": "B"
+      },
+      "actual_navigation_routes": {
+        "A": "A",
+        "B": "B"
+      },
+      "expected_routes": {
+        "A": "A",
+        "B": "B"
+      },
+      "storage_shared": false,
+      "storage_matches_expected": true,
+      "navigation_overlapped": true,
+      "native_api": [
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "A",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "B",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "pages_loaded": true
+        }
+      ],
+      "blocked_nonfixture_proxy_requests": 2,
+      "matches_expected_matrix": true,
+      "feature_ready": false
+    },
+    {
+      "scenario": "shared",
+      "actual_fetch_routes": {
+        "A": "B",
+        "B": "B"
+      },
+      "actual_navigation_routes": {
+        "A": "B",
+        "B": "B"
+      },
+      "expected_routes": {
+        "A": "B",
+        "B": "B"
+      },
+      "storage_shared": true,
+      "storage_matches_expected": true,
+      "navigation_overlapped": true,
+      "native_api": [
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "A",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": true,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "B",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": true,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "pages_loaded": true
+        }
+      ],
+      "blocked_nonfixture_proxy_requests": 1,
+      "matches_expected_matrix": true,
+      "feature_ready": false
+    },
+    {
+      "scenario": "cli",
+      "actual_fetch_routes": {
+        "A": "A",
+        "B": "A"
+      },
+      "actual_navigation_routes": {
+        "A": "A",
+        "B": "A"
+      },
+      "expected_routes": {
+        "A": "A",
+        "B": "A"
+      },
+      "storage_shared": false,
+      "storage_matches_expected": true,
+      "navigation_overlapped": true,
+      "native_api": [
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": false,
+          "context": "A",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "Trying to modify a preference that is not user modifiable",
+          "set_proxy_ok": false,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": false,
+          "context": "B",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "Trying to modify a preference that is not user modifiable",
+          "set_proxy_ok": false,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "pages_loaded": true
+        }
+      ],
+      "blocked_nonfixture_proxy_requests": 6,
+      "matches_expected_matrix": true,
+      "feature_ready": false
+    },
+    {
+      "scenario": "legacy",
+      "actual_fetch_routes": {
+        "A": "A",
+        "B": "B"
+      },
+      "actual_navigation_routes": {
+        "A": "A",
+        "B": "B"
+      },
+      "expected_routes": {
+        "A": "A",
+        "B": "B"
+      },
+      "storage_shared": false,
+      "storage_matches_expected": true,
+      "navigation_overlapped": true,
+      "native_api": [
+        {
+          "canonical_cache_matches_seed": true,
+          "global_cache_leaf": "Default",
+          "global_cache_present": true,
+          "global_readiness_context_shares": true,
+          "legacy_phase": "legacy_seed"
+        },
+        {
+          "cookie_flush_confirmed": true,
+          "global_cache_shared": true,
+          "legacy_phase": "legacy_seed",
+          "normal_close_confirmed": true,
+          "pages_loaded": true,
+          "same_root_and_cache": true
+        },
+        {
+          "pages_loaded": true
+        },
+        {
+          "canonical_cache_matches_seed": true,
+          "global_cache_leaf": "Default",
+          "global_cache_present": true,
+          "global_readiness_context_shares": true,
+          "legacy_phase": "legacy_reopen"
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "legacy-default",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "cookie_flush_confirmed": true,
+          "global_cache_shared": true,
+          "legacy_phase": "legacy_reopen",
+          "normal_close_confirmed": true,
+          "pages_loaded": true,
+          "same_root_and_cache": true
+        },
+        {
+          "pages_loaded": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "A",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "B",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "pages_loaded": true
+        },
+        {
+          "global_disk_cache_enabled": false,
+          "legacy_explicit_native_seed_cache": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "A",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "bypass_set_ok": true,
+          "can_set_proxy": true,
+          "context": "B",
+          "dict_valid": true,
+          "dictionary_set_ok": true,
+          "mode_set_ok": true,
+          "preference_type": "ValueType(VTYPE_DICTIONARY)",
+          "server_set_ok": true,
+          "set_proxy_error": "",
+          "set_proxy_ok": true,
+          "sharing": false,
+          "value_type": "ValueType(VTYPE_DICTIONARY)",
+          "value_valid": true
+        },
+        {
+          "pages_loaded": true
+        }
+      ],
+      "blocked_nonfixture_proxy_requests": 9,
+      "matches_expected_matrix": true,
+      "feature_ready": false,
+      "persistent_http_only_auth_preserved": true,
+      "session_http_only_survived_restart": false,
+      "separate_process_restart": true,
+      "same_root_and_cache": true,
+      "explicit_old_cache_without_global_disk_cache": true,
+      "native_process_count": 4,
+      "server_auth_receipts": {
+        "legacy_seed": {
+          "A": {
+            "storage": null,
+            "cookie": "",
+            "route": "A",
+            "persistent_http_only_sent": true,
+            "session_http_only_sent": true,
+            "script_cannot_read_http_only": true
+          }
+        },
+        "legacy_reopen": {
+          "A": {
+            "storage": null,
+            "cookie": "",
+            "route": "A",
+            "persistent_http_only_sent": true,
+            "session_http_only_sent": true,
+            "script_cannot_read_http_only": true
+          },
+          "B": {
+            "storage": "A",
+            "cookie": "",
+            "route": "B",
+            "persistent_http_only_sent": true,
+            "session_http_only_sent": false,
+            "script_cannot_read_http_only": true
+          }
+        },
+        "legacy_parallel": {
+          "A": {
+            "storage": "A",
+            "cookie": "",
+            "route": "A",
+            "persistent_http_only_sent": true,
+            "session_http_only_sent": false,
+            "script_cannot_read_http_only": true
+          },
+          "B": {
+            "storage": null,
+            "cookie": "",
+            "route": "B",
+            "persistent_http_only_sent": false,
+            "session_http_only_sent": false,
+            "script_cannot_read_http_only": true
+          }
+        },
+        "legacy_explicit": {
+          "A": {
+            "storage": "A",
+            "cookie": "",
+            "route": "A",
+            "persistent_http_only_sent": true,
+            "session_http_only_sent": false,
+            "script_cannot_read_http_only": true
+          },
+          "B": {
+            "storage": null,
+            "cookie": "",
+            "route": "B",
+            "persistent_http_only_sent": false,
+            "session_http_only_sent": false,
+            "script_cannot_read_http_only": true
+          }
+        }
+      }
+    }
+  ],
+  "capability_measurement_passed": true,
+  "product_feature_ready": false,
+  "platform": "win32",
+  "coverage": {
+    "http": true,
+    "https": false,
+    "service_worker_startup": false,
+    "product_integration": false
+  },
+  "provenance": {
+    "run": 44729558840,
+    "native_source": "a7544566a3e1ecb3714ecceda1e0cba4b193edce",
+    "status": "success",
+    "scope": "synthetic-Windows-HTTP-capability-only",
+    "no_product_routing_integration": true
+  },
+  "network_guard": {
+    "loopback_family": "IPv4",
+    "non_loopback_outbound_blocked": true,
+    "scope": "own-probe-executable",
+    "product_feature_ready": false
+  }
+}

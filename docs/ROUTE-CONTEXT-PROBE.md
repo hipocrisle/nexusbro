@@ -1,5 +1,7 @@
 # CEF156: эксперимент RequestContext / proxy
 
+**Актуально 20.11.2026:** Linux capability `44526165115` и Windows capability `44729558840` прошли. Это изолированные эксперименты, `product_feature_ready:false`; пользовательские per-tab маршруты не реализованы. Факты Windows и ограничения — в конце и в `ROUTE-CONTEXT-WINDOWS-RESULT.json`. Старые записи ниже сохранены как история проверки.
+
 Изолированный Linux/Xvfb example, не продуктовый код. Сборка и запуск только GitHub CI; на DE-1 не запускать. Никаких реальных аккаунтов, подписок или VPN.
 
 ```sh
@@ -87,8 +89,8 @@ an operating-system network namespace or a proof about Windows DNS services.
 Coverage is basic HTTP/fresh synthetic profiles plus same-root/cache persistence.
 HTTPS, service-worker startup leakage, actual VPNs, product integration and real
 user profile migration remain explicitly unverified. `product_feature_ready`
-stays false even if the capability matrix passes. Build and runtime results are
-pending until the hosted Windows job completes.
+stays false even if the capability matrix passes. The first successful hosted Windows result is recorded below; product routing
+acceptance remains separate.
 
 A fourth legacy phase, `legacy_explicit`, leaves the global disk cache empty and
 opens the recorded original effective cache through an explicit RequestContext with its own
@@ -127,3 +129,41 @@ when the global disk cache is empty. The path must remain an immediate child of
 the same root, with no profile/cookie/Local State moves or copies. Server-side
 HttpOnly authentication and storage-preservation assertions are unchanged.
 Partial server observations are retained even if a later legacy phase fails.
+
+## Confirmed Windows measurement — 20 November 2026
+
+Commit `a754456`, [CI44729558840](https://github.com/hipocrisle/nexusbro/actions/runs/44729558840),
+Windows/MSVC compilation and native runtime passed.
+[Raw bounded results](ROUTE-CONTEXT-WINDOWS-RESULT.json) preserve
+`capability_measurement_passed:true` and `product_feature_ready:false`.
+
+| Scenario | Actual concurrent HTTP routes | Storage | Result |
+|---|---|---|---|
+| Independent contexts | A→A, B→B | Isolated | Passed |
+| Shared factory | A→B, B→B | Shared | Passed |
+| CLI proxy A | A→A, B→A | Isolated, preferences blocked | Passed |
+| Old default plus fresh override | A→A, B→B | Old auth retained only in A | Passed |
+
+The four-process legacy sequence confirmed:
+
+- Original CLI/global context reports its effective directory as `Default`,
+  not the requested `kesh`. Native cache identity is recorded and checked.
+- After normal close, confirmed cookie flush and a real process restart, the
+  same effective profile sends the persistent HttpOnly authentication cookie
+  to the server and retains localStorage. JS cannot read the HttpOnly cookie.
+- A session HttpOnly cookie does **not** survive the engine restart with the
+  unchanged default settings. This is a measured limitation, not a passed
+  Super hibernation/login guarantee. No persistence/privacy flag was changed.
+- Concurrent old-default and fresh-override contexts preserve auth/storage
+  only in the old context while using their own A/B proxy routes.
+- The same auth/storage result also holds with an **empty global disk cache**
+  and the old effective `Default` opened explicitly with a context handler;
+  the new override is still isolated. No directory, cookie or Local State
+  data was moved/copied, and no encryption key was replaced by the harness.
+
+The own-executable non-loopback firewall was installed and verified on the
+throwaway Windows runner. Native runtime stayed within the bounded supervisor.
+All source/traffic/accounts are synthetic. No production software or services
+were changed. This does not prove HTTPS/CONNECT, service-worker startup admission,
+WebRTC/UDP leakage controls, real VPN operation, whole-app integration, or shared
+authentication between independent routes. Those remain acceptance work.
