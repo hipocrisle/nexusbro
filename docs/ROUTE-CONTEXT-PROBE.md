@@ -103,3 +103,13 @@ measurement did not start because the per-program firewall rejected an address
 prefix/range. The follow-up uses a full CIDR decomposition excluding127/8 and no
 `/0` prefixes, preserving the outbound block rather than dropping isolation.
 No routing or authentication success is claimed from that first run.
+
+Second Windows run `44727862779` compiled and installed the strict firewall.
+Independent A/B, shared B/B and CLI A/A matrices all passed with real concurrent
+navigation/storage observations. The legacy phase stopped before opening its
+page: its preliminary same-path context was not reported as sharing with the
+global context. The follow-up uses the documented shared-context factory only
+as a global readiness barrier and separately requires the native global cache
+path to equal the original `root/kesh` directory after filesystem canonicalization.
+The actual server-side HttpOnly/auth and explicit-cache reopen gates remain
+unchanged; no authentication preservation was established by that failed run.

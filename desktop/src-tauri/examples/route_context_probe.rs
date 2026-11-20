@@ -136,8 +136,14 @@ wrap_completion_callback! {
 }
 fn legacy(root: &PathBuf, scenario: &str, a: &str, b: &str, target: &str) -> Result<bool, String> {
     let ready = Arc::new(AtomicUsize::new(0));
-    // Same path as Settings.cache_path: no move/copy of the old Windows profile.
-    let mut explicit = context(root.join("kesh"), ready.clone())?;
+    // Initialize the actual global context through the documented shared
+    // factory; a separately created same-path context is not a readiness API.
+    let mut global = request_context_get_global_context().ok_or("global context missing")?;
+    let mut explicit = request_context_cef_create_context_shared(
+        Some(&mut global),
+        Some(&mut ContextReady::new(ready.clone())),
+    )
+    .ok_or("global shared readiness context creation failed")?;
     let started = Instant::now();
     while ready.load(Ordering::SeqCst) < 1 && started.elapsed() < Duration::from_secs(10) {
         do_message_loop_work();
@@ -146,9 +152,21 @@ fn legacy(root: &PathBuf, scenario: &str, a: &str, b: &str, target: &str) -> Res
     if ready.load(Ordering::SeqCst) != 1 {
         return Err("legacy context initialization deadline exceeded".into());
     }
-    let global = request_context_get_global_context().ok_or("global context missing")?;
-    if global.is_sharing_with(Some(&mut explicit)) == 0 {
-        return Err("legacy default cache was not reused".into());
+    let actual_path = CefString::from(&global.cache_path()).to_string();
+    let requested = std::fs::canonicalize(root.join("kesh")).ok();
+    let actual = std::fs::canonicalize(&actual_path).ok();
+    let cache_matches = requested.is_some() && requested == actual;
+    let sharing = global.is_sharing_with(Some(&mut explicit)) != 0;
+    println!(
+        "{}",
+        serde_json::json!({"legacy_phase":scenario,"global_cache_present":!actual_path.is_empty(),
+        "global_cache_leaf":std::path::Path::new(&actual_path).file_name().map(|p|p.to_string_lossy().into_owned()),
+        "canonical_cache_matches_requested":cache_matches,"global_readiness_context_shares":sharing})
+    );
+    if !cache_matches || !sharing {
+        return Err(
+            "native global cache does not match the unchanged legacy kesh directory".into(),
+        );
     }
     if scenario == "legacy_reopen" {
         configure(&global, "legacy-default", b, false)?;
