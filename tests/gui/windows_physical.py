@@ -258,12 +258,24 @@ try:
             return True
         u.EnumWindows(collect_menu,0)
         assert len(menus)==1,('Expected one actual owned popup HWND',menus)
-        box=rect(menus[0]);screen=ImageGrab.grab()
-        colors=[screen.getpixel((box.left+3,y))[:3] for y in [box.top+3,(box.top+box.bottom)//2,box.bottom-4]]
+        # GetWindowRect includes an invisible DWM resize/shadow frame even for
+        # this undecorated popup. Its left+3 can sample the owner's Super text
+        # behind the popup instead of HTML (observed in collapsed-sidebar CI).
+        # Locate the actual native client surface, keeping all three samples
+        # in its background gutter and away from the rounded top/bottom edge.
+        client=wintypes.RECT();assert u.GetClientRect(menus[0],ctypes.byref(client))
+        origin=wintypes.POINT(client.left,client.top)
+        assert u.ClientToScreen(menus[0],ctypes.byref(origin))
+        cw=client.right-client.left;ch=client.bottom-client.top
+        assert cw>20 and ch>20,('Owned popup client is too small',cw,ch)
+        points=[(origin.x+3,y) for y in [origin.y+8,origin.y+ch//2,origin.y+ch-9]]
+        screen=ImageGrab.grab()
+        colors=[screen.getpixel(point)[:3] for point in points]
         assert all(max(rgb)<180 for rgb in colors),('Menu did not inherit dark NexusBro palette',colors)
         assert not Desktop(backend='uia').windows(class_name='#32768'),'Unexpected system menu instead of themed popup'
         screen.save(run/(stage+'-themed.png'))
-        results.append({'themed_menu':stage,'background_rgb':colors,'owned_html_popup':True})
+        results.append({'themed_menu':stage,'background_rgb':colors,'background_points':points,
+                        'client_rect':[origin.x,origin.y,cw,ch],'owned_html_popup':True})
         return menus[0]
     ui('Варианты новой вкладки',['Button']).click_input()
     ui('Новая приватная вкладка',['MenuItem'])
