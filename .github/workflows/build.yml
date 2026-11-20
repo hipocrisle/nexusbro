@@ -614,6 +614,8 @@ jobs:
           Get-FileHash -Algorithm SHA256 $installers[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/installer-sha256.json
           7z x -y $installers[0].FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($env:GITHUB_ACTIONS -ne "true") { throw "Paired alias is restricted to the disposable runner" }
+          Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "127.0.0.1 nexusbro-perf.test" -Encoding ascii
           python -m pip install Pillow pyautogui pywinauto psutil websocket-client cryptography
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($env:REFERENCE_RUN) {
@@ -622,10 +624,10 @@ jobs:
             Get-FileHash -Algorithm SHA256 $reference[0].FullName | ConvertTo-Json > .dev-check/performance-provenance/reference-sha256.json
             7z x -y $reference[0].FullName "-o.dev-check/reference-installed"
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @referenceExtra
+            python tests/gui/performance_windows.py --exe .dev-check/reference-installed/nexusbro.exe --cef .dev-check/reference-installed --out .dev-check/performance-reference --origin-host nexusbro-perf.test --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @referenceExtra
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @extra
+          python tests/gui/performance_windows.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/performance --origin-host nexusbro-perf.test --saved-tabs $env:PERF_SAVED_TABS --supers $env:PERF_SUPERS --tabs $env:PERF_LIVE_TABS @extra
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         if: always()

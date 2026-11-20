@@ -810,6 +810,10 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                 observed = {row["page"] for row in visibility_reports}
                 if observed != expected or visibility_dropped:
                     raise AssertionError("Visibility probe missing a visited page or exceeded its report bound")
+        if origin_host != "127.0.0.1":
+            with hit_lock:
+                if request_forms["absolute"] == 0 or request_forms["origin"] != 0:
+                    raise AssertionError("Paired alias workload did not consistently traverse the real proxy")
         report["measurement_completed"] = True
     except Exception as error:
         report["error"] = f"{type(error).__name__}: {error}"
