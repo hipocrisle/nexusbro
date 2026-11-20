@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import pathlib
+import socket
 import subprocess
 import sys
 import time
@@ -19,6 +20,7 @@ import psutil
 import websocket
 from client import Client
 from route_fixture import Fixture
+from stun_fixture import StunFixture
 from security_native import Device, call, js_wait, port, require, settings, super_record, wait_for
 
 
@@ -175,12 +177,16 @@ def assert_receipt(fixture, case, lane, auth, storage, *, tls=False):
 def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed'}}
-    device = fixture = None
+    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed', 'rtc_dns_udp': 'not_executed'}}
+    device = fixture = stun = None
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Only an ephemeral GitHub runner may run this native test')
         require(args.tls_cert and args.tls_key, 'HTTPS acceptance NOT EXECUTED: supply pretrusted runner-only CA-signed 127.0.0.1 certificate/key')
-        fixture = Fixture(args.tls_cert, args.tls_key)
+        stun_host = 'nexusbro-route-stun.test'
+        resolved = {answer[4][0] for answer in socket.getaddrinfo(stun_host, None, socket.AF_INET, socket.SOCK_DGRAM)}
+        require(resolved == {'127.0.0.1'}, 'Runner prerequisite missing: STUN fixture hostname must resolve only to 127.0.0.1')
+        stun = StunFixture()
+        fixture = Fixture(args.tls_cert, args.tls_key, 'stun:' + stun_host + ':' + str(stun.port))
         exe, cef = pathlib.Path(args.exe).resolve(), pathlib.Path(args.cef).resolve()
         require(exe.is_file() and cef.is_dir(), 'Built native app/CEF prerequisite missing')
         device = WindowsDevice(out / 'device', exe, cef) if sys.platform == 'win32' else Device('routes', out / 'device', exe, cef)
@@ -192,26 +198,28 @@ def run(args):
         supers['routes-direct'] = super_record('routes-direct', 'routes-direct', 'about:blank', proxy='')
         write_json(device.data / 'vkladki.json', list(supers.values()))
 
-        def tab(identifier, case, route, seed=None, tls=False):
-            return {'id': identifier, 'adres': fixture.url(case, seed, tls), 'zagolovok': case,
+        def tab(identifier, case, route, seed=None, tls=False, rtc=False):
+            return {'id': identifier, 'adres': fixture.url(case, seed, tls, rtc), 'zagolovok': case,
                     'route': route, 'zakreplena': False, 'otlozhena': False, 'privatnaya': False}
         inherit, direct = {'kind': 'inherit'}, {'kind': 'direct'}
         connection = lambda lane: {'kind': 'connection', 'id': 'lane-' + lane}
         tabs = [tab(1, 'seed-a', inherit, 'A'), tab(2, 'seed-b', connection('B'), 'B'),
                 tab(3, 'share-a', connection('A')), tab(4, 'seed-direct', direct, 'Direct'),
                 tab(5, 'share-direct', direct), tab(6, 'https-b', connection('B'), tls=True),
-                tab(7, 'blocked-unknown', connection('missing')), tab(8, 'draft', inherit), tab(9, 'media', inherit)]
+                tab(7, 'blocked-unknown', connection('missing')), tab(8, 'draft', inherit), tab(9, 'media', inherit),
+                tab(10, 'rtc-vpn', inherit, rtc=True)]
         # Delayed tabs are activated explicitly, in order, to make first-request cookie witnesses deterministic.
         for t in tabs[1:]:
             t['otlozhena'] = True
         session_path = device.data / 'profili' / 'routes-a' / 'obychnye.json'
-        write_json(session_path, {'vkladki': tabs, 'aktivnaya': 1, 'sleduyushchaya': 10, 'zakrytye': []})
+        write_json(session_path, {'vkladki': tabs, 'aktivnaya': 1, 'sleduyushchaya': 11, 'zakrytye': []})
         write_json(device.data / 'profili' / 'routes-b' / 'obychnye.json',
                    {'vkladki': [tab(1, 'other-super', inherit)], 'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
         write_json(device.data / 'profili' / 'routes-direct' / 'obychnye.json',
                    {'vkladki': [tab(1, 'direct-super-seed', inherit, 'Direct'),
-                                {**tab(2, 'direct-super-share', direct), 'otlozhena': True}],
-                    'aktivnaya': 1, 'sleduyushchaya': 3, 'zakrytye': []})
+                                {**tab(2, 'direct-super-share', direct), 'otlozhena': True},
+                                {**tab(3, 'rtc-direct', inherit, rtc=True), 'otlozhena': True}],
+                    'aktivnaya': 1, 'sleduyushchaya': 4, 'zakrytye': []})
         client = device.start()
         call(client, 'otkryt', nastrojki=supers['routes-a'])
         assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
@@ -245,6 +253,48 @@ def run(args):
             require(first_direct and first_direct[0]['auth'] is None,
                     'Direct Super inherited another Super authentication profile')
         report['checks'].append('direct_super_inherit_matches_explicit_direct_profile_and_network')
+        # Browser DNS + real ICE/STUN positive control precedes the VPN leak
+        # check. A fixture-only protocol success cannot satisfy this assertion.
+        def rtc_events(case):
+            return [r for r in fixture.requests(case) if r['path'] == '/rtc']
+
+        def complete_rtc(case, lane, minimum_seconds=0):
+            events = rtc_events(case)
+            names = {r['rtc_event'] for r in events}
+            if not {'started', 'gathering-done', 'closed'} <= names or names & {'timeout', 'error'}:
+                return None
+            if any(r['lane'] != lane for r in events):
+                return None
+            started = next(r['time'] for r in events if r['rtc_event'] == 'started')
+            return events if time.monotonic() - started >= minimum_seconds else None
+
+        def start_rtc(owner, identifier, began):
+            remaining = lambda: max(.1, 15 - (time.monotonic() - began))
+            call(client, 'pereklyuchit', id=owner, timeout=remaining())
+            call(client, 'obychnaya_komanda', id=owner,
+                 komanda={'deystvie': 'vybrat', 'id': identifier}, timeout=remaining())
+
+        direct_started = time.monotonic()
+        start_rtc('routes-direct', 3, direct_started)
+        def direct_rtc_witness():
+            events = complete_rtc('rtc-direct', 'Direct')
+            return events if (events and any(p['binding'] for p in stun.since(direct_started))
+                              and any(r['candidate_type'] == 'srflx' and r['candidate_address'] == '203.0.113.10'
+                                      for r in events)) else None
+        wait_for(direct_rtc_witness, 'Direct hostname ICE did not produce actual STUN UDP + mapped srflx candidate',
+                 max(.1, 15 - (time.monotonic() - direct_started)))
+        report['checks'].append('direct_hostname_rtc_real_udp_and_srflx_positive_control')
+        # Direct PC has closed after its final HTTP receipt. No remote SDP is
+        # ever installed; the documentation-only mapped IP is not contacted.
+        time.sleep(.3)
+        vpn_started = time.monotonic()
+        start_rtc('routes-a', 10, vpn_started)
+        wait_for(lambda: complete_rtc('rtc-vpn', 'A', minimum_seconds=5),
+                 'VPN ICE did not genuinely start/complete/close within bounded no-UDP observation',
+                 max(.1, 15 - (time.monotonic() - vpn_started)))
+        require(not stun.since(vpn_started), 'VPN profile leaked non-proxied UDP to hostname STUN fixture')
+        report['coverage']['rtc_dns_udp'] = 'passed'
+        report['checks'].append('vpn_hostname_rtc_completed_no_udp_at_least_five_seconds')
         select(client, 'routes-a', 7)
         wait_for(lambda: row(client, 'routes-a', 7).get('route_error'), 'Unknown saved ID was not explicitly unavailable')
         require(not fixture.requests('blocked-unknown'), 'Unknown ID fell back to a network route')
@@ -385,6 +435,8 @@ def run(args):
             device.close()
         if fixture:
             fixture.close()
+        if stun:
+            stun.close()
         (out / 'results.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
 
 

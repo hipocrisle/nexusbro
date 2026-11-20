@@ -20,10 +20,11 @@ class Server(http.server.ThreadingHTTPServer):
 
 
 class Fixture:
-    def __init__(self, cert, key):
+    def __init__(self, cert, key, stun_uri=None):
         self.lock = threading.Lock()
         self.receipts, self.tunnels, self.peers = [], [], {}
         self.tokens = {lane: secrets.token_hex(20) for lane in ('A', 'B', 'Direct')}
+        self.stun_uri = stun_uri
         self.servers = []
         self.proxy_servers, self.proxy_sockets, self.stopped_proxies = {}, {}, set()
         owner = self
@@ -46,6 +47,9 @@ class Fixture:
                 with owner.lock:
                     owner.receipts.append({'path': parsed.path, 'case': q.get('case', [None])[0], 'lane': lane,
                                            'auth': auth, 'storage': q.get('storage', [None])[0],
+                                           'rtc_event': q.get('event', [None])[0],
+                                           'candidate_type': q.get('type', [None])[0],
+                                           'candidate_address': q.get('address', [None])[0],
                                            'time': time.monotonic(),
                                            'tls': isinstance(self.connection, ssl.SSLSocket)})
                 seed = q.get('seed', [None])[0]
@@ -61,7 +65,7 @@ class Fixture:
                         "document.querySelector('#draft').oninput=()=>fetch('/receipt/draft-typed');"
                         "document.querySelector('#media').onclick=async()=>{const c=new AudioContext();await c.resume();"
                         "const o=c.createOscillator(),g=c.createGain();g.gain.value=.02;o.connect(g);g.connect(c.destination);o.start();window.fixtureAudio=c;if(c.state==='running')fetch('/receipt/media-running')};"
-                        "</script>").encode()
+                        + owner.rtc_script() + "</script>").encode()
                 self.send_response(200)
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.send_header('Cache-Control', 'no-store')
@@ -213,8 +217,26 @@ class Fixture:
         server.shutdown()
         server.server_close()
 
-    def url(self, case, seed=None, tls=False):
+    def rtc_script(self):
+        # Only an actual CEF ICE event supplies candidate witnesses. No remote
+        # description/candidate is installed, so the reserved mapped IP is
+        # never used as an outgoing ICE peer destination.
+        return ("if(q.has('rtc')){(async()=>{let pc,timer,done=false;"
+                "const send=(event,extra={})=>fetch('/rtc?'+new URLSearchParams({case:q.get('case'),event,...extra}),{cache:'no-store'});"
+                "try{await send('started');pc=new RTCPeerConnection({iceServers:[{urls:"
+                + json.dumps(self.stun_uri) + "}]});"
+                "const finish=()=>{if(done||pc.iceGatheringState!=='complete')return;done=true;clearTimeout(timer);send('gathering-done').finally(()=>{pc.close();void send('closed')})};"
+                "pc.onicecandidate=e=>{if(e.candidate){const parts=e.candidate.candidate.split(/\\s+/),i=parts.indexOf('typ');"
+                "if(i>=0&&parts[i+1]==='srflx')void send('candidate',{type:parts[i+1],address:parts[4]})}else finish()};"
+                "pc.onicegatheringstatechange=finish;pc.createDataChannel('fixture');"
+                "timer=setTimeout(()=>{if(done)return;done=true;void send('timeout');pc.close()},14000);"
+                "await pc.setLocalDescription(await pc.createOffer());finish();"
+                "}catch(e){clearTimeout(timer);if(pc)pc.close();void send('error')}})()}" )
+
+    def url(self, case, seed=None, tls=False, rtc=False):
         query = {'case': case}
+        if rtc:
+            query['rtc'] = '1'
         if seed:
             query['seed'] = seed
         return ('https' if tls else 'http') + '://127.0.0.1:' + str(self.https if tls else self.http) + '/page?' + urllib.parse.urlencode(query)
