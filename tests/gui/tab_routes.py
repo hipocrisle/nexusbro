@@ -231,7 +231,42 @@ class WindowsDevice:
                            'Owned native Windows desktop window absent', 20)
         window = next((w for w in windows if 'NexusBro' in w.window_text()), windows[0])
         window.restore()
-        window.move_window(x=20, y=20, width=1200, height=820)
+        from ctypes import wintypes
+        user = ctypes.WinDLL('user32', use_last_error=True)
+        user.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
+        user.MonitorFromWindow.argtypes = [wintypes.HWND, wintypes.DWORD]
+        user.MonitorFromWindow.restype = wintypes.HANDLE
+        user.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                      ctypes.c_int, ctypes.c_int, wintypes.UINT]
+        user.GetWindowRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+
+        class MonitorInfo(ctypes.Structure):
+            _fields_ = [('size', wintypes.DWORD), ('monitor', wintypes.RECT),
+                        ('work', wintypes.RECT), ('flags', wintypes.DWORD)]
+
+        user.GetMonitorInfoW.argtypes = [wintypes.HANDLE, ctypes.POINTER(MonitorInfo)]
+        handle, pid = wintypes.HWND(window.handle), wintypes.DWORD()
+        require(user.GetWindowThreadProcessId(handle, ctypes.byref(pid)) and pid.value == self.app.pid,
+                'Native window geometry target is not owned by this test application')
+        monitor = MonitorInfo()
+        monitor.size = ctypes.sizeof(monitor)
+        require(user.GetMonitorInfoW(user.MonitorFromWindow(handle, 2), ctypes.byref(monitor)),
+                'Cannot obtain the owned window monitor work area')
+        area = monitor.work
+        width, height = min(1200, area.right - area.left - 40), min(820, area.bottom - area.top - 40)
+        require(width >= 900 and height >= 560, 'Runner monitor cannot fit the required native browser window')
+        require(user.SetWindowPos(handle, None, area.left + 20, area.top + 20, width, height, 0x0004 | 0x0040),
+                'Native SetWindowPos failed for the owned application window')
+        actual = wintypes.RECT()
+        require(user.GetWindowRect(handle, ctypes.byref(actual)), 'Cannot read back the native window rectangle')
+        # DWM invisible borders and DPI rounding may differ from the requested
+        # rectangle; require a usable visible window without exact pixel equality.
+        require(actual.right - actual.left >= 900 and actual.bottom - actual.top >= 560
+                and actual.left >= area.left - 16 and actual.top >= area.top - 16
+                and actual.right <= area.right + 16 and actual.bottom <= area.bottom + 16,
+                'Owned application window is outside the usable monitor area')
+        self.inspector_diagnostic['window_rect'] = [actual.left, actual.top, actual.right, actual.bottom]
+        self.inspector_diagnostic['monitor_work_rect'] = [area.left, area.top, area.right, area.bottom]
         window.set_focus()
         return client
 
