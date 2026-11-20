@@ -86,7 +86,9 @@ wrap_app! {
                 ks.append_switch(Some(&CefString::from("disable-quic")));
                 // Proxy endpoints are loopback literals; unresolved origins must
                 // be resolved by the proxy, never by Chromium's direct resolver.
-                ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP * ~NOTFOUND , EXCLUDE localhost")));
+                // The configured proxy itself is a numeric loopback endpoint.
+                // Preserve its resolution while origins remain proxy-resolved.
+                ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP * ~NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE [::1]")));
                 // Движок — тёмный, как вся программа.
                 ks.append_switch(Some(&CefString::from("force-dark-mode")));
             }
