@@ -185,7 +185,7 @@ impl Sessiya {
             s.aktivnaya = s.vkladki[0].id;
         }
         s.sleduyushchaya = ids.iter().max().unwrap() + 1;
-        for v in &mut s.vkladki {
+        for v in s.vkladki.iter_mut().chain(s.zakrytye.iter_mut()) {
             v.zagruzka = false;
             v.otlozhena = true;
             v.memory_pending=false;

@@ -379,6 +379,10 @@ async fn build(
     let route = NativeRoute {
         key: key.into(),
         proxy: format!("http://127.0.0.1:{}", proxy.port),
+        allow_non_proxied_udp: matches!(
+            crate::proxy::razobrat_vyhod(address),
+            Ok(crate::proxy::Vyhod::Pryamo)
+        ),
     };
     resources.proxy = Some(proxy);
     Ok(Arc::new(Runtime {
@@ -408,6 +412,7 @@ mod tests {
         let key = effective_key("", "");
         assert!(NativeRoute {
             key,
+            allow_non_proxied_udp: true,
             proxy: "http://127.0.0.1:1".into()
         }
         .validate());
@@ -419,6 +424,7 @@ mod tests {
         let owner = Engine {
             inherit: NativeRoute {
                 key: effective_key("", ""),
+                allow_non_proxied_udp: true,
                 proxy: "http://127.0.0.1:1".into(),
             },
             slots: Mutex::new(HashMap::new()),

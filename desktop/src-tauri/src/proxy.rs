@@ -124,19 +124,26 @@ pub async fn podnyat(n: Nastrojka) -> anyhow::Result<Rabotayushchij> {
     let s2 = schet.clone();
 
     tokio::spawn(async move {
+        // The listener owns established CONNECT/WebSocket tasks too. Dropping
+        // a route must not leave detached traffic alive after its engine dies.
+        let mut connections = tokio::task::JoinSet::new();
         loop {
             tokio::select! {
                 _ = &mut rx => break,
+                _ = connections.join_next(), if !connections.is_empty() => {},
                 prinyato = slushatel.accept() => {
                     let (potok, _) = match prinyato { Ok(v) => v, Err(_) => continue };
+                    if connections.len() >= 256 { drop(potok); continue; }
                     let n = n.clone();
                     let s = s2.clone();
-                    tokio::spawn(async move {
+                    connections.spawn(async move {
                         let _ = obsluzhit(potok, n, s).await;
                     });
                 }
             }
         }
+        connections.abort_all();
+        while connections.join_next().await.is_some() {}
     });
 
     Ok(Rabotayushchij { port, schet, ostanovit: tx })
@@ -144,6 +151,33 @@ pub async fn podnyat(n: Nastrojka) -> anyhow::Result<Rabotayushchij> {
 
 fn pravilo_reklamy(host: &str) -> Option<&'static str> {
     crate::spisok_reklamy::reklamnyj_host(host)
+}
+
+#[cfg(test)]
+mod route_shutdown_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn stopping_proxy_closes_already_established_connect() {
+        let upstream = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let target = upstream.local_addr().unwrap();
+        let proxy = podnyat(Nastrojka { vyhod: Vyhod::Pryamo, rezat_reklamu: false }).await.unwrap();
+        let mut client = TcpStream::connect(("127.0.0.1", proxy.port)).await.unwrap();
+        client.write_all(format!("CONNECT {target} HTTP/1.1\r\nHost: {target}\r\n\r\n").as_bytes()).await.unwrap();
+        let (mut server, _) = tokio::time::timeout(std::time::Duration::from_secs(2), upstream.accept()).await.unwrap().unwrap();
+        let mut response = [0; 256];
+        let n = tokio::time::timeout(std::time::Duration::from_secs(2), client.read(&mut response)).await.unwrap().unwrap();
+        assert!(String::from_utf8_lossy(&response[..n]).contains("200 Connection Established"));
+        // Prove actual forwarding before shutdown, not merely a listening port.
+        client.write_all(b"ping").await.unwrap();
+        let mut ping = [0; 4];
+        tokio::time::timeout(std::time::Duration::from_secs(2), server.read_exact(&mut ping)).await.unwrap().unwrap();
+        assert_eq!(&ping, b"ping");
+        proxy.ostanovit();
+        let mut byte = [0];
+        let closed = tokio::time::timeout(std::time::Duration::from_secs(2), server.read(&mut byte)).await.unwrap();
+        assert!(matches!(closed, Ok(0)) || closed.is_err());
+    }
 }
 #[cfg(test)]
 fn reklama(host: &str) -> bool { pravilo_reklamy(host).is_some() }

@@ -15,8 +15,11 @@ mod okna_app;
 mod brauzer;
 mod sessiya;
 mod tab_routes;
+mod tab_route_parent;
+mod route_network;
 mod nastrojki;
 mod cef_vkladki;
+mod cef_route_context;
 mod cdp;
 mod memory_guard;
 mod memory_cef;
@@ -154,6 +157,8 @@ struct Vkladka {
     nastrojki: Nastrojki,
     /// Свой прокси этой вкладки: режет рекламу и уводит в нужный выход.
     nash_proxy: Option<proxy::Rabotayushchij>,
+    inherit_route: Option<tab_routes::NativeRoute>,
+    route_settings: Option<Nastrojki>,
     /// Туннель вкладки, если выход задан подпиской или ссылкой на узел.
     tunnel: Option<std::process::Child>,
     /// None = вкладка сохранена, но движок не запущен.
@@ -174,6 +179,7 @@ struct Vkladka {
 
 #[derive(Default)]
 struct Sostoyanie {
+    routes: route_network::Registry,
     okna:okna_app::Okna,
     #[cfg(target_os = "windows")]
     obolochka: std::sync::OnceLock<tauri::WebviewWindow>,
@@ -371,7 +377,7 @@ async fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -512,7 +518,15 @@ async fn podgotovit_dvizhok(
         }
     };
     let m = s.mesto.lock().unwrap().unwrap_or(Mesto { x: 0, y: 44, w: 1200, h: 700 });
-    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, nastrojki.rezat_reklamu, m) {
+    let route_bootstrap = tab_routes::RouteBootstrap {
+        inherit: tab_routes::NativeRoute {
+            key: route_network::effective_key(&nastrojki.proxy, &nastrojki.proxy_uzel),
+            proxy: cherez.clone(),
+            allow_non_proxied_udp: matches!(proxy::razobrat_vyhod(&nastrojki.proxy),Ok(proxy::Vyhod::Pryamo)),
+        },
+        bindings: Vec::new(),
+    };
+    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, nastrojki.rezat_reklamu, m, &route_bootstrap) {
         Ok(d) => d,
         Err(e) => {
             nash.ostanovit();
@@ -531,6 +545,8 @@ async fn podgotovit_dvizhok(
         match v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet) {
             Some(vk) => {
                 vk.proc = Some(ditya);
+                vk.inherit_route = Some(route_bootstrap.inherit.clone());
+                vk.route_settings = Some(nastrojki.clone());
                 browser_lock::synchronize_engine(&kanal);
                 vk.kanal = Some(kanal);
                 vk.nash_proxy = Some(nash);
@@ -572,6 +588,7 @@ async fn podgotovit_dvizhok(
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
             if data["tip"]=="browser-lock"{browser_lock::request_lock(h_ui.clone());return;}
+            if tab_route_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if passwords::receive(&h_ui,&id_ui,&data){return;}
             if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
@@ -590,8 +607,8 @@ async fn podgotovit_dvizhok(
             }
             if data["tip"]=="perevod-zapros" {
                 let s:State<Sostoyanie>=h_ui.state();
-                let route=s.vkladki.lock().unwrap().get(&id_ui).filter(|v|v.zapusk_id==zapusk_id)
-                    .and_then(|v|Some((v.nash_proxy.as_ref()?.port,v.kanal.clone()?)));
+                let route=tab_route_parent::translation_port(&s,&id_ui,zapusk_id,&data)
+                    .and_then(|port| s.vkladki.lock().ok()?.get(&id_ui)?.kanal.clone().map(|channel|(port,channel)));
                 if let Some((port,kanal))=route{perevod::zapros(id_ui.clone(),&data,port,kanal);}
                 return;
             }
@@ -616,6 +633,7 @@ async fn podgotovit_dvizhok(
             let resursy = (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take());
             drop(v);
             ostanovit_resursy(resursy.0, resursy.1, resursy.2);
+            release_route_resources(&s, &id_fon, zapusk_id);
             zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
             let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
         }
@@ -675,6 +693,7 @@ async fn pereklyuchit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: Stat
                         let _ = t.kill();
                         let _ = t.wait();
                     }
+                    release_route_resources(&s, &id, vk.zapusk_id);
                     false
                 }
             }
@@ -760,6 +779,12 @@ fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
     sohranit_aktivnuyu(id);
 }
 
+fn release_route_resources(s: &Sostoyanie, id: &str, engine: u64) {
+    perevod::otmenit_super(id);
+    tab_route_parent::release_engine(id, engine);
+    s.routes.release_engine(id, engine);
+}
+
 fn ostanovit_resursy(
     proc: Option<Child>, proxy: Option<proxy::Rabotayushchij>, tunnel: Option<Child>,
 ) {
@@ -784,11 +809,12 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
         vk.kanal = None;
         vk.okno = None;
         vk.zapas_pid = None;
-        (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take())
+        (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take(), vk.zapusk_id)
     };
     let _ = tauri::async_runtime::spawn_blocking(move || {
         ostanovit_resursy(resursy.0, resursy.1, resursy.2);
     }).await;
+    release_route_resources(s, id, resursy.3);
 }
 
 /// Правка настроек супер-вкладки после создания. Работающую перезапускаем
@@ -971,7 +997,7 @@ async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State
         if v.contains_key(&id) {
             return Ok(net("такая супер-вкладка уже открыта"));
         }
-        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
@@ -1226,6 +1252,7 @@ pub fn run() {
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
             fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            tab_route_parent::tab_route_choices, tab_route_parent::tab_route_set,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
 
@@ -1268,7 +1295,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
                 }
             }
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
@@ -1356,11 +1383,12 @@ pub fn run() {
                             vk.okno = None;
                             vk.kanal = None;
                             vk.zapas_pid = None;
-                            Some((id.clone(), vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take(), vpn_umer, active))
+                            Some((id.clone(), vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take(), vpn_umer, active, vk.zapusk_id))
                         }).collect()
                     };
-                    for (id, proc, proxy, tunnel, vpn_umer, active) in mertvye {
+                    for (id, proc, proxy, tunnel, vpn_umer, active, engine) in mertvye {
                         ostanovit_resursy(proc, proxy, tunnel);
+                        release_route_resources(&s, &id, engine);
                         {
                             let _okna = s.izmenenie_okon.lock().unwrap();
                             primenit_vidimost(&s);
@@ -1504,6 +1532,7 @@ pub fn run() {
                 };
                 for (d,p,t) in deti { ostanovit_resursy(d,p,t); }
                 perevod::otmenit_vse();
+                { let s: tauri::State<Sostoyanie> = app.state(); s.routes.stop_all(); }
                 privatnost::ochistit();
             }
         });

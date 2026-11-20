@@ -33,3 +33,18 @@ The Windows legacy-profile capability probe below is complete. Continue product 
 [44729558840](https://github.com/hipocrisle/nexusbro/actions/runs/44729558840), native source `a7544566a3e1ecb3714ecceda1e0cba4b193edce`, passed the real Windows context probe. Independent contexts routed A/B concurrently and isolated storage; shared contexts routed both to B and shared storage; CLI proxy A prevented preference changes. Legacy CLI/global profile → context preferences preserved persistent HttpOnly server-auth and localStorage at the actual `root/Default`. An additional process with empty global disk cache and explicit RequestContext to that exact legacy directory plus a new override also preserved old auth only in the inherited context, routing A/B simultaneously. No copying or moving cookies, Local State or profiles. Session HttpOnly cookies did not survive engine restart with existing defaults.
 
 This result remains `product_feature_ready:false`: HTTP capability only; HTTPS/CONNECT, service-worker early admission, real VPN/UDP and integration into the application still require acceptance. The owner has explicitly accepted separate authentication per route; product integration is now authorized.
+
+## Product integration file ownership and transaction contract
+
+- Parent: `lib.rs`, `sessiya.rs`, `tab_routes.rs`, new `tab_route_parent.rs`, proxy task lifecycle.
+- Native: `cef_vkladki.rs`, `cef_dvizhok.rs`, new `cef_route_context.rs`.
+- UI: `ObychnyeVkladki.tsx` and dedicated route selector component/styles.
+- Network leases: new `route_network.rs`, no changes to other packages.
+
+The trusted UI calls `tab_route_choices({id})` (only sanitized names/IDs) and `tab_route_set({id,tabId,route,expectedGeneration})`. Applied selection remains authoritative native session state. Parent preparation is single-flight per tab transaction, followed by exact engine/window/tab/browser/generation checks. Native must refuse unsafe replacement of media/drafts/downloads and preserve the existing route on failure. Requests time out visibly; timeout is not proof of application or rollback.
+
+`NativeRoute` contains a 64-character lowercase hexadecimal effective-path key and strictly validated `http://127.0.0.1:PORT`, never remote credentials or bypass rules. Inherited and explicit choices for the same effective path resolve to one key/profile. A pre-spawn bootstrap file contains the inherited prepared route; restored override routes resolve lazily before navigation. Native `route-needed`/`route-result` events identify window label, tab ID, attempt generation and the old browser ID (zero if not created). Parent replies with `RouteApply` or `RouteFailed`. Attempt generations cannot be reused after a failure.
+
+Leases remain until the owning engine has exited because service workers and downloads can outlive visible tabs. The first implementation bounds each Super/engine to eight effective routes including inherited, with global caps on VPN children/startup. It reuses one tunnel per Super/effective path, never per tab. Established CONNECT tasks belong to their proxy listener and are aborted on shutdown. Translation resolves actual native route key and identity, without an unknown-key fallback to the Super route. Data clear/statistics must include all owned route contexts.
+
+These are implementation contracts, not passed product acceptance. No new product build is authorized until all route components are integrated.
