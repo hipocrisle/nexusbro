@@ -1,4 +1,5 @@
 """Реальный CI-бинарник под Xvfb: процесс CEF, документ, два окна и две Super."""
+from origin_request import canonicalize
 import argparse,http.server,json,os,pathlib,signal,subprocess,threading,time,urllib.parse
 from client import Client
 p=argparse.ArgumentParser();p.add_argument('--exe',required=True);p.add_argument('--cef',required=True);p.add_argument('--out',required=True);a=p.parse_args()
@@ -6,6 +7,7 @@ root=pathlib.Path(a.out).resolve();root.mkdir(parents=True,exist_ok=False);exe=p
 probes=[]
 class Page(http.server.BaseHTTPRequestHandler):
  def do_GET(self):
+  self.path = canonicalize(self.path)
   if self.path.startswith('/probe?'):probes.append(urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query,keep_blank_values=True));self.send_response(204);self.end_headers();return
   body=b"""<!doctype html><title>LinuxNativeSmoke</title><style>body{background:#185541}</style><p>CEF is alive</p><script>const q=new URLSearchParams(location.search);if(q.has('set'))document.cookie='smoke='+q.get('set')+';path=/;SameSite=Lax';fetch('/probe?'+new URLSearchParams({case:q.get('case')||'',cookie:document.cookie}));</script>"""
   self.send_response(200);self.send_header('Content-Type','text/html');self.end_headers();self.wfile.write(body)

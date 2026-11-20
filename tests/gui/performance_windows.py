@@ -4,6 +4,7 @@
 This is a measurement harness, not a synthetic backend or a performance PASS.
 Only the fixture's saved profile is seeded; every engine/tab is woken by mouse.
 """
+from origin_request import canonicalize
 import argparse
 import collections
 import http.server
@@ -221,6 +222,7 @@ def run(args):
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            self.path = canonicalize(self.path)
             path = urllib.parse.urlsplit(self.path).path
             parts = path.strip("/").split("/")
             if len(parts) != 3 or parts[0] != "page" or not all(p.isdecimal() for p in parts[1:]):
@@ -279,6 +281,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             self.wfile.write(body)
 
         def do_POST(self):
+            self.path = canonicalize(self.path)
             nonlocal visibility_dropped
             if not args.visibility_probe or self.path not in ["/visibility", "/input-proof", "/trace-proof"]:
                 self.send_error(404)

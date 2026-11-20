@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Real Windows automatic-only tab-unload and continuous-media acceptance; no IPC or CEF/CDP mocks."""
+from origin_request import canonicalize
 import argparse
 import collections
 import http.server
@@ -84,6 +85,7 @@ def run(a):
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            self.path = canonicalize(self.path)
             path = urllib.parse.urlsplit(self.path).path
             with lock:
                 hits[path] += 1
@@ -189,6 +191,7 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
                     pass
 
         def do_POST(self):
+            self.path = canonicalize(self.path)
             if self.path != "/receipt":
                 self.send_error(404)
                 return

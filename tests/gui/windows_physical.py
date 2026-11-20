@@ -1,4 +1,5 @@
 """Windows screen acceptance using physical mouse/keyboard, without CDP."""
+from origin_request import canonicalize
 import argparse
 import ctypes
 from ctypes import wintypes
@@ -56,6 +57,7 @@ translation_reports=[]
 storage_reports=[]
 class Fixture(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
+        self.path = canonicalize(self.path)
         path=urllib.parse.urlsplit(self.path).path
         hits[path] = hits.get(path,0)+1
         if path=='/download-fixture':

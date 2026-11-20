@@ -5,6 +5,7 @@ inspector endpoint and data/config/cache roots. All credentials are generated
 synthetic fixtures; only boolean checkpoints enter results.json. Website probes
 stay in memory. No deployment or external endpoint is used.
 """
+from origin_request import canonicalize
 import argparse
 import base64
 import hashlib
@@ -420,6 +421,7 @@ def run(args):
             pass
 
         def do_POST(self):
+            self.path = canonicalize(self.path)
             if self.path != '/probe':
                 self.send_response(404)
                 self.end_headers()
@@ -443,6 +445,7 @@ def run(args):
             self.end_headers()
 
         def do_GET(self):
+            self.path = canonicalize(self.path)
             q = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)
             path = urllib.parse.urlsplit(self.path).path
             if path == '/favicon.ico':
