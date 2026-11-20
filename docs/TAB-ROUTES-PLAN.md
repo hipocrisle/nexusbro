@@ -18,9 +18,9 @@ Do not merge its special build.yml launcher into a product branch.
 - All windows of one Super use the same route registry. Private route contexts stay in memory and separate from ordinary contexts.
 - Translation must resolve the actual tab route; clearing site data must cover route contexts. Preserve password origin and native Browser ownership guards.
 
-## Open owner decision
+## Approved profile policy (20 November 2026)
 
-Stock CEF cannot provide shared cookie/storage login and independent proxies through shared RequestContexts. New override profiles require separate login; inherited tabs keep their original login. Owner has been asked whether this is acceptable. Do not treat elapsed time as an answer or implement a promise of shared login across routes.
+The owner explicitly approved one storage profile per effective route within each Super. Tabs using the same effective route share cookies/storage; different Supers remain isolated. Different routes can hold different accounts. A new login when moving an existing tab to another route is an intentional safeguard against exposing an account through another exit. Never copy authentication between route profiles. Inherited legacy storage remains intact. A failed selected VPN must fail closed, without falling back to Direct. Route changes must explain the profile change before applying.
 
 Ordinary tabs are not currently part of the cloud Super payload. Do not promise route-choice sync as part of this local feature.
 
@@ -32,4 +32,4 @@ The Windows legacy-profile capability probe below is complete. Continue product 
 
 [44729558840](https://github.com/hipocrisle/nexusbro/actions/runs/44729558840), native source `a7544566a3e1ecb3714ecceda1e0cba4b193edce`, passed the real Windows context probe. Independent contexts routed A/B concurrently and isolated storage; shared contexts routed both to B and shared storage; CLI proxy A prevented preference changes. Legacy CLI/global profile → context preferences preserved persistent HttpOnly server-auth and localStorage at the actual `root/Default`. An additional process with empty global disk cache and explicit RequestContext to that exact legacy directory plus a new override also preserved old auth only in the inherited context, routing A/B simultaneously. No copying or moving cookies, Local State or profiles. Session HttpOnly cookies did not survive engine restart with existing defaults.
 
-This result remains `product_feature_ready:false`: HTTP capability only; HTTPS/CONNECT, service-worker early admission, real VPN/UDP and integration into the application still require acceptance. The owner decision about separate/mandatory-shared auth remains open.
+This result remains `product_feature_ready:false`: HTTP capability only; HTTPS/CONNECT, service-worker early admission, real VPN/UDP and integration into the application still require acceptance. The owner has explicitly accepted separate authentication per route; product integration is now authorized.
