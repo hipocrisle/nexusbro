@@ -584,11 +584,14 @@ fetch('/receipt',{method:'POST',body:JSON.stringify({page:'MemoryBeforeUnload',g
         # PyAutoGUI's Windows backend passes clicks as raw dwData. Win32
         # requires WHEEL_DELTA=120 per notch; -6 raw units moved only 5px.
         # https://learn.microsoft.com/windows/win32/api/winuser/nf-winuser-mouse_event
-        u.mouse_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
-                                 wintypes.DWORD, ctypes.c_size_t]
-        u.mouse_event.restype = None
+        # A private DLL/function wrapper must not alter PyAutoGUI's shared
+        # user32.mouse_event prototype (it passes c_long mouse coordinates).
+        wheel_event = ctypes.WinDLL("user32", use_last_error=True).mouse_event
+        wheel_event.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.DWORD,
+                                wintypes.DWORD, ctypes.c_size_t]
+        wheel_event.restype = None
         wheel_delta = -6 * 120
-        u.mouse_event(0x0800, 0, 0, ctypes.c_uint32(wheel_delta).value, 0)
+        wheel_event(0x0800, 0, 0, ctypes.c_uint32(wheel_delta).value, 0)
         report["automatic_wheel_input"] = {"transport": "win32_mouse_event", "delta": wheel_delta,
                                             "notches": 6, "required_scroll_pixels": 200}
         # Do not click this safe page before auto: the conservative early hook
