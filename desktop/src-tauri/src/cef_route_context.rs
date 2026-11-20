@@ -305,6 +305,8 @@ impl Registry {
             ));
         }
         let owned=profile_paths::owned_profiles(&self.root,&self.legacy_key)?;
+        let additional=owned.iter().filter(|(key,_)|!self.entries.contains_key(&(key.clone(),false))).count();
+        anyhow::ensure!(self.entries.len().checked_add(additional).is_some_and(|count|count<=256),"Достигнут лимит профилей маршрутов");
         for (key, path) in owned {
             if self.entries.contains_key(&(key.clone(), false)) {
                 continue;
