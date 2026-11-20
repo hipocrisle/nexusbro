@@ -137,29 +137,73 @@ def write_json(path, value):
     path.write_text(json.dumps(value), encoding='utf-8')
 
 
-def rows(client, owner):
-    return call(client, 'obychnye_spisok', id=owner)
+def rows(client, owner, timeout=40):
+    return call(client, 'obychnye_spisok', id=owner, timeout=timeout)
 
 
-def row(client, owner, identifier):
-    return next(t for t in rows(client, owner)['vkladki'] if t['id'] == identifier)
+def row(client, owner, identifier, timeout=40):
+    return next(t for t in rows(client, owner, timeout)['vkladki'] if t['id'] == identifier)
+
+
+def click_control(client, selector, timeout):
+    # Scrolling/geometry reads do not invoke application handlers. The final
+    # action remains a real desktop mouse click through Client/WindowsClient.
+    js_wait(client, '(()=>{const e=document.querySelector(' + json.dumps(selector) + ');'
+            'if(!e)return false;e.scrollIntoView({block:"nearest",inline:"nearest",behavior:"instant"});'
+            'const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,h=document.elementFromPoint(x,y);'
+            'return r.width>0&&r.height>0&&x>=0&&x<innerWidth&&y>=0&&y<innerHeight&&!!h&&(h===e||e.contains(h))})()',
+            'Native UI control did not become physically reachable: ' + selector, timeout)
+    client.click(selector)
+
+
+def switch_super(client, owner, timeout=30):
+    deadline = time.monotonic() + timeout
+    remaining = lambda: max(.1, deadline - time.monotonic())
+    selector = '.vkladka[data-super-id="' + owner + '"]'
+    # IPC pereklyuchit updates native state but an already-running engine does
+    # not emit the shell selection event. Only the actual sidebar click also
+    # runs App's setAktivnaya handler; waiting after raw IPC cannot replace it.
+    click_control(client, selector, remaining())
+    active = '.vkladka.aktivna[data-super-id="' + owner + '"]'
+    js_wait(client, '!!document.querySelector(' + json.dumps(active) + ')'
+            '&&!!document.querySelector(".obychnaya[aria-selected=true]")',
+            'Physical Super switch did not mount the requested shell owner', remaining())
+    wait_for(lambda: call(client, 'aktivnaya', timeout=remaining()) == owner
+             and any(v['id'] == owner and v['zapushchena'] for v in call(client, 'spisok', timeout=remaining())),
+             'Physical Super switch did not start/select its native engine', remaining())
+
+
+def target_dom(client, owner, identifier, timeout=20, route_button=False):
+    deadline = time.monotonic() + timeout
+    remaining = lambda: max(.1, deadline - time.monotonic())
+    expected_url = row(client, owner, identifier, remaining())['adres']
+    super_selector = '.vkladka.aktivna[data-super-id="' + owner + '"]'
+    tab_selector = '.obychnaya[data-id="' + str(identifier) + '"][aria-selected=true]'
+    expression = ('(()=>{const s=document.querySelector(' + json.dumps(super_selector) + '),'
+                  't=document.querySelector(' + json.dumps(tab_selector) + ');'
+                  'return !!s&&!!t&&(t.getAttribute("title")||"").includes(' + json.dumps(expected_url) + ')'
+                  + ('&&!!document.querySelector(' + json.dumps('button[aria-label="Путь вкладки"]:not(:disabled)') + ')' if route_button else '')
+                  + '})()')
+    js_wait(client, expression, 'Shell owner/tab/document does not match the intended native target', remaining())
 
 
 def activate_saved(client, owner):
-    call(client, 'pereklyuchit', id=owner)
-    # Restored selected rows are intentionally lazy. Wake them with the same
-    # physical tab click as the owner, after this Super's UI has mounted.
-    selector = '.vkladka.aktivna[data-super-id="' + owner + '"]'
-    js_wait(client, '!!document.querySelector(' + json.dumps(selector) + ')&&!!document.querySelector("[role=tab][aria-selected=true]")',
-            'Saved Super session UI did not become available', 30)
-    client.click('[role=tab][aria-selected=true]')
+    switch_super(client, owner)
+    # Restored selected rows are lazy. A real tab click wakes the actual
+    # selected row after the physical Super switch has mounted its shell.
+    select(client, owner, rows(client, owner)['aktivnaya'])
 
 
-def select(client, owner, identifier):
-    call(client, 'pereklyuchit', id=owner)
-    call(client, 'obychnaya_komanda', id=owner, komanda={'deystvie': 'vybrat', 'id': identifier})
-    wait_for(lambda: rows(client, owner)['aktivnaya'] == identifier and not row(client, owner, identifier)['zagruzka'],
-             'Native tab did not finish activation', 30)
+def select(client, owner, identifier, timeout=30):
+    deadline = time.monotonic() + timeout
+    remaining = lambda: max(.1, deadline - time.monotonic())
+    switch_super(client, owner, remaining())
+    click_control(client, '.obychnaya[data-id="' + str(identifier) + '"]', remaining())
+    def selected_loaded():
+        current = rows(client, owner, remaining())
+        return current['aktivnaya'] == identifier and any(t['id'] == identifier and not t['zagruzka'] for t in current['vkladki'])
+    wait_for(selected_loaded, 'Native tab did not finish activation', remaining())
+    target_dom(client, owner, identifier, remaining())
 
 
 def choose(client, label):
@@ -171,7 +215,10 @@ def choose(client, label):
     client.click('[data-route-test-choice="true"]')
 
 
-def apply_ui(client, label):
+def apply_ui(client, label, owner, identifier):
+    target_dom(client, owner, identifier, route_button=True)
+    require(call(client, 'aktivnaya') == owner and rows(client, owner)['aktivnaya'] == identifier,
+            'Route UI target no longer matches the active native owner/tab')
     client.click('button[aria-label="Путь вкладки"]')
     js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
     choose(client, label)
@@ -186,12 +233,8 @@ def assert_receipt(fixture, case, lane, auth, storage, *, tls=False):
 
 def apply_route_ack(client, owner, identifier, label, expected):
     """Physical selector actions, then authoritative native replacement ACK."""
-    active_selector = '.obychnaya[data-id="' + str(identifier) + '"][aria-selected="true"]'
-    js_wait(client, '!!document.querySelector(' + json.dumps(active_selector) + ')'
-            '&&!!document.querySelector(' + json.dumps('button[aria-label="Путь вкладки"]:not(:disabled)') + ')',
-            'Actual route selector did not follow the selected native tab', 20)
     before = row(client, owner, identifier)
-    apply_ui(client, label)
+    apply_ui(client, label, owner, identifier)
     js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route selection stayed open; native application was not confirmed', 40)
 
     def replacement():
@@ -318,10 +361,7 @@ def run(args):
             return events if time.monotonic() - started >= minimum_seconds else None
 
         def start_rtc(owner, identifier, began):
-            remaining = lambda: max(.1, 15 - (time.monotonic() - began))
-            call(client, 'pereklyuchit', id=owner, timeout=remaining())
-            call(client, 'obychnaya_komanda', id=owner,
-                 komanda={'deystvie': 'vybrat', 'id': identifier}, timeout=remaining())
+            select(client, owner, identifier, timeout=max(.1, 15 - (time.monotonic() - began)))
 
         direct_started = time.monotonic()
         start_rtc('routes-direct', 3, direct_started)
@@ -351,7 +391,7 @@ def run(args):
         # Real UI change and native ACK: route/generation/browser identity are read only after the transaction.
         select(client, 'routes-a', 5)
         before = row(client, 'routes-a', 5)
-        apply_ui(client, 'Fixture B')
+        apply_ui(client, 'Fixture B', 'routes-a', 5)
         js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route UI did not close after ACK', 40)
         def acknowledged_replacement():
             current = row(client, 'routes-a', 5)
@@ -384,7 +424,7 @@ def run(args):
                     subprocess.run(['xdotool', 'type', '--clearmodifiers', '--', 'synthetic unsaved draft'], env={**os.environ, 'DISPLAY': device.display}, check=True)
             wait_for(lambda: fixture.records(witness), 'Actual protected page interaction did not occur: ' + case)
             before = row(client, 'routes-a', identifier)
-            apply_ui(client, 'Fixture B')
+            apply_ui(client, 'Fixture B', 'routes-a', identifier)
             wait_for(lambda: row(client, 'routes-a', identifier).get('route_error'), 'Native route change did not refuse protected ' + case, 40)
             after = row(client, 'routes-a', identifier)
             require(after['route'] == before['route'] and after['browser_id'] == before['browser_id']
