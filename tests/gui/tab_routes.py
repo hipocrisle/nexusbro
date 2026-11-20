@@ -145,6 +145,16 @@ def row(client, owner, identifier):
     return next(t for t in rows(client, owner)['vkladki'] if t['id'] == identifier)
 
 
+def activate_saved(client, owner):
+    call(client, 'pereklyuchit', id=owner)
+    # Restored selected rows are intentionally lazy. Wake them with the same
+    # physical tab click as the owner, after this Super's UI has mounted.
+    selector = '.vkladka.aktivna[data-super-id="' + owner + '"]'
+    js_wait(client, '!!document.querySelector(' + json.dumps(selector) + ')&&!!document.querySelector("[role=tab][aria-selected=true]")',
+            'Saved Super session UI did not become available', 30)
+    client.click('[role=tab][aria-selected=true]')
+
+
 def select(client, owner, identifier):
     call(client, 'pereklyuchit', id=owner)
     call(client, 'obychnaya_komanda', id=owner, komanda={'deystvie': 'vybrat', 'id': identifier})
@@ -241,7 +251,7 @@ def run(args):
                                 {**tab(3, 'rtc-direct', inherit, rtc=True), 'otlozhena': True}],
                     'aktivnaya': 1, 'sleduyushchaya': 4, 'zakrytye': []})
         client = device.start()
-        call(client, 'pereklyuchit', id='routes-a')
+        activate_saved(client, 'routes-a')
         assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
         for identifier, case, lane, auth, storage, tls in [
                 (2, 'seed-b', 'B', 'B', 'B', False), (3, 'share-a', 'A', 'A', 'A', False),
@@ -279,10 +289,10 @@ def run(args):
         wait_for(lambda: any(r['time'] > start for r in fixture.records('seed-a')) and any(r['time'] > start for r in fixture.records('seed-b')),
                  'Two differently routed native pages did not run concurrently', 20)
         report['checks'].append('two_native_pages_concurrent_different_routes')
-        call(client, 'pereklyuchit', id='routes-b')
+        activate_saved(client, 'routes-b')
         assert_receipt(fixture, 'other-super', 'A', None, 'empty')
         report['checks'].append('cross_super_profile_isolation')
-        call(client, 'pereklyuchit', id='routes-direct')
+        activate_saved(client, 'routes-direct')
         assert_receipt(fixture, 'direct-super-seed', 'Direct', 'Direct', 'Direct')
         select(client, 'routes-direct', 2)
         assert_receipt(fixture, 'direct-super-share', 'Direct', 'Direct', 'Direct')
@@ -404,7 +414,7 @@ def run(args):
         write_json(device.data / 'nastrojki.json', config)
         client = device.start()
         restored_at = time.monotonic()
-        call(client, 'pereklyuchit', id='routes-a')
+        activate_saved(client, 'routes-a')
         wait_for(lambda: any(r['time'] > restored_at and r['lane'] == 'B' for r in fixture.records('seed-b')), 'Cold restore lost opaque B connection ID')
         require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Restart rebound connection by list index')
         report['checks'].append('restart_opaque_id_survives_connection_reorder')
@@ -484,7 +494,7 @@ def run(args):
         write_json(device.data / 'nastrojki.json', config)
         before_restart = len(fixture.requests('seed-b'))
         client = device.start()
-        call(client, 'pereklyuchit', id='routes-a')
+        activate_saved(client, 'routes-a')
         wait_for(lambda: row(client, 'routes-a', 2).get('route_error'), 'Deleted ID was not blocked on cold restore', 40)
         time.sleep(2)
         require(len(fixture.requests('seed-b')) == before_restart and not fixture.requests('blocked-unknown'), 'Removed/unknown ID silently used Direct or stale proxy')
