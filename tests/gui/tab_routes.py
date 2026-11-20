@@ -174,6 +174,26 @@ def assert_receipt(fixture, case, lane, auth, storage, *, tls=False):
             'Origin route/auth/storage mismatch for ' + case)
 
 
+def apply_route_ack(client, owner, identifier, label, expected):
+    """Physical selector actions, then authoritative native replacement ACK."""
+    active_selector = '.obychnaya[data-id="' + str(identifier) + '"][aria-selected="true"]'
+    js_wait(client, '!!document.querySelector(' + json.dumps(active_selector) + ')'
+            '&&!!document.querySelector(' + json.dumps('button[aria-label="Путь вкладки"]:not(:disabled)') + ')',
+            'Actual route selector did not follow the selected native tab', 20)
+    before = row(client, owner, identifier)
+    apply_ui(client, label)
+    js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route dialog did not close after native ACK', 40)
+
+    def replacement():
+        current = row(client, owner, identifier)
+        return current if (current['route'] == expected
+                           and current['route_generation'] == before['route_generation'] + 1
+                           and current['browser_id'] > 0 and current['browser_id'] != before['browser_id']
+                           and not current['route_pending'] and not current.get('route_error')) else None
+
+    return wait_for(replacement, 'Route UI did not produce the acknowledged replacement browser', 40)
+
+
 def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
@@ -236,6 +256,23 @@ def run(args):
             require(first_b and first_b[0]['auth'] is None, 'Different route inherited another profile before first navigation')
         report['coverage']['https_connect'] = 'passed'
         report['checks'].append('http_https_connect_same_effective_key_shares_different_key_isolates')
+        # The owner's first route choice must work before any website loads.
+        before_ids = {t['id'] for t in rows(client, 'routes-a')['vkladki']}
+        call(client, 'obychnaya_komanda', id='routes-a', komanda={'deystvie': 'novaya', 'adres': 'about:blank'})
+
+        def owned_blank():
+            current = rows(client, 'routes-a')
+            return next((t for t in current['vkladki'] if t['id'] not in before_ids
+                         and current['aktivnaya'] == t['id'] and t['adres'] == 'about:blank'
+                         and t['browser_id'] > 0 and not t['zagruzka'] and not t['route_pending']), None)
+
+        blank = wait_for(owned_blank, 'New owned about:blank tab did not acquire a real browser', 30)
+        apply_route_ack(client, 'routes-a', blank['id'], 'Fixture B', connection('B'))
+        blank_case = 'blank-to-b-' + str(time.time_ns())
+        call(client, 'obychnaya_komanda', id='routes-a',
+             komanda={'deystvie': 'pereyti', 'id': blank['id'], 'adres': fixture.url(blank_case)})
+        assert_receipt(fixture, blank_case, 'B', 'B', 'B')
+        report['checks'].append('owned_about_blank_actual_route_selector_b_ack_then_b_auth_storage_network')
         start = time.monotonic()
         wait_for(lambda: any(r['time'] > start for r in fixture.records('seed-a')) and any(r['time'] > start for r in fixture.records('seed-b')),
                  'Two differently routed native pages did not run concurrently', 20)
@@ -402,6 +439,35 @@ def run(args):
         require(not fixture.requests(down_case), 'Dead configured B transport leaked a request through Direct/another route')
         require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Dead transport silently changed saved B intent')
         report['coverage']['transport_down'] = 'pending_final_no_fallback_check'
+        # Preserve down_case's permanent zero-origin invariant. Recovery uses
+        # another URL whose first load genuinely fails on the dead B transport.
+        recovery_case = 'recover-network-error-' + str(time.time_ns())
+        recovery_url = fixture.url(recovery_case)
+        call(client, 'obychnaya_komanda', id='routes-a',
+             komanda={'deystvie': 'pereyti', 'id': 2, 'adres': recovery_url})
+        wait_for(lambda: row(client, 'routes-a', 2)['adres'] == recovery_url
+                 and not row(client, 'routes-a', 2)['zagruzka'], 'Native B network-error page did not settle', 40)
+        require(not fixture.requests(recovery_case), 'Dead B reached recovery URL before any route change')
+        apply_route_ack(client, 'routes-a', 2, 'Fixture A', connection('A'))
+        assert_receipt(fixture, recovery_case, 'A', 'A', 'A')
+        require(row(client, 'routes-a', 2)['adres'] == recovery_url, 'Network-error recovery silently changed requested URL')
+        require(not fixture.requests(down_case), 'Network-error route recovery revisited the permanent no-fallback URL')
+        report['checks'].append('native_network_error_actual_route_selector_a_recovers_same_url_auth_storage')
+        # Selecting the configured but dead B is still an explicit route
+        # transaction. It must ACK intent without sending this URL via A/Direct.
+        recovery_main_loads = sum(r['path'] == '/page' for r in fixture.requests(recovery_case))
+        apply_route_ack(client, 'routes-a', 2, 'Fixture B', connection('B'))
+        wait_for(lambda: row(client, 'routes-a', 2)['adres'] == recovery_url
+                 and not row(client, 'routes-a', 2)['zagruzka'], 'Explicit switch back to dead B did not settle', 40)
+        # Retired A-page heartbeat fetches may finish after replacement ACK.
+        # A fallback navigation would add another origin /page GET, which must
+        # never happen even if it reuses the old A lane/auth/profile.
+        time.sleep(2)
+        require(sum(r['path'] == '/page' for r in fixture.requests(recovery_case)) == recovery_main_loads
+                and all(r['lane'] == 'A' for r in fixture.requests(recovery_case)),
+                'Switch to unavailable B leaked the recovered URL through another route')
+        require(not fixture.requests(down_case), 'Switch back to B broke permanent transport-down no-fallback invariant')
+        report['checks'].append('network_error_recovery_can_reselect_unavailable_b_without_direct')
         # Restore the original URL while B is still down, preserving the
         # deleted-ID cold-restore test's unique prior URL and B selection.
         seed_b_url = tabs[1]['adres']
@@ -421,6 +487,8 @@ def run(args):
         time.sleep(2)
         require(len(fixture.requests('seed-b')) == before_restart and not fixture.requests('blocked-unknown'), 'Removed/unknown ID silently used Direct or stale proxy')
         require(not fixture.requests(down_case), 'Delayed dead-transport fallback reached the origin')
+        require(sum(r['path'] == '/page' for r in fixture.requests(recovery_case)) == recovery_main_loads,
+                'Delayed switch-back fallback navigated the recovered URL through another route')
         report['coverage']['transport_down'] = 'passed'
         report['checks'].append('configured_transport_down_no_direct_fallback_unaffected_a_live')
         report['checks'].append('deleted_connection_cold_restore_fail_closed')
