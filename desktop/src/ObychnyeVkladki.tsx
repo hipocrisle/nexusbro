@@ -15,7 +15,7 @@ import {listenWindow as listen} from "./windowEvents";
 import Icon from "./Icons";
 import { createPortal } from "react-dom";
 
-type Vkladka = TabRouteState & { memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
+type Vkladka = TabRouteState & { browser_id?:number; memory_pending?: boolean; id: number; adres: string; zagolovok: string; zakreplena: boolean; zagruzka: boolean; nazad: boolean; vpered: boolean; otlozhena?: boolean; ikonka?: string | null; privatnaya?: boolean };
 type Sessiya = { vkladki: Vkladka[]; aktivnaya: number; zakrytye?: Vkladka[] };
 type Komanda = { deystvie: string;enabled?:boolean; id?: number; adres?: string; zakreplena?: boolean; sprava?: boolean; pered?: number | null; procent?: number; text?: string; vpered?: boolean; dalshe?: boolean };
 
@@ -371,7 +371,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button aria-label="Следующее совпадение" disabled={!findText}>↓</button>
       <button type="button" aria-label="Закрыть поиск" onClick={closeFind}>×</button>
     </form>}
-    {(aktivnaya?.otlozhena||aktivnaya?.memory_pending) && poleKontenta.current && createPortal(<div className="pusto" role={aktivnaya.memory_pending?"status":undefined}><Icon name="tabs" size={36} /><h1>{aktivnaya.memory_pending?"Завершаем выгрузку…":"Вкладка ждёт открытия"}</h1><p>{aktivnaya.memory_pending?"Страница откроется после завершения выгрузки.":"Страница сейчас не загружена в память. Нажмите вкладку или кнопку ниже, когда она понадобится."}</p>{!aktivnaya.memory_pending&&<button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button>}</div>, poleKontenta.current)}
+    {aktivnaya?.browser_id===0&&aktivnaya.route_error&&!aktivnaya.route_pending&&poleKontenta.current&&createPortal(<div className="pusto" role="alert"><Icon name="globe" size={36}/><h1>Выбранный путь недоступен</h1><p>{aktivnaya.route_error}</p><button onClick={()=>openTabRoute(aktivnaya)}>Выбрать путь</button></div>,poleKontenta.current)}
+    {!aktivnaya?.route_error&&(aktivnaya?.otlozhena||aktivnaya?.memory_pending) && poleKontenta.current && createPortal(<div className="pusto" role={aktivnaya.memory_pending?"status":undefined}><Icon name="tabs" size={36} /><h1>{aktivnaya.memory_pending?"Завершаем выгрузку…":"Вкладка ждёт открытия"}</h1><p>{aktivnaya.memory_pending?"Страница откроется после завершения выгрузки.":"Страница сейчас не загружена в память. Нажмите вкладку или кнопку ниже, когда она понадобится."}</p>{!aktivnaya.memory_pending&&<button onClick={() => void poslat({ deystvie: "vybrat", id: aktivnaya.id })}>Загрузить вкладку</button>}</div>, poleKontenta.current)}
 
   </>;
 }

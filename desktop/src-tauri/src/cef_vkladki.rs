@@ -1641,7 +1641,13 @@ impl Rabota {
                 h.set_focus(1);
             }
         }
-        for tab in &mut s.vkladki{let identity=brauzery.get(&tab.id).map(|b|b.identifier()).unwrap_or(0);if tab.browser_id!=identity{tab.browser_id=identity;izmeneno=true;}}
+        for tab in &mut s.vkladki{
+            let identity=brauzery.get(&tab.id).map(|b|b.identifier()).unwrap_or(0);
+            if tab.browser_id!=identity{tab.browser_id=identity;izmeneno=true;}
+            if identity==0&&tab.route_error.is_some()&&!tab.route_pending&&tab.zagruzka{
+                tab.zagruzka=false;izmeneno=true;
+            }
+        }
         let novyj = k.razmer();
         let pending_ids:Vec<_>=devtools_pending.keys().copied().collect();
         for id in pending_ids{

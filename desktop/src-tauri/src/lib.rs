@@ -750,7 +750,7 @@ fn obnovit_oblast_obolochki(s: &State<Sostoyanie>, oblast: Option<Mesto>) {
 }
 
 fn stranica_gotova(s: &sessiya::Sessiya) -> bool {
-    s.vkladki.iter().find(|v| v.id == s.aktivnaya).is_some_and(|v| !v.otlozhena)
+    s.vkladki.iter().find(|v| v.id == s.aktivnaya).is_some_and(|v| !v.otlozhena && v.browser_id > 0)
 }
 fn primenit_vidimost(s: &State<Sostoyanie>) {
     let m = *s.mesto.lock().unwrap();
