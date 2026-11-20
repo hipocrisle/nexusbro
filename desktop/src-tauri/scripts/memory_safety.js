@@ -2,6 +2,8 @@
 // Returns a function held ONLY by native V8Value, never a page-global handle.
 (() => {
  'use strict';
+ // Replaced only by the native script builder; standalone probes default false.
+ const nativeOwnedBlank=/*NB_NATIVE_OWNED_BLANK*/false;
  const g=globalThis, d=document, apply=Reflect.apply, construct=Reflect.construct;
  const descriptor=Object.getOwnPropertyDescriptor, define=Object.defineProperty, parent=Object.getPrototypeOf;
  const create=Object.create, stringify=JSON.stringify, finite=Number.isFinite, lower=String.prototype.toLowerCase;
@@ -43,6 +45,7 @@
  };
  let observer=null, take=null, walk=null, next=null, matches=null, shadow=null, scrollX=null,scrollY=null;
  let storage=null, storageLength=null, controller=null, designMode=null,nodeType=null, added=null,removed=null,listLength=null,listItem=null,beforeUnload=null;
+ let documentURL=null,serializedOrigin=null,exceptionName=null;
  try{
   // Capture native operations before any page mutation of prototypes.
   const createTreeWalker=Document.prototype.createTreeWalker, walkerNext=TreeWalker.prototype.nextNode;
@@ -51,6 +54,9 @@
   walk=root=>apply(createTreeWalker,d,[root,0xffffffff]);next=w=>apply(walkerNext,w,[]);
   matches=n=>apply(elementMatches,n,['input,textarea,select,form,[contenteditable]:not([contenteditable="false"]),audio,video,iframe,frame,canvas,object,embed']);
   shadow=shadowGetter;scrollX=getter(g,'scrollX');scrollY=getter(g,'scrollY');designMode=getter(Document.prototype,'designMode');
+  if(nativeOwnedBlank){
+   documentURL=getter(Document.prototype,'URL');serializedOrigin=getter(g,'origin');exceptionName=getter(DOMException.prototype,'name');
+  }
   const storageGetter=getter(g,'sessionStorage');storage=()=>storageGetter(g);storageLength=getter(Storage.prototype,'length');
   if(typeof ServiceWorkerContainer!=='undefined'){
    const getServiceWorker=getter(Navigator.prototype,'serviceWorker');const getController=getter(ServiceWorkerContainer.prototype,'controller');
@@ -95,6 +101,14 @@
    define(unload.owner,'onbeforeunload',{...original,set:setter});remember(unload.owner,'onbeforeunload',descriptor(unload.owner,'onbeforeunload'));
   }
  }catch{fail('Early native instrumentation unavailable');}
+ const ownedOpaqueSecurityError=error=>{
+  if(!nativeOwnedBlank)return false;
+  // Native DOM getters brand-check both the document and exception. A page's
+  // fake {name:'SecurityError'} or replaced getter never grants this absence.
+  try{return documentURL(d)==='about:blank'&&serializedOrigin(g)==='null'&&exceptionName(error)==='SecurityError';}catch{return false;}
+ };
+ const storageHasState=()=>{try{return storageLength(storage())!==0;}catch(error){if(ownedOpaqueSecurityError(error))return false;throw error;}};
+ const hasController=()=>{try{return controller&&controller();}catch(error){if(ownedOpaqueSecurityError(error))return false;throw error;}};
  function scan(root,budget){
   if(nodeType(root)===1&&(matches(root)||shadow(root))){mark('Form, media, frame, canvas or shadow DOM');return;}
   const w=walk(root);let n;
@@ -122,7 +136,7 @@
   }catch{fail('Dynamic or uninspectable document');}
  }
  return function memorySafetyProbe(){
-  let x=0,y=0;
+  let x=0,y=0,stage='checks';
   try{
    if(failure)return answer(false,failure,x,y);
    // A page may replace a global/method after installation. Never treat an
@@ -137,11 +151,13 @@
    if(!blocked){
     if(beforeUnload&&beforeUnload()!=null)mark('Before-unload handler installed');
     else if(apply(lower,designMode(d),[])==='on')mark('Editable document');
-    else if(storageLength(storage())!==0)mark('Session storage is not empty');
-    else if(controller&&controller())mark('Service worker controls page');
-    else scan(d,{left:4096});
+    else{
+     stage='storage';const sessionState=storageHasState();
+     if(sessionState)mark('Session storage is not empty');
+     else{stage='controller';if(hasController())mark('Service worker controls page');else{stage='dom';scan(d,{left:4096});}}
+    }
    }
    return answer(failure===null,failure||blocked||interaction,x,y);
-  }catch{return answer(false,'Document state unavailable or changed',0,0);}
+  }catch{return answer(false,stage==='storage'?'Session storage state unavailable':stage==='controller'?'Service worker state unavailable':'Document state unavailable or changed',0,0);}
  };
 })()

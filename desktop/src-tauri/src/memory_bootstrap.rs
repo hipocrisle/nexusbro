@@ -154,9 +154,10 @@ wrap_dev_tools_message_observer! {
             if message_id==self.enable{
                 eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=page_enable browser={} success={}",browser.identifier(),success!=0);
                 if success==0{finish(browser,&self.setup,false);return;}
+                let owned_blank={self.setup.target.lock().unwrap().as_str()=="about:blank"};
                 let params=serde_json::json!({
-                    "source":crate::cef_memory_renderer::new_document_script(&self.setup.name,&self.setup.nonce),
-                    "runImmediately":self.setup.target.lock().unwrap().as_str()=="about:blank"
+                    "source":crate::cef_memory_renderer::new_document_script(&self.setup.name,&self.setup.nonce,owned_blank),
+                    "runImmediately":owned_blank
                 });
                 if !crate::cdp::send(browser,self.message,"Page.addScriptToEvaluateOnNewDocument",params){finish(browser,&self.setup,false);}
                 return;

@@ -46,6 +46,8 @@ fn reason_code(reason: &Value) -> &'static str {
             | "Before-unload hook unavailable"
             | "Before-unload state unavailable",
         ) => "js_install_unavailable",
+        Some("Session storage state unavailable") => "js_storage_unavailable",
+        Some("Service worker state unavailable") => "js_service_worker_unavailable",
         Some("Dynamic or uninspectable document") => "js_dynamic_budget",
         Some("Document state unavailable or changed") => "js_probe_unavailable_or_tampered",
         Some("Trusted page interaction or editing") => "js_trusted_interaction",
@@ -108,9 +110,10 @@ fn unknown(reason: &str) -> Value {
     json!({"known":false,"reason":reason,"scroll_x":0,"scroll_y":0})
 }
 /// Registered before the first real navigation; never install this after page JS.
-pub fn new_document_script(name: &str, nonce: &str) -> String {
+pub fn new_document_script(name: &str, nonce: &str, owned_blank:bool) -> String {
+    let script=include_str!("../scripts/memory_safety.js").replace("/*NB_NATIVE_OWNED_BLANK*/false",if owned_blank{"true"}else{"false"});
     format!("(function(){{if(window!==top)return;const key={};const capture=window[key];delete window[key];if(typeof capture!=='function')return;capture({},(\n{}\n));}})();",
-        json!(name), json!(nonce), include_str!("../scripts/memory_safety.js"))
+        json!(name), json!(nonce), script)
 }
 fn same_nonce(actual: &str, expected: &str) -> bool {
     if actual.len() != expected.len() {
