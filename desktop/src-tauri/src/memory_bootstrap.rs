@@ -123,11 +123,22 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
     }
 }
 wrap_dev_tools_message_observer! {
-    struct BootstrapObserver{setup:Arc<Bootstrap>,message:i32}
+    struct BootstrapObserver{setup:Arc<Bootstrap>,message:i32,enable:i32}
     impl DevToolsMessageObserver{
         fn on_dev_tools_method_result(&self,browser:Option<&mut Browser>,message_id:i32,success:i32,result:Option<&[u8]>){
-            if message_id!=self.message{return;}
+            if message_id!=self.message && message_id!=self.enable{return;}
             let Some(browser)=browser else{return;};
+            if !self.setup.pending.load(Ordering::Acquire){return;}
+            if message_id==self.enable{
+                eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=page_enable browser={} success={}",browser.identifier(),success!=0);
+                if success==0{finish(browser,&self.setup,false);return;}
+                let params=serde_json::json!({
+                    "source":crate::cef_memory_renderer::new_document_script(&self.setup.name,&self.setup.nonce),
+                    "runImmediately":self.setup.target.lock().unwrap().as_str()=="about:blank"
+                });
+                if !crate::cdp::send(browser,self.message,"Page.addScriptToEvaluateOnNewDocument",params){finish(browser,&self.setup,false);}
+                return;
+            }
             let registered=success!=0&&result.filter(|s|s.len()<4096).and_then(|s|serde_json::from_slice::<serde_json::Value>(s).ok()).is_some_and(|v|v["identifier"].as_str().is_some_and(|s|!s.is_empty()));
             eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=method_result browser={} success={} identifier_present={} error_code={}",browser.identifier(),success!=0,registered,result.filter(|s|s.len()<4096).and_then(|s|serde_json::from_slice::<serde_json::Value>(s).ok()).and_then(|v|v["code"].as_i64()).unwrap_or(0));
             finish(browser,&self.setup,registered);
@@ -139,10 +150,11 @@ wrap_task! {
     impl Task{fn execute(&self){if self.setup.pending.load(Ordering::Acquire){eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=deadline browser={}",self.browser.identifier());}finish(&self.browser,&self.setup,false);}}
 }
 pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
-    let Some(message) = crate::cdp::reserve(1) else {
+    let Some(enable) = crate::cdp::reserve(2) else {
         finish(browser, &setup, false);
         return;
     };
+    let message = enable + 1;
     let Some(host) = browser.host() else {
         eprintln!(
             "NEXUSBRO_MEMORY_BOOTSTRAP stage=host_missing browser={}",
@@ -151,11 +163,9 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
         finish(browser, &setup, false);
         return;
     };
-    let script = crate::cef_memory_renderer::new_document_script(&setup.name, &setup.nonce);
-    let params = serde_json::json!({"source":script,"runImmediately":setup.target.lock().unwrap().as_str()=="about:blank"});
-    let Some(registration) = host
-        .add_dev_tools_message_observer(Some(&mut BootstrapObserver::new(setup.clone(), message)))
-    else {
+    let Some(registration) = host.add_dev_tools_message_observer(Some(
+        &mut BootstrapObserver::new(setup.clone(), message, enable),
+    )) else {
         finish(browser, &setup, false);
         return;
     };
@@ -166,12 +176,7 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
     REGISTRATIONS.with(|r| {
         r.borrow_mut().insert(browser.identifier(), registration);
     });
-    if !crate::cdp::send(
-        browser,
-        message,
-        "Page.addScriptToEvaluateOnNewDocument",
-        params,
-    ) {
+    if !crate::cdp::send(browser, enable, "Page.enable", serde_json::json!({})) {
         eprintln!(
             "NEXUSBRO_MEMORY_BOOTSTRAP stage=command_rejected browser={}",
             browser.identifier()

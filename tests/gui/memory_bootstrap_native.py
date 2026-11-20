@@ -42,7 +42,7 @@ VALUES = {'true', 'false', 'manual', 'automatic', 'unknown', 'two-phase', 'grace
           'js_dynamic_budget', 'js_probe_unavailable_or_tampered', 'js_trusted_interaction',
           'js_media_or_worker', 'js_dom_protected', 'js_unload_protected',
           'js_state_protected', 'other_internal_reason', 'early', 'keep',
-          'method_result', 'deadline', 'host_missing', 'observer_ready', 'command_rejected', 'timer_rejected', 'native_binding', 'native_capture_success'}
+          'page_enable', 'method_result', 'deadline', 'host_missing', 'observer_ready', 'command_rejected', 'timer_rejected', 'native_binding', 'native_capture_success'}
 
 
 def metadata_line(raw):
