@@ -57,6 +57,13 @@ impl Bootstrap {
     }
     /// User navigation before setup supersedes the initial saved URL. No page
     /// can run before its script-on-new-document has been registered.
+    /// Only the explicitly requested initial owned blank may lack a URL/method
+    /// in CEF's first callbacks. This never identifies an HTTP bootstrap blank.
+    pub fn owned_blank_navigation(&self,url:&str)->bool{
+        self.approved()&&!self.seen_real.load(Ordering::Acquire)
+            &&self.target.lock().unwrap().as_str()=="about:blank"
+            &&(url.is_empty()||url=="about:blank")
+    }
     pub fn rejects_initial_document(&self, url: &str) -> bool {
         (url.is_empty() || url == "about:blank")
             && self.target.lock().unwrap().as_str() != "about:blank"
@@ -113,7 +120,16 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
         // The first internal blank predates script registration. Recreate only
         // the explicitly requested owned blank, so it gets the same early
         // observer and full media/edit protections as a normal web document.
-        if let Some(frame)=browser.main_frame(){if CefString::from(&frame.url()).to_string()=="about:blank"{frame.execute_java_script(Some(&CefString::from("location.replace(\"about:blank\")")),None,0);}}
+        if let Some(frame)=browser.main_frame(){
+            let current=CefString::from(&frame.url()).to_string();
+            eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=owned_blank browser={} initial_empty={} initial_blank={}",browser.identifier(),current.is_empty(),current=="about:blank");
+            if setup.owned_blank_navigation(&current){
+                // Some CEF initial-empty callbacks omit the GET method entirely.
+                // Seed only this owned navigation, never unknown web documents.
+                crate::memory_guard::navigation_to(browser.identifier(),true,"about:blank");
+                frame.execute_java_script(Some(&CefString::from("location.replace(\"about:blank\")")),None,0);
+            }
+        }
     }
     if !target.is_empty() && target != "about:blank" {
         if let Some(frame) = browser.main_frame() {
@@ -201,5 +217,23 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
             browser.identifier()
         );
         finish(browser, &setup, false);
+    }
+}
+
+#[cfg(test)]
+mod owned_blank_tests {
+    use super::*;
+    #[test]
+    fn only_approved_initial_owned_blank_can_use_empty_native_metadata(){
+        let owned=Bootstrap::new("about:blank").unwrap();
+        assert!(!owned.owned_blank_navigation(""));
+        owned.approved.store(true,Ordering::Release);
+        assert!(owned.owned_blank_navigation(""));assert!(owned.owned_blank_navigation("about:blank"));
+        assert!(!owned.owned_blank_navigation("https://site.test/"));
+        owned.skip_address("https://site.test/");assert!(!owned.owned_blank_navigation("about:blank"));
+        let web=Bootstrap::new("https://site.test/").unwrap();web.approved.store(true,Ordering::Release);
+        assert!(!web.owned_blank_navigation(""));assert!(!web.owned_blank_navigation("about:blank"));assert!(web.rejects_initial_document("about:blank"));
+        let closed=Bootstrap::new("about:blank").unwrap();closed.approved.store(true,Ordering::Release);closed.closed.store(true,Ordering::Release);
+        assert!(!closed.owned_blank_navigation("about:blank"));
     }
 }

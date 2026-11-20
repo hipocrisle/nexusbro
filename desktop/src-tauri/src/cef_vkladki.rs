@@ -177,7 +177,10 @@ wrap_request_handler! {
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
                 if let Some(request)=request.as_ref(){let url=CefString::from(&request.url()).to_string();if self.bootstrap.allow_initial_blank(&url){return 0;}if self.bootstrap.defer(&url){return 1;}}
                 crate::cef_interfeys::cancel_context(browser.identifier());
-                crate::memory_guard::navigation_to(browser.identifier(),request.as_ref().is_some_and(|r|CefString::from(&r.method()).to_string()=="GET"),&request.as_ref().map(|r|CefString::from(&r.url()).to_string()).unwrap_or_default());
+                let url=request.as_ref().map(|r|CefString::from(&r.url()).to_string()).unwrap_or_default();
+                let method=request.as_ref().map(|r|CefString::from(&r.method()).to_string()).unwrap_or_default();
+                let get=method=="GET"||(method.is_empty()&&self.bootstrap.owned_blank_navigation(&url));
+                crate::memory_guard::navigation_to(browser.identifier(),get,&url);
             }}
             0
         }
@@ -226,12 +229,14 @@ wrap_client! {
                 if data["kind"]=="NB_MEMORY_DOCUMENT"{
                     let current=CefString::from(&f.url()).to_string();
                     let Some(token)=data["token"].as_str().filter(|s|!s.is_empty()&&s.len()<128)else{return 1;};
-                    let uri_matches=data["url"].as_str()==Some(current.as_str());
+                    let owned_blank=self.bootstrap.owned_blank_navigation(&current)&&data["url"].as_str()==Some("about:blank");
+                    let uri_matches=data["url"].as_str()==Some(current.as_str())||owned_blank;
                     let initial_blank=self.bootstrap.rejects_initial_document(&current);
                     let internal_error=!initial_blank&&crate::memory_guard::error_document(b.identifier(),&current,data["url"].as_str().unwrap_or(""),token.into());
                     if (!uri_matches&&!internal_error)||initial_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=false uri_matches={uri_matches} initial_blank={initial_blank}",b.identifier());return 1;}
                     if internal_error{eprintln!("NEXUSBRO_ROUTE_ERROR browser={} internal_document_confirmed=true",b.identifier());}
                     else{crate::memory_guard::document(b.identifier(),token.into());}
+                    if owned_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=true owned_blank=true guard={}",b.identifier(),route_guard_code(crate::memory_guard::reason(b.identifier()).unwrap_or("")));}
                 }
                 let _=self.tx.send(Sobytie::MemoryMessage(self.id,b.identifier(),data));return 1;
             }0
@@ -645,6 +650,16 @@ struct RouteAttempt {
     since:std::time::Instant,
     token:Option<String>,stage:Option<MemoryStage>,registration:Option<Registration>,verified:bool,failure:Option<String>,
 }
+fn route_guard_code(reason:&str)->&'static str{
+    match reason{
+        ""=>"clear",
+        "Состояние документа ещё неизвестно"=>"document_unknown",
+        "Страница получена отправкой формы и не выгружается"=>"non_get",
+        "Во вкладке был ввод; перезагрузите страницу после сохранения данных"=>"edited",
+        "Вкладка использует камеру, микрофон или захват экрана"=>"capture",
+        _=>"protected_or_unavailable",
+    }
+}
 fn route_result(tx:&Sender<Sobytie>,id:u64,generation:u64,browser_id:i32,error:Option<&str>){
     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-result","id":id,"generation":generation,"browser_id":browser_id,"ok":error.is_none(),"error":error})));
 }
@@ -766,6 +781,7 @@ impl Rabota {
                 }
             }
             if let Some(mut error)=failure{
+                eprintln!("NEXUSBRO_ROUTE_RESULT browser={} attempt={} ok=false guard={}",attempt.expected,attempt.generation,route_guard_code(&error));
                 if let Some(browser)=self.brauzery.get(&id){crate::memory_cef::resume(browser);}
                 if attempt.closed&&attempt.expected!=0&&!self.brauzery.contains_key(&id){
                     match sozdat_brauzer(&self.k,id,&tab.adres,&self.tx,tab.privatnaya||self.force_private){
