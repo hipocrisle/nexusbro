@@ -390,6 +390,9 @@ jobs:
           name: linux-route-verification
           path: |
             .dev-check/native-routes/*.json
+            .dev-check/native-routes/*.png
+            .dev-check/native-routes/device/data/zhurnal.log
+            .dev-check/native-routes/device/data/profili/*/obychnye.json
             .dev-check/native-routes/device/*.log
             .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14
@@ -454,6 +457,9 @@ jobs:
           name: windows-route-verification
           path: |
             .dev-check/native-routes/*.json
+            .dev-check/native-routes/*.png
+            .dev-check/native-routes/device/data/zhurnal.log
+            .dev-check/native-routes/device/data/profili/*/obychnye.json
             .dev-check/native-routes/device/*.log
             .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14
@@ -713,6 +719,9 @@ jobs:
           name: windows-route-verification
           path: |
             .dev-check/native-routes/*.json
+            .dev-check/native-routes/*.png
+            .dev-check/native-routes/device/data/zhurnal.log
+            .dev-check/native-routes/device/data/profili/*/obychnye.json
             .dev-check/native-routes/device/*.log
             .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14
@@ -915,6 +924,9 @@ jobs:
           name: linux-route-verification
           path: |
             .dev-check/native-routes/*.json
+            .dev-check/native-routes/*.png
+            .dev-check/native-routes/device/data/zhurnal.log
+            .dev-check/native-routes/device/data/profili/*/obychnye.json
             .dev-check/native-routes/device/*.log
             .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14

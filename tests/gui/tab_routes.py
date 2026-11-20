@@ -192,7 +192,7 @@ def apply_route_ack(client, owner, identifier, label, expected):
             'Actual route selector did not follow the selected native tab', 20)
     before = row(client, owner, identifier)
     apply_ui(client, label)
-    js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route dialog did not close after native ACK', 40)
+    js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route selection stayed open; native application was not confirmed', 40)
 
     def replacement():
         current = row(client, owner, identifier)
@@ -509,6 +509,17 @@ def run(args):
     except Exception as error:
         # No credential/raw server receipts are written to artifacts.
         report['error'] = type(error).__name__ + ': ' + str(error)
+        if device and device.client:
+            try:
+                report['shell_text_on_failure'] = device.client.js('document.body.innerText').strip()[:12000]
+                report['session_on_failure'] = rows(device.client, 'routes-a')
+            except Exception as diagnostic_error:
+                report['diagnostic_error'] = type(diagnostic_error).__name__
+            try:
+                from PIL import ImageGrab
+                (ImageGrab.grab() if sys.platform == 'win32' else ImageGrab.grab(xdisplay=device.display)).save(out / 'failure.png')
+            except Exception as screenshot_error:
+                report['screenshot_error'] = type(screenshot_error).__name__
         raise
     finally:
         if device:
