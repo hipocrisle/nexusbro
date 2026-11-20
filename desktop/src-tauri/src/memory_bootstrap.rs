@@ -17,6 +17,7 @@ pub struct Bootstrap {
     approved: AtomicBool,
     closed: AtomicBool,
     seen_real: AtomicBool,
+    initial_blank_pending: AtomicBool,
     target: Mutex<String>,
     name: String,
     nonce: String,
@@ -33,6 +34,7 @@ impl Bootstrap {
             approved: AtomicBool::new(false),
             closed: AtomicBool::new(false),
             seen_real: AtomicBool::new(false),
+            initial_blank_pending: AtomicBool::new(true),
             target: Mutex::new(target.into()),
             name: format!("__nb_memory_{}", hex(&bytes[..16])),
             nonce: hex(&bytes[16..]),
@@ -59,6 +61,11 @@ impl Bootstrap {
     pub fn rejects_initial_document(&self, url: &str) -> bool {
         (url.is_empty() || url == "about:blank")
             && self.target.lock().unwrap().as_str() != "about:blank"
+    }
+    /// Permit only the browser's first internal blank navigation. It starts the
+    /// renderer needed to acknowledge CDP registration, while real URLs wait.
+    pub fn allow_initial_blank(&self, url: &str) -> bool {
+        url == "about:blank" && self.initial_blank_pending.swap(false, Ordering::AcqRel)
     }
     pub fn defer(&self, url: &str) -> bool {
         if self.pending.load(Ordering::Acquire) && !url.is_empty() {

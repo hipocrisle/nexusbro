@@ -166,7 +166,7 @@ wrap_request_handler! {
     impl RequestHandler {
         fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
-                if request.as_ref().is_some_and(|r|self.bootstrap.defer(&CefString::from(&r.url()).to_string())){return 1;}
+                if let Some(request)=request.as_ref(){let url=CefString::from(&request.url()).to_string();if self.bootstrap.allow_initial_blank(&url){return 0;}if self.bootstrap.defer(&url){return 1;}}
                 crate::cef_interfeys::cancel_context(browser.identifier());
                 crate::memory_guard::navigation(browser.identifier(),request.is_some_and(|r|CefString::from(&r.method()).to_string()=="GET"));
             }}
@@ -397,7 +397,8 @@ fn sozdat_brauzer(
     let b = browser_host_create_browser_sync(
         Some(&info),
         Some(&mut KlientVkladki::new(id, tx.clone(), privatnaya,bootstrap)),
-        Some(&CefString::from("")),
+        // An explicit initial blank starts the renderer before CDP waits for its ACK.
+        Some(&CefString::from("about:blank")),
         Some(&BrowserSettings::default()),
         Some(&mut extra.clone()),
         context.as_mut(),

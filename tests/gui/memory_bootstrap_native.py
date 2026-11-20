@@ -183,7 +183,12 @@ def run(args):
         address = 'http://127.0.0.1:' + str(server.server_port) + ('/safe' if args.safe_unload else '/form')
         report['phase'] = 'opening-fixture'
         call(client, 'otkryt', nastrojki=super_record(owner, 'Bootstrap diagnostic', address))
-        first = device.loaded(owner, address=address)['aktivnaya']
+        initial = device.loaded(owner, address=address)
+        first = initial['aktivnaya']
+        initial_tab = next(tab for tab in initial['vkladki'] if tab['id'] == first)
+        report['initial_history_empty'] = not initial_tab.get('nazad', True)
+        if not report['initial_history_empty']:
+            raise RuntimeError('Bootstrap left a spurious back-history entry')
         log = device.data / 'profili' / owner / 'cef.log'
         if args.safe_unload:
             report['phase'] = 'waiting-allocation'
