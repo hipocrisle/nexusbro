@@ -69,7 +69,7 @@ pub fn owned_profiles(root: &Path, legacy_key: &str) -> io::Result<Vec<(String, 
     if !valid_key(legacy_key) || !root.is_absolute() {
         return Err(invalid("Invalid owned profile root"));
     }
-    let mut profiles = Vec::new();
+    let mut profiles: Vec<(String, PathBuf)> = Vec::new();
     for (index, entry) in fs::read_dir(root)?.enumerate() {
         if index >= MAX_ROOT_ENTRIES {
             return Err(invalid("Too many root directory entries"));
