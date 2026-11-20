@@ -34,7 +34,7 @@ FIELDS = {'stage', 'valid', 'entered', 'eval_ok', 'retval', 'is_function', 'exce
           'line', 'function_present', 'function_valid', 'value_present', 'value_string',
           'known', 'reason_code', 'tab', 'browser', 'automatic', 'requested', 'probe',
           'verified', 'close', 'closed', 'timeout', 'intent', 'registered', 'safety',
-          'accepted', 'bootstrap_approved', 'uri_matches', 'initial_blank', 'installed'}
+          'success', 'identifier_present', 'error_code', 'accepted', 'bootstrap_approved', 'uri_matches', 'initial_blank', 'installed'}
 VALUES = {'true', 'false', 'manual', 'automatic', 'unknown', 'two-phase', 'graceful',
           'row-retained', 'close', 'retained', 'install', 'probe_context_changed',
           'probe_no_observer', 'probe_cannot_enter', 'probe_invalid_string',
@@ -42,7 +42,7 @@ VALUES = {'true', 'false', 'manual', 'automatic', 'unknown', 'two-phase', 'grace
           'js_dynamic_budget', 'js_probe_unavailable_or_tampered', 'js_trusted_interaction',
           'js_media_or_worker', 'js_dom_protected', 'js_unload_protected',
           'js_state_protected', 'other_internal_reason', 'early', 'keep',
-          'native_binding', 'native_capture_success'}
+          'method_result', 'deadline', 'host_missing', 'observer_ready', 'command_rejected', 'timer_rejected', 'native_binding', 'native_capture_success'}
 
 
 def metadata_line(raw):

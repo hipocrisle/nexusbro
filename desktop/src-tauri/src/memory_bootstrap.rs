@@ -116,17 +116,22 @@ wrap_dev_tools_message_observer! {
             if message_id!=self.message{return;}
             let Some(browser)=browser else{return;};
             let registered=success!=0&&result.filter(|s|s.len()<4096).and_then(|s|serde_json::from_slice::<serde_json::Value>(s).ok()).is_some_and(|v|v["identifier"].as_str().is_some_and(|s|!s.is_empty()));
+            eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=method_result browser={} success={} identifier_present={} error_code={}",browser.identifier(),success!=0,registered,result.filter(|s|s.len()<4096).and_then(|s|serde_json::from_slice::<serde_json::Value>(s).ok()).and_then(|v|v["code"].as_i64()).unwrap_or(0));
             finish(browser,&self.setup,registered);
         }
     }
 }
 wrap_task! {
     struct BootstrapTimeout{browser:Browser,setup:Arc<Bootstrap>}
-    impl Task{fn execute(&self){finish(&self.browser,&self.setup,false);}}
+    impl Task{fn execute(&self){if self.setup.pending.load(Ordering::Acquire){eprintln!("NEXUSBRO_MEMORY_BOOTSTRAP stage=deadline browser={}",self.browser.identifier());}finish(&self.browser,&self.setup,false);}}
 }
 pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
     let message = NEXT.fetch_add(1, Ordering::Relaxed);
     let Some(host) = browser.host() else {
+        eprintln!(
+            "NEXUSBRO_MEMORY_BOOTSTRAP stage=host_missing browser={}",
+            browser.identifier()
+        );
         finish(browser, &setup, false);
         return;
     };
@@ -149,6 +154,10 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
         finish(browser, &setup, false);
         return;
     };
+    eprintln!(
+        "NEXUSBRO_MEMORY_BOOTSTRAP stage=observer_ready browser={}",
+        browser.identifier()
+    );
     REGISTRATIONS.with(|r| {
         r.borrow_mut().insert(browser.identifier(), registration);
     });
@@ -158,6 +167,10 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
         Some(&mut params.clone()),
     ) == 0
     {
+        eprintln!(
+            "NEXUSBRO_MEMORY_BOOTSTRAP stage=command_rejected browser={}",
+            browser.identifier()
+        );
         finish(browser, &setup, false);
         return;
     }
@@ -167,6 +180,10 @@ pub fn start(browser: &Browser, setup: Arc<Bootstrap>) {
         8000,
     ) != 1
     {
+        eprintln!(
+            "NEXUSBRO_MEMORY_BOOTSTRAP stage=timer_rejected browser={}",
+            browser.identifier()
+        );
         finish(browser, &setup, false);
     }
 }
