@@ -10,5 +10,14 @@
   "full_build_failure": "test driver used fractional Win32 wheel delta; app sources unchanged by test fixes",
   "linux_full_job": "success",
   "windows_ui_and_background": "success",
-  "fresh_publication_runtime": "pending"
+  "fresh_publication_runtime": "success",
+  "publication_run": 44709217672,
+  "publication_workflow_source": "c83d3e93f186fccbcd16a1c4e146c72798ff48ae",
+  "tag": "v0.2.20",
+  "tag_source": "3b529f5d0c93edcd22c17a8e09e7f4b71fcc41a9",
+  "published_at": "2026-11-20T09:23:47Z",
+  "intentional_duplicate_tag_build_canceled": 44709215550,
+  "public_latest_verified": true,
+  "public_all_three_packages_crypto_verified": true,
+  "measured_installer_sha256": "18952dfcef0b6c4364d6a35e424cc1e1e16bc45699d1040f4b1a8e601a02d682"
 }
