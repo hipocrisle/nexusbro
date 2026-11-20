@@ -14,11 +14,38 @@ import os
 import pathlib
 import platform
 import re
+import socket
 import subprocess
 import sys
 import threading
 import time
 import urllib.parse
+
+
+def validate_origin_host(host):
+    """An alias must be a real OS hosts mapping to the IPv4-only fixture.
+
+    Keep the default origin unchanged. Named aliases avoid Chromium's implicit
+    localhost proxy bypass in paired measurements; no fallback can hide a bad
+    runner mapping or accidentally send the workload to an external origin.
+    """
+    if host == "127.0.0.1":
+        return host, [host]
+    if (not isinstance(host, str) or len(host) > 253
+            or not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?", host)
+            or "." not in host or host.lower().endswith(".localhost")
+            or any(not label or len(label) > 63 or label.startswith("-") or label.endswith("-")
+                   for label in host.split("."))
+            or not re.fullmatch(r"[A-Za-z][A-Za-z0-9-]*", host.rsplit(".", 1)[-1])):
+        raise ValueError("--origin-host must be a named non-localhost DNS alias or 127.0.0.1")
+    try:
+        addresses = sorted({answer[4][0] for answer in socket.getaddrinfo(
+            host, None, family=socket.AF_UNSPEC, type=socket.SOCK_STREAM)})
+    except OSError as error:
+        raise ValueError("--origin-host has no valid OS loopback mapping") from error
+    if addresses != ["127.0.0.1"]:
+        raise ValueError("--origin-host must resolve only to 127.0.0.1; no fallback is allowed")
+    return host, addresses
 
 
 def role(name, command, root=False):
@@ -115,6 +142,7 @@ def assert_background_throttled(reports, phases, pages, active_page, traces=None
 def run(args):
     if sys.platform != "win32":
         raise RuntimeError("The measurement requires real Windows; no substituted result")
+    origin_host, origin_addresses = validate_origin_host(args.origin_host)
     import ctypes
     from ctypes import wintypes
     import psutil
@@ -136,8 +164,11 @@ def run(args):
                             "saved_tabs_total": args.supers * args.saved_tabs,
                             "visited_tabs_total": args.supers * args.tabs},
               "phases": [], "samples": [], "fixture_hits": {},
-              "visibility_probe": args.visibility_probe}
+              "visibility_probe": args.visibility_probe,
+              "fixture_origin": {"host": origin_host, "resolved_addresses": origin_addresses,
+                                 "bind_address": "127.0.0.1"}}
     hits = collections.Counter()
+    request_forms = collections.Counter()
     hit_lock = threading.Lock()
     visibility_reports = []
     input_proofs = []
@@ -222,6 +253,7 @@ def run(args):
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
+            request_form = "absolute" if self.path.startswith(("http://", "https://")) else "origin"
             self.path = canonicalize(self.path)
             path = urllib.parse.urlsplit(self.path).path
             parts = path.strip("/").split("/")
@@ -230,6 +262,7 @@ def run(args):
                 return
             with hit_lock:
                 hits[path] += 1
+                request_forms[request_form] += 1
             title = f"Perf {parts[1]}-{parts[2]}"
             body = (f'<!doctype html><meta charset="utf-8"><title>{title}</title>'
                     '<style>html,body{margin:0;background:#185541;color:white;font:24px sans-serif}</style>'
@@ -483,7 +516,8 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Fixture)
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
-        base = f"http://127.0.0.1:{server.server_port}"
+        base = f"http://{origin_host}:{server.server_port}"
+        report["fixture_origin"]["url"] = base
         definitions = []
         for s in range(args.supers):
             sid = f"perf-{s}"
@@ -809,6 +843,7 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             server.shutdown()
             server.server_close()
         report["fixture_hits"] = dict(hits)
+        report["fixture_request_forms"] = dict(request_forms)
         if args.visibility_probe:
             report["visibility_reports"] = list(visibility_reports)
             report["visibility_reports_dropped"] = visibility_dropped
@@ -825,6 +860,8 @@ def main():
     parser.add_argument("--exe", required=True, help="Installed/extracted NexusBro executable with bundled resources")
     parser.add_argument("--cef", help="CEF directory, if not adjacent to the extracted executable")
     parser.add_argument("--out", required=True, help="Fresh nonexistent result directory")
+    parser.add_argument("--origin-host", default="127.0.0.1",
+                        help="Optional runner-owned DNS alias resolving only to 127.0.0.1; use the same alias for both paired builds")
     parser.add_argument("--supers", type=int, default=4)
     parser.add_argument("--tabs", type=int, default=6)
     parser.add_argument("--saved-tabs", type=int, help="Saved tabs per super; defaults to --tabs; at most 5000 total")
