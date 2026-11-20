@@ -23,7 +23,8 @@ class Fixture:
     def __init__(self, cert, key, stun_uri=None):
         self.lock = threading.Lock()
         self.receipts, self.tunnels, self.peers = [], [], {}
-        self.tokens = {lane: secrets.token_hex(20) for lane in ('A', 'B', 'Direct')}
+        self.tokens = {lane: secrets.token_hex(20) for lane in ('A', 'B', 'Direct', 'Historical', 'Neighbor')}
+        self.worker_token = secrets.token_hex(24)
         self.stun_uri = stun_uri
         self.servers = []
         self.proxy_servers, self.proxy_sockets, self.stopped_proxies = {}, {}, set()
@@ -50,8 +51,38 @@ class Fixture:
                                            'rtc_event': q.get('event', [None])[0],
                                            'candidate_type': q.get('type', [None])[0],
                                            'candidate_address': q.get('address', [None])[0],
+                                           'worker_proof': secrets.compare_digest(self.headers.get('X-Fixture-Worker', ''), owner.worker_token),
+                                           'worker_existing': q.get('existing', [None])[0],
+                                           'worker_event': q.get('event', [None])[0],
+                                           'secure': q.get('secure', [None])[0],
                                            'time': time.monotonic(),
                                            'tls': isinstance(self.connection, ssl.SSLSocket)})
+                if parsed.path.startswith('/worker/'):
+                    if parsed.path == '/worker/sw.js':
+                        body = owner.worker_script().encode()
+                        kind = 'application/javascript'
+                    elif parsed.path == '/worker/page':
+                        body = ("<!doctype html><title>Worker route fixture</title><p>Owned worker route</p><script>"
+                                "(async()=>{const q=new URLSearchParams(location.search);"
+                                "let reg=await navigator.serviceWorker.getRegistration('/worker/');const existing=!!reg?.active;"
+                                "if(!reg)reg=await navigator.serviceWorker.register('/worker/sw.js',{scope:'/worker/'});"
+                                "const ready=await navigator.serviceWorker.ready;"
+                                "await fetch('/worker/page-status?'+new URLSearchParams({case:q.get('case'),existing:String(existing),secure:String(isSecureContext)}),{cache:'no-store'});"
+                                "ready.active.postMessage({case:q.get('case')});"
+                                "})().catch(()=>fetch('/worker/page-error?'+new URLSearchParams(location.search),{cache:'no-store'}));</script>").encode()
+                        kind = 'text/html; charset=utf-8'
+                    elif parsed.path in ('/worker/receipt', '/worker/page-status', '/worker/page-error'):
+                        body, kind = b'worker receipt', 'text/plain'
+                    else:
+                        self.send_error(404)
+                        return
+                    self.send_response(200)
+                    self.send_header('Content-Type', kind)
+                    self.send_header('Cache-Control', 'no-store')
+                    self.send_header('Content-Length', str(len(body)))
+                    self.end_headers()
+                    self.wfile.write(body)
+                    return
                 seed = q.get('seed', [None])[0]
                 if seed and seed not in owner.tokens:
                     self.send_error(400)
@@ -70,7 +101,8 @@ class Fixture:
                 self.send_header('Content-Type', 'text/html; charset=utf-8')
                 self.send_header('Cache-Control', 'no-store')
                 if seed:
-                    self.send_header('Set-Cookie', 'route_auth=' + owner.tokens[seed] + '; HttpOnly; SameSite=Lax; Path=/')
+                    self.send_header('Set-Cookie', 'route_auth=' + owner.tokens[seed] + '; HttpOnly; SameSite=Lax; Path=/'
+                                     + ('; Max-Age=86400' if q.get('persist') == ['1'] else ''))
                 self.send_header('Content-Length', str(len(body)))
                 self.end_headers()
                 self.wfile.write(body)
@@ -233,12 +265,30 @@ class Fixture:
                 "await pc.setLocalDescription(await pc.createOffer());finish();"
                 "}catch(e){clearTimeout(timer);if(pc)pc.close();void send('error')}})()}" )
 
-    def url(self, case, seed=None, tls=False, rtc=False):
+    def worker_script(self):
+        # The page never receives this nonce or fabricates worker receipts.
+        # Only the actual installed worker adds the proof header to its fetch.
+        return ("const proof=" + json.dumps(self.worker_token) + ";"
+                "const receipt=(name,event)=>fetch('/worker/receipt?'+new URLSearchParams({case:name,event}),"
+                "{headers:{'X-Fixture-Worker':proof},credentials:'include',cache:'no-store'});"
+                "self.addEventListener('install',e=>e.waitUntil(self.skipWaiting()));"
+                "self.addEventListener('activate',e=>e.waitUntil(self.clients.claim().then(()=>receipt('worker-activate','activate'))));"
+                "self.addEventListener('message',e=>{const name=e.data?.case;"
+                "if(typeof name==='string'&&name.startsWith('worker-')&&name.length<100)e.waitUntil(receipt(name,'message'));});")
+
+    def worker_url(self, case):
+        return 'http://127.0.0.1:' + str(self.http) + '/worker/page?' + urllib.parse.urlencode({'case': case})
+
+    def url(self, case, seed=None, tls=False, rtc=False, persist=False):
         query = {'case': case}
         if rtc:
             query['rtc'] = '1'
         if seed:
             query['seed'] = seed
+        if persist:
+            if not seed:
+                raise ValueError('Persistent fixture cookie requires an explicit seed case')
+            query['persist'] = '1'
         return ('https' if tls else 'http') + '://127.0.0.1:' + str(self.https if tls else self.http) + '/page?' + urllib.parse.urlencode(query)
 
     def records(self, case):

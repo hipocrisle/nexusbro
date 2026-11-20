@@ -315,7 +315,7 @@ def apply_route_ack(client, owner, identifier, label, expected):
 def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
-    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed', 'rtc_dns_udp': 'not_executed'}}
+    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed', 'rtc_dns_udp': 'not_executed', 'historical_cookies': 'not_executed', 'worker_ready_context': 'not_executed', 'worker_startup_pre_admission': 'not_executed'}}
     device = fixture = stun = None
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Only an ephemeral GitHub runner may run this native test')
@@ -334,6 +334,8 @@ def run(args):
         write_json(device.data / 'nastrojki.json', config)
         supers = {name: super_record(name, name, 'about:blank', proxy=config['vyhody'][0]['adres']) for name in ('routes-a', 'routes-b')}
         supers['routes-direct'] = super_record('routes-direct', 'routes-direct', 'about:blank', proxy='')
+        for name in ('routes-historical', 'routes-neighbor', 'routes-worker'):
+            supers[name] = super_record(name, name, 'about:blank', proxy=config['vyhody'][0]['adres'])
         write_json(device.data / 'vkladki.json', list(supers.values()))
 
         def tab(identifier, case, route, seed=None, tls=False, rtc=False):
@@ -358,6 +360,25 @@ def run(args):
                                 {**tab(2, 'direct-super-share', direct), 'otlozhena': True},
                                 {**tab(3, 'rtc-direct', inherit, rtc=True), 'otlozhena': True}],
                     'aktivnaya': 1, 'sleduyushchaya': 4, 'zakrytye': []})
+        historical_path = device.data / 'profili' / 'routes-historical' / 'obychnye.json'
+        neighbor_path = device.data / 'profili' / 'routes-neighbor' / 'obychnye.json'
+        historical_case = 'historical-clear-' + str(time.time_ns())
+        neighbor_case = 'historical-neighbor-' + str(time.time_ns())
+        write_json(historical_path, {'vkladki': [tab(1, 'historical-inherit', inherit),
+                   {**tab(2, 'historical-seed', connection('B'), 'Historical'), 'otlozhena': True}],
+                   'aktivnaya': 1, 'sleduyushchaya': 3, 'zakrytye': []})
+        # Persistence is opt-in for these two witnesses, leaving every original
+        # session-cookie/restart assertion and A/B seed case unchanged.
+        saved_history = json.loads(historical_path.read_text(encoding='utf-8'))
+        saved_history['vkladki'][1]['adres'] = fixture.url('historical-seed', 'Historical', persist=True)
+        write_json(historical_path, saved_history)
+        write_json(neighbor_path, {'vkladki': [{**tab(1, 'neighbor-seed', inherit, 'Neighbor'),
+                   'adres': fixture.url('neighbor-seed', 'Neighbor', persist=True)}],
+                   'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
+        write_json(device.data / 'profili' / 'routes-worker' / 'obychnye.json',
+                   {'vkladki': [{'id': 1, 'adres': fixture.worker_url('worker-first'), 'zagolovok': 'Worker route fixture',
+                                 'route': connection('B'), 'otlozhena': False}],
+                    'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
         client = device.start()
         activate_saved(client, 'routes-a')
         assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
@@ -500,6 +521,67 @@ def run(args):
             client.text_button('Отмена')
             report['checks'].append(case + '_route_change_refused_preserves_browser')
         report['coverage']['refusal'] = 'passed'
+        # Prepare independent persistent state before the existing owned restart.
+        # No original routes-a/routes-b profile is cleared or reseeded here.
+        activate_saved(client, 'routes-historical')
+        select(client, 'routes-historical', 2)
+        assert_receipt(fixture, 'historical-seed', 'B', 'Historical', 'Historical')
+        call(client, 'obychnaya_komanda', id='routes-historical', komanda={
+             'deystvie': 'pereyti', 'id': 2, 'adres': fixture.url(historical_case)})
+        assert_receipt(fixture, historical_case, 'B', 'Historical', 'Historical')
+        select(client, 'routes-historical', 1)
+        activate_saved(client, 'routes-neighbor')
+        assert_receipt(fixture, 'neighbor-seed', 'A', 'Neighbor', 'Neighbor')
+        call(client, 'obychnaya_komanda', id='routes-neighbor', komanda={
+             'deystvie': 'pereyti', 'id': 1, 'adres': fixture.url(neighbor_case)})
+        assert_receipt(fixture, neighbor_case, 'A', 'Neighbor', 'Neighbor')
+
+        def worker_witness(case, existing):
+            requests = fixture.requests(case)
+            require(all(r['lane'] == 'B' for r in requests), 'Worker owner used A/Direct instead of B')
+            status = [r for r in requests if r['path'] == '/worker/page-status']
+            proof = [r for r in requests if r['path'] == '/worker/receipt' and r['worker_proof'] and r['worker_event'] == 'message']
+            require(not any(r['path'] == '/worker/page-error' for r in requests), 'Actual worker registration/message failed')
+            return proof if proof and any(r['worker_existing'] == str(existing).lower() and r['secure'] == 'true' for r in status) else None
+
+        activate_saved(client, 'routes-worker')
+        wait_for(lambda: worker_witness('worker-first', False), 'No actual B worker fetch/secure-context positive receipt', 20)
+        # Change only the saved client URL. After restart, getRegistration must
+        # find the persisted active worker; a fresh registration cannot pass.
+        call(client, 'obychnaya_komanda', id='routes-worker', komanda={
+             'deystvie': 'pereyti', 'id': 1, 'adres': fixture.worker_url('worker-restored')})
+        wait_for(lambda: worker_witness('worker-restored', True), 'Installed B worker could not handle a second native client', 20)
+
+        def gap_state_persisted():
+            try:
+                h = json.loads(historical_path.read_text(encoding='utf-8'))
+                n = json.loads(neighbor_path.read_text(encoding='utf-8'))
+                w = json.loads((device.data / 'profili' / 'routes-worker' / 'obychnye.json').read_text(encoding='utf-8'))
+                return (h['aktivnaya'] == 1 and h['vkladki'][1]['adres'] == fixture.url(historical_case)
+                        and h['vkladki'][1]['route'] == connection('B')
+                        and n['vkladki'][0]['adres'] == fixture.url(neighbor_case)
+                        and w['vkladki'][0]['adres'] == fixture.worker_url('worker-restored'))
+            except (OSError, ValueError, KeyError, IndexError):
+                return False
+        wait_for(gap_state_persisted, 'Historical/worker non-seed URLs were not persisted before restart', 30)
+        def persistent_cookie_on_disk(owner):
+            # Force-killing an engine must not race Chromium's delayed cookie
+            # commit. Read metadata only, never encrypted/plain token values.
+            import sqlite3
+            profile = device.data / 'profili' / owner
+            for database in profile.rglob('Cookies'):
+                try:
+                    with sqlite3.connect(database.resolve().as_uri() + '?mode=ro', uri=True, timeout=.1) as db:
+                        if db.execute("SELECT count(*) FROM cookies WHERE host_key='127.0.0.1' AND name='route_auth' AND is_persistent=1").fetchone()[0] > 0:
+                            return True
+                except (OSError, sqlite3.Error):
+                    # A live native writer may not have committed its schema yet.
+                    continue
+            return False
+        wait_for(lambda: persistent_cookie_on_disk('routes-historical') and persistent_cookie_on_disk('routes-neighbor'),
+                 'Native persistent cookie writes were not durable before the owned restart', 40)
+
+
         def persisted_selected_b(address=None):
             # The native session callback updates RAM before writing disk. A
             # forced process stop must wait for actual persisted route intent.
@@ -523,6 +605,56 @@ def run(args):
         wait_for(lambda: any(r['time'] > restored_at and r['lane'] == 'B' for r in fixture.records('seed-b')), 'Cold restore lost opaque B connection ID')
         require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Restart rebound connection by list index')
         report['checks'].append('restart_opaque_id_survives_connection_reorder')
+        # Historical B is on disk but has no Browser in this new engine. Stats
+        # and clear must enumerate its closed-gate context without networking.
+        historical_restart_at = time.monotonic()
+        activate_saved(client, 'routes-historical')
+        require(row(client, 'routes-historical', 2)['browser_id'] == 0, 'Historical B opened before clear')
+        require(not [r for r in fixture.requests(historical_case) if r['time'] > restored_at],
+                'Historical B requested its origin before clear')
+        before_clear = call(client, 'dannye_saytov_statistika', id='routes-historical', timeout=20)
+        require(type(before_clear.get('cookies')) is int and before_clear['cookies'] > 0,
+                'No persistent historical cookie existed before the clear operation')
+        cleared = call(client, 'ochistit_dannye_saytov', id='routes-historical', cookies=True, cache=False, timeout=20)
+        require(cleared.get('cookies') is True and cleared.get('cache') is False, 'Actual cookie clear was not acknowledged')
+        after_clear = call(client, 'dannye_saytov_statistika', id='routes-historical', timeout=20)
+        require(after_clear.get('cookies') == 0, 'Historical native cookies remained after clear')
+        require(row(client, 'routes-historical', 2)['browser_id'] == 0, 'Stats/clear opened the historical B Browser')
+        require(not [r for r in fixture.requests(historical_case) if r['time'] > restored_at],
+                'Closed-gate historical context performed origin traffic during stats/clear')
+        select(client, 'routes-historical', 2)
+        wait_for(lambda: [r for r in fixture.records(historical_case) if r['time'] > historical_restart_at],
+                 'Historical B never loaded after actual cookie clear', 20)
+        historical_after = [r for r in fixture.requests(historical_case) if r['time'] > historical_restart_at]
+        require(all(r['lane'] == 'B' and r['auth'] is None for r in historical_after),
+                'Historical B authentication survived cookie clear or used a wrong lane')
+        require(any(r['storage'] == 'Historical' for r in historical_after),
+                'Cookies-only API unexpectedly erased localStorage (the UI explicitly excludes it)')
+        neighbor_after_at = time.monotonic()
+        activate_saved(client, 'routes-neighbor')
+        wait_for(lambda: [r for r in fixture.records(neighbor_case) if r['time'] > neighbor_after_at],
+                 'Neighbor did not produce a new persistent state witness after historical clear', 20)
+        require(all(r['lane'] == 'A' and r['auth'] == 'Neighbor' and r['storage'] == 'Neighbor'
+                    for r in fixture.records(neighbor_case) if r['time'] > neighbor_after_at),
+                'Clearing one Super affected the neighboring Super cookie/storage profile')
+        report['coverage']['historical_cookies'] = 'passed'
+        report['checks'].append('historical_unopened_route_cookies_clear_no_network_ls_preserved_neighbor_untouched')
+        worker_restored_at = time.monotonic()
+        activate_saved(client, 'routes-worker')
+        def restored_worker():
+            proof = worker_witness('worker-restored', True)
+            return [r for r in proof if r['time'] > worker_restored_at] if proof else None
+        wait_for(restored_worker, 'Persisted worker produced no actual B fetch after restart', 20)
+        with fixture.lock:
+            worker_requests = [r for r in fixture.receipts if r['path'].startswith('/worker/')]
+            require(worker_requests and all(r['lane'] == 'B' for r in worker_requests),
+                    'Worker traffic escaped B before or after restart')
+        report['coverage']['worker_ready_context'] = 'passed'
+        report['checks'].append('actual_service_worker_fetch_b_only_persisted_registration_after_restart')
+        # This positive is genuinely worker-originated, but requires a ready B
+        # client. It does NOT test autonomous worker startup before admission.
+        report['coverage']['worker_startup_pre_admission'] = 'not_executed'
+
         # Existing configured B remains selected when its actual transport dies.
         # A fresh URL makes every origin hit (even before page JS) a failure.
         select(client, 'routes-a', 1)
@@ -609,6 +741,12 @@ def run(args):
         report['coverage']['transport_down'] = 'passed'
         report['checks'].append('configured_transport_down_no_direct_fallback_unaffected_a_live')
         report['checks'].append('deleted_connection_cold_restore_fail_closed')
+        with fixture.lock:
+            worker_requests = [r for r in fixture.receipts if r['path'].startswith('/worker/')]
+            require(worker_requests and all(r['lane'] == 'B' for r in worker_requests),
+                    'Delayed worker traffic escaped the selected B lane')
+            require(not any(r['time'] > transport_down_at for r in worker_requests),
+                    'Worker origin traffic survived the stopped configured B transport')
         report['coverage']['cold_restore'] = 'passed'
         report['completed'] = True
     except Exception as error:
