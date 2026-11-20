@@ -447,8 +447,12 @@ jobs:
           python tests/gui/route_ca.py --out .dev-check/routes-ca
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "127.0.0.1 nexusbro-route-stun.test" -Encoding ascii
-          certutil -user -addstore Root .dev-check/routes-ca/ca.crt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # User Root imports can block on an invisible confirmation dialog.
+          # This is an elevated, disposable GitHub VM, never the developer host.
+          if ($env:GITHUB_ACTIONS -ne "true") { throw "Fixture trust is runner-only" }
+          $fixtureRoot = Import-Certificate -FilePath .dev-check/routes-ca/ca.crt -CertStoreLocation Cert:\LocalMachine\Root -Confirm:$false -ErrorAction Stop
+          if (-not $fixtureRoot -or -not (Test-Path "Cert:\LocalMachine\Root\$($fixtureRoot.Thumbprint)")) { throw "Fixture CA was not installed" }
+          Write-Host "Disposable fixture CA installed; starting native routes"
           python tests/gui/tab_routes.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
@@ -709,8 +713,12 @@ jobs:
           python tests/gui/route_ca.py --out .dev-check/routes-ca
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           Add-Content -Path "$env:SystemRoot\System32\drivers\etc\hosts" -Value "127.0.0.1 nexusbro-route-stun.test" -Encoding ascii
-          certutil -user -addstore Root .dev-check/routes-ca/ca.crt
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          # User Root imports can block on an invisible confirmation dialog.
+          # This is an elevated, disposable GitHub VM, never the developer host.
+          if ($env:GITHUB_ACTIONS -ne "true") { throw "Fixture trust is runner-only" }
+          $fixtureRoot = Import-Certificate -FilePath .dev-check/routes-ca/ca.crt -CertStoreLocation Cert:\LocalMachine\Root -Confirm:$false -ErrorAction Stop
+          if (-not $fixtureRoot -or -not (Test-Path "Cert:\LocalMachine\Root\$($fixtureRoot.Thumbprint)")) { throw "Fixture CA was not installed" }
+          Write-Host "Disposable fixture CA installed; starting native routes"
           python tests/gui/tab_routes.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
