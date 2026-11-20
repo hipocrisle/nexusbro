@@ -1,0 +1,316 @@
+#!/usr/bin/env python3
+"""Native per-tab route acceptance, on a disposable GitHub desktop only.
+
+Requires a built app, CEF, and --tls-cert/--tls-key for 127.0.0.1 signed by a
+CA already trusted by that disposable runner. No ignore-certificate flags,
+production changes, simulated Tauri replies, or external network probes.
+Unexecuted/missing prerequisites always leave completed=false and exit nonzero.
+"""
+import argparse
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+import urllib.request
+
+import psutil
+import websocket
+from client import Client
+from route_fixture import Fixture
+from security_native import Device, call, js_wait, port, require, settings, super_record, wait_for
+
+
+class WindowsClient(Client):
+    """WebView2 inspector reads shell IPC; all UI clicks are physical input."""
+    def __init__(self, inspector):
+        self.seq = 0
+        with urllib.request.urlopen('http://127.0.0.1:' + str(inspector) + '/json/list', timeout=2) as response:
+            pages = json.load(response)
+        self.ws = None
+        for page in pages:
+            if page.get('type') != 'page' or not page.get('webSocketDebuggerUrl'):
+                continue
+            candidate = websocket.create_connection(page['webSocketDebuggerUrl'], timeout=5, suppress_origin=True)
+            self.ws = candidate
+            try:
+                if self.js('!!window.__TAURI_INTERNALS__?.invoke'):
+                    return
+            except (OSError, RuntimeError, websocket.WebSocketException):
+                pass
+            candidate.close()
+            self.ws = None
+        raise ConnectionError('No real Tauri WebView2 shell inspector')
+
+    def js(self, expression):
+        self.seq += 1
+        sequence = self.seq
+        self.ws.send(json.dumps({'id': sequence, 'method': 'Runtime.evaluate',
+                                 'params': {'expression': expression, 'returnByValue': True}}))
+        while True:
+            reply = json.loads(self.ws.recv())
+            if reply.get('id') != sequence:
+                continue
+            require(not reply.get('error') and not reply.get('result', {}).get('exceptionDetails'),
+                    'Real WebView2 inspector evaluation failed')
+            return reply.get('result', {}).get('result', {}).get('value')
+
+    def mouse(self, x, y, button=1):
+        import pyautogui
+        label = self.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        origin = self.command('plugin:window|inner_position', label=label)
+        scale = self.js('devicePixelRatio||1')
+        pyautogui.click(round(origin['x'] + x * scale), round(origin['y'] + y * scale),
+                        button={1: 'left', 2: 'middle', 3: 'right'}[button])
+
+
+class WindowsDevice:
+    def __init__(self, root, exe, cef):
+        self.root, self.exe, self.cef = root, exe, cef
+        self.data = root / 'data'
+        self.data.mkdir(parents=True)
+        self.inspector = port()
+        self.app = self.client = self.log = None
+
+    def start(self):
+        import ctypes
+        from pywinauto import Desktop
+        ctypes.windll.user32.SetProcessDpiAwarenessContext(ctypes.c_void_p(-4))
+        env = {**os.environ, 'NEXUSBRO_TEST_DATA': str(self.data), 'NEXUSBRO_PROBA': '0',
+               'CEF_PATH': str(self.cef), 'PATH': str(self.cef) + os.pathsep + os.environ.get('PATH', ''),
+               'WEBVIEW2_USER_DATA_FOLDER': str(self.root / 'webview2'),
+               'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS': '--remote-debugging-port=' + str(self.inspector)}
+        self.log = (self.root / ('app-' + str(time.time_ns()) + '.log')).open('wb')
+        self.app = subprocess.Popen([str(self.exe)], env=env, stdout=self.log, stderr=subprocess.STDOUT)
+
+        def ready():
+            require(self.app.poll() is None, 'Owned native application exited during startup')
+            try:
+                self.client = WindowsClient(self.inspector)
+                return self.client
+            except (OSError, ValueError, websocket.WebSocketException):
+                return None
+        client = wait_for(ready, 'WebView2 shell inspector did not become available', 45)
+        windows = wait_for(lambda: Desktop(backend='uia').windows(process=self.app.pid, visible_only=True),
+                           'Owned native Windows desktop window absent', 20)
+        window = next((w for w in windows if 'NexusBro' in w.window_text()), windows[0])
+        window.restore()
+        window.move_window(x=20, y=20, width=1200, height=820)
+        window.set_focus()
+        return client
+
+    def stop_app(self):
+        if self.client:
+            self.client.close()
+            self.client = None
+        if self.app:
+            try:
+                process = psutil.Process(self.app.pid)
+                owned = process.children(recursive=True) + [process]
+                for child in reversed(owned):
+                    try:
+                        child.terminate()
+                    except psutil.NoSuchProcess:
+                        pass
+                _, alive = psutil.wait_procs(owned, timeout=6)
+                for child in alive:
+                    try:
+                        child.kill()
+                    except psutil.NoSuchProcess:
+                        pass
+                psutil.wait_procs(alive, timeout=4)
+            except psutil.NoSuchProcess:
+                pass
+            self.app = None
+        if self.log:
+            self.log.close()
+            self.log = None
+
+    close = stop_app
+
+
+def write_json(path, value):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value), encoding='utf-8')
+
+
+def rows(client, owner):
+    return call(client, 'obychnye_spisok', id=owner)
+
+
+def row(client, owner, identifier):
+    return next(t for t in rows(client, owner)['vkladki'] if t['id'] == identifier)
+
+
+def select(client, owner, identifier):
+    call(client, 'pereklyuchit', id=owner)
+    call(client, 'obychnaya_komanda', id=owner, komanda={'deystvie': 'vybrat', 'id': identifier})
+    wait_for(lambda: rows(client, owner)['aktivnaya'] == identifier and not row(client, owner, identifier)['zagruzka'],
+             'Native tab did not finish activation', 30)
+
+
+def choose(client, label):
+    client.click('[role="combobox"][aria-label="Выберите путь вкладки"]')
+    js_wait(client, '!!document.querySelector(".vybor-popup [role=option]")', 'Route dropdown did not open')
+    # Attribute is a selector marker only; never invoke React or synthesize clicks.
+    found = client.js('(()=>{const e=Array.from(document.querySelectorAll(".vybor-popup [role=option]")).find(e=>e.textContent.trim()===' + json.dumps(label) + ');if(!e)return false;e.setAttribute("data-route-test-choice","true");e.scrollIntoView({block:"nearest"});return true})()')
+    require(found, 'Saved route absent from actual UI: ' + label)
+    client.click('[data-route-test-choice="true"]')
+
+
+def apply_ui(client, label):
+    client.click('button[aria-label="Путь вкладки"]')
+    js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
+    choose(client, label)
+    client.text_button('Применить путь')
+
+
+def assert_receipt(fixture, case, lane, auth, storage, *, tls=False):
+    records = wait_for(lambda: fixture.records(case), 'No actual CEF origin receipt for ' + case, 35)
+    require(all(r['lane'] == lane and r['auth'] == auth and r['storage'] == storage and r['tls'] == tls for r in records),
+            'Origin route/auth/storage mismatch for ' + case)
+
+
+def run(args):
+    out = pathlib.Path(args.out).resolve()
+    out.mkdir(parents=True, exist_ok=False)
+    report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed'}}
+    device = fixture = None
+    try:
+        require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Only an ephemeral GitHub runner may run this native test')
+        require(args.tls_cert and args.tls_key, 'HTTPS acceptance NOT EXECUTED: supply pretrusted runner-only CA-signed 127.0.0.1 certificate/key')
+        fixture = Fixture(args.tls_cert, args.tls_key)
+        exe, cef = pathlib.Path(args.exe).resolve(), pathlib.Path(args.cef).resolve()
+        require(exe.is_file() and cef.is_dir(), 'Built native app/CEF prerequisite missing')
+        device = WindowsDevice(out / 'device', exe, cef) if sys.platform == 'win32' else Device('routes', out / 'device', exe, cef)
+        config = settings('grafit', 'unused')
+        config['vyhody'] = [{'id': 'lane-' + lane, 'nazvanie': 'Fixture ' + lane,
+                             'adres': 'http://127.0.0.1:' + str(fixture.proxies[lane]), 'proxy_uzel': ''} for lane in ('A', 'B')]
+        write_json(device.data / 'nastrojki.json', config)
+        supers = {name: super_record(name, name, 'about:blank', proxy=config['vyhody'][0]['adres']) for name in ('routes-a', 'routes-b')}
+        write_json(device.data / 'vkladki.json', list(supers.values()))
+
+        def tab(identifier, case, route, seed=None, tls=False):
+            return {'id': identifier, 'adres': fixture.url(case, seed, tls), 'zagolovok': case,
+                    'route': route, 'zakreplena': False, 'otlozhena': False, 'privatnaya': False}
+        inherit, direct = {'kind': 'inherit'}, {'kind': 'direct'}
+        connection = lambda lane: {'kind': 'connection', 'id': 'lane-' + lane}
+        tabs = [tab(1, 'seed-a', inherit, 'A'), tab(2, 'seed-b', connection('B'), 'B'),
+                tab(3, 'share-a', connection('A')), tab(4, 'seed-direct', direct, 'Direct'),
+                tab(5, 'share-direct', direct), tab(6, 'https-b', connection('B'), tls=True),
+                tab(7, 'blocked-unknown', connection('missing')), tab(8, 'draft', inherit), tab(9, 'media', inherit)]
+        # Delayed tabs are activated explicitly, in order, to make first-request cookie witnesses deterministic.
+        for t in tabs[1:]:
+            t['otlozhena'] = True
+        session_path = device.data / 'profili' / 'routes-a' / 'obychnye.json'
+        write_json(session_path, {'vkladki': tabs, 'aktivnaya': 1, 'sleduyushchaya': 10, 'zakrytye': []})
+        write_json(device.data / 'profili' / 'routes-b' / 'obychnye.json',
+                   {'vkladki': [tab(1, 'other-super', inherit)], 'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
+        client = device.start()
+        call(client, 'otkryt', nastrojki=supers['routes-a'])
+        assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
+        for identifier, case, lane, auth, storage, tls in [
+                (2, 'seed-b', 'B', 'B', 'B', False), (3, 'share-a', 'A', 'A', 'A', False),
+                (4, 'seed-direct', 'Direct', 'Direct', 'Direct', False),
+                (5, 'share-direct', 'Direct', 'Direct', 'Direct', False),
+                (6, 'https-b', 'B', 'B', 'empty', True)]:
+            select(client, 'routes-a', identifier)
+            assert_receipt(fixture, case, lane, auth, storage, tls=tls)
+        with fixture.lock:
+            require(any(t['lane'] == 'B' and t['port'] == fixture.https for t in fixture.tunnels), 'No actual HTTPS CONNECT witnessed')
+            first_b = [r for r in fixture.receipts if r.get('case') == 'seed-b' and r['path'] == '/page']
+            require(first_b and first_b[0]['auth'] is None, 'Different route inherited another profile before first navigation')
+        report['coverage']['https_connect'] = 'passed'
+        report['checks'].append('http_https_connect_same_effective_key_shares_different_key_isolates')
+        start = time.monotonic()
+        wait_for(lambda: any(r['time'] > start for r in fixture.records('seed-a')) and any(r['time'] > start for r in fixture.records('seed-b')),
+                 'Two differently routed native pages did not run concurrently', 20)
+        report['checks'].append('two_native_pages_concurrent_different_routes')
+        call(client, 'otkryt', nastrojki=supers['routes-b'])
+        assert_receipt(fixture, 'other-super', 'A', None, 'empty')
+        report['checks'].append('cross_super_profile_isolation')
+        select(client, 'routes-a', 7)
+        wait_for(lambda: row(client, 'routes-a', 7).get('route_error'), 'Unknown saved ID was not explicitly unavailable')
+        require(not fixture.requests('blocked-unknown'), 'Unknown ID fell back to a network route')
+        report['checks'].append('unknown_connection_id_fail_closed')
+        # Real UI change and native ACK: route/generation/browser identity are read only after the transaction.
+        select(client, 'routes-a', 5)
+        before = row(client, 'routes-a', 5)
+        apply_ui(client, 'Fixture B')
+        js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route UI did not close after ACK', 40)
+        after = row(client, 'routes-a', 5)
+        require(after['route'] == connection('B') and after['route_generation'] == before['route_generation'] + 1
+                and after['browser_id'] != before['browser_id'] and not after['route_pending'] and not after.get('route_error'),
+                'Actual route UI did not commit an acknowledged replacement browser')
+        wait_for(lambda: any(r['lane'] == 'B' and r['auth'] == 'B' and r['storage'] == 'B' for r in fixture.records('share-direct')),
+                 'Acknowledged route UI change did not reach B profile/network')
+        report['coverage']['http_ui'] = 'passed'
+        report['checks'].append('actual_route_selector_native_ack_network_and_profile')
+        # Protected-page refusal is tested through physical CEF input, then through the real shell menu.
+        for identifier, case, offset, witness in [(8, 'draft', 30, 'draft-typed'), (9, 'media', 80, 'media-running')]:
+            select(client, 'routes-a', identifier)
+            assert_receipt(fixture, case, 'A', 'A', 'A')
+            bounds = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
+            client.mouse(bounds[0] + 50, bounds[1] + offset)
+            if case == 'draft':
+                if sys.platform == 'win32':
+                    import pyautogui
+                    pyautogui.write('synthetic unsaved draft', interval=.04)
+                else:
+                    subprocess.run(['xdotool', 'type', '--clearmodifiers', '--', 'synthetic unsaved draft'], env={**os.environ, 'DISPLAY': device.display}, check=True)
+            wait_for(lambda: fixture.records(witness), 'Actual protected page interaction did not occur: ' + case)
+            before = row(client, 'routes-a', identifier)
+            apply_ui(client, 'Fixture B')
+            wait_for(lambda: row(client, 'routes-a', identifier).get('route_error'), 'Native route change did not refuse protected ' + case, 40)
+            after = row(client, 'routes-a', identifier)
+            require(after['route'] == before['route'] and after['browser_id'] == before['browser_id']
+                    and after['route_generation'] == before['route_generation'] + 1 and not after['route_pending'],
+                    'Refused route attempt changed protected page/profile or lost attempt generation')
+            require(client.js('!!document.querySelector("[data-tab-route-root] [role=alert]")'), 'Native refusal absent from actual route UI')
+            client.text_button('Отмена')
+            report['checks'].append(case + '_route_change_refused_preserves_browser')
+        report['coverage']['refusal'] = 'passed'
+        # Stop only our owned process tree, reorder IDs, and cold restore selected B.
+        select(client, 'routes-a', 2)
+        device.stop_app()
+        config['vyhody'].reverse()
+        write_json(device.data / 'nastrojki.json', config)
+        client = device.start()
+        restored_at = time.monotonic()
+        call(client, 'otkryt', nastrojki=supers['routes-a'])
+        wait_for(lambda: any(r['time'] > restored_at and r['lane'] == 'B' for r in fixture.records('seed-b')), 'Cold restore lost opaque B connection ID')
+        require(row(client, 'routes-a', 2)['route'] == connection('B'), 'Restart rebound connection by list index')
+        report['checks'].append('restart_opaque_id_survives_connection_reorder')
+        device.stop_app()
+        config['vyhody'] = [c for c in config['vyhody'] if c['id'] != 'lane-B']
+        write_json(device.data / 'nastrojki.json', config)
+        before_restart = len(fixture.requests('seed-b'))
+        client = device.start()
+        call(client, 'otkryt', nastrojki=supers['routes-a'])
+        wait_for(lambda: row(client, 'routes-a', 2).get('route_error'), 'Deleted ID was not blocked on cold restore', 40)
+        time.sleep(2)
+        require(len(fixture.requests('seed-b')) == before_restart and not fixture.requests('blocked-unknown'), 'Removed/unknown ID silently used Direct or stale proxy')
+        report['checks'].append('deleted_connection_cold_restore_fail_closed')
+        report['coverage']['cold_restore'] = 'passed'
+        report['completed'] = True
+    except Exception as error:
+        # No credential/raw server receipts are written to artifacts.
+        report['error'] = type(error).__name__ + ': ' + str(error)
+        raise
+    finally:
+        if device:
+            device.close()
+        if fixture:
+            fixture.close()
+        (out / 'results.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
+
+
+if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--exe', required=True)
+    parser.add_argument('--cef', required=True)
+    parser.add_argument('--out', required=True)
+    parser.add_argument('--tls-cert')
+    parser.add_argument('--tls-key')
+    run(parser.parse_args())
