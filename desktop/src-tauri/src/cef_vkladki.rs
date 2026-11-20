@@ -643,6 +643,16 @@ struct RouteAttempt {
 fn route_result(tx:&Sender<Sobytie>,id:u64,generation:u64,browser_id:i32,error:Option<&str>){
     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-result","id":id,"generation":generation,"browser_id":browser_id,"ok":error.is_none(),"error":error})));
 }
+/// A lock cancels preparation/probes, but cannot undo an already committed close.
+fn cancel_routes_for_lock(s:&mut Sessiya,attempts:&mut HashMap<u64,RouteAttempt>,browsers:&HashMap<u64,Browser>,tx:&Sender<Sobytie>)->bool{
+    let ids:Vec<_>=attempts.iter().filter(|(_,a)|!a.closing).map(|(id,_)|*id).collect();
+    let changed=!ids.is_empty();
+    for id in ids{if let Some(attempt)=attempts.remove(&id){
+        if let Some(browser)=browsers.get(&id).filter(|b|b.identifier()==attempt.expected){crate::memory_cef::resume(browser);}
+        if let Some(tab)=s.vkladki.iter_mut().find(|t|t.id==id){tab.route_pending=false;tab.route_error=Some("Смена пути отменена: браузер заблокирован".into());}
+        route_result(tx,id,attempt.generation,attempt.expected,Some("Браузер заблокирован"));
+    }}changed
+}
 struct Rabota {
     k: Konteyner,
     s: Sessiya,
@@ -799,6 +809,7 @@ impl Rabota {
         self.browser_locked=locked;
         for extra in self.extras.values_mut(){extra.set_browser_locked(locked,generation);}
         if locked{
+            if cancel_routes_for_lock(&mut self.s,&mut self.route_attempts,&self.brauzery,&self.tx){let _=self.route_publish();}
             for browser in self.brauzery.values(){crate::cef_interfeys::cancel_context(browser.identifier());}
             for browser in self.brauzery.values(){
                 if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}
@@ -868,7 +879,7 @@ impl Rabota {
             // A lock covers queued/in-flight UI actions too. Lifecycle events
             // still complete, while no key, popup or stale command can reopen a page.
             if *browser_locked && matches!(&sobytie,Sobytie::Komanda(command) if !matches!(command,
-                Komanda::BrowserLocked{..}|Komanda::PasswordsEnabled{..}|Komanda::MemorySettings{..}|Komanda::OknoKomanda{..}|
+                Komanda::BrowserLocked{..}|Komanda::RouteApply{..}|Komanda::RouteFailed{..}|Komanda::PasswordsEnabled{..}|Komanda::MemorySettings{..}|Komanda::OknoKomanda{..}|
                 Komanda::OknoZakryt{..}|Komanda::GlavnoeSkryto|Komanda::GlavnoePokazat)) {continue;}
 
             // No input or navigation reaches a WebContents after close was
@@ -978,7 +989,15 @@ impl Rabota {
                     let actual=brauzery.get(&id).map(|b|b.identifier()).unwrap_or(0);
                     let pending=route_attempts.get(&id);
                     let matching=pending.is_some_and(|a|a.generation==generation&&a.expected==expected_browser&&a.route==route&&!a.closing);
+                    if *browser_locked{
+                        if generation>tab.route_generation&&pending.is_none(){tab.route_generation=generation;tab.route_error=Some("Браузер заблокирован".into());izmeneno=true;}
+                        if matching{route_attempts.remove(&id);tab.route_pending=false;tab.route_error=Some("Браузер заблокирован".into());if let Some(browser)=brauzery.get(&id){crate::memory_cef::resume(browser);}izmeneno=true;}
+                        route_result(tx,id,generation,expected_browser,Some("Браузер заблокирован"));continue;
+                    }
                     if actual!=expected_browser||(!matching&&(generation<=tab.route_generation||pending.is_some())){
+                        // Accepted attempt numbers never become reusable when an
+                        // old parent snapshot races a wake/recreated Browser.
+                        if generation>tab.route_generation&&pending.is_none(){tab.route_generation=generation;tab.route_error=Some("Вкладка уже изменилась; выберите путь повторно".into());izmeneno=true;}
                         route_result(tx,id,generation,expected_browser,Some("Вкладка уже изменилась"));continue;
                     }
                     tab.route_generation=generation; // consumed also on failure; never reused
@@ -1374,6 +1393,7 @@ impl Rabota {
                     *browser_locked=locked;
                     for extra in extras.values_mut(){extra.set_browser_locked(locked,generation);}
                     if locked{
+                        izmeneno|=cancel_routes_for_lock(s,route_attempts,brauzery,tx);
                         for browser in brauzery.values(){crate::cef_interfeys::cancel_context(browser.identifier());}
                         for browser in brauzery.values(){if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}let _=sistema::pokazat(handle(browser),false);}
                         for hwnd in devtools.values(){let _=sistema::pokazat(*hwnd,false);}
