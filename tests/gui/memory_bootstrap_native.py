@@ -183,6 +183,7 @@ def run(args):
         address = 'http://127.0.0.1:' + str(server.server_port) + ('/safe' if args.safe_unload else '/form')
         report['phase'] = 'opening-fixture'
         call(client, 'otkryt', nastrojki=super_record(owner, 'Bootstrap diagnostic', address))
+        log = device.data / 'profili' / owner / 'cef.log'
         initial = device.loaded(owner, address=address)
         first = initial['aktivnaya']
         initial_tab = next(tab for tab in initial['vkladki'] if tab['id'] == first)

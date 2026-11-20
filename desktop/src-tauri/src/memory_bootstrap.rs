@@ -112,7 +112,14 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
     let target = setup.target.lock().unwrap().clone();
     if !target.is_empty() && target != "about:blank" {
         if let Some(frame) = browser.main_frame() {
-            frame.load_url(Some(&CefString::from(target.as_str())));
+            if CefString::from(&frame.url()).to_string() == "about:blank" {
+                // The blank exists only to start Chromium, not as a user history
+                // entry. Replace it rather than append a second navigation.
+                let script = format!("location.replace({});", serde_json::json!(target));
+                frame.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
+            } else {
+                frame.load_url(Some(&CefString::from(target.as_str())));
+            }
         }
     }
 }
