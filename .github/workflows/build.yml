@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      linux_build_only:
+        description: Build and verify Linux only while debugging native integration (no release)
+        type: boolean
+        default: false
       frontend_only:
         description: Build frontend and isolated security tests (no CEF)
         type: boolean
@@ -137,13 +141,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - os: windows-latest
-            target: x86_64-pc-windows-msvc
-            artifact: nexusbro-windows
-          - os: ubuntu-24.04
-            target: x86_64-unknown-linux-gnu
-            artifact: nexusbro-linux
+        include: ${{ fromJSON(inputs.linux_build_only && '[{"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","artifact":"nexusbro-linux"}]' || '[{"os":"windows-latest","target":"x86_64-pc-windows-msvc","artifact":"nexusbro-windows"},{"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","artifact":"nexusbro-linux"}]') }}
 
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
