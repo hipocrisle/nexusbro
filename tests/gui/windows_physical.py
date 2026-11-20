@@ -704,7 +704,19 @@ try:
     def storage(case,value=None,origin='http://vpn-fixture.test'):
         params={'case':case}
         if value is not None:params['set']=value
-        ui('Адрес страницы',['Edit','ComboBox']).click_input();gui.hotkey('ctrl','a');gui.write(origin+'/storage?'+urllib.parse.urlencode(params),interval=.001);gui.press('enter')
+        url=origin+'/storage?'+urllib.parse.urlencode(params)
+        # A newly opened private tab may finish mounting after the menu click.
+        # Prove native keyboard focus and the exact entered URL before Enter,
+        # matching the verified download-navigation pattern below. These are
+        # bounded input attempts, not retries of the storage/privacy outcome.
+        for input_attempt in range(3):
+            address=focus_ui('Адрес страницы',['Edit','ComboBox'])
+            gui.hotkey('ctrl','a');gui.write(url,interval=.001)
+            deadline=time.monotonic()+3
+            while time.monotonic()<deadline and address.iface_value.CurrentValue!=url:time.sleep(.05)
+            if address.iface_value.CurrentValue==url:break
+        assert address.iface_value.CurrentValue==url,('Storage URL was not entered',case,address.iface_value.CurrentValue)
+        gui.press('enter')
         deadline=time.monotonic()+15
         while time.monotonic()<deadline:
             report=next((r for r in storage_reports if r.get('case')==[case]),None)
