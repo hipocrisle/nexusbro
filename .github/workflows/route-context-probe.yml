@@ -1,4 +1,4 @@
-name: CEF route context capability (offline, no release)
+name: CEF Windows route context capability (loopback only, no release)
 on:
   workflow_dispatch:
   workflow_call:
@@ -6,20 +6,21 @@ permissions:
   contents: read
 jobs:
   capability:
-    runs-on: ubuntu-24.04
+    runs-on: windows-latest
     timeout-minutes: 25
     env:
       CEF_VERSION: "156.0.26+g8ea0c73+chromium-156.0.8078.88"
       CEF_BASE: "cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88"
-      CEF_SHA1: "cacfbb7d7261fea682fb67c108de7e4347519ff7"
+      CEF_SHA1: "15d29eea209d857c22dc163706080295aea69b5c"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: x86_64-pc-windows-msvc
       - name: Identify compiler image
         id: image
-        run: echo "key=${ImageOS:-$RUNNER_OS}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+        shell: pwsh
+        run: '"key=$env:ImageOS-$env:ImageVersion" >> $env:GITHUB_OUTPUT'
       - uses: actions/cache/restore@v4
         id: cargo-cache
         with:
@@ -31,12 +32,6 @@ jobs:
             tests/route_context_probe/target/
           key: ${{ runner.os }}-route-probe-${{ steps.image.outputs.key }}-${{ hashFiles('tests/route_context_probe/Cargo.lock') }}
           restore-keys: ${{ runner.os }}-route-probe-${{ steps.image.outputs.key }}-
-      - name: Check preinstalled offline probe tools
-        run: |
-          set -euo pipefail
-          command -v Xvfb
-          command -v ip
-          command -v unshare
       - uses: actions/cache/restore@v4
         id: cef
         with:
@@ -44,28 +39,28 @@ jobs:
           key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
       - name: Verified CEF SDK
         if: steps.cef.outputs.cache-hit != 'true'
+        shell: bash
         run: |
           set -euo pipefail
-          curl -fSL --max-time 180 --retry 2 -o /tmp/cef-probe.tar.bz2 "https://cef-builds.spotifycdn.com/${CEF_BASE}_linux64_minimal.tar.bz2"
+          curl -fSL --max-time 180 --retry 2 -o /tmp/cef-probe.tar.bz2 "https://cef-builds.spotifycdn.com/${CEF_BASE}_windows64_minimal.tar.bz2"
           echo "$CEF_SHA1 /tmp/cef-probe.tar.bz2" | sha1sum -c -
           mkdir -p desktop/src-tauri/cef
           tar -xjf /tmp/cef-probe.tar.bz2 -C desktop/src-tauri/cef --strip-components=1
           mv desktop/src-tauri/cef/Release/* desktop/src-tauri/cef/
           mv desktop/src-tauri/cef/Resources/* desktop/src-tauri/cef/
           rm -rf desktop/src-tauri/cef/Release desktop/src-tauri/cef/Resources
-          printf '{"type":"minimal","name":"%s","sha1":"%s"}' "${CEF_BASE}_linux64_minimal.tar.bz2" "$CEF_SHA1" > desktop/src-tauri/cef/archive.json
+          printf '{"type":"minimal","name":"%s","sha1":"%s"}' "${CEF_BASE}_windows64_minimal.tar.bz2" "$CEF_SHA1" > desktop/src-tauri/cef/archive.json
       - uses: actions/cache/save@v4
         if: steps.cef.outputs.cache-hit != 'true'
         with:
           path: desktop/src-tauri/cef
           key: cef-${{ env.CEF_VERSION }}-${{ runner.os }}
       - name: Build only synthetic capability executable
+        shell: pwsh
         run: |
-          set -euo pipefail
-          export CEF_PATH="$GITHUB_WORKSPACE/desktop/src-tauri/cef"
-          cargo build --release --locked --manifest-path tests/route_context_probe/Cargo.toml --target x86_64-unknown-linux-gnu --bin route_context_probe
-          ldd "$CEF_PATH/libcef.so" > /tmp/route-probe-runtime-libs
-          if grep -q "not found" /tmp/route-probe-runtime-libs; then cat /tmp/route-probe-runtime-libs; exit 1; fi
+          $env:CEF_PATH="$env:GITHUB_WORKSPACE/desktop/src-tauri/cef"
+          cargo build --release --locked --manifest-path tests/route_context_probe/Cargo.toml --target x86_64-pc-windows-msvc --bin route_context_probe
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Save probe compiler cache even after a diagnostic compile failure
         if: always() && steps.cargo-cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -77,18 +72,32 @@ jobs:
             ~/.cargo/git/db/
             tests/route_context_probe/target/
           key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
-      - name: Measure contexts with physically isolated loopback networking
-        timeout-minutes: 5
+      - name: Measure only synthetic loopback routes with per-program outbound firewall
+        timeout-minutes: 7
+        shell: pwsh
         run: |
-          set -euo pipefail
-          sudo unshare --net -- bash -c '
-            set -euo pipefail
-            ip link set lo up
-            exec env CEF_PATH="$1" LD_LIBRARY_PATH="$1" python3 tests/gui/route_context_probe.py --exe "$2" --out "$3"
-          ' route-probe "$GITHUB_WORKSPACE/desktop/src-tauri/cef" "$GITHUB_WORKSPACE/tests/route_context_probe/target/x86_64-unknown-linux-gnu/release/route_context_probe" "$GITHUB_WORKSPACE/.dev-check/route-probe"
+          python -m pip install psutil
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $env:CEF_PATH="$env:GITHUB_WORKSPACE/desktop/src-tauri/cef"
+          $env:PATH="$env:CEF_PATH;$env:PATH"
+          $exe=(Resolve-Path tests/route_context_probe/target/x86_64-pc-windows-msvc/release/route_context_probe.exe).Path
+          $rule="NexusBroRouteProbe-$env:GITHUB_RUN_ID-$env:GITHUB_RUN_ATTEMPT"
+          New-Item -ItemType Directory -Force .dev-check/route-probe | Out-Null
+          try {
+            New-NetFirewallRule -Name $rule -DisplayName $rule -Direction Outbound -Action Block -Enabled True -Profile Any -Program $exe -RemoteAddress @('0.0.0.0-126.255.255.255','128.0.0.0-255.255.255.255','::/0') -ErrorAction Stop | Out-Null
+            $actual=Get-NetFirewallRule -Name $rule -ErrorAction Stop
+            if ($actual.Enabled -ne 'True' -or $actual.Action -ne 'Block' -or $actual.Direction -ne 'Outbound') { throw 'Program network guard was not installed' }
+            $program=($actual | Get-NetFirewallApplicationFilter).Program
+            if ($program -ne $exe) { throw 'Network guard targets another executable' }
+            @{scope='own-probe-executable';non_loopback_outbound_blocked=$true;loopback_family='IPv4';product_feature_ready=$false} | ConvertTo-Json | Set-Content .dev-check/route-probe/network-guard.json
+            python tests/gui/route_context_probe.py --exe $exe --out .dev-check/route-probe
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          } finally {
+            Remove-NetFirewallRule -Name $rule -ErrorAction SilentlyContinue
+          }
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: route-context-capability
+          name: route-context-capability-windows
           path: .dev-check/route-probe/
           retention-days: 7

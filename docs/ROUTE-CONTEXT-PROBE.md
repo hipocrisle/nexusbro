@@ -52,3 +52,40 @@ Xvfb и iproute2 уже присутствуют в GitHub Ubuntu24; налич�
 Команда из корня: cargo build --release --locked --manifest-path
 tests/route_context_probe/Cargo.toml --target x86_64-unknown-linux-gnu.
 Локально наDE1 выполнена только offlineгенерацияCargo.lock, не Rustсборка.
+
+## Windows follow-up: old cache and HttpOnly authentication
+
+The `probe/route-windows` branch extends the same bounded synthetic example; it
+is never a product release workflow. It uses the hosted MSVC runner and the
+product's exact verified Windows CEF archive. No Rust/CEF runs on the DE-1 host.
+
+Three existing capability scenarios remain: independent, shared and CLI. An
+additional legacy sequence starts three distinct native engine processes while
+keeping one marked disposable root and the original `kesh` path:
+
+1. `legacy_seed`: the original global context with CLI proxy A receives a real
+   persistent HttpOnly cookie, a session HttpOnly cookie, and localStorage.
+2. `legacy_reopen`: no CLI proxy, context preference B, the exact same global
+   root/cache. The server checks the actual Cookie header, and JS confirms
+   HttpOnly cookies are not exposed through `document.cookie`. Persistent auth
+   and localStorage must survive; session-cookie survival is measured, not
+   assumed or silently enabled.
+3. `legacy_parallel`: original `kesh` context through A and a fresh override
+   subdirectory through B navigate concurrently. The original context must send
+   its persistent HttpOnly auth; the override must see none of the original
+   cookies/localStorage. No profile, Local State or cookie database is copied.
+
+All cookie values are synthetic, but HttpOnly values are never printed. Native
+flush and normal-close callbacks are required before a process is restarted.
+The supervisor limits each engine to55s,40 owned processes and3GiB working set.
+A temporary per-executable outbound firewall rule on the disposable Windows CI
+runner blocks non-loopback IPv4 and all IPv6; fixtures use127.0.0.1 only. Rule
+creation is verified and failure stops the test. The rule is removed in finally;
+no firewall or service on DE-1 is touched. This is process-scoped isolation, not
+an operating-system network namespace or a proof about Windows DNS services.
+
+Coverage is basic HTTP/fresh synthetic profiles plus same-root/cache persistence.
+HTTPS, service-worker startup leakage, actual VPNs, product integration and real
+user profile migration remain explicitly unverified. `product_feature_ready`
+stays false even if the capability matrix passes. Build and runtime results are
+pending until the hosted Windows job completes.

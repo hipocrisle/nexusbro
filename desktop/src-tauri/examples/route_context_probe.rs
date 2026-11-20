@@ -130,6 +130,106 @@ fn configure(
     // Only bounded CEF API errors and type diagnostics; never preference contents.
     Ok(())
 }
+wrap_completion_callback! {
+    struct Flushed { done: Arc<AtomicUsize> }
+    impl CompletionCallback { fn on_complete(&self) { self.done.store(1,Ordering::SeqCst); } }
+}
+fn legacy(root: &PathBuf, scenario: &str, a: &str, b: &str, target: &str) -> Result<bool, String> {
+    let ready = Arc::new(AtomicUsize::new(0));
+    // Same path as Settings.cache_path: no move/copy of the old Windows profile.
+    let mut explicit = context(root.join("kesh"), ready.clone())?;
+    let started = Instant::now();
+    while ready.load(Ordering::SeqCst) < 1 && started.elapsed() < Duration::from_secs(10) {
+        do_message_loop_work();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if ready.load(Ordering::SeqCst) != 1 {
+        return Err("legacy context initialization deadline exceeded".into());
+    }
+    let global = request_context_get_global_context().ok_or("global context missing")?;
+    if global.is_sharing_with(Some(&mut explicit)) == 0 {
+        return Err("legacy default cache was not reused".into());
+    }
+    if scenario == "legacy_reopen" {
+        configure(&global, "legacy-default", b, false)?;
+    }
+    let (path, label) = if scenario == "legacy_seed" {
+        ("first", "A")
+    } else {
+        ("second", "B")
+    };
+    let mut info = WindowInfo {
+        runtime_style: RuntimeStyle::ALLOY,
+        window_name: CefString::from("LegacyProfileProbe"),
+        bounds: Rect {
+            x: 0,
+            y: 0,
+            width: 800,
+            height: 600,
+        },
+        ..WindowInfo::default()
+    };
+    #[cfg(target_os = "windows")]
+    {
+        info = info.set_as_popup(Default::default(), "LegacyProfileProbe");
+    }
+    let loaded = Arc::new(AtomicUsize::new(0));
+    let closed = Arc::new(AtomicUsize::new(0));
+    let url = format!("{}/{path}?context={label}", target.trim_end_matches('/'));
+    let browser = browser_host_create_browser_sync(
+        Some(&info),
+        Some(&mut ProbeClient::new(loaded.clone(), closed.clone())),
+        Some(&CefString::from(url.as_str())),
+        Some(&BrowserSettings::default()),
+        None,
+        None,
+    )
+    .ok_or("legacy browser creation failed")?;
+    while !(root.join("done").is_file() && loaded.load(Ordering::SeqCst) >= 1)
+        && started.elapsed() < Duration::from_secs(35)
+    {
+        do_message_loop_work();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let complete = root.join("done").is_file() && loaded.load(Ordering::SeqCst) >= 1;
+    let done = Arc::new(AtomicUsize::new(0));
+    let flush_accepted = global
+        .cookie_manager(None)
+        .is_some_and(|manager| manager.flush_store(Some(&mut Flushed::new(done.clone()))) != 0);
+    let flushing = Instant::now();
+    while flush_accepted
+        && done.load(Ordering::SeqCst) == 0
+        && flushing.elapsed() < Duration::from_secs(5)
+    {
+        do_message_loop_work();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let flush_confirmed = flush_accepted && done.load(Ordering::SeqCst) == 1;
+    if let Some(host) = browser.host() {
+        host.close_browser(0);
+    }
+    let closing = Instant::now();
+    while closed.load(Ordering::SeqCst) < 1 && closing.elapsed() < Duration::from_secs(5) {
+        do_message_loop_work();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    if closed.load(Ordering::SeqCst) != 1 {
+        return Err("CEF browsers did not close within deadline".into());
+    }
+    if !flush_confirmed {
+        return Err("cookie flush was not confirmed before normal close".into());
+    }
+    println!(
+        "{}",
+        serde_json::json!({"legacy_phase":scenario,"same_root_and_cache":true,"global_cache_shared":true,
+        "cookie_flush_confirmed":true,"normal_close_confirmed":true,"pages_loaded":complete})
+    );
+    drop(browser);
+    drop(explicit);
+    drop(global);
+    let _ = a;
+    Ok(complete)
+}
 fn experiment(
     root: PathBuf,
     scenario: &str,
@@ -139,7 +239,14 @@ fn experiment(
 ) -> Result<bool, String> {
     let started = Instant::now();
     let ready = Arc::new(AtomicUsize::new(0));
-    let mut ca = context(root.join("A"), ready.clone())?;
+    let mut ca = context(
+        root.join(if scenario == "legacy_parallel" {
+            "kesh"
+        } else {
+            "A"
+        }),
+        ready.clone(),
+    )?;
     let mut cb = if scenario == "shared" {
         request_context_cef_create_context_shared(
             Some(&mut ca),
@@ -147,7 +254,14 @@ fn experiment(
         )
         .ok_or("shared context creation failed")?
     } else {
-        context(root.join("B"), ready.clone())?
+        context(
+            root.join(if scenario == "legacy_parallel" {
+                "override-new"
+            } else {
+                "B"
+            }),
+            ready.clone(),
+        )?
     };
     while ready.load(Ordering::SeqCst) < 2 && started.elapsed() < Duration::from_secs(10) {
         do_message_loop_work();
@@ -236,11 +350,26 @@ fn run() -> Result<i32, String> {
         return Ok(execute_process(Some(args.as_main_args()), None, std::ptr::null_mut()).max(0));
     }
     let root = PathBuf::from(arg("--probe-root")?);
-    if !root.is_absolute() || root.exists() {
-        return Err("probe-root must be an absolute, nonexistent disposable directory".into());
-    }
     let scenario = arg("--scenario")?;
-    if !["independent", "shared", "cli"].contains(&scenario.as_str()) {
+    if !root.is_absolute()
+        || (root.exists()
+            && !((scenario == "legacy_reopen" || scenario == "legacy_parallel")
+                && root.join("owned-profile-probe").is_file()))
+    {
+        return Err(
+            "probe-root must be a new disposable directory or its marked legacy reopen".into(),
+        );
+    }
+    if ![
+        "independent",
+        "shared",
+        "cli",
+        "legacy_seed",
+        "legacy_reopen",
+        "legacy_parallel",
+    ]
+    .contains(&scenario.as_str())
+    {
         return Err("invalid scenario".into());
     }
     let a = arg("--proxy-a")?;
@@ -250,16 +379,28 @@ fn run() -> Result<i32, String> {
         return Err("only explicit HTTP loopback fixtures are allowed".into());
     }
     std::fs::create_dir_all(&root).map_err(|e| e.to_string())?;
+    if scenario == "legacy_seed" {
+        std::fs::write(root.join("owned-profile-probe"), b"synthetic-only")
+            .map_err(|e| e.to_string())?;
+    }
     let cef_dir = PathBuf::from(std::env::var("CEF_PATH").map_err(|_| "CEF_PATH required")?);
     let mut settings = Settings::default();
     settings.no_sandbox = 1;
     settings.external_message_pump = 1;
     settings.root_cache_path = CefString::from(root.to_string_lossy().as_ref());
-    settings.cache_path = CefString::from(root.join("global").to_string_lossy().as_ref());
+    settings.cache_path = CefString::from(
+        root.join(if scenario.starts_with("legacy_") {
+            "kesh"
+        } else {
+            "global"
+        })
+        .to_string_lossy()
+        .as_ref(),
+    );
     settings.resources_dir_path = CefString::from(cef_dir.to_string_lossy().as_ref());
     settings.locales_dir_path = CefString::from(cef_dir.join("locales").to_string_lossy().as_ref());
     settings.log_severity = LogSeverity::DISABLE;
-    let mut app = ProbeApp::new(if scenario == "cli" {
+    let mut app = ProbeApp::new(if scenario == "cli" || scenario == "legacy_seed" {
         a.clone()
     } else {
         String::new()
@@ -273,7 +414,11 @@ fn run() -> Result<i32, String> {
     {
         return Err("CEF initialize failed".into());
     }
-    let result = experiment(root, &scenario, &a, &b, &target);
+    let result = if scenario == "legacy_seed" || scenario == "legacy_reopen" {
+        legacy(&root, &scenario, &a, &b, &target)
+    } else {
+        experiment(root, &scenario, &a, &b, &target)
+    };
     // Shutdown is safe only after all browser lifetimes ended. On close failure,
     // process exit is bounded; do not enter an unsafe shutdown with live browsers.
     if !matches!(&result, Err(e) if e == "CEF browsers did not close within deadline") {

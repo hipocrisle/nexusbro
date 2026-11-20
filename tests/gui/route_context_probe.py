@@ -6,7 +6,9 @@ import json
 import os
 import pathlib
 import select
+import psutil
 import signal
+import sys
 import subprocess
 import tempfile
 import threading
@@ -19,6 +21,8 @@ def scenario(exe, workspace, kind, display):
     lock = threading.Condition()
     reports, navigation, denied = {}, {}, []
     first_report = threading.Event()
+    native_phase=None
+    phase_receipts={}
 
     class Origin(http.server.BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -42,7 +46,11 @@ def scenario(exe, workspace, kind, display):
 if(context==='A'){localStorage.setItem('route-probe-seed','A');document.cookie='route_probe_seed=A; Path=/; SameSite=Lax';}
 fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(before)});'''.replace('CONTEXT', json.dumps(context))
             body = ('<!doctype html><title>Route context fixture</title><script>'+script+'</script>').encode()
-            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.send_header('Content-Length', str(len(body))); self.end_headers()
+            self.send_response(200); self.send_header('Content-Type', 'text/html'); self.send_header('Content-Length', str(len(body)))
+            if kind == 'legacy' and native_phase == 'legacy_seed' and context == 'A':
+                self.send_header('Set-Cookie', 'route_probe_auth=persistent-fixture; Path=/; SameSite=Lax; HttpOnly; Max-Age=3600')
+                self.send_header('Set-Cookie', 'route_probe_session=session-fixture; Path=/; SameSite=Lax; HttpOnly')
+            self.end_headers()
             self.wfile.write(body)
             with lock:
                 navigation[context]['end'] = time.monotonic()
@@ -55,8 +63,13 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
             value = json.loads(self.rfile.read(size))
             with lock:
                 reports[context] = {'storage': value.get('storage'), 'cookie': value.get('cookie', ''), 'route': self.headers.get('X-Route-Probe', 'DIRECT')}
+                if kind == 'legacy':
+                    cookies = self.headers.get('Cookie', '').split('; ')
+                    reports[context].update(persistent_http_only_sent='route_probe_auth=persistent-fixture' in cookies,
+                        session_http_only_sent='route_probe_session=session-fixture' in cookies,
+                        script_cannot_read_http_only='route_probe_auth=' not in value.get('cookie', '') and 'route_probe_session=' not in value.get('cookie', ''))
                 if context == 'A': first_report.set()
-                if len(reports) == 2: (profile/'done').touch()
+                if len(reports) == 2 or (kind == 'legacy' and native_phase != 'legacy_parallel'): (profile/'done').touch()
             self.send_response(204); self.end_headers()
 
     origin = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Origin)
@@ -95,64 +108,112 @@ fetch('/report?context='+context,{method:'POST',headers:{'Content-Type':'applica
         server.daemon_threads = True
         threading.Thread(target=server.serve_forever, daemon=True).start()
     env = {**os.environ, 'DISPLAY': display}
-    command = [str(exe), '--probe-root', str(profile), '--scenario', kind, '--proxy-a', proxy_a, '--proxy-b', proxy_b, '--target-base', 'http://127.0.0.1:'+str(origin.server_port)]
-    process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, start_new_session=True)
+    processes=[]
     try:
-        stdout, stderr = process.communicate(timeout=55)
-        (workspace/(kind+'-native.jsonl')).write_text(stdout)
-        (workspace/(kind+'-native.log')).write_text(stderr)
-        api = [json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
-        if process.returncode or set(reports) != {'A', 'B'}:
-            raise AssertionError('Native '+kind+' probe did not complete; inspect its bounded diagnostic output')
-        expected = {'independent': {'A':'A','B':'B'}, 'shared': {'A':'B','B':'B'}, 'cli': {'A':'A','B':'A'}}[kind]
+        api=[]
+        for native_kind in (('legacy_seed', 'legacy_reopen', 'legacy_parallel') if kind=='legacy' else (kind,)):
+            native_phase=native_kind
+            if native_kind=='legacy_parallel':
+                reports.clear();navigation.clear();first_report.clear()
+            if native_kind in ('legacy_reopen','legacy_parallel'):
+                (profile/'done').unlink()
+            command = [str(exe), '--probe-root', str(profile), '--scenario', native_kind, '--proxy-a', proxy_a, '--proxy-b', proxy_b, '--target-base', 'http://127.0.0.1:'+str(origin.server_port)]
+            process = subprocess.Popen(command, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                **({'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform=='win32' else {'start_new_session':True}))
+            processes.append(process)
+            # Bounded CEF population and working set, in addition to runtime.
+            deadline=time.monotonic()+55
+            while True:
+                try:
+                    root_process=psutil.Process(process.pid)
+                    owned=[root_process,*root_process.children(recursive=True)]
+                    if len(owned)>40 or sum(p.memory_info().rss for p in owned if p.is_running())>3*1024**3:
+                        raise RuntimeError('Owned probe process or memory limit exceeded')
+                except psutil.NoSuchProcess:
+                    pass
+                remaining=deadline-time.monotonic()
+                if remaining<=0:raise subprocess.TimeoutExpired(command,55)
+                try:
+                    stdout,stderr=process.communicate(timeout=min(.5,remaining));break
+                except subprocess.TimeoutExpired:
+                    pass
+            (workspace/(native_kind+'-native.jsonl')).write_text(stdout)
+            (workspace/(native_kind+'-native.log')).write_text(stderr)
+            phase_api=[json.loads(line) for line in stdout.splitlines() if line.startswith('{')]
+            api.extend(phase_api)
+            phase_receipts[native_kind]=json.loads(json.dumps(reports))
+            expected_reports={'A'} if native_kind=='legacy_seed' else {'A','B'}
+            if process.returncode or set(reports)!=expected_reports:
+                raise AssertionError('Native '+native_kind+' probe did not complete; inspect its bounded diagnostic output')
+        expected = {'independent': {'A':'A','B':'B'}, 'shared': {'A':'B','B':'B'}, 'cli': {'A':'A','B':'A'}, 'legacy': {'A':'A','B':'B'}}[kind]
         actual = {key: row['route'] for key, row in reports.items()}
         navigation_routes = {key: row['route'] for key, row in navigation.items()}
         shared = reports['B']['storage'] == 'A' and 'route_probe_seed=A' in reports['B']['cookie']
-        storage_expected = shared if kind == 'shared' else reports['B']['storage'] is None and not reports['B']['cookie']
+        storage_expected = (shared if kind == 'shared' else reports['B']['storage'] is None and not reports['B']['cookie'])
         overlap = max(row['start'] for row in navigation.values()) < min(row['end'] for row in navigation.values())
-        matches = actual == expected and navigation_routes == expected and storage_expected and overlap
-        return {'scenario':kind,'actual_fetch_routes':actual,'actual_navigation_routes':navigation_routes,'expected_routes':expected,'storage_shared':shared,'storage_matches_expected':storage_expected,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'matches_expected_matrix':matches,'feature_ready':False}
+        legacy_ok=True
+        if kind=='legacy':
+            seed=phase_receipts['legacy_seed']['A'];reopened=phase_receipts['legacy_reopen']['B']
+            inherited=reports['A'];override=reports['B']
+            legacy_ok=(all(row['persistent_http_only_sent'] and row['script_cannot_read_http_only'] for row in [seed,reopened,inherited])
+                and seed['session_http_only_sent'] and reopened['storage']=='A' and inherited['storage']=='A'
+                and not override['persistent_http_only_sent'] and not override['session_http_only_sent'] and override['storage'] is None
+                and len(processes)==3 and processes[0].pid!=processes[1].pid)
+        matches = actual == expected and navigation_routes == expected and storage_expected and overlap and legacy_ok
+        return {'scenario':kind,'actual_fetch_routes':actual,'actual_navigation_routes':navigation_routes,'expected_routes':expected,'storage_shared':shared,'storage_matches_expected':storage_expected,'navigation_overlapped':overlap,'native_api':api,'blocked_nonfixture_proxy_requests':len(denied),'matches_expected_matrix':matches,'feature_ready':False,**({'persistent_http_only_auth_preserved':legacy_ok,'session_http_only_survived_restart':phase_receipts['legacy_reopen']['B']['session_http_only_sent'],'separate_process_restart':True,'same_root_and_cache':True,'server_auth_receipts':phase_receipts} if kind=='legacy' else {})}
     finally:
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGTERM)
-            try: process.wait(timeout=3)
-            except subprocess.TimeoutExpired: os.killpg(process.pid, signal.SIGKILL); process.wait()
-        else:
-            try: os.killpg(process.pid, signal.SIGTERM)
-            except ProcessLookupError: pass
+        for process in processes:
+            if sys.platform=='win32':
+                # The PID is our own subprocess. /T also kills its CEF children.
+                if process.poll() is None:
+                    subprocess.run(['taskkill','/PID',str(process.pid),'/T','/F'],stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+                    process.wait(timeout=5)
+            else:
+                try:os.killpg(process.pid,signal.SIGTERM)
+                except ProcessLookupError:pass
+                try:process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid,signal.SIGKILL);process.wait()
         for server in servers: server.shutdown(); server.server_close()
 
 
 def main():
     parser = argparse.ArgumentParser(); parser.add_argument('--exe', required=True, type=pathlib.Path); parser.add_argument('--out', required=True, type=pathlib.Path)
     args = parser.parse_args(); args.out.mkdir(parents=True, exist_ok=True)
-    read_fd, write_fd = os.pipe()
-    xlog = (args.out/'xvfb.log').open('wb')
-    xserver = subprocess.Popen(['Xvfb', '-displayfd', str(write_fd), '-screen', '0', '1280x900x24', '-nolisten', 'tcp'], pass_fds=(write_fd,), stdout=xlog, stderr=subprocess.STDOUT, start_new_session=True)
-    os.close(write_fd)
-    rows=[]
-    try:
+    xserver=xlog=None
+    read_fd=None
+    display=os.environ.get('DISPLAY','')
+    if sys.platform!='win32':
+        read_fd, write_fd = os.pipe()
+        xlog = (args.out/'xvfb.log').open('wb')
+        xserver = subprocess.Popen(['Xvfb', '-displayfd', str(write_fd), '-noreset', '-screen', '0', '1280x900x24', '-nolisten', 'tcp'], pass_fds=(write_fd,), stdout=xlog, stderr=subprocess.STDOUT, start_new_session=True)
+        os.close(write_fd)
         ready, _, _ = select.select([read_fd], [], [], 25)
         assert ready, 'Xvfb display allocation timed out'
         number = os.read(read_fd, 32).decode().strip(); assert number.isdigit()
+        display=':'+number
+    rows=[]
+    try:
         with tempfile.TemporaryDirectory(prefix='cef-route-probe-') as temporary:
             workspace=pathlib.Path(temporary)
-            for kind in ('independent','shared','cli'):
+            for kind in ('independent','shared','cli','legacy'):
                 try:
-                    row=scenario(args.exe.resolve(),workspace,kind,':'+number); rows.append(row)
+                    row=scenario(args.exe.resolve(),workspace,kind,display); rows.append(row)
                 finally:
-                    for path in workspace.glob(kind+'-native.*'):
+                    for path in workspace.glob(kind+'*-native.*'):
                         (args.out/path.name).write_bytes(path.read_bytes())
         assert all(row['matches_expected_matrix'] for row in rows), 'Actual routes or storage do not match the proposed capability matrix'
-        (args.out/'results.json').write_text(json.dumps({'measurements':rows,'capability_measurement_passed':True,'product_feature_ready':False},indent=2)+'\n')
+        (args.out/'results.json').write_text(json.dumps({'measurements':rows,'capability_measurement_passed':True,'product_feature_ready':False,'platform':sys.platform,'coverage':{'http':True,'https':False,'service_worker_startup':False,'product_integration':False}},indent=2)+'\n')
         print(json.dumps({'capability_measurement_passed':True,'product_feature_ready':False}))
     except Exception as error:
         (args.out/'results.json').write_text(json.dumps({'measurements':rows,'capability_measurement_passed':False,'product_feature_ready':False,'failure':str(error)[:1000]},indent=2)+'\n')
         raise
     finally:
-        os.close(read_fd); xserver.terminate()
-        try:xserver.wait(timeout=3)
-        except subprocess.TimeoutExpired:xserver.kill();xserver.wait()
-        xlog.close()
+        if read_fd is not None:os.close(read_fd)
+        if xserver:
+            xserver.terminate()
+            try:xserver.wait(timeout=3)
+            except subprocess.TimeoutExpired:xserver.kill();xserver.wait()
+        if xlog:xlog.close()
 
 if __name__=='__main__':main()
