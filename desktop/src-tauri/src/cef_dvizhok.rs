@@ -84,13 +84,8 @@ wrap_app! {
                 // Route transports are HTTP CONNECT/SOCKS TCP; prohibit direct
                 // UDP paths that would otherwise bypass a per-context proxy.
                 ks.append_switch(Some(&CefString::from("disable-quic")));
-                // Proxy endpoints are loopback literals; unresolved origins must
-                // be resolved by the proxy, never by Chromium's direct resolver.
-                // The configured proxy itself is a numeric loopback endpoint.
-                // Preserve its resolution while origins remain proxy-resolved.
-                // Chromium 156 MappedHostResolver recognizes ^NOTFOUND as a
-                // failing request, rather than resolving a replacement name.
-                ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP * ^NOTFOUND, EXCLUDE localhost, EXCLUDE 127.0.0.1, EXCLUDE ::1")));
+                // Speculative DNS is disabled per profile before admission.
+                // Keep ordinary Direct WebRTC/STUN hostname resolution intact.
                 // Движок — тёмный, как вся программа.
                 ks.append_switch(Some(&CefString::from("force-dark-mode")));
             }

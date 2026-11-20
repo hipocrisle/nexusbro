@@ -23,8 +23,9 @@ wrap_request_context_handler! {
     struct Initialized { state:Arc<AtomicU8>, proxy:String,allow_non_proxied_udp:bool }
     impl RequestContextHandler {
         fn on_request_context_initialized(&self,context:Option<&mut RequestContext>){
-            if self.proxy.is_empty(){self.state.store(3,Ordering::Release);return;}
-            let good=context.is_some_and(|context|configure(context,&self.proxy,self.allow_non_proxied_udp));
+            let Some(context)=context else{self.state.store(2,Ordering::Release);return;};
+            if self.proxy.is_empty(){self.state.store(if disable_prediction(context){3}else{2},Ordering::Release);return;}
+            let good=configure(context,&self.proxy,self.allow_non_proxied_udp);
             self.state.store(if good{1}else{2},Ordering::Release);
         }
         fn resource_request_handler(&self,_browser:Option<&mut Browser>,_frame:Option<&mut Frame>,_request:Option<&mut Request>,_is_navigation:i32,_is_download:i32,_request_initiator:Option<&CefString>,_disable_default_handling:Option<&mut i32>)->Option<ResourceRequestHandler>{
@@ -34,7 +35,21 @@ wrap_request_context_handler! {
         }
     }
 }
+fn disable_prediction(context: &RequestContext) -> bool {
+    let key = CefString::from("net.network_prediction_options");
+    if context.can_set_preference(Some(&key)) == 0 {
+        eprintln!("route-context: profile prediction policy is unavailable; admission denied");
+        return false;
+    }
+    let Some(mut value) = value_create() else { return false; };
+    if value.set_int(2) == 0 { return false; }
+    let mut error = CefString::from("route prediction policy");
+    let accepted = context.set_preference(Some(&key), Some(&mut value), Some(&mut error)) != 0;
+    if !accepted { eprintln!("route-context: profile prediction policy was rejected; admission denied"); }
+    accepted
+}
 fn configure(context: &RequestContext, proxy: &str, allow_non_proxied_udp: bool) -> bool {
+    if !disable_prediction(context) { return false; }
     let policy = CefString::from("webrtc.ip_handling_policy");
     if context.can_set_preference(Some(&policy)) == 0 {
         eprintln!("route-context: WebRTC policy preference is unavailable; admission denied");
