@@ -270,6 +270,17 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
     def required_snapshot(tab_ids):
         return wait(lambda: snapshot(tab_ids), "Required native session rows were unavailable")
 
+    def normal_policy():
+        # Observe the actual normal policy; never initialize it through Save.
+        try:
+            policy = json.loads((data / "nastrojki.json").read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return False
+        if not isinstance(policy, dict):
+            return False
+        minutes = policy.get("memory_saver_minutes", 30)
+        return policy.get("memory_saver", True) is True and type(minutes) is int and minutes == 30
+
     def memory(label):
         samples = []
         for _ in range(5):
