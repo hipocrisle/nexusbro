@@ -75,7 +75,7 @@ class Quiet(http.server.SimpleHTTPRequestHandler):
 
 with tempfile.TemporaryDirectory(prefix='nexusbro-security-ui-') as temp:
  harness=pathlib.Path(temp);(harness/'src').mkdir()
- for name in ['SecuritySettings.tsx','TotpQr.tsx','security.ts','securitySettings.css','Icons.tsx','Vybor.tsx','App.css']:
+ for name in ['SecuritySettings.tsx','SyncHistory.tsx','TotpQr.tsx','security.ts','securitySettings.css','Icons.tsx','Vybor.tsx','App.css']:
   shutil.copy2(root/'desktop/src'/name,harness/'src'/name)
  modules=root/'desktop/node_modules'
  if not modules.exists():modules=pathlib.Path('/matrix/nexusbro/desktop/node_modules')
