@@ -149,7 +149,7 @@ def run(args):
             painted(client)
 
         def select(label,text,occurrence=0):
-            selector=DIALOG+' button[role="combobox"][aria-label='+json.dumps(label)+']'
+            selector=DIALOG+' button[role="combobox"][aria-label='+json.dumps(label,ensure_ascii=False)+']'
             require(client.js('(()=>{const e=document.querySelector('+json.dumps(selector)+');if(!e)return false;e.scrollIntoView({block:"center"});return true})()'),'Backup mapping selector is missing')
             focus_shell();client.click(selector)
             js_wait(client,'!!document.querySelector(".vybor-popup")','Custom mapping popup did not open',5)
@@ -159,7 +159,7 @@ def run(args):
             js_wait(client,'!document.querySelector(".vybor-popup")','Mapping popup did not close',5)
 
         def fill(label,value):
-            selector=DIALOG+' input[aria-label='+json.dumps(label)+']'
+            selector=DIALOG+' input[aria-label='+json.dumps(label,ensure_ascii=False)+']'
             require(client.js('(()=>{const e=document.querySelector('+json.dumps(selector)+');if(!e)return false;e.scrollIntoView({block:"center"});return true})()'),'Backup password field is missing')
             focus_shell();client.fill(selector,value)
 
