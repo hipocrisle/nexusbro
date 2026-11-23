@@ -24,7 +24,7 @@ pub(crate) enum Sobytie {
     MemoryFrozen(u64,i32,String,bool),
     MemoryLoaded(u64,i32),
     MainLoadFailed(u64,i32,String,u64,String,i32),
-    NavigationFailed(u64,i32,String,i32),
+    NavigationFailed(u64,i32,String,u64,i32),
     Ikonka(u64, String, String),
     AdresnyiVvod,
     #[cfg(target_os = "windows")]
@@ -87,7 +87,9 @@ wrap_load_handler! {
             if error_code!=Errorcode::ABORTED&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let (Some(browser),Some(url))=(_browser.as_ref(),_failed_url){
                 let failed_url=url.to_string();let identity=browser.identifier();
                 let native_code:cef::sys::cef_errorcode_t=error_code.into();
-                let _=self.tx.send(Sobytie::NavigationFailed(self.id,identity,failed_url.clone(),native_code as i32));
+                if let Some(epoch)=crate::memory_guard::diagnostic_epoch(identity,&failed_url){
+                    let _=self.tx.send(Sobytie::NavigationFailed(self.id,identity,failed_url.clone(),epoch,native_code as i32));
+                }
                 let accepted=crate::memory_guard::native_load_error(identity,&failed_url);
                 eprintln!("NEXUSBRO_ROUTE_ERROR browser={identity} native_candidate={accepted}");
                 if accepted{
@@ -1215,8 +1217,9 @@ impl Rabota {
                         }
                     }
                 }
-                Sobytie::NavigationFailed(id,identity,url,code)=>{
-                    if !brauzery.get(&id).is_some_and(|browser|browser.identifier()==identity){continue;}
+                Sobytie::NavigationFailed(id,identity,url,epoch,code)=>{
+                    if !brauzery.get(&id).is_some_and(|browser|browser.identifier()==identity)
+                        ||crate::memory_guard::diagnostic_epoch(identity,&url)!=Some(epoch){continue;}
                     if let Some(tab)=s.vkladki.iter().find(|t|t.id==id&&t.adres==url&&!t.route_pending){
                         let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"navigation-error","id":id,"code":code,"route":tab.route,"route_generation":tab.route_generation})));
                     }

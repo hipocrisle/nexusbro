@@ -15,6 +15,8 @@ struct Protection {
     navigation_epoch: u64,
     navigation_url: String,
     navigation_get: bool,
+    // Diagnostic-only completion; never grants safe-to-close/unload permission.
+    diagnostic_complete: bool,
     error_eligible: bool,
     error: Option<NativeError>,
     pending_error_document: Option<(u64, String, String)>,
@@ -31,6 +33,7 @@ pub fn navigation_to(browser: i32, get: bool, url: &str) {
         p.navigation_epoch = p.navigation_epoch.saturating_add(1);
         p.navigation_url = url.into();
         p.navigation_get = get;
+        p.diagnostic_complete = false;
         p.error_eligible = true;
         p.error = None;
         p.pending_error_document = None;
@@ -97,9 +100,19 @@ pub fn native_error_epoch(browser: i32, failed_url: &str) -> Option<u64> {
         Some(error.epoch)
     })
 }
+/// Bind a queued UI diagnostic to the native main-frame navigation, including
+/// same-URL retries. This observer does not classify an error as safe to unload.
+pub fn diagnostic_epoch(browser: i32, url: &str) -> Option<u64> {
+    DOCUMENTS.with(|m| {
+        let m = m.borrow();
+        let p = m.get(&browser)?;
+        (!p.diagnostic_complete && p.navigation_url == url).then_some(p.navigation_epoch)
+    })
+}
 pub fn load_succeeded(browser: i32) {
     DOCUMENTS.with(|m| {
         if let Some(p) = m.borrow_mut().get_mut(&browser) {
+            p.diagnostic_complete = true;
             p.error = None;
             p.error_eligible = false;
             p.pending_error_document = None;
@@ -402,5 +415,24 @@ mod tests {
         assert!(native_load_error(b, url));
         closed(b);
         assert!(native_error_epoch(b, url).is_none());
+    }
+    #[test]
+    fn diagnostic_queue_epoch_does_not_approve_unload_and_rejects_retry_success_close() {
+        let b = 908;
+        let url = "https://diagnostic.test/";
+        navigation_to(b, false, url);
+        edited(b);
+        let old = diagnostic_epoch(b, url).unwrap();
+        assert!(reason(b).is_some());
+        assert!(!confirmed_error(b, url));
+        navigation_to(b, false, url);
+        assert_ne!(diagnostic_epoch(b, url), Some(old));
+        assert!(diagnostic_epoch(b, "https://other.test/").is_none());
+        load_succeeded(b);
+        assert!(diagnostic_epoch(b, url).is_none());
+        assert!(reason(b).is_some());
+        navigation_to(b, true, url);
+        closed(b);
+        assert!(diagnostic_epoch(b, url).is_none());
     }
 }

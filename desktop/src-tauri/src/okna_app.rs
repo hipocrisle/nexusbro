@@ -14,6 +14,8 @@ pub struct Okno {
     pub hwnd:Option<u32>,
     pub mesto:Option<Mesto>,
     pub sessiya:Option<Sessiya>,
+    // First ACK of this native attachment, immutable across reorder/focus updates.
+    pub initial_session:Option<Sessiya>,
     pub hidden:bool,
     pub closing:bool,
     pub privatnaya:bool,
@@ -47,7 +49,10 @@ pub fn sobytie(app:&tauri::AppHandle,s:&Sostoyanie,super_id:&str,data:&serde_jso
     let session={let mut map=s.okna.0.lock().unwrap();let Some(w)=map.get_mut(label)else{return true};
         if w.super_id!=super_id{if let Some(v)=w.others.get_mut(super_id){if let Some(h)=data["hwnd"].as_u64(){v.hwnd=Some(h as u32);let _=sistema::pokazat(h as u32,false);}if let Ok(session)=serde_json::from_value::<Sessiya>(data["sessiya"].clone()){v.sessiya=Some(session);}}drop(map);persist(app,s);return true;}
         if let Some(hwnd)=data["hwnd"].as_u64(){w.hwnd=Some(hwnd as u32);}
-        if let Ok(session)=serde_json::from_value::<Sessiya>(data["sessiya"].clone()){w.sessiya=Some(session);}
+        if let Ok(session)=serde_json::from_value::<Sessiya>(data["sessiya"].clone()){
+            if data["tip"]=="okno-ready"{w.initial_session=Some(session.clone());}
+            w.sessiya=Some(session);
+        }
         w.sessiya.clone()};
     persist(app,s);
     obolochka(app,s,label);
@@ -95,7 +100,7 @@ fn create_window(app:&tauri::AppHandle,s:&Sostoyanie,id:String,privatnaya:bool,r
     let preferred=main.as_ref().and_then(|w|Some((w.inner_size().ok()?,w.scale_factor().ok()?))).map(|(size,k)|(size.width as f64/k,size.height as f64/k)).unwrap_or((1200.,800.));
     let width=preferred.0.min(1200.).min(limit_w).max(900_f64.min(limit_w));let height=preferred.1.min(800.).min(limit_h).max(560_f64.min(limit_h));
     let theme=main.as_ref().and_then(|w|w.theme().ok());let maximized=main.as_ref().is_some_and(|w|w.is_maximized().unwrap_or(false));
-    s.okna.0.lock().unwrap().insert(label.clone(),Okno{others,pending_close:Default::default(),super_id:id,engine:0,hwnd:None,mesto:None,sessiya:session,hidden:false,closing:false,privatnaya,generation:Default::default(),recovery_key,recovery_lazy:recovering});
+    s.okna.0.lock().unwrap().insert(label.clone(),Okno{others,pending_close:Default::default(),super_id:id,engine:0,hwnd:None,mesto:None,sessiya:session,initial_session:None,hidden:false,closing:false,privatnaya,generation:Default::default(),recovery_key,recovery_lazy:recovering});
     match tauri::WebviewWindowBuilder::new(app,&label,tauri::WebviewUrl::App(url.into())).title(title).focused(!recovering).inner_size(width,height).min_inner_size(900_f64.min(limit_w),560_f64.min(limit_h)).theme(theme).disable_drag_drop_handler().enable_clipboard_access().build(){
         Ok(window)=>{crate::browser_lock::install_shortcut(&window);if let Some(m)=monitor{let area=m.work_area();let pos=if area.size.width>0{area.position}else{*m.position()};let _=window.set_position(tauri::PhysicalPosition::new(pos.x+20,pos.y+20));}if maximized{let _=window.maximize();}persist(app,s);Ok(())},Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
     }
@@ -127,7 +132,7 @@ fn podklyuchit(app:&tauri::AppHandle,s:&Sostoyanie,label:&str)->Result<(),String
     let (id,private,session,mesto)={let map=s.okna.0.lock().unwrap();let w=map.get(label).ok_or("Окно уже закрыто")?;if w.closing{return Err("Окно уже закрывается".into());}(w.super_id.clone(),w.privatnaya,w.sessiya.clone(),w.mesto.unwrap_or(Mesto{x:0,y:100,w:1200,h:700}))};
     let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).ok_or("Супер-вкладка закрыта")?;
     kanal(s,label,&id)?.try_send(Komanda::OknoNovoe{label:label.into(),parent,x:mesto.x,y:mesto.y,w:mesto.w,h:mesto.h,privatnaya:private,sessiya:session}).map_err(|e|e.to_string())?;
-    if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.engine=engine;w.hwnd=None;}
+    if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.engine=engine;w.hwnd=None;w.initial_session=None;}
     obolochka(app,s,label);Ok(())
 }
 pub fn vosstanovit(app:&tauri::AppHandle,s:&Sostoyanie,id:&str,engine:u64){
@@ -315,4 +320,198 @@ pub async fn ready_command(app:&tauri::AppHandle,s:&Sostoyanie,label:&str,comman
     };
     persist(app,s);
     match before{Some(before)=>crate::window_recovery::remap_command(&before,&after,command),None=>Ok(command)}
+}
+
+
+/// Select a search target before attaching a cold secondary CEF view. Selecting
+/// the previous active page and switching afterwards would make an unwanted
+/// network request (and could expose the wrong account route).
+pub async fn prepare_search(
+    app: &tauri::AppHandle,
+    s: &Sostoyanie,
+    window: &tauri::WebviewWindow,
+    entry: &crate::tab_search::Entry,
+) -> Result<(u64, u64), String> {
+    let changed = "Список вкладок изменился. Повторите поиск.";
+    let target = entry.tab_id.ok_or(changed)?;
+    let (running, engine_before) = {
+        let all = s.vkladki.lock().map_err(|_| "Список занят")?;
+        let v = all
+            .get(&entry.super_id)
+            .filter(|v| {
+                !v.nastrojki.privatnaya
+                    && !crate::privatnost::eto_id(&v.nastrojki.id)
+                    && v.zapusk_id == entry.engine_generation
+                    && crate::tab_search::profile_guard(&v.nastrojki)==entry.profile_guard
+            })
+            .ok_or(changed)?;
+        (
+            (v.proc.is_some() || v.zapas_pid.is_some()) && !v.zapusk_idet,
+            v.zapusk_id,
+        )
+    };
+    let before = {
+        let mut windows = s.okna.0.lock().map_err(|_| "Список окон занят")?;
+        let w = windows
+            .get_mut(&entry.window)
+            .filter(|w| !w.closing && !w.privatnaya)
+            .ok_or(changed)?;
+        let (session, view, attached, lazy) = if w.super_id == entry.super_id {
+            (
+                w.sessiya.as_ref(),
+                w.engine,
+                w.hwnd.is_some_and(sistema::okno_zhivo),
+                w.recovery_lazy,
+            )
+        } else {
+            let v = w.others.get(&entry.super_id).ok_or(changed)?;
+            (
+                v.sessiya.as_ref(),
+                v.engine,
+                v.hwnd.is_some_and(sistema::okno_zhivo),
+                false,
+            )
+        };
+        let before = session.ok_or(changed)?.clone();
+        if view != entry.view_generation
+            || (lazy || !attached || view != engine_before) != entry.cold
+        {
+            return Err(changed.into());
+        }
+        crate::tab_search::validate(&before, entry)?;
+        if w.super_id != entry.super_id {
+            let old_id = w.super_id.clone();
+            let old = Vid {
+                hwnd: w.hwnd.take(),
+                sessiya: w.sessiya.take(),
+                engine: w.engine,
+            };
+            if let Some(h) = old.hwnd {
+                let _ = sistema::pokazat(h, false);
+            }
+            w.others.insert(old_id, old);
+            let next = w.others.remove(&entry.super_id).ok_or(changed)?;
+            w.super_id = entry.super_id.clone();
+            w.hwnd = next.hwnd;
+            w.sessiya = next.sessiya;
+            w.engine = next.engine;
+            w.initial_session = None;
+        }
+        if entry.cold {
+            w.sessiya.as_mut().ok_or(changed)?.aktivnaya = target;
+            // Prevent the engine startup callback from attaching this view with
+            // an old active tab before this explicit search preparation finishes.
+            w.recovery_lazy = true;
+        }
+        w.hidden = false;
+        before
+    };
+    let _=app.emit_to(&entry.window,"vkladki-izmenilis",&entry.super_id);
+    if !running {
+        let previous = s.aktivnaya.lock().map_err(|_| "Список занят")?.clone();
+        let result = crate::zapustit_vnutri(app, &app.state(), &entry.super_id).await;
+        if let Some(previous) = previous {
+            crate::pereklyuchit_vnutri(&app.state(), &previous);
+        }
+        if !result.ok {
+            return Err(result.soobshchenie);
+        }
+    }
+    if crate::browser_lock::locked_global() {
+        return Err("Браузер заблокирован".into());
+    }
+    let engine = {let all=s.vkladki.lock().map_err(|_|"Список занят")?;
+        let v=all.get(&entry.super_id).filter(|v|crate::tab_search::profile_guard(&v.nastrojki)==entry.profile_guard).ok_or(changed)?;
+        v.zapusk_id};
+    if !entry.cold && engine != engine_before {
+        return Err(changed.into());
+    }
+    let attach = {
+        let mut windows = s.okna.0.lock().map_err(|_| "Список окон занят")?;
+        let w = windows
+            .get_mut(&entry.window)
+            .filter(|w| !w.closing && !w.privatnaya && w.super_id == entry.super_id)
+            .ok_or(changed)?;
+        crate::tab_search::validate(w.sessiya.as_ref().ok_or(changed)?, entry)?;
+        let attach = w.engine != engine || !w.hwnd.is_some_and(sistema::okno_zhivo);
+        if attach {
+            if !entry.cold {
+                return Err(changed.into());
+            }
+            w.sessiya.as_mut().ok_or(changed)?.aktivnaya = target;
+        }
+        w.recovery_lazy = false;
+        attach
+    };
+    if attach {
+        podklyuchit(app, s, &entry.window)?;
+    } else {
+        obolochka(app, s, &entry.window);
+    }
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+    let after = loop {
+        if crate::browser_lock::locked_global() {
+            return Err("Браузер заблокирован".into());
+        }
+        let session = {
+            let windows = s.okna.0.lock().map_err(|_| "Список окон занят")?;
+            let w = windows
+                .get(&entry.window)
+                .filter(|w| !w.closing && !w.privatnaya && w.super_id == entry.super_id)
+                .ok_or(changed)?;
+            if w.engine == engine && w.hwnd.is_some() {
+                if entry.cold {
+                    w.initial_session.clone()
+                } else {
+                    w.sessiya.clone()
+                }
+            } else {
+                None
+            }
+        };
+        if let Some(session) = session {
+            break session;
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err("Движок не подтвердил окно. Повторите поиск.".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    };
+    let selected = if entry.cold {
+        match crate::window_recovery::remap_command(
+            &before,
+            &after,
+            Komanda::Vybrat { id: target },
+        )? {
+            Komanda::Vybrat { id } => id,
+            _ => return Err(changed.into()),
+        }
+    } else {
+        crate::tab_search::validate(&after, entry)?;
+        target
+    };
+    // A later live reorder is harmless: selection now uses the native ID from
+    // the first attachment ACK, not a URL/index guess against a later snapshot.
+    let current = {
+        let windows = s.okna.0.lock().map_err(|_| "Список окон занят")?;
+        windows
+            .get(&entry.window)
+            .and_then(|w| w.sessiya.clone())
+            .ok_or(changed)?
+    };
+    if !current.vkladki.iter().any(|t| {
+        t.id == selected && !t.privatnaya && t.route == entry.route
+    }) {
+        return Err(changed.into());
+    }
+    let private = s
+        .okna
+        .0
+        .lock()
+        .map_err(|_| "Список окон занят")?
+        .get(&entry.window)
+        .is_some_and(|w| w.privatnaya);
+    let _ = window.set_title(&zagolovok(s, &entry.super_id, private));
+    persist(app, s);
+    Ok((selected, engine))
 }
