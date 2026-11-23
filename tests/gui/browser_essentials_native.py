@@ -233,7 +233,7 @@ def run(args):
             def do_GET(self):
                 path=urllib.parse.urlsplit(self.path).path
                 with count_lock: counts[path]+=1
-                body=b'<!doctype html><meta charset="utf-8"><title>EssentialsNativeFixture</title><style>html,body{margin:0;background:#185541;color:white;min-height:100vh}</style><main>Real native essentials fixture</main>'
+                body=b'<!doctype html><meta charset="utf-8"><title>EssentialsNativeFixture</title><style>html,body{margin:0;background:#185541;color:white;min-height:100vh}</style><main>Real native essentials fixture</main><script>addEventListener("pointerdown",e=>{if(e.isTrusted)fetch("/physical-pointer"+location.pathname)})</script>'
                 self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8')
                 self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
 
@@ -358,11 +358,19 @@ def run(args):
         require(next(t for t in extra['vkladki'] if t['id']==extra['aktivnaya'])['adres']==base+'/window-target','Wrong extra-window tab activated')
         report['checks'].append('search_targets_actual_other_window_without_changing_main_selection')
         report['coverage']['search']='passed'
-        foreground(client)
+        # This scenario requires CEF keyboard focus, not an address-input focus.
+        # Raise the owning shell and prove a physical click reached its real page
+        # by a trusted-pointer HTTP witness before sending the CEF shortcut.
+        call(client,'fokus_obolochke')
         call(client,'pokazat_dvizhki',vidno=True)
         point=js_wait(client,'(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r&&r.width>300&&r.height>200?[r.x+200,r.y+150]:null})()',
                       'Native CEF area unavailable for task-manager shortcut')
-        client.mouse(*point);keys(device,'shift','esc')
+        pointer_before=counts['/physical-pointer/lazy-target']
+        client.mouse(*point)
+        wait_for(lambda:counts['/physical-pointer/lazy-target']>pointer_before,
+                 'Physical task-manager click did not reach the owning main CEF page',15)
+        report['task_cef_trusted_pointer_http_witness']=True
+        keys(device,'shift','esc')
         task='[role="dialog"][aria-label="Диспетчер задач NexusBro"]'
         js_wait(client,'!!document.querySelector('+json.dumps(task)+')&&!!document.querySelector('+json.dumps(task+' tbody tr')+')',
                 'Physical CEF Shift+Escape did not open measured task manager')
