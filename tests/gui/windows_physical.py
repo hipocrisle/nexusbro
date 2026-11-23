@@ -984,7 +984,13 @@ try:
     native_focus_class=ctypes.create_unicode_buffer(256)
     u.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int]
     u.GetClassNameW(keyboard_info.hwndFocus,native_focus_class,len(native_focus_class))
-    results.append({'shell_keyboard_native_focus':{'active':int(keyboard_info.hwndActive or 0),'focus':int(keyboard_info.hwndFocus or 0),'class':native_focus_class.value,'main':int(main_hwnd)}})
+    focus_pid=wintypes.DWORD()
+    focus_thread=u.GetWindowThreadProcessId(keyboard_info.hwndFocus,ctypes.byref(focus_pid))
+    try: focus_process=psutil.Process(focus_pid.value).name()
+    except (psutil.NoSuchProcess,psutil.AccessDenied): focus_process='unavailable'
+    # CEF and WebView2 both use Chrome_RenderWidgetHostHWND; class alone
+    # cannot prove which process owns physical keyboard focus.
+    results.append({'shell_keyboard_native_focus':{'active':int(keyboard_info.hwndActive or 0),'focus':int(keyboard_info.hwndFocus or 0),'class':native_focus_class.value,'main':int(main_hwnd),'focus_pid':focus_pid.value,'focus_thread':focus_thread,'focus_process':focus_process}})
     assert keyboard_info.hwndActive==main_hwnd,'Physical keyboard target is not the main browser window'
     gui.hotkey('ctrl','shift','l')
     ui('Мастер-пароль для разблокировки браузера',['Edit'])

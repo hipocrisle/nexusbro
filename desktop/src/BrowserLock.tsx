@@ -7,7 +7,7 @@ import './BrowserLock.css';
 type LockStatus={locked:boolean;exists:boolean;revision:number};
 export default function BrowserGuard({children}:{children:ReactNode}){
  const [status,setStatus]=useState<LockStatus|null>(null),[error,setError]=useState(''),[password,setPassword]=useState(''),[busy,setBusy]=useState(false),[hint,setHint]=useState('');
- const alive=useRef(true),request=useRef(false);
+ const alive=useRef(true),unlocking=useRef(false);
  const apply=useCallback((next:LockStatus)=>{if(!alive.current)return;setStatus(previous=>!previous||next.revision>=previous.revision?next:previous);},[]);
  const refresh=useCallback(async()=>{const next=await invoke<LockStatus>('browser_lock_status');apply(next);},[apply]);
  useEffect(()=>{
@@ -23,16 +23,19 @@ export default function BrowserGuard({children}:{children:ReactNode}){
   const key=(event:KeyboardEvent)=>{
    if(!event.ctrlKey||!event.shiftKey||event.altKey||event.metaKey||shortcutKey(event)!=='l')return;
    event.preventDefault();event.stopImmediatePropagation();
-   if(status?.locked||request.current)return;
-   request.current=true;
-   void invoke<LockStatus>('browser_lock').then(apply).catch(e=>{if(alive.current){setHint(String(e));window.dispatchEvent(new Event('nexusbro-security'));}}).finally(()=>{request.current=false;});
+   // Native lock/unlock operations are serialized. Never discard a fresh
+   // lock intent because an earlier unlock response has not arrived yet.
+   // Ignore held-key repeats, but forward every distinct press, including
+   // while locally locked: an unlock may already be queued in native code.
+   if(event.repeat)return;
+   void invoke<LockStatus>('browser_lock').then(apply).catch(e=>{if(alive.current){setHint(String(e));window.dispatchEvent(new Event('nexusbro-security'));}});
   };
   window.addEventListener('keydown',key,true);return()=>window.removeEventListener('keydown',key,true);
- },[status?.locked,apply]);
+ },[apply]);
  async function unlock(event:FormEvent){
-  event.preventDefault();if(request.current)return;request.current=true;setBusy(true);setError('');const secret=password;setPassword('');
+  event.preventDefault();if(unlocking.current)return;unlocking.current=true;setBusy(true);setError('');const secret=password;setPassword('');
   try{apply(await invoke<LockStatus>('browser_unlock',{password:secret}));}catch(e){if(alive.current)setError(String(e));}
-  finally{request.current=false;if(alive.current)setBusy(false);}
+  finally{unlocking.current=false;if(alive.current)setBusy(false);}
  }
  if(!status||status.locked)return <main className="browser-lock-screen" aria-label="Браузер заблокирован">
   <section className="browser-lock-card">

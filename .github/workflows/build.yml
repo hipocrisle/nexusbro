@@ -130,6 +130,7 @@ jobs:
           python3 tests/super_colors_0214.py
           python3 tests/address_autocomplete_0214.py
           python3 tests/security_ui_browser.py
+          python3 tests/browser_lock_race_browser.py
           python3 tests/cloud_supers.py
           python3 tests/memory_safety_browser.py
           python3 tests/memory_bootstrap_browser.py
@@ -360,6 +361,7 @@ jobs:
           python3 tests/super_colors_0214.py
           python3 tests/address_autocomplete_0214.py
           python3 tests/security_ui_browser.py
+          python3 tests/browser_lock_race_browser.py
           python3 tests/cloud_supers.py
           python3 tests/memory_safety_browser.py
           python3 tests/memory_bootstrap_browser.py
