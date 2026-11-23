@@ -27,6 +27,8 @@ class Fixture:
         self.worker_token = secrets.token_hex(24)
         self.stun_uri = stun_uri
         self.servers = []
+        self.loading_started = threading.Event()
+        self._loading_release = threading.Event()
         self.proxy_servers, self.proxy_sockets, self.stopped_proxies = {}, {}, set()
         owner = self
 
@@ -57,6 +59,24 @@ class Fixture:
                                            'secure': q.get('secure', [None])[0],
                                            'time': time.monotonic(),
                                            'tls': isinstance(self.connection, ssl.SSLSocket)})
+                if parsed.path == '/route-pending' and q.get('case') == ['route-loading']:
+                    # Receipt (including actual lane/auth) is recorded above,
+                    # before this real subresource keeps CEF's load unfinished.
+                    owner.loading_started.set()
+                    owner._loading_release.wait(30)
+                    body = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+                    try:
+                        self.send_response(200)
+                        self.send_header('Content-Type', 'image/svg+xml')
+                        self.send_header('Cache-Control', 'no-store')
+                        self.send_header('Content-Length', str(len(body)))
+                        self.end_headers()
+                        self.wfile.write(body)
+                    except (BrokenPipeError, ConnectionResetError):
+                        # A manual route restart legitimately aborts the old
+                        # browser's still-pending request before release.
+                        pass
+                    return
                 if parsed.path.startswith('/worker/'):
                     if parsed.path == '/worker/sw.js':
                         body = owner.worker_script().encode()
@@ -144,7 +164,8 @@ class Fixture:
                 conn = upstream = None
                 try:
                     p = self.target(self.path)
-                    conn = http.client.HTTPConnection(p.hostname, p.port, timeout=8)
+                    pending = p.path == '/route-pending' and urllib.parse.parse_qs(p.query).get('case') == ['route-loading']
+                    conn = http.client.HTTPConnection(p.hostname, p.port, timeout=32 if pending else 8)
                     conn.connect()
                     upstream = conn.sock
                     owner._track(lane, upstream)
@@ -257,12 +278,25 @@ class Fixture:
                 "}catch(e){clearTimeout(timer);if(pc)pc.close();void send('error')}})()}" )
 
     def page_html(self, case):
-        # Protected controls belong only to the corresponding refusal case.
-        # Ordinary route changes must exercise a genuinely safe plain document.
+        # Draft has an actual beforeunload refusal. Interactive deliberately
+        # uses ordinary page APIs without dirty input; other cases stay plain.
         controls = handlers = ''
         if case == 'draft':
             controls = "<input id='draft' style='position:absolute;left:20px;top:20px'>"
-            handlers = "document.querySelector('#draft').oninput=()=>fetch('/receipt/draft-typed');"
+            handlers = ("document.querySelector('#draft').oninput=()=>fetch('/receipt/draft-typed');"
+                        "addEventListener('beforeunload',event=>{if(document.querySelector('#draft').value){"
+                        "event.preventDefault();event.returnValue='';}});")
+        elif case == 'interactive':
+            controls = ("<button id='route-interaction' style='position:absolute;left:20px;top:20px'>Interact</button>"
+                        "<input id='route-search' type='search' style='position:absolute;left:20px;top:70px'>"
+                        "<canvas id='route-canvas' width='120' height='60' style='position:absolute;left:20px;top:110px'></canvas>")
+            handlers = ("sessionStorage.setItem('route-interactive','ordinary-api-use');"
+                        "const ctx=document.querySelector('#route-canvas').getContext('2d');"
+                        "ctx.fillStyle='#185541';ctx.fillRect(0,0,120,60);"
+                        "document.querySelector('#route-interaction').onclick=event=>{if(event.isTrusted)"
+                        "fetch('/receipt/route-interaction?'+new URLSearchParams({case:q.get('case'),storage:localStorage.getItem('route-store')||'empty'}),{cache:'no-store'})};")
+        elif case == 'route-loading':
+            controls = "<img id='route-pending' alt='' src='/route-pending?case=route-loading'>"
         elif case == 'media':
             controls = "<button id='media' style='position:absolute;left:20px;top:70px'>Start media</button><audio id='audio' loop></audio>"
             handlers = ("document.querySelector('#media').onclick=async()=>{const c=new AudioContext();await c.resume();"
@@ -309,7 +343,12 @@ class Fixture:
             return [dict(item) for item in self.receipts
                     if item.get('case') == case or item['path'] == '/receipt/' + case]
 
+    def release_loading(self):
+        """Release the actual unfinished origin response, never synthesize a load ACK."""
+        self._loading_release.set()
+
     def close(self):
+        self.release_loading()
         for lane in self.proxy_servers:
             self.stop_proxy(lane)
         for server in self.servers:
