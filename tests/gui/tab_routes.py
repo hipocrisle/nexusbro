@@ -21,8 +21,9 @@ import psutil
 import websocket
 from client import Client
 from route_fixture import Fixture
+from route_socks_fixture import SocksFixture
 from stun_fixture import StunFixture
-from security_native import Device, call, js_wait, port, require, settings, super_record, wait_for
+from security_native import Device, call, js_wait, painted, port, require, settings, super_record, wait_for
 
 
 class InspectorNoRedirect(urllib.request.HTTPRedirectHandler):
@@ -394,14 +395,14 @@ def activate_saved(client, owner):
     select(client, owner, rows(client, owner)['aktivnaya'])
 
 
-def select(client, owner, identifier, timeout=30):
+def select(client, owner, identifier, timeout=30, *, allow_loading=False):
     deadline = time.monotonic() + timeout
     remaining = lambda: max(.1, deadline - time.monotonic())
     switch_super(client, owner, remaining())
     click_control(client, '.obychnaya[data-id="' + str(identifier) + '"]', remaining())
     def selected_loaded():
         current = rows(client, owner, remaining())
-        return current['aktivnaya'] == identifier and any(t['id'] == identifier and not t['zagruzka'] for t in current['vkladki'])
+        return current['aktivnaya'] == identifier and any(t['id'] == identifier and (allow_loading or not t['zagruzka']) for t in current['vkladki'])
     wait_for(selected_loaded, 'Native tab did not finish activation', remaining())
     target_dom(client, owner, identifier, remaining())
 
@@ -415,13 +416,17 @@ def choose(client, label):
     client.click('[data-route-test-choice="true"]')
 
 
-def apply_ui(client, label, owner, identifier):
+def apply_ui(client, label, owner, identifier, screenshot=None):
     target_dom(client, owner, identifier, route_button=True)
     require(call(client, 'aktivnaya') == owner and rows(client, owner)['aktivnaya'] == identifier,
             'Route UI target no longer matches the active native owner/tab')
     client.click('button[aria-label="Путь вкладки"]')
     js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
     choose(client, label)
+    if screenshot:
+        from PIL import ImageGrab
+        painted(client)
+        ImageGrab.grab(**({'xdisplay':client.display} if sys.platform!='win32' else {})).save(screenshot)
     client.text_button('Применить путь')
 
 
@@ -431,10 +436,10 @@ def assert_receipt(fixture, case, lane, auth, storage, *, tls=False):
             'Origin route/auth/storage mismatch for ' + case)
 
 
-def apply_route_ack(client, owner, identifier, label, expected):
+def apply_route_ack(client, owner, identifier, label, expected, screenshot=None):
     """Physical selector actions, then authoritative native replacement ACK."""
     before = row(client, owner, identifier)
-    apply_ui(client, label, owner, identifier)
+    apply_ui(client, label, owner, identifier, screenshot=screenshot)
     js_wait(client, '!document.querySelector("[data-tab-route-root]")', 'Route selection stayed open; native application was not confirmed', 40)
 
     def replacement():
@@ -451,7 +456,7 @@ def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed', 'rtc_dns_udp': 'not_executed', 'historical_cookies': 'not_executed', 'worker_ready_context': 'not_executed', 'worker_startup_pre_admission': 'not_executed'}}
-    device = fixture = stun = None
+    device = fixture = stun = socks = None
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Only an ephemeral GitHub runner may run this native test')
         require(args.tls_cert and args.tls_key, 'HTTPS acceptance NOT EXECUTED: supply pretrusted runner-only CA-signed 127.0.0.1 certificate/key')
@@ -460,12 +465,14 @@ def run(args):
         require(resolved == {'127.0.0.1'}, 'Runner prerequisite missing: STUN fixture hostname must resolve only to 127.0.0.1')
         stun = StunFixture()
         fixture = Fixture(args.tls_cert, args.tls_key, 'stun:' + stun_host + ':' + str(stun.port))
+        socks = SocksFixture(fixture)
         exe, cef = pathlib.Path(args.exe).resolve(), pathlib.Path(args.cef).resolve()
         require(exe.is_file() and cef.is_dir(), 'Built native app/CEF prerequisite missing')
         device = WindowsDevice(out / 'device', exe, cef) if sys.platform == 'win32' else Device('routes', out / 'device', exe, cef)
         config = settings('grafit', 'unused')
         config['vyhody'] = [{'id': 'lane-' + lane, 'nazvanie': 'Fixture ' + lane,
                              'adres': 'http://127.0.0.1:' + str(fixture.proxies[lane]), 'proxy_uzel': ''} for lane in ('A', 'B')]
+        config['vyhody'].append({'id':'lane-socks','nazvanie':'Fixture SOCKS5','adres':socks.url,'proxy_uzel':''})
         write_json(device.data / 'nastrojki.json', config)
         supers = {name: super_record(name, name, 'about:blank', proxy=config['vyhody'][0]['adres']) for name in ('routes-a', 'routes-b')}
         supers['routes-direct'] = super_record('routes-direct', 'routes-direct', 'about:blank', proxy='')
@@ -482,12 +489,12 @@ def run(args):
                 tab(3, 'share-a', connection('A')), tab(4, 'seed-direct', direct, 'Direct'),
                 tab(5, 'share-direct', direct), tab(6, 'https-b', connection('B'), tls=True),
                 tab(7, 'blocked-unknown', connection('missing')), tab(8, 'draft', inherit), tab(9, 'media', inherit),
-                tab(10, 'rtc-vpn', inherit, rtc=True)]
+                tab(10, 'rtc-vpn', inherit, rtc=True), tab(11, 'interactive', inherit), tab(12, 'route-loading', inherit), tab(13, 'socks-http', inherit)]
         # Delayed tabs are activated explicitly, in order, to make first-request cookie witnesses deterministic.
         for t in tabs[1:]:
             t['otlozhena'] = True
         session_path = device.data / 'profili' / 'routes-a' / 'obychnye.json'
-        write_json(session_path, {'vkladki': tabs, 'aktivnaya': 1, 'sleduyushchaya': 11, 'zakrytye': []})
+        write_json(session_path, {'vkladki': tabs, 'aktivnaya': 1, 'sleduyushchaya': 14, 'zakrytye': []})
         write_json(device.data / 'profili' / 'routes-b' / 'obychnye.json',
                    {'vkladki': [tab(1, 'other-super', inherit)], 'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
         write_json(device.data / 'profili' / 'routes-direct' / 'obychnye.json',
@@ -631,31 +638,106 @@ def run(args):
                  'Acknowledged route UI change did not reach B profile/network')
         report['coverage']['http_ui'] = 'passed'
         report['checks'].append('actual_route_selector_native_ack_network_and_profile')
-        # Protected-page refusal is tested through physical CEF input, then through the real shell menu.
-        for identifier, case, offset, witness in [(8, 'draft', 30, 'draft-typed'), (9, 'media', 80, 'media-running')]:
-            select(client, 'routes-a', identifier)
-            assert_receipt(fixture, case, 'A', 'A', 'A')
-            bounds = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
-            client.mouse(bounds[0] + 50, bounds[1] + offset)
-            if case == 'draft':
-                if sys.platform == 'win32':
-                    import pyautogui
-                    pyautogui.write('synthetic unsaved draft', interval=.04)
-                else:
-                    subprocess.run(['xdotool', 'type', '--clearmodifiers', '--', 'synthetic unsaved draft'], env={**os.environ, 'DISPLAY': device.display}, check=True)
-            wait_for(lambda: fixture.records(witness), 'Actual protected page interaction did not occur: ' + case)
-            before = row(client, 'routes-a', identifier)
-            apply_ui(client, 'Fixture B', 'routes-a', identifier)
-            wait_for(lambda: row(client, 'routes-a', identifier).get('route_error'), 'Native route change did not refuse protected ' + case, 40)
-            after = row(client, 'routes-a', identifier)
-            require(after['route'] == before['route'] and after['browser_id'] == before['browser_id']
-                    and after['route_generation'] == before['route_generation'] + 1 and not after['route_pending'],
-                    'Refused route attempt changed protected page/profile or lost attempt generation')
-            js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=alert]")',
-                    'Native refusal absent from actual route UI', 20)
-            client.text_button('Отмена')
-            report['checks'].append(case + '_route_change_refused_preserves_browser')
-        report['coverage']['refusal'] = 'passed'
+        # A real unsaved-data beforeunload refusal still cancels graceful close.
+        select(client, 'routes-a', 8)
+        assert_receipt(fixture, 'draft', 'A', 'A', 'A')
+        bounds = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
+        client.mouse(bounds[0]+50,bounds[1]+30)
+        if sys.platform=='win32':
+            import pyautogui
+            pyautogui.write('synthetic unsaved draft',interval=.04)
+        else:
+            subprocess.run(['xdotool','type','--clearmodifiers','--','synthetic unsaved draft'],env={**os.environ,'DISPLAY':device.display},check=True)
+        wait_for(lambda:fixture.records('draft-typed'),'Real draft input did not reach the page')
+        before_draft=row(client,'routes-a',8)
+        apply_ui(client,'Fixture B','routes-a',8)
+        wait_for(lambda:row(client,'routes-a',8).get('route_error'),'Actual beforeunload did not cancel route change',40)
+        after_draft=row(client,'routes-a',8)
+        require(after_draft['route']==before_draft['route'] and after_draft['browser_id']==before_draft['browser_id']
+                and after_draft['route_generation']==before_draft['route_generation']+1 and not after_draft['route_pending'],
+                'Beforeunload refusal changed the unsaved document or profile')
+        js_wait(client,'document.querySelector("[data-tab-route-root] [role=alert]")?.textContent.includes("Сохраните")',
+                'Actual refusal did not show a safe actionable reason',20)
+        client.text_button('Отмена')
+        report['checks'].append('actual_beforeunload_route_refusal_preserves_unsaved_page_and_shows_reason')
+        report['coverage']['refusal']='passed'
+
+        # Blank forms, canvas/sessionStorage and an ordinary trusted click are
+        # valid pages for an explicit route reload, unlike automatic eviction.
+        select(client,'routes-a',11)
+        assert_receipt(fixture,'interactive','A','A','A')
+        bounds=client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
+        client.mouse(bounds[0]+50,bounds[1]+30)
+        wait_for(lambda:fixture.records('route-interaction'),'Actual ordinary CEF interaction did not occur')
+        apply_route_ack(client,'routes-a',11,'Fixture B',connection('B'),screenshot=out/'native-route-selector-compact.png')
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':11,'adres':fixture.url('interactive-after')})
+        assert_receipt(fixture,'interactive-after','B','B','B')
+        apply_route_ack(client,'routes-a',11,'Fixture A',connection('A'))
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':11,'adres':fixture.url('interactive-returned')})
+        assert_receipt(fixture,'interactive-returned','A','A','A')
+        report['checks'].append('interactive_page_with_form_canvas_session_storage_manual_path_change_and_auth_isolation')
+
+        # Explicitly changing a media page reloads that target. Background
+        # automatic media protection is exercised independently by AUTO tests.
+        select(client,'routes-a',9)
+        assert_receipt(fixture,'media','A','A','A')
+        bounds=client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
+        client.mouse(bounds[0]+50,bounds[1]+80)
+        wait_for(lambda:fixture.records('media-running'),'Actual CEF audio did not start')
+        apply_route_ack(client,'routes-a',9,'Fixture B',connection('B'))
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':9,'adres':fixture.url('media-reloaded')})
+        assert_receipt(fixture,'media-reloaded','B','B','B')
+        require(row(client,'routes-a',8)['browser_id']==before_draft['browser_id'],'Changing another route closed the protected draft')
+        report['checks'].append('user_requested_media_route_reload_changes_only_target_not_protected_neighbor')
+
+        # Keep the old document genuinely loading; changing its path must not
+        # require that the currently failing connection first finishes loading.
+        select(client,'routes-a',12,allow_loading=True)
+        wait_for(lambda:fixture.loading_started.is_set() and row(client,'routes-a',12)['zagruzka'],
+                 'Controlled unfinished subresource did not keep the real page loading',20)
+        apply_route_ack(client,'routes-a',12,'Fixture B',connection('B'))
+        wait_for(lambda:any(r['lane']=='B' for r in fixture.requests('route-loading')),
+                 'Route change of a loading page never reached the selected proxy',20)
+        fixture.release_loading()
+        wait_for(lambda:not row(client,'routes-a',12)['zagruzka'],'New route page did not finish after releasing its subresource',20)
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':12,'adres':fixture.url('loading-after')})
+        assert_receipt(fixture,'loading-after','B','B','B')
+        report['checks'].append('manual_path_change_during_real_unfinished_load_no_direct_fallback')
+        # Match the reported SOCKS path with real RFC1929 authentication and
+        # hostname forwarding, not just an HTTP-proxy substitute.
+        select(client,'routes-a',13)
+        assert_receipt(fixture,'socks-http','A','A','A')
+        apply_route_ack(client,'routes-a',13,'Fixture SOCKS5',{'kind':'connection','id':'lane-socks'})
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':fixture.url('socks-http-after')})
+        assert_receipt(fixture,'socks-http-after','Socks',None,'empty')
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':fixture.url('socks-seeded','Socks')})
+        assert_receipt(fixture,'socks-seeded','Socks','Socks','Socks')
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':fixture.url('socks-https',tls=True)})
+        assert_receipt(fixture,'socks-https','Socks','Socks','empty',tls=True)
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':fixture.url('socks-hostname').replace('127.0.0.1','localhost',1)})
+        assert_receipt(fixture,'socks-hostname','Socks',None,'empty')
+        require(any(e.get('authenticated') and e.get('atyp')==3 and e.get('host')=='localhost' for e in socks.events),
+                'Actual SOCKS5 transport did not receive the hostname via ATYP=3')
+        require(any(e.get('authenticated') and e.get('port')==fixture.https for e in socks.events),
+                'Trusted HTTPS did not pass through authenticated SOCKS5')
+        apply_route_ack(client,'routes-a',13,'Fixture A',connection('A'))
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':fixture.url('socks-returned-a')})
+        assert_receipt(fixture,'socks-returned-a','A','A','A')
+        apply_route_ack(client,'routes-a',13,'Fixture SOCKS5',{'kind':'connection','id':'lane-socks'})
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':fixture.url('socks-returned-s')})
+        assert_receipt(fixture,'socks-returned-s','Socks','Socks','Socks')
+        socks.close()
+        before_socks_down=row(client,'routes-a',13)
+        socks_down_url=fixture.url('socks-down')
+        call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':13,'adres':socks_down_url})
+        wait_for(lambda:row(client,'routes-a',13)['adres']==socks_down_url and not row(client,'routes-a',13)['zagruzka'],
+                 'Closed SOCKS5 did not produce a finished network error',40)
+        require(not fixture.requests('socks-down'),'Unavailable SOCKS5 silently fell back to Direct')
+        require(row(client,'routes-a',13)['route']==before_socks_down['route'] and row(client,'routes-a',13)['browser_id']==before_socks_down['browser_id'],
+                'Unavailable SOCKS5 changed the selected route or profile')
+        report['socks_transport_witness']={'authenticated':True,'hostname_atyp3':True,'trusted_https':True,'profile_auth_isolated':True,'no_direct_fallback':True}
+        report['checks'].append('native_authenticated_socks5_http_https_hostname_and_profile_switch')
+        report['checks'].append('native_socks5_down_no_direct_fallback_or_profile_change')
         # Prepare independent persistent state before the existing owned restart.
         # No original routes-a/routes-b profile is cleared or reseeded here.
         activate_saved(client, 'routes-historical')
@@ -971,6 +1053,8 @@ def run(args):
     finally:
         if device:
             device.close()
+        if socks:
+            socks.close()
         if fixture:
             fixture.close()
         if stun:
