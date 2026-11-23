@@ -27,6 +27,7 @@ def run(args):
     root=pathlib.Path(args.out).resolve()
     root.mkdir(parents=True,exist_ok=False)
     checks=[];phase='environment';failure=None;device=None
+    last_picker=None
     sensitive=set()
     alarm_before=signal.getsignal(signal.SIGALRM)
     def alarm(_signal,_frame):
@@ -114,6 +115,7 @@ def run(args):
             js_wait(client,'(()=>{const e=document.querySelector('+json.dumps(DIALOG+' [role="status"]')+');return !!e&&e.innerText.includes('+json.dumps(text)+')})()','Backup completion was not shown',timeout)
 
         def choose(text,path,save=False):
+            nonlocal last_picker
             # These operations never select outside the test-owned output tree.
             path=path.resolve()
             require(root in path.parents,'Native picker path escaped the owned test root')
@@ -121,7 +123,15 @@ def run(args):
             new=wait_for(lambda:owned_windows()-before,'Native GTK file chooser did not appear as an owned app window',15)
             require(len(new)==1,'Expected exactly one new native file chooser window')
             xid=next(iter(new));xdo('windowfocus','--sync',xid)
+            last_picker={'save':save,'expected_owned_filename':path.name,'owned_dialog_xid':int(xid)}
             xdo('key','--clearmodifiers','ctrl+l')
+            # GTK SAVE focuses GtkFileChooserEntry and selects the basename
+            # WITHOUT its extension. Rfd's default nexusbro-settings.json would
+            # otherwise retain .json, producing portable-config.json.json.
+            # Physical Select All replaces the entire entry, including suffix.
+            # Source: GNOME/gtk gtk-3-24 gtk/gtkfilechooserentry.c
+            # gtk_file_chooser_entry_grab_focus + _gtk_file_chooser_entry_select_filename.
+            xdo('key','--clearmodifiers','ctrl+a')
             xdo('type','--clearmodifiers','--delay','2','--',str(path))
             xdo('key','--clearmodifiers','Return')
             # GTK save dialogs can resolve the Location entry before accepting.
@@ -248,6 +258,20 @@ def run(args):
         phase='complete'
         checks.append({'success':True,'native_crypto_file_io_and_gtk_pickers':'actual','ipc_overrides':False,'platform':'linux'})
     except Exception as exc:
+        # Collect names/sizes only BEFORE cleanup removes owned JSON fixtures.
+        # Never inspect file contents or search outside this test's output root;
+        # a wrong picker filename remains a failure, never an accepted alias.
+        owned_files=[]
+        try:
+            for path in sorted(root.iterdir()):
+                if path.is_symlink() or not path.is_file() or path.suffix!='.json':continue
+                name=path.name
+                for secret in sorted(sensitive,key=len,reverse=True):name=name.replace(secret,'[redacted]')
+                owned_files.append({'name':name[:160],'bytes':path.stat().st_size})
+                if len(owned_files)>=16:break
+        except OSError:
+            pass
+        checks.append({'native_picker_owned_file_diagnostic':{'last_picker':last_picker,'owned_json_files':owned_files}})
         message=str(exc)
         for secret in sorted(sensitive,key=len,reverse=True):message=message.replace(secret,'[synthetic secret redacted]')
         message=message.replace(str(root),'[owned test directory]')
