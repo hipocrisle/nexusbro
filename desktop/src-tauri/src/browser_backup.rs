@@ -66,6 +66,7 @@ fn hash(bytes: &[u8]) -> String {
 }
 fn normal(id: &str) -> bool {
     !id.is_empty()
+        && id.as_bytes()[0].is_ascii_alphanumeric()
         && id.len() <= 128
         && !crate::privatnost::eto_id(id)
         && id
@@ -129,6 +130,8 @@ struct PasswordFile {
     format: String,
     version: u32,
     passwords: Vec<Credential>,
+    #[serde(default)]
+    super_names: BTreeMap<String, String>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -206,30 +209,49 @@ fn open(bytes: &[u8], pass: &str) -> Result<Zeroizing<Vec<u8>>> {
     }
     let ciphertext = B64.decode(e.ciphertext).map_err(|_| error())?;
     let key = derive(pass, &salt)?;
-    let plain = XChaCha20Poly1305::new_from_slice(&*key)
-        .map_err(|_| error())?
-        .decrypt(
-            XNonce::from_slice(&nonce),
-            Payload {
-                msg: &ciphertext,
-                aad: AAD,
-            },
-        )
-        .map_err(|_| "Неверный пароль резервной копии или файл повреждён".to_string())?;
+    let plain = Zeroizing::new(
+        XChaCha20Poly1305::new_from_slice(&*key)
+            .map_err(|_| error())?
+            .decrypt(
+                XNonce::from_slice(&nonce),
+                Payload {
+                    msg: &ciphertext,
+                    aad: AAD,
+                },
+            )
+            .map_err(|_| "Неверный пароль резервной копии или файл повреждён".to_string())?,
+    );
     if plain.len() > MAX {
         return Err(error());
     }
-    Ok(Zeroizing::new(plain))
+    Ok(plain)
 }
 fn read(path: &Path, limit: usize) -> Result<Vec<u8>> {
     let meta = fs::symlink_metadata(path).map_err(|_| "Не удалось прочитать резервную копию")?;
     if !meta.is_file() || meta.file_type().is_symlink() || meta.len() > limit as u64 {
         return Err(error());
     }
+    let mut options = OpenOptions::new();
+    options.read(true);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(libc::O_NOFOLLOW);
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        options.custom_flags(0x0020_0000);
+    }
+    let file = options.open(path).map_err(|_| error())?;
+    // Check the opened handle, not only the path observed before open. Linux
+    // NOFOLLOW and Windows OPEN_REPARSE_POINT prevent a swapped leaf symlink.
+    let opened = file.metadata().map_err(|_| error())?;
+    if !opened.is_file() || opened.file_type().is_symlink() || opened.len() > limit as u64 {
+        return Err(error());
+    }
     let mut bytes = Vec::new();
-    File::open(path)
-        .map_err(|_| error())?
-        .take(limit as u64 + 1)
+    file.take(limit as u64 + 1)
         .read_to_end(&mut bytes)
         .map_err(|_| error())?;
     if bytes.len() > limit {
@@ -408,16 +430,26 @@ fn all_supers(
     live: &BTreeMap<String, crate::Nastrojki>,
 ) -> Result<BTreeMap<String, crate::Nastrojki>> {
     let saved: Vec<crate::Nastrojki> = typed(files["sohranennye.json"].as_ref(), Vec::new)?;
+    // A private declaration in either source wins. Legacy profiles can have
+    // privatnaya=true without the modern pvt- prefix; conflicting stale saved
+    // and live definitions must not turn private data into a portable record.
+    let private: BTreeSet<_> = saved
+        .iter()
+        .chain(live.values())
+        .filter(|n| n.privatnaya || !normal(&n.id))
+        .map(|n| n.id.clone())
+        .collect();
     let mut out: BTreeMap<_, _> = saved
         .into_iter()
-        .filter(|n| !n.privatnaya && normal(&n.id))
+        .filter(|n| !private.contains(&n.id))
         .map(|n| (n.id.clone(), n))
         .collect();
     out.extend(
         live.iter()
-            .filter(|(_, n)| !n.privatnaya && normal(&n.id))
+            .filter(|(id, _)| !private.contains(*id))
             .map(|(id, n)| (id.clone(), n.clone())),
     );
+
     Ok(out)
 }
 fn config(
@@ -438,7 +470,9 @@ fn config(
             true
         )?),
     );
-    let supers = all_supers(files, live)?
+    let allowed = all_supers(files, live)?;
+    let allowed_ids: BTreeSet<_> = allowed.keys().cloned().collect();
+    let supers = allowed
         .into_values()
         .map(|n| {
             Ok(Super {
@@ -457,7 +491,11 @@ fn config(
         typed(files["zakladki.json"].as_ref(), Vec::new)?;
     let bookmarks = bookmarks
         .into_iter()
-        .filter(|b| b.super_id.as_deref().is_none_or(normal))
+        .filter(|b| {
+            b.super_id
+                .as_ref()
+                .is_none_or(|id| allowed_ids.contains(id))
+        })
         .map(|b| {
             Ok(Bookmark {
                 url: url(&b.adres, false)?,
@@ -532,12 +570,13 @@ fn validate_config(c: &Config) -> Result<()> {
         if !normal(&s.id)
             || !ids.insert(&s.id)
             || s.name.trim().is_empty()
+            || s.name.chars().count() > 80
             || !crate::supervkladki::cvet_dopustim(&s.color)
             || url(&s.start, true)? != s.start
         {
             return Err(error());
         }
-        bounded(&s.name, 200)?;
+        bounded(&s.name, 320)?;
     }
     for b in &c.bookmarks {
         if url(&b.url, false)? != b.url {
@@ -551,8 +590,18 @@ fn validate_config(c: &Config) -> Result<()> {
 fn passwords(bytes: &[u8], pass: &str) -> Result<PasswordFile> {
     let plain = open(bytes, pass)?;
     let p: PasswordFile = serde_json::from_slice(&plain).map_err(|_| error())?;
-    if p.format != "nexusbro-password-records" || p.version != 1 || p.passwords.len() > 5000 {
+    if p.format != "nexusbro-password-records"
+        || p.version != 1
+        || p.passwords.len() > 5000
+        || p.super_names.len() > 5000
+    {
         return Err(error());
+    }
+    for (id, name) in &p.super_names {
+        if !normal(id) {
+            return Err(error());
+        }
+        bounded(name, 320)?;
     }
     let mut ids = BTreeSet::new();
     for c in &p.passwords {
@@ -567,7 +616,10 @@ fn passwords(bytes: &[u8], pass: &str) -> Result<PasswordFile> {
         }
         bounded(&c.username, 512)?;
         bounded(&c.password, 4096)?;
-        bounded(&c.title, 200)?;
+        bounded(&c.title, 800)?;
+        if c.title.chars().count() > 200 {
+            return Err(error());
+        }
     }
     Ok(p)
 }
@@ -670,14 +722,17 @@ fn run(
         .parent()
         .ok_or_else(error)?
         .to_path_buf();
-    // Same locks as existing writers. Keep imported Supers saved/lazy, never mutate live engines.
+    // Lock order: live -> settings -> bookmarks -> saved -> vault. Existing
+    // sync apply/history restore already holds live before saved (then vault).
+    // Never wait for live while holding saved, or hold a vault guard before live.
+    // File dialogs and await points are outside this complete synchronous scope.
+    let state: tauri::State<crate::Sostoyanie> = app.state();
+    let live_guard = state.vkladki.lock().map_err(|_| error())?;
     let _settings = crate::nastrojki::ZAPIS.lock().map_err(|_| error())?;
     let _bookmarks = crate::biblioteka::IO.lock().map_err(|_| error())?;
     let _saved = crate::supervkladki::SOHRANENNYE
         .lock()
         .map_err(|_| error())?;
-    let state: tauri::State<crate::Sostoyanie> = app.state();
-    let live_guard = state.vkladki.lock().map_err(|_| error())?;
     let live: BTreeMap<_, _> = live_guard
         .iter()
         .map(|(id, v)| (id.clone(), v.nastrojki.clone()))
@@ -700,7 +755,7 @@ fn run(
         for key in vault.keys("password/")? {
             if let Some(raw) = vault.get(&key)? {
                 let row: Credential = serde_json::from_str(&raw).map_err(|_| error())?;
-                if normal(&row.super_id) {
+                if all.contains_key(&row.super_id) {
                     rows.push(row);
                 }
             }
@@ -708,6 +763,10 @@ fn run(
         let file = PasswordFile {
             format: "nexusbro-password-records".into(),
             version: 1,
+            super_names: all
+                .iter()
+                .map(|(id, n)| (id.clone(), n.nazvanie.clone()))
+                .collect(),
             passwords: rows,
         };
         let plain = Zeroizing::new(serde_json::to_vec(&file).map_err(|_| error())?);
@@ -722,7 +781,7 @@ fn run(
             let file = passwords(&bytes, pass)?;
             let source_ids: BTreeSet<_> =
                 file.passwords.iter().map(|c| c.super_id.clone()).collect();
-            json!({"kind":"passwords","passwords":file.passwords.len(),"supers":source_ids.into_iter().map(|id|json!({"id":id})).collect::<Vec<_>>()})
+            json!({"kind":"passwords","passwords":file.passwords.len(),"supers":source_ids.into_iter().enumerate().map(|(i,id)|json!({"name":file.super_names.get(&id).cloned().unwrap_or_else(||format!("Группа {}",i+1)),"id":id})).collect::<Vec<_>>()})
         } else {
             let c: Config = serde_json::from_slice(&bytes).map_err(|_| error())?;
             validate_config(&c)?;
@@ -925,10 +984,10 @@ fn run(
     }
     entries.remove(token);
     drop(entries);
-    drop(live_guard);
     drop(_saved);
     drop(_bookmarks);
     drop(_settings);
+    drop(live_guard);
     let _ = app.emit("vkladki-izmenilis", "");
     let _ = app.emit("zakladki-izmenilis", ());
     let _ = app.emit("nastrojki-izmenilis", crate::nastrojki::zagruzit());
@@ -1033,6 +1092,85 @@ mod tests {
         assert!(exported.contains("https://site.test/path"));
     }
     #[test]
+    fn legacy_private_and_conflicting_saved_live_definitions_never_export() {
+        let ordinary: crate::Nastrojki =
+            serde_json::from_value(json!({"id":"ordinary","nazvanie":"Ordinary"})).unwrap();
+        let legacy: crate::Nastrojki = serde_json::from_value(
+            json!({"id":"legacy-normal-id","nazvanie":"Legacy private","privatnaya":true}),
+        )
+        .unwrap();
+        let conflicting_saved: crate::Nastrojki =
+            serde_json::from_value(json!({"id":"conflicting","nazvanie":"Stale ordinary saved"}))
+                .unwrap();
+        let conflicting_live: crate::Nastrojki = serde_json::from_value(
+            json!({"id":"conflicting","nazvanie":"Current private","privatnaya":true}),
+        )
+        .unwrap();
+        let mut files = BTreeMap::new();
+        files.insert(
+            "sohranennye.json".into(),
+            Some(serde_json::to_vec(&vec![ordinary, legacy, conflicting_saved]).unwrap()),
+        );
+        let mut live = BTreeMap::new();
+        live.insert(conflicting_live.id.clone(), conflicting_live);
+        files.insert("nastrojki.json".into(), None);
+        files.insert(
+            "zakladki.json".into(),
+            Some(
+                serde_json::to_vec(&vec![
+                    crate::biblioteka::Zapis {
+                        super_id: Some("legacy-normal-id".into()),
+                        id: "private-bookmark".into(),
+                        adres: "https://legacy-private.test/".into(),
+                        nazvanie: "Private bookmark".into(),
+                        vremya: 0,
+                        papka: String::new(),
+                    },
+                    crate::biblioteka::Zapis {
+                        super_id: None,
+                        id: "public-bookmark".into(),
+                        adres: "https://ordinary.test/".into(),
+                        nazvanie: "Ordinary bookmark".into(),
+                        vremya: 0,
+                        papka: String::new(),
+                    },
+                ])
+                .unwrap(),
+            ),
+        );
+        let portable = config(&files, &live).unwrap();
+        assert_eq!(portable.bookmarks.len(), 1);
+        assert_eq!(portable.bookmarks[0].title, "Ordinary bookmark");
+        let allowed = all_supers(&files, &live).unwrap();
+        assert_eq!(
+            allowed.keys().cloned().collect::<Vec<_>>(),
+            vec!["ordinary".to_string()]
+        );
+        // Password export uses this exact allowlist; a syntactically normal ID
+        // by itself is never enough to authorize credential export.
+        assert!(!allowed.contains_key("legacy-normal-id"));
+        assert!(!allowed.contains_key("conflicting"));
+    }
+    #[test]
+    fn password_backup_group_names_are_optional_for_older_files() {
+        let old: PasswordFile = serde_json::from_value(
+            json!({"format":"nexusbro-password-records","version":1,"passwords":[]}),
+        )
+        .unwrap();
+        assert!(old.super_names.is_empty());
+        let file = PasswordFile {
+            format: "nexusbro-password-records".into(),
+            version: 1,
+            passwords: vec![],
+            super_names: BTreeMap::from([("ordinary".into(), "Рабочие аккаунты".into())]),
+        };
+        let plain = Zeroizing::new(serde_json::to_vec(&file).unwrap());
+        let encrypted = seal(&plain, "backup independent password").unwrap();
+        assert!(!String::from_utf8_lossy(&encrypted).contains("Рабочие аккаунты"));
+        let restored = passwords(&encrypted, "backup independent password").unwrap();
+        assert_eq!(restored.super_names["ordinary"], "Рабочие аккаунты");
+    }
+    #[test]
     fn multi_file_failure_rolls_back_previous_successful_writes() {
         let root = std::env::temp_dir().join(format!("nexusbro-backup-test-{}", id().unwrap()));
         fs::create_dir(&root).unwrap();
@@ -1044,6 +1182,19 @@ mod tests {
         assert!(transaction(&root, &before, &after).is_err());
         assert_eq!(fs::read(root.join("nastrojki.json")).unwrap(), b"before");
         assert!(!root.join(JOURNAL).exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+    #[cfg(unix)]
+    #[test]
+    fn reading_backup_rejects_symlink_and_over_limit_files() {
+        use std::os::unix::fs::symlink;
+        let root = std::env::temp_dir().join(format!("nexusbro-backup-test-{}", id().unwrap()));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("file"), b"data").unwrap();
+        symlink(root.join("file"), root.join("link")).unwrap();
+        assert!(read(&root.join("link"), 100).is_err());
+        assert!(read(&root.join("file"), 3).is_err());
+        assert_eq!(read(&root.join("file"), 4).unwrap(), b"data");
         fs::remove_dir_all(root).unwrap();
     }
     #[test]
