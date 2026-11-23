@@ -127,7 +127,13 @@ try:
   assert page.locator('.vkladka[data-super-id="pvt-saved"]').count()==0
   assert page.evaluate('window.__started.length')==0
   assert 'Подтверждена' not in opened.get_attribute('title')
+  # Closing a modal restores CEF on the next animation frame. Deliberately
+  # delay that frame and await its real IPC before attributing later commands
+  # to the group-sync button. Keep the no-engine-side-effects assertion below.
+  page.evaluate('window.__restoreFrame=window.requestAnimationFrame.bind(window);window.requestAnimationFrame=cb=>window.__restoreFrame(t=>setTimeout(()=>cb(t),30));true')
   dialog.get_by_role('button',name='Закрыть',exact=True).click()
+  page.wait_for_function('!document.querySelector(".security-panel")&&window.__args.filter(c=>c.cmd==="pokazat_dvizhki").at(-1)?.args.vidno===true')
+  page.evaluate('window.requestAnimationFrame=window.__restoreFrame;delete window.__restoreFrame')
   heading_sync=page.get_by_role('button',name='Синхронизировать выбранные данные',exact=True)
   selection_before=page.evaluate('JSON.stringify(window.__selection)')
   active_before=page.evaluate('window.__active');args_before=page.evaluate('window.__args.length')
