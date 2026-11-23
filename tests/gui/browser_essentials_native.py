@@ -143,9 +143,18 @@ def run(args):
         write_json(device.data/'profili/essentials-sleeping/obychnye.json',{
             'vkladki':[tab(1,'/sleeping-super','Спящий движок',{'kind':'inherit'})],
             'aktivnaya':1,'sleduyushchaya':2,'zakrytye':[]})
+        write_json(device.data/'windows-recovery.json',{'schema':1,'windows':[{
+            'key':'essentials-cold-window','active_super':'essentials-main','views':[{
+                'super_id':'essentials-main','session':{
+                    'vkladki':[tab(901,'/cold-secondary-old','Старую активную не загружать',{'kind':'inherit'}),
+                               tab(902,'/cold-secondary-target','Холодная цель окна',{'kind':'direct'})],
+                    'aktivnaya':901,'sleduyushchaya':903,'zakrytye':[]}}]}]})
         unrelated=subprocess.Popen([sys.executable,'-c','import time; time.sleep(180)'],
                                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
         client=device.start()
+        if client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')!='main':
+            main_client=wait_for(lambda:connect_window(device,'main'),'Main native inspector unavailable',30)
+            client.close();client=main_client;device.client=client
         activate_saved(client,'essentials-main')
         loaded(client,base+'/loaded')
         with count_lock:
@@ -184,13 +193,37 @@ def run(args):
         keys(device,'esc')
         js_wait(client,'!document.querySelector('+json.dumps(search)+')','Escape did not close CEF-opened search')
         report['checks'].append('physical_cef_search_shortcut_and_private_ordinary_exclusion')
-        # One extra window reuses the same Super engine, not another app instance.
+        # Select the SECOND row of a cold recovered window via real search.
+        # The first row was active on disk and must never make a request.
+        def cold_entry():
+            return next((r for r in call(client,'tab_search_snapshot')
+                         if r['window']!='main' and r['address']==base+'/cold-secondary-target'),None)
+        entry=wait_for(cold_entry,'Cold recovered window absent from search snapshot',30)
+        require(entry['cold'] and entry['tab_id']==902,'Recovered window unexpectedly attached before user selection')
+        with count_lock:
+            require(counts['/cold-secondary-old']==0 and counts['/cold-secondary-target']==0,
+                    'Cold recovered window eagerly navigated before search')
         before=main_rows(client)['aktivnaya']
-        call(client,'novoe_okno',id='essentials-main',privatnaya=False)
-        def extra_entry():
-            return next((r for r in call(client,'tab_search_snapshot') if r['window']!='main' and r['super_id']=='essentials-main'),None)
-        entry=wait_for(extra_entry,'New native window absent from search snapshot',30)
-        extra_client=wait_for(lambda:connect_window(device,entry['window']),'Additional native shell inspector unavailable',30)
+        foreground(client);keys(device,'ctrl','shift','a')
+        js_wait(client,'!!document.querySelector('+json.dumps(search)+')','Search absent for cold secondary target')
+        client.fill('input[aria-label="Найти вкладку или супервкладку"]','cold-secondary-target')
+        js_wait(client,'document.querySelectorAll("#tab-search-results [role=option]").length===1','Cold-window result was not unique')
+        keys(device,'enter')
+        js_wait(client,'!document.querySelector('+json.dumps(search)+')','Cold-window native selection did not finish',40)
+        extra_client=wait_for(lambda:connect_window(device,entry['window']),'Recovered secondary inspector unavailable',30)
+        def cold_selected():
+            session=call(extra_client,'obychnye_spisok',id='essentials-main')
+            active=next((t for t in session['vkladki'] if t['id']==session['aktivnaya']),None)
+            return active if active and active['adres']==base+'/cold-secondary-target' and active.get('browser_id',0)>0 and not active['zagruzka'] else None
+        restored=wait_for(cold_selected,'Actual cold secondary target did not become selected/loaded',35)
+        require(restored['id']!=902 and restored['route']=={'kind':'direct'},'Search did not remap the old ID with its exact route')
+        time.sleep(.3)
+        with count_lock:
+            require(counts['/cold-secondary-target']>0 and counts['/cold-secondary-old']==0,
+                    'Cold search loaded the previous active page before its intended target')
+        require(main_rows(client)['aktivnaya']==before,'Cold secondary search changed main-window selection')
+        report['checks'].append('cold_secondary_search_second_row_native_ID_remap_no_previous_active_HTTP')
+        # The same extra window is now warm and reuses this one Super engine.
         extra=call(extra_client,'obychnye_spisok',id='essentials-main')
         call(extra_client,'obychnaya_komanda',id='essentials-main',komanda={'deystvie':'pereyti','id':extra['aktivnaya'],'adres':base+'/window-target'})
         wait_for(lambda:any(r['window']==entry['window'] and r['address']==base+'/window-target' for r in call(client,'tab_search_snapshot')),
