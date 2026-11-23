@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import socket
+import shutil
 import subprocess
 import sys
 import threading
@@ -42,6 +43,96 @@ def foreground(client):
     click_control(client,'input[aria-label="Адрес страницы"]',15)
     js_wait(client,'document.hasFocus()&&document.activeElement?.getAttribute("aria-label")==="Адрес страницы"',
             'Native shell address did not own physical keyboard focus')
+
+
+def focus_initial_shell(client):
+    """Bring the actual main WebView forward before the first physical tab click.
+
+    Its address input can legitimately be disabled while restored rows are lazy.
+    Do not use foreground(), whose editable-address assertion belongs after load.
+    """
+    require(client.js('window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label')=='main',
+            'Initial activation inspector does not belong to the main native shell')
+    call(client,'fokus_obolochke')
+    js_wait(client,'document.hasFocus()',
+            'Initial main shell did not own desktop focus before physical activation',15)
+    painted(client)
+
+
+def copy_failure_logs(device,out,report):
+    if not device:return
+    sources=list(device.root.glob('*.log'))
+    if device.data.exists():
+        sources.extend(device.data.glob('zhurnal*.log'))
+        for pattern in ('profili/*/engine.log','profili/*/engine.log.1','profili/*/cef*.log'):
+            sources.extend(device.data.glob(pattern))
+    copied=[];errors=[]
+    for index,source in enumerate(sorted(set(sources))):
+        if not source.is_file() or source.is_symlink():continue
+        target=out/('failure-owned-'+str(index)+'-'+source.name+('' if source.name.endswith('.log') else '.log'))
+        try:shutil.copyfile(source,target);copied.append(target.name)
+        except OSError as error:errors.append(type(error).__name__)
+    report['failure_logs']=copied
+    if errors:report['failure_log_copy_errors']=errors
+
+
+def failure_diagnostics(device,out,report):
+    """Owned-window IDs, rectangles and focus only; never read form values/text."""
+    if not device:return
+    try:
+        from PIL import ImageGrab
+        ImageGrab.grab(**({'xdisplay':device.display} if sys.platform!='win32' else {})).save(out/'native-failure-full-screen.png')
+        report['failure_full_screen_saved']=True
+    except Exception as error:report['failure_screenshot_error']=type(error).__name__
+    observers=[]
+    for label,observer in getattr(device,'essentials_clients',{}).items():
+        try:
+            state=observer.js('(()=>{const e=document.activeElement,r=e?.getBoundingClientRect();return {document_has_focus:document.hasFocus(),window_width:innerWidth,window_height:innerHeight,active_tag:e?.tagName??null,active_disabled:!!e?.disabled,active_rect:r?[r.x,r.y,r.width,r.height]:null}})()')
+            observers.append({'window':label,'state':state})
+        except Exception as error:observers.append({'window':label,'error_type':type(error).__name__})
+    report['failure_shell_focus']=observers
+    try:
+        process=psutil.Process(device.app.pid)
+        pids={process.pid}|{p.pid for p in process.children(recursive=True)}
+        if sys.platform=='win32':
+            import ctypes
+            from ctypes import wintypes
+            user=ctypes.WinDLL('user32',use_last_error=True)
+            user.GetForegroundWindow.restype=wintypes.HWND
+            user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+            user.GetWindowThreadProcessId.restype=wintypes.DWORD
+            user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)]
+            user.IsWindowVisible.argtypes=[wintypes.HWND]
+            callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+            user.EnumWindows.argtypes=[callback_type,wintypes.LPARAM]
+            windows=[]
+            def collect(hwnd,_parameter):
+                pid=wintypes.DWORD();thread=user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+                if pid.value in pids:
+                    rect=wintypes.RECT();have_rect=user.GetWindowRect(hwnd,ctypes.byref(rect))
+                    windows.append({'handle':int(hwnd),'pid':pid.value,'thread':thread,'visible':bool(user.IsWindowVisible(hwnd)),
+                        'rect':[rect.left,rect.top,rect.right,rect.bottom] if have_rect else None})
+                return True
+            user.EnumWindows(callback_type(collect),0)
+            hwnd=user.GetForegroundWindow();pid=wintypes.DWORD();thread=user.GetWindowThreadProcessId(hwnd,ctypes.byref(pid))
+            class GuiThreadInfo(ctypes.Structure):
+                _fields_=[('size',wintypes.DWORD),('flags',wintypes.DWORD),('active',wintypes.HWND),('focus',wintypes.HWND),('capture',wintypes.HWND),('menu',wintypes.HWND),('move_size',wintypes.HWND),('caret',wintypes.HWND),('caret_rect',wintypes.RECT)]
+            user.GetGUIThreadInfo.argtypes=[wintypes.DWORD,ctypes.POINTER(GuiThreadInfo)]
+            gui=GuiThreadInfo();gui.size=ctypes.sizeof(gui)
+            info={'foreground_handle':int(hwnd or 0),'foreground_pid':pid.value,'foreground_thread':thread,'owned_windows':windows}
+            if user.GetGUIThreadInfo(thread,ctypes.byref(gui)):
+                info.update({'active_handle':int(gui.active or 0),'focus_handle':int(gui.focus or 0),'capture_handle':int(gui.capture or 0)})
+            report['failure_os_focus']=info
+        else:
+            env={**os.environ,'DISPLAY':device.display}
+            focus=subprocess.run(['xdotool','getwindowfocus'],env=env,capture_output=True,text=True,timeout=3)
+            windows=[]
+            for pid in pids:
+                result=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(pid)],env=env,capture_output=True,text=True,timeout=3)
+                if result.returncode==0:windows.extend({'handle':int(xid),'pid':pid} for xid in result.stdout.splitlines() if xid.isdigit())
+            report['failure_os_focus']={'focus_handle':int(focus.stdout.strip()) if focus.returncode==0 and focus.stdout.strip().isdigit() else None,'owned_visible_windows':windows}
+    except Exception as error:report['failure_os_focus_error']=type(error).__name__
+    copy_failure_logs(device,out,report)
 
 
 def main_rows(client):
@@ -181,6 +272,7 @@ def run(args):
         initial_client.close();device.client=None
         client=wait_for(lambda:connect_window(device,'main'),'Main native inspector unavailable',30)
         device.client=client
+        focus_initial_shell(client)
         activate_saved(client,'essentials-main')
         loaded(client,base+'/loaded')
         with count_lock:
@@ -351,6 +443,11 @@ def run(args):
                 report['owned_tree_alive_at_failure']=len(process.children(recursive=True))
             except psutil.NoSuchProcess:
                 report['owned_tree_alive_at_failure']=0
+        with count_lock:
+            expected_paths=('/loaded','/lazy-target','/sleeping-super','/private-super','/private-ordinary','/cold-secondary-old','/cold-secondary-target','/window-target','/real-refused')
+            report['failure_http_counts']={path:counts[path] for path in expected_paths}
+            report['failure_other_http_requests']=sum(count for path,count in counts.items() if path not in expected_paths)
+        failure_diagnostics(device,out,report)
         raise
     finally:
         write_json(out/'results.json',report)
@@ -362,6 +459,9 @@ def run(args):
                 try: observed.close()
                 except Exception: pass
             device.close()
+            if report.get('failure_type'):
+                copy_failure_logs(device,out,report)
+                write_json(out/'results.json',report)
         if blocked: blocked.close()
         for fixture in (server,recovered_server):
             if fixture: fixture.shutdown();fixture.server_close()
