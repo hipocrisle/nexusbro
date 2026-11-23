@@ -1,0 +1,166 @@
+{
+  "producer_run": 45202456428,
+  "application_source": "c64ef76f01b539e8b20dee2aabfd09b6feb1edc5",
+  "source_result": "windows-memory-verification/results.json",
+  "selection": "result records; large runtime samples and local environment metadata omitted",
+  "result": {
+    "schema": 2,
+    "automatic_only": true,
+    "completed": true,
+    "platform": "Windows-2025Server-10.0.26100-SP0",
+    "normal_policy_minutes": 30,
+    "isolated_idle_seconds": 8,
+    "checks": [
+      {
+        "saved_tabs_lazy_without_page_requests": true
+      },
+      {
+        "default_automatic_on_normal_30_minutes_without_settings_mutation": true
+      },
+      {
+        "active_download_retained_without_manual_exception": true
+      },
+      {
+        "manual_memory_commands_absent_from_actual_tab_menus": true
+      },
+      {
+        "active_heap_retained_beyond_idle_interval": true,
+        "active_seconds": 10.0
+      },
+      {
+        "actual_automatic_two_phase_close": true,
+        "drop_private_bytes": 239353856,
+        "isolated_idle_seconds": 8,
+        "normal_policy_minutes": 30
+      },
+      {
+        "only_heap_automatically_closed_legacy_exception_ignored": true
+      },
+      {
+        "pinned_loading_devtools_draft_private_active_and_paused_download_retained": true
+      },
+      {
+        "actual_unsaved_draft_preserved_without_exception": true
+      },
+      {
+        "automatic_same_row_wake_cookie_storage_scroll_preserved": true
+      }
+    ],
+    "coverage": {
+      "beforeunload_refusal": "actual_automatic_refusal_and_retry",
+      "user_close_during_sleep": "not_executed",
+      "automatic_unload": "actual_native_two_phase_auto_close_private_commit_drop_and_wake",
+      "fake_capture": "not_executed_no_fake_capture_interface",
+      "media": "actual_html_playing_paused_webaudio_clocks_and_local_rtc_retained_across_native_minimize"
+    },
+    "live_session_observer": {
+      "source": "actual_readonly_Tauri_IPC",
+      "window": "main",
+      "runtime_session_command": "obychnye_spisok",
+      "engine_membership_command": "spisok",
+      "python_disk_runtime_fallback": false,
+      "background_poll": false,
+      "ipc_requests": 140,
+      "live_sessions": 70,
+      "dormant_snapshots": 0,
+      "transient_unavailable": 0,
+      "attach_attempts": 2,
+      "last_stage": "ready",
+      "last_attach_error_type": "ConnectionError"
+    },
+    "actual_minimize_interval": {
+      "started_seconds": 50.952999999999975,
+      "finished_seconds": 66.43700000000001,
+      "duration_seconds": 15.484000000000037,
+      "automatic_close_observed_while_minimized": true,
+      "first_closed_observed_seconds": 60.983999999999924,
+      "selected_tab_id": 2
+    },
+    "media_clock_proofs": {
+      "before": {
+        "MemoryAudio": {
+          "page": "MemoryAudio",
+          "reason": "start",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 0.010101,
+          "duration": 120,
+          "paused": false,
+          "ready_state": 4,
+          "received_seconds": 15.765999999999963
+        },
+        "MemoryAudioPaused": {
+          "page": "MemoryAudioPaused",
+          "reason": "pause",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 0.03094,
+          "duration": 120,
+          "paused": true,
+          "ready_state": 4,
+          "received_seconds": 16.718999999999937
+        },
+        "MemoryWebAudio": {
+          "page": "MemoryWebAudio",
+          "reason": "start",
+          "trusted": true,
+          "kind": "webaudio",
+          "current_time": 0.020317460317460317,
+          "context_state": "running",
+          "received_seconds": 17.640999999999963
+        },
+        "MemoryRTC": {
+          "page": "MemoryRTC",
+          "reason": "start",
+          "trusted": true,
+          "kind": "rtc",
+          "connection_state": "new",
+          "signaling_state": "stable",
+          "received_seconds": 18.593999999999937
+        }
+      },
+      "after": {
+        "MemoryAudio": {
+          "page": "MemoryAudio",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 53.640226,
+          "duration": 120,
+          "paused": false,
+          "ready_state": 4,
+          "received_seconds": 69.42199999999991
+        },
+        "MemoryAudioPaused": {
+          "page": "MemoryAudioPaused",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 0.03094,
+          "duration": 120,
+          "paused": true,
+          "ready_state": 4,
+          "received_seconds": 70.09399999999994
+        },
+        "MemoryWebAudio": {
+          "page": "MemoryWebAudio",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "webaudio",
+          "current_time": 53.13015873015873,
+          "context_state": "running",
+          "received_seconds": 70.76599999999996
+        },
+        "MemoryRTC": {
+          "page": "MemoryRTC",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "rtc",
+          "connection_state": "new",
+          "signaling_state": "stable",
+          "received_seconds": 71.375
+        }
+      }
+    }
+  }
+}

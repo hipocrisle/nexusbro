@@ -1,0 +1,14 @@
+{
+  "version": "0.2.25",
+  "build_source": "c64ef76f01b539e8b20dee2aabfd09b6feb1edc5",
+  "build_run": 45198941758,
+  "producer_conclusion": "failure",
+  "producer_failure": "Windows fixture read the download before CEF released its file handle; Linux and both signed package builds succeeded.",
+  "windows_acceptance_run": 45202456428,
+  "windows_acceptance_conclusion": "success",
+  "linux_acceptance_run": 45198941758,
+  "linux_acceptance_conclusion": "success",
+  "test_only_fix": "f392caf",
+  "application_diff_from_build": "empty",
+  "scope": "Explicit tab route reload after ordinary page interaction/loading, concise dialog, real authenticated SOCKS and pending-unlock lock intent."
+}

@@ -1,0 +1,29 @@
+{
+  "producer_run": 45198941758,
+  "application_source": "c64ef76f01b539e8b20dee2aabfd09b6feb1edc5",
+  "source_result": "browser-essentials-ubuntu-24.04/backup-native/results.json",
+  "selection": "result records; large runtime samples and local environment metadata omitted",
+  "result": [
+    {
+      "native_picker_real_config_export_whitelist_private_proxy_and_url_secret_exclusion": true
+    },
+    {
+      "native_config_preview_read_only_explicit_routes_confirmed_new_ids_saved_without_engine": true
+    },
+    {
+      "native_picker_real_password_export_separate_passphrase_ciphertext_and_secret_field_clear": true
+    },
+    {
+      "native_wrong_passphrase_and_tampered_ciphertext_rejected_without_target_mutation": true
+    },
+    {
+      "native_actual_decrypt_prepare_mapped_password_import_new_id_vault_roundtrip_ciphertext": true
+    },
+    {
+      "success": true,
+      "native_crypto_file_io_and_gtk_pickers": "actual",
+      "ipc_overrides": false,
+      "platform": "linux"
+    }
+  ]
+}

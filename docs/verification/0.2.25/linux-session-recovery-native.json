@@ -1,0 +1,29 @@
+{
+  "producer_run": 45198941758,
+  "application_source": "c64ef76f01b539e8b20dee2aabfd09b6feb1edc5",
+  "source_result": "browser-essentials-ubuntu-24.04/session-recovery-native/results.json",
+  "selection": "result records; large runtime samples and local environment metadata omitted",
+  "result": {
+    "completed": true,
+    "checks": [
+      {
+        "corrupt_main_uses_backup_ordinary_windows_restored_private_excluded_and_no_cold_page_requests": true
+      },
+      {
+        "physical_restored_tab_click_waits_native_ack_remaps_id_and_keeps_explicit_route": true
+      },
+      {
+        "actual_sigkill_restart_restores_independent_window_tabs_routes_lazily": true
+      },
+      {
+        "graceful_app_exit_retains_open_window_recovery_snapshot": true
+      },
+      {
+        "explicit_secondary_window_close_commits_removal": true
+      },
+      {
+        "closed_window_does_not_resurrect_on_next_start": true
+      }
+    ]
+  }
+}
