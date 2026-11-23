@@ -3,7 +3,7 @@ let opening:string|null=null;
 const dialogs=()=>[...new Set(Array.from(document.querySelectorAll<HTMLElement>('[role="dialog"],.zatemnenie')).map(node=>node.matches('[role="dialog"]')?node:node.querySelector<HTMLElement>('[role="dialog"],.dialog')||node))].filter(node=>node.getClientRects().length>0);
 /** Serialize the async hide-before-render gap; never discard an existing form. */
 export function claimModal(owner:string,ownSelector?:string){
- if(opening&&opening!==owner)return false;
+ if(opening)return false;
  if(dialogs().some(node=>!ownSelector||!node.matches(ownSelector)))return false;
  opening=owner;return true;
 }

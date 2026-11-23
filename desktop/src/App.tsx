@@ -59,7 +59,7 @@ export default function App() {
   const [backupOpen,setBackupOpen]=useState(false);
   async function openGlobalModal(owner:string,setter:()=>void,allowedParent?:string){
     if(!claimModal(owner,allowedParent))return;
-    try{await invoke("pokazat_dvizhki",{vidno:false});setter();renderedModal(owner);}
+    try{await invoke("pokazat_dvizhki",{vidno:false});await invoke("fokus_obolochke");setter();renderedModal(owner);}
     catch(e){settleModal(owner);setOshibka(String(e));}
   }
 

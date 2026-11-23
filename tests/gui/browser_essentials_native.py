@@ -358,10 +358,15 @@ def run(args):
         require(next(t for t in extra['vkladki'] if t['id']==extra['aktivnaya'])['adres']==base+'/window-target','Wrong extra-window tab activated')
         report['checks'].append('search_targets_actual_other_window_without_changing_main_selection')
         report['coverage']['search']='passed'
-        foreground(client);keys(device,'shift','esc')
+        foreground(client)
+        call(client,'pokazat_dvizhki',vidno=True)
+        point=js_wait(client,'(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r&&r.width>300&&r.height>200?[r.x+200,r.y+150]:null})()',
+                      'Native CEF area unavailable for task-manager shortcut')
+        client.mouse(*point);keys(device,'shift','esc')
         task='[role="dialog"][aria-label="Диспетчер задач NexusBro"]'
         js_wait(client,'!!document.querySelector('+json.dumps(task)+')&&!!document.querySelector('+json.dumps(task+' tbody tr')+')',
-                'Physical Shift+Escape did not open measured task manager')
+                'Physical CEF Shift+Escape did not open measured task manager')
+        js_wait(client,'document.hasFocus()&&document.activeElement?.getAttribute("aria-label")==="Закрыть диспетчер задач"','CEF-opened task manager did not own keyboard focus')
         task_layout=client.js('(()=>{const t=document.querySelector(".browser-task-table"),p=t?.parentElement;if(!t||!p)return null;const r=p.getBoundingClientRect();return {width:document.querySelector(".browser-tasks").getBoundingClientRect().width,overflow:p.scrollWidth>p.clientWidth+1,cells:[...t.querySelectorAll("th,td")].every(c=>{const q=c.getBoundingClientRect();return q.left>=r.left-1&&q.right<=r.right+1;})};})()')
         require(task_layout and not task_layout['overflow'] and task_layout['cells'],'Native task table clipped a column or required horizontal scrolling')
         report['task_layout']=task_layout

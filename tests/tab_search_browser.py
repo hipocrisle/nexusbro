@@ -8,8 +8,9 @@ mock=base+r'''
 const oldInvoke=window.__TAURI_INTERNALS__.invoke;
 window.__searchRows=Array.from({length:1000},(_,i)=>({super_id:'hosters',super_name:'Хостеры',window:'main',tab_id:i+1,title:i===777?'Особенный хостер':'Страница '+i,address:'https://host'+i+'.invalid/',sleeping:i>5,index:i,route:{kind:'inherit'}}));
 window.__searchRows.push({super_id:'work',super_name:'Работа',window:'browser-42',tab_id:42,title:'Почта',address:'https://mail.invalid/',sleeping:false,index:0,route:{kind:'direct'}});
-window.__activated=[];window.__activateFails=false;
+window.__activated=[];window.__activateFails=false;window.__modalDelay=0;window.__hideStarted=0;
 window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
+ if(cmd==='pokazat_dvizhki'&&args.vidno===false){window.__hideStarted++;if(window.__modalDelay)await new Promise(resolve=>setTimeout(resolve,window.__modalDelay));}
  if(cmd==='tab_search_snapshot')return structuredClone(window.__searchRows);
  if(cmd==='tab_search_activate'){if(window.__activateFails)throw 'Список вкладок изменился. Повторите поиск.';window.__activated.push(args.entry);return;}
  return oldInvoke(cmd,args);
@@ -22,7 +23,13 @@ threading.Thread(target=server.serve_forever,daemon=True).start()
 with sync_playwright() as pw:
  browser=pw.chromium.launch(channel=os.getenv('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome') or None,headless=True)
  page=browser.new_page();page.add_init_script(mock);page.goto(f'http://127.0.0.1:{server.server_port}');page.wait_for_function('window.__calls.includes("spisok")')
- page.keyboard.press('Control+Shift+A');dialog=page.get_by_role('dialog',name='Поиск по вкладкам');expect(dialog).to_be_visible()
+ page.evaluate('window.__modalDelay=250')
+ page.keyboard.press('Control+Shift+A');page.keyboard.press('Control+Shift+A');page.keyboard.press('Control+Shift+A')
+ dialog=page.get_by_role('dialog',name='Поиск по вкладкам');expect(dialog).to_be_visible()
+ assert page.evaluate('window.__hideStarted')==1,'Repeated shortcut scheduled multiple asynchronous openings'
+ page.keyboard.press('Escape');expect(dialog).not_to_be_visible();page.wait_for_timeout(350);expect(dialog).not_to_be_visible()
+ page.evaluate('window.__modalDelay=0')
+ page.keyboard.press('Control+Shift+A');expect(dialog).to_be_visible()
  field=dialog.get_by_role('textbox',name='Найти вкладку или супервкладку');expect(field).to_be_focused()
  expect(dialog.get_by_role('option')).to_have_count(150)
  assert not page.evaluate('window.__calls.includes("zapustit")')
@@ -39,4 +46,4 @@ with sync_playwright() as pw:
  page.wait_for_function('window.__args.filter(x=>x.cmd==="pokazat_dvizhki").at(-1)?.args.vidno===true')
  browser.close()
 server.shutdown()
-print(json.dumps({'real_chromium':True,'native_ipc':'fixture','thousand_rows_bounded_render':True,'multiword_name_super_url_search':True,'exact_tab_window_activation':True,'no_engine_launch_while_searching':True,'stale_activation_visible_error':True,'keyboard_escape_restore':True}))
+print(json.dumps({'real_chromium':True,'native_ipc':'fixture','thousand_rows_bounded_render':True,'multiword_name_super_url_search':True,'exact_tab_window_activation':True,'no_engine_launch_while_searching':True,'stale_activation_visible_error':True,'keyboard_escape_restore':True,'delayed_native_hide_repeated_shortcut_single_open_no_resurrection':True}))
