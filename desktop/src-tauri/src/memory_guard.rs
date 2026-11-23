@@ -200,6 +200,17 @@ pub fn edited(browser: i32) {
         m.borrow_mut().entry(browser).or_default().edited = true;
     });
 }
+/// An explicit user route change is a normal reload into another profile,
+/// not an automatic memory eviction. Sticky editing/POST/document-observation
+/// signals must not turn that user action into a permanently unavailable one.
+/// Actual native beforeunload still gets a graceful, cancelable close in CEF.
+/// Keep current native capture protected independently of renderer availability.
+pub fn route_reason(browser: i32) -> Option<&'static str> {
+    DOCUMENTS.with(|m| {
+        m.borrow().get(&browser).filter(|p| p.capture)
+            .map(|_| "Вкладка использует камеру, микрофон или захват экрана")
+    })
+}
 pub fn reason(browser: i32) -> Option<&'static str> {
     DOCUMENTS.with(|m| {
         let m = m.borrow();
@@ -225,6 +236,30 @@ pub fn closed(browser: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn explicit_route_reload_is_not_automatic_document_eviction() {
+        let b = 6001;
+        closed(b);
+        assert!(reason(b).is_some(), "Unknown documents remain protected from automatic eviction");
+        assert!(route_reason(b).is_none(), "User navigation does not require an early observer");
+        navigation(b, true);
+        document(b, "explicit-get".into());
+        edited(b);
+        assert!(reason(b).is_some(), "Native editing must still protect automatic memory policy");
+        assert!(route_reason(b).is_none(), "A page-directed key is not permission to veto explicit reload forever");
+        navigation(b, false);
+        document(b, "explicit-post".into());
+        assert!(reason(b).is_some(), "Automatic eviction still preserves POST state");
+        assert!(route_reason(b).is_none());
+        capture(b, true);
+        assert!(reason(b).is_some());
+        assert!(route_reason(b).is_some(), "Native live capture is protected for both policies");
+        capture(b, false);
+        assert!(route_reason(b).is_none());
+        assert!(reason(b).is_some(), "Route policy must not clear automatic protection");
+        closed(b);
+    }
+
     #[test]
     fn canceled_navigation_never_clears_dirty_document() {
         navigation(100, true);

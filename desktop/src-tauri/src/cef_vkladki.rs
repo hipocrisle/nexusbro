@@ -668,7 +668,7 @@ struct RouteAttempt {
     prepared:Option<crate::tab_routes::NativeRoute>,
     generation:u64, expected:i32, closing:bool, closed:bool,
     since:std::time::Instant,
-    token:Option<String>,stage:Option<MemoryStage>,registration:Option<Registration>,verified:bool,failure:Option<String>,
+    failure:Option<String>,
 }
 fn route_guard_code(reason:&str)->&'static str{
     match reason{
@@ -677,18 +677,33 @@ fn route_guard_code(reason:&str)->&'static str{
         "Страница получена отправкой формы и не выгружается"=>"non_get",
         "Во вкладке был ввод; перезагрузите страницу после сохранения данных"=>"edited",
         "Вкладка использует камеру, микрофон или захват экрана"=>"capture",
+        "Страница удерживает несохранённые данные"=>"before_unload",
+        "Дождитесь загрузки страницы"=>"loading",
+        "Вкладка занята; завершите текущую операцию"=>"busy",
+        "Браузер заблокирован"=>"locked",
+        "Вкладка уже изменилась"|"Вкладка уже изменилась; выберите путь повторно"|"Вкладка закрыта"|"Смена пути отменена: вкладка закрывается"=>"stale",
+        "Истекло время подготовки маршрута"=>"timeout",
+        "Безопасный профиль маршрута недоступен"|"Недопустимый маршрут"=>"context",
+        "Не удалось создать страницу на выбранном пути"|"Страница уже недоступна"|"Не удалось открыть новый путь и восстановить прежнюю страницу; выберите путь повторно"=>"unavailable",
         _=>"protected_or_unavailable",
     }
 }
-fn route_result(tx:&Sender<Sobytie>,id:u64,generation:u64,browser_id:i32,error:Option<&str>){
-    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-result","id":id,"generation":generation,"browser_id":browser_id,"ok":error.is_none(),"error":error})));
+fn route_error_code(error:&str)->&'static str{
+    match route_guard_code(error){
+        "capture"=>"capture", "busy"=>"busy", "before_unload"=>"before_unload",
+        "locked"=>"locked", "stale"=>"stale", "timeout"=>"timeout",
+        "context"|"unavailable"=>"profile_unavailable",
+        _=>"unknown",
+    }
 }
-/// A lock cancels preparation/probes, but cannot undo an already committed close.
-fn cancel_routes_for_lock(s:&mut Sessiya,attempts:&mut HashMap<u64,RouteAttempt>,browsers:&HashMap<u64,Browser>,tx:&Sender<Sobytie>)->bool{
+fn route_result(tx:&Sender<Sobytie>,id:u64,generation:u64,browser_id:i32,error:Option<&str>){
+    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-result","id":id,"generation":generation,"browser_id":browser_id,"ok":error.is_none(),"error":error,"error_code":error.map(route_error_code)})));
+}
+/// A lock cancels preparation, but cannot undo an already committed close.
+fn cancel_routes_for_lock(s:&mut Sessiya,attempts:&mut HashMap<u64,RouteAttempt>,_browsers:&HashMap<u64,Browser>,tx:&Sender<Sobytie>)->bool{
     let ids:Vec<_>=attempts.iter().filter(|(_,a)|!a.closing).map(|(id,_)|*id).collect();
     let changed=!ids.is_empty();
     for id in ids{if let Some(attempt)=attempts.remove(&id){
-        if let Some(browser)=browsers.get(&id).filter(|b|b.identifier()==attempt.expected){crate::memory_cef::resume(browser);}
         if let Some(tab)=s.vkladki.iter_mut().find(|t|t.id==id){tab.route_pending=false;tab.route_error=Some("Смена пути отменена: браузер заблокирован".into());}
         route_result(tx,id,attempt.generation,attempt.expected,Some("Браузер заблокирован"));
     }}changed
@@ -762,26 +777,17 @@ impl Rabota {
                             }
                             if !attempt.closed&&!attempt.closing{
                                 if self.sleep_requests.contains_key(&id)||self.pending_downloads.contains_key(&id)||self.devtools_pending.contains_key(&id)||self.devtools.contains_key(&id)||crate::zagruzki::tab_busy(id){failure=Some("Вкладка занята; завершите текущую операцию".into());}
-                                else if let Some(reason)=self.brauzery.get(&id).and_then(|browser|{
-                                    let url=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
-                                    if crate::memory_guard::confirmed_error(actual,&url){crate::memory_guard::error_reason(actual,&url)}else{crate::memory_guard::reason(actual)}
-                                }){failure=Some(reason.into());}
+                                else if let Some(reason)=crate::memory_guard::route_reason(actual){failure=Some(reason.into());}
                                 else if let Some(browser)=self.brauzery.get(&id){
-                                    if browser.is_loading()!=0{failure=Some("Дождитесь загрузки страницы".into());}
-                                    else if browser.main_frame().is_some_and(|frame|crate::memory_guard::confirmed_error(actual,&CefString::from(&frame.url()).to_string())){
-                                        if let Some(host)=browser.host(){ROUTE_CLOSES.with(|m|{m.borrow_mut().insert(actual);});attempt.closing=true;host.close_browser(0);}else{failure=Some("Страница уже недоступна".into());}
-                                    }
-                                    else if !attempt.verified{
-                                        if attempt.stage.is_none(){
-                                            if let Some(token)=crate::memory_guard::token(actual){
-                                                let request=format!("route:{}:{}",attempt.generation,actual);
-                                                if crate::memory_cef::probe(browser,&request,&token){attempt.token=Some(token);attempt.stage=Some(MemoryStage::Preflight);}else{failure=Some("Не удалось проверить медиа и несохранённые данные".into());}
-                                            }else{failure=Some("Состояние документа неизвестно".into());}
-                                        }
-                                    }
-                                    else if crate::memory_guard::token(actual)!=attempt.token{failure=Some("Документ изменился во время проверки".into());}
-                                    else if let Some(host)=browser.host(){ROUTE_CLOSES.with(|m|{m.borrow_mut().insert(actual);});attempt.closing=true;host.close_browser(0);}
-                                    else{failure=Some("Страница уже недоступна".into());}
+                                    if let Some(host)=browser.host(){
+                                        // This was explicitly requested by the user: reload into
+                                        // another isolated profile, not a background eviction.
+                                        // Do not demand an untouched page or run the automatic
+                                        // memory purity probe. The real beforeunload callback
+                                        // below still cancels a page that refuses graceful close.
+                                        ROUTE_CLOSES.with(|m|{m.borrow_mut().insert(actual);});
+                                        attempt.closing=true;host.close_browser(0);
+                                    }else{failure=Some("Страница уже недоступна".into());}
                                 }
                             }
                             if attempt.closed{
@@ -802,7 +808,6 @@ impl Rabota {
             }
             if let Some(mut error)=failure{
                 eprintln!("NEXUSBRO_ROUTE_RESULT browser={} attempt={} ok=false guard={}",attempt.expected,attempt.generation,route_guard_code(&error));
-                if let Some(browser)=self.brauzery.get(&id){crate::memory_cef::resume(browser);}
                 if attempt.closed&&attempt.expected!=0&&!self.brauzery.contains_key(&id){
                     match sozdat_brauzer(&self.k,id,&tab.adres,&self.tx,tab.privatnaya||self.force_private){
                         Ok(Some(browser))=>{let identity=browser.identifier();self.brauzery.insert(id,browser);if let Some(tab)=self.s.vkladki.iter_mut().find(|v|v.id==id){tab.browser_id=identity;tab.otlozhena=false;}},
@@ -821,7 +826,7 @@ impl Rabota {
             if descriptor.is_none(){
                 let Some(generation)=tab.route_generation.checked_add(1)else{continue;};
                 if let Some(row)=self.s.vkladki.iter_mut().find(|v|v.id==tab.id){row.route_generation=generation;row.route_pending=true;}
-                self.route_attempts.insert(tab.id,RouteAttempt{route:tab.route.clone(),prepared:None,generation,expected:0,closing:false,closed:true,since:std::time::Instant::now(),token:None,stage:None,registration:None,verified:false,failure:None});
+                self.route_attempts.insert(tab.id,RouteAttempt{route:tab.route.clone(),prepared:None,generation,expected:0,closing:false,closed:true,since:std::time::Instant::now(),failure:None});
                 let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-needed","id":tab.id,"generation":generation,"route":tab.route,"browser_id":0})));changed=true;continue;
             }
             match self.k.routes.borrow_mut().prepare(&descriptor.unwrap(),tab.privatnaya||self.force_private){
@@ -1029,7 +1034,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::RoutePrepareSnapshot{snapshot,generation})=>{
                     let error=k.routes.borrow_mut().snapshot(snapshot).err().map(|_|"Некорректный снимок маршрутов");
-                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-snapshot-result","generation":generation,"ok":error.is_none(),"error":error})));continue;
+                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"route-snapshot-result","generation":generation,"ok":error.is_none(),"error":error,"error_code":error.map(route_error_code)})));continue;
                 }
                 Sobytie::Komanda(Komanda::RouteApply{id,route,generation,prepared,expected_browser})=>{
                     let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id)else{route_result(tx,id,generation,expected_browser,Some("Вкладка закрыта"));continue;};
@@ -1038,7 +1043,7 @@ impl Rabota {
                     let matching=pending.is_some_and(|a|a.generation==generation&&a.expected==expected_browser&&a.route==route&&!a.closing);
                     if *browser_locked{
                         if generation>tab.route_generation&&pending.is_none(){tab.route_generation=generation;tab.route_error=Some("Браузер заблокирован".into());izmeneno=true;}
-                        if matching{route_attempts.remove(&id);tab.route_pending=false;tab.route_error=Some("Браузер заблокирован".into());if let Some(browser)=brauzery.get(&id){crate::memory_cef::resume(browser);}izmeneno=true;}
+                        if matching{route_attempts.remove(&id);tab.route_pending=false;tab.route_error=Some("Браузер заблокирован".into());izmeneno=true;}
                         route_result(tx,id,generation,expected_browser,Some("Браузер заблокирован"));continue;
                     }
                     if actual!=expected_browser||(!matching&&(generation<=tab.route_generation||pending.is_some())){
@@ -1051,16 +1056,16 @@ impl Rabota {
                     if !prepared.validate(){tab.route_pending=false;tab.route_error=Some("Недопустимый маршрут".into());route_attempts.remove(&id);route_result(tx,id,generation,expected_browser,tab.route_error.as_deref());izmeneno=true;continue;}
                     tab.route_pending=true;tab.route_error=None;
                     if perevody.remove(&id).is_some(){let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"perevod-otmena","id":id})));}perevod_due.remove(&id);
-                    route_attempts.insert(id,RouteAttempt{route,prepared:Some(prepared),generation,expected:expected_browser,closing:false,closed:expected_browser==0,since:std::time::Instant::now(),token:None,stage:None,registration:None,verified:false,failure:None});
+                    route_attempts.insert(id,RouteAttempt{route,prepared:Some(prepared),generation,expected:expected_browser,closing:false,closed:expected_browser==0,since:std::time::Instant::now(),failure:None});
                     izmeneno=true;continue;
                 }
                 Sobytie::Komanda(Komanda::RouteFailed{id,generation,error,expected_browser})=>{
                     if route_attempts.get(&id).is_some_and(|a|a.generation==generation&&a.expected==expected_browser&&!a.closing){
-                        route_attempts.remove(&id);if let Some(browser)=brauzery.get(&id){crate::memory_cef::resume(browser);}if let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id){tab.route_pending=false;tab.route_error=Some(error.chars().take(300).collect());route_result(tx,id,generation,expected_browser,tab.route_error.as_deref());izmeneno=true;}
+                        route_attempts.remove(&id);if let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id){tab.route_pending=false;tab.route_error=Some(error.chars().take(300).collect());route_result(tx,id,generation,expected_browser,tab.route_error.as_deref());izmeneno=true;}
                     }continue;
                 }
                 Sobytie::RouteRefused(id,identity)=>{
-                    if route_attempts.get(&id).is_some_and(|a|a.expected==identity){let a=route_attempts.remove(&id).unwrap();if let Some(browser)=brauzery.get(&id){crate::memory_cef::resume(browser);}if let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id){tab.route_pending=false;tab.route_error=Some("Страница удерживает несохранённые данные".into());route_result(tx,id,a.generation,a.expected,tab.route_error.as_deref());izmeneno=true;}}continue;
+                    if route_attempts.get(&id).is_some_and(|a|a.expected==identity){let a=route_attempts.remove(&id).unwrap();if let Some(tab)=s.vkladki.iter_mut().find(|v|v.id==id){tab.route_pending=false;tab.route_error=Some("Страница удерживает несохранённые данные".into());route_result(tx,id,a.generation,a.expected,tab.route_error.as_deref());izmeneno=true;}}continue;
                 }
                 Sobytie::Komanda(Komanda::OknoKomanda{label:target,komanda})=>{if let Some(extra)=extras.get(&target){let _=extra.tx.send(Sobytie::Komanda(*komanda));}continue;}
                 Sobytie::Komanda(Komanda::OknoZakryt{label:target})=>{
@@ -1248,20 +1253,6 @@ impl Rabota {
                         }
                         continue;
                     }
-                    if let Some(attempt)=route_attempts.get_mut(&id).filter(|a|a.expected==identity&&!a.closing){
-                        let request=format!("route:{}:{}",attempt.generation,identity);
-                        if data["request"].as_str()==Some(request.as_str())&&data["token"].as_str()==attempt.token.as_deref(){
-                            let reason=crate::memory_guard::reason(identity).map(str::to_owned)
-                                .or_else(||if crate::memory_guard::token(identity)!=attempt.token{Some("Документ изменился во время проверки".into())}else{None})
-                                .or_else(||if data["known"]!=true{Some("Не удалось проверить медиа и данные страницы".into())}else{None})
-                                .or_else(||data["reason"].as_str().map(str::to_owned));
-                            if let Some(reason)=reason{attempt.failure=Some(reason);}
-                            else if attempt.stage==Some(MemoryStage::Preflight){
-                                if let Some(registration)=crate::memory_cef::freeze(browser,id,&request,tx.clone()){attempt.registration=Some(registration);attempt.stage=Some(MemoryStage::Freezing);}else{attempt.failure=Some("Не удалось защитить страницу перед сменой пути".into());}
-                            }else if attempt.stage==Some(MemoryStage::Verify){attempt.verified=true;}
-                            continue;
-                        }
-                    }
                     let Some(attempt)=sleep_requests.get(&id).filter(|a|a.identity==identity&&Some(a.request.as_str())==data["request"].as_str()&&Some(a.token.as_str())==data["token"].as_str())else{continue;};
                     if !matches!(attempt.stage,MemoryStage::Preflight|MemoryStage::Verify){continue;}
                     let automatic=attempt.automatic;
@@ -1299,12 +1290,6 @@ impl Rabota {
                     }
                 }
                 Sobytie::MemoryFrozen(id,identity,request,success)=>{
-                    if let Some(attempt)=route_attempts.get_mut(&id).filter(|a|a.expected==identity&&a.stage==Some(MemoryStage::Freezing)&&request==format!("route:{}:{}",a.generation,identity)){
-                        attempt.stage=Some(MemoryStage::Verify);
-                        let sent=success&&brauzery.get(&id).is_some_and(|b|crate::memory_cef::probe(b,&request,attempt.token.as_deref().unwrap_or("")));
-                        if !sent{attempt.failure=Some("Не удалось завершить безопасную проверку страницы".into());}continue;
-                    }
-
                     let Some(attempt)=sleep_requests.get_mut(&id).filter(|a|a.identity==identity&&a.request==request&&a.stage==MemoryStage::Freezing)else{
                         if !sleep_requests.contains_key(&id){if let Some(b)=brauzery.get(&id).filter(|b|b.identifier()==identity){crate::memory_cef::resume(b);}}continue;
                     };
