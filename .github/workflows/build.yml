@@ -550,6 +550,7 @@ jobs:
           BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
           python3 tests/gui/session_recovery.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/session-recovery-native
           python3 tests/gui/sync_history_native.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/sync-history-native
+          python3 tests/gui/backup_native.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/backup-native
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -562,6 +563,8 @@ jobs:
             .dev-check/session-recovery-native/*.log
             .dev-check/sync-history-native/results.json
             .dev-check/sync-history-native/*.png
+            .dev-check/backup-native/results.json
+            .dev-check/backup-native/*.log
           retention-days: 14
 
       - name: Проверить содержимое установщика Windows

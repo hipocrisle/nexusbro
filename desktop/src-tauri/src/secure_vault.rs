@@ -525,7 +525,7 @@ impl VaultState {
     }
     /// A batch imports credentials with one encrypted durable commit. No partial RAM or disk mutation.
     pub(crate) fn compare_and_set_many(&self, entries: &[(&str, Option<&str>, Option<&str>)]) -> Result<()> {
-        if entries.len()>1000 {return Err("Слишком много записей".into());}
+        if entries.len()>10_000 {return Err("Слишком много записей".into());}
         let mut seen=std::collections::HashSet::new();
         for (key,expected,value) in entries {
             if key.is_empty()||key.len()>512||!seen.insert(*key)||expected.is_some_and(|v|v.len()>MAX_VALUE)||value.is_some_and(|v|v.len()>MAX_VALUE){return Err("Недопустимые записи хранилища".into());}

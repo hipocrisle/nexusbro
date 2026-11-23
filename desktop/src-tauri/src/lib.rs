@@ -500,7 +500,8 @@ async fn podgotovit_dvizhok(
     // Новая и приватная Super начинают со стартового адреса. Старые
     // обычные профили восстанавливают вкладки из JSON без фоновой загрузки.
     let adres = if nastrojki.pustaya || nastrojki.privatnaya
-        || !brauzer::papka_profilya(id).join("obychnye.json").is_file() {
+        || (!brauzer::papka_profilya(id).join("obychnye.json").is_file()
+            && !brauzer::papka_profilya(id).join("obychnye.backup.json").is_file()) {
         Some(nastrojki.adres.as_str())
     } else {
         None
