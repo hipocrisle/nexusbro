@@ -64,6 +64,7 @@ def run(a):
     lock = threading.Lock()
     release_loading, stop_download = threading.Event(), threading.Event()
     app = log = server = None
+    observer = None
     owned = {}
     u = ctypes.windll.user32
     u.SetProcessDpiAwarenessContext.argtypes = [ctypes.c_void_p]
@@ -248,16 +249,17 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
         raise AssertionError(description)
 
     def session():
-        try:
-            return json.loads((data / "profili" / "memory" / "obychnye.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return {"vkladki": []}
+        # A durable recovery checkpoint resets runtime flags by design. Read
+        # the actual live parent snapshot without touching memory/activity state.
+        return observer.session("memory") if observer is not None else None
 
     def snapshot(tab_ids, predicate=lambda state, rows: True):
-        # The persisted session can be temporarily unreadable while native CEF
-        # writes it. Read once per observation; never mix rows from different
+        # The live parent snapshot may be unavailable during engine startup.
+        # Read once per observation; never mix rows from different
         # generations or interpret a missing row as a successful negative.
         state = session()
+        if state is None:
+            return None
         observed = {}
         for item in state["vkladki"]:
             if item["id"] in observed:
@@ -329,8 +331,13 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
                "NEXUSBRO_TEST_DATA": str(data), "WEBVIEW2_USER_DATA_FOLDER": str(out / "webview2"),
                "NEXUSBRO_PROBA": "0", "NEXUSBRO_TEST_DOWNLOAD_DIR": str(out / "downloads"),
                "NEXUSBRO_TEST_MEMORY_IDLE_SECONDS": "8"}
+        from live_sessions_windows import LiveSessions
+        observer=LiveSessions(a.exe)
+        report["live_session_observer"]=observer.diagnostics
+        env=observer.configure(env)
         log = (out / "app.log").open("w", encoding="utf-8")
         app = subprocess.Popen([str(pathlib.Path(a.exe).resolve())], env=env, stdout=log, stderr=log)
+        observer.attach(app)
         desktop = Desktop(backend="uia")
         win = wait(lambda: next(iter(desktop.windows(process=app.pid, title="NexusBro")), None), "No real shell window", 45)
         u.ShowWindow(win.handle, 9)
@@ -746,6 +753,8 @@ page:'MemoryDraft',reason:'draft-snapshot',trusted:true,value:document.getElemen
             pass
         raise
     finally:
+        if observer is not None:
+            observer.close()
         release_loading.set()
         stop_download.set()
         if app is not None:

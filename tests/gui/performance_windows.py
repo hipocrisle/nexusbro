@@ -177,6 +177,7 @@ def run(args):
     current_phase = "setup"
     started = time.monotonic()
     app = cover = log = None
+    observer = None
     owned = {}
     server = None
     u = ctypes.windll.user32
@@ -424,18 +425,21 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
         return time.monotonic(), found
 
     def tab_counts():
-        """Read persisted lifecycle state; do not infer live pages from saved URLs."""
-        saved = live = deferred = 0
-        for s in range(args.supers):
-            try:
-                session = json.loads((data / "profili" / f"perf-{s}" / "obychnye.json").read_text(encoding="utf-8"))
-            except (ValueError, OSError):
-                return {"saved": None, "live": None, "deferred": None, "available": False}
-            tabs = session["vkladki"]
-            saved += len(tabs)
-            deferred += sum(bool(v.get("otlozhena")) for v in tabs)
-            live += sum(not v.get("otlozhena") for v in tabs)
-        return {"saved": saved, "live": live, "deferred": deferred, "available": True}
+        """Runtime flags come from one actual IPC snapshot per Super, not recovery JSON."""
+        if observer is None:
+            raise AssertionError("Live session observer is not ready for measurement")
+        sessions=observer.sessions([f"perf-{s}" for s in range(args.supers)],
+            allow_dormant=current_phase=="cold_saved_lazy")
+        if sessions is None:
+            raise AssertionError("Live native session unavailable during measured phase")
+        saved=live=deferred=0
+        for session in sessions.values():
+            tabs=session["vkladki"]
+            saved+=len(tabs)
+            deferred+=sum(bool(v.get("otlozhena")) for v in tabs)
+            live+=sum(not v.get("otlozhena") for v in tabs)
+        return {"saved":saved,"live":live,"deferred":deferred,"available":True,
+                "source":"actual_readonly_Tauri_IPC"}
 
     def measure(name, duration_seconds=None):
         nonlocal current_phase
@@ -540,8 +544,13 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             if not (cef / "libcef.dll").is_file():
                 raise RuntimeError("--cef must contain the actual libcef.dll")
             env.update({"CEF_PATH": str(cef), "PATH": str(cef) + os.pathsep + env["PATH"]})
+        from live_sessions_windows import LiveSessions
+        observer=LiveSessions(args.exe)
+        report["live_session_observer"]=observer.diagnostics
+        env=observer.configure(env)
         log = (out / "app.log").open("w", encoding="utf-8")
         app = subprocess.Popen([str(pathlib.Path(args.exe).resolve())], env=env, stdout=log, stderr=log)
+        observer.attach(app)
         windows = Desktop(backend="uia")
         window = wait_for(lambda: next(iter(windows.windows(process=app.pid, title="NexusBro")), None),
                           "NexusBro shell did not appear", 45)
@@ -585,10 +594,11 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
                 click(f"Perf {s}-{t}", "TabItem")
                 path = f"/page/{s}/{t}"
                 wait_for(lambda: hits.get(path, 0) > 0, f"Tab did not really load: {path}")
-            # Wait for the actual persisted loaded title, not only an HTTP request.
+            # Require a real live native snapshot in addition to the HTTP witness.
             def loaded():
                 try:
-                    session = json.loads((data / "profili" / f"perf-{s}" / "obychnye.json").read_text(encoding="utf-8"))
+                    session=observer.session(f"perf-{s}")
+                    if session is None: return False
                     tabs = session["vkladki"]
                     visited = [v for v in tabs if 1 <= v["id"] <= args.tabs]
                     deferred = [v for v in tabs if args.tabs < v["id"] <= args.saved_tabs]
@@ -824,6 +834,8 @@ trusted:event.isTrusted,focus:document.hasFocus()}),keepalive:true}).catch(()=>{
             report["screenshot_error"] = type(screenshot_error).__name__
         raise
     finally:
+        if observer is not None:
+            observer.close()
         if cover is not None:
             cover.destroy()
         if app is not None:
