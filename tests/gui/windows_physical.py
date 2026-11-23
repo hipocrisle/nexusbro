@@ -831,15 +831,24 @@ try:
         if address.iface_value.CurrentValue==download_url:break
     assert address.iface_value.CurrentValue==download_url,('Download URL was not entered',address.iface_value.CurrentValue)
     gui.press('enter')
+    # The final path can exist while CEF is still writing/holding it on
+    # Windows. Persisted completion AND a real readable payload are required.
     deadline=time.monotonic()+15
-    while time.monotonic()<deadline and not (run/'downloads/nexusbro-fixture.txt').exists():time.sleep(.1)
-    assert (run/'downloads/nexusbro-fixture.txt').read_bytes()==b'NexusBro download fixture\n'*256
-    gui.hotkey('ctrl','j');ui('Закрыть библиотеку',['Button']).click_input()
-    deadline=time.monotonic()+8
+    downloads=[];download_bytes=None;download_read_error=None
     while time.monotonic()<deadline:
-        downloads=json.loads((data/'zagruzki.json').read_text(encoding='utf-8'))
-        if any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads):break
+        try:
+            downloads=json.loads((data/'zagruzki.json').read_text(encoding='utf-8'))
+            if any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads):
+                download_bytes=(run/'downloads/nexusbro-fixture.txt').read_bytes()
+                break
+        except (FileNotFoundError, PermissionError) as error:
+            # Only transient absence/sharing violations are retried; malformed
+            # history and readable-but-wrong bytes remain immediate failures.
+            download_read_error=type(error).__name__
         time.sleep(.1)
+    assert download_bytes is not None,('Completed download did not become readable within 15 seconds',download_read_error)
+    assert download_bytes==b'NexusBro download fixture\n'*256
+    gui.hotkey('ctrl','j');ui('Закрыть библиотеку',['Button']).click_input()
     download_name_ok=any(d['name']=='nexusbro-fixture.txt' and d['status']=='Готово' for d in downloads)
     results.append({'native_download_name_correct':download_name_ok})
     assert any(d['status']=='Готово' for d in downloads),downloads
