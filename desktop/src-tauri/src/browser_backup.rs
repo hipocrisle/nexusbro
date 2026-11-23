@@ -45,6 +45,14 @@ static PENDING: OnceLock<Mutex<BTreeMap<String, Pending>>> = OnceLock::new();
 fn error() -> String {
     "Резервная копия повреждена или имеет неподдерживаемый формат".into()
 }
+fn unlocked_generation(expected: u64) -> Result<()> {
+    let (locked, generation) = crate::browser_lock::engine_state();
+    if locked || generation != expected {
+        Err("Состояние защиты изменилось. Повторите операцию после разблокировки браузера.".into())
+    } else {
+        Ok(())
+    }
+}
 fn changed() -> String {
     "Данные изменились после предварительного просмотра. Откройте копию заново.".into()
 }
@@ -636,6 +644,7 @@ struct Pending {
     mapping: BTreeMap<String, String>,
     settings: bool,
     ready: bool,
+    lock_generation: u64,
 }
 fn cache() -> &'static Mutex<BTreeMap<String, Pending>> {
     PENDING.get_or_init(Default::default)
@@ -697,7 +706,8 @@ fn run(
     pass: &str,
 ) -> Result<Value> {
     let _serial = SERIAL.lock().map_err(|_| "Резервное копирование занято")?;
-    if crate::browser_lock::locked_global() {
+    let (locked, lock_generation) = crate::browser_lock::engine_state();
+    if locked {
         return Err("Браузер заблокирован".into());
     }
     if action == "cancel" {
@@ -718,6 +728,9 @@ fn run(
     } else {
         None
     };
+    // A native file chooser can stay open while another window locks and even
+    // unlocks the browser. Both the bit and generation must still match.
+    unlocked_generation(lock_generation)?;
     let root = crate::brauzer::papka_profilej()
         .parent()
         .ok_or_else(error)?
@@ -747,6 +760,7 @@ fn run(
         if bytes.len() > MAX {
             return Err(error());
         }
+        unlocked_generation(lock_generation)?;
         create_file(chosen.as_ref().ok_or_else(error)?, &bytes)?;
         return Ok(json!({"exported":true,"kind":"config","url_queries_removed":true}));
     }
@@ -771,6 +785,7 @@ fn run(
         };
         let plain = Zeroizing::new(serde_json::to_vec(&file).map_err(|_| error())?);
         let bytes = seal(&plain, pass)?;
+        unlocked_generation(lock_generation)?;
         create_file(chosen.as_ref().ok_or_else(error)?, &bytes)?;
         return Ok(json!({"exported":true,"kind":"passwords","count":file.passwords.len()}));
     }
@@ -824,6 +839,7 @@ fn run(
                 mapping: BTreeMap::new(),
                 settings: false,
                 ready: false,
+                lock_generation,
             },
         );
         return Ok(out);
@@ -835,6 +851,7 @@ fn run(
         .get_mut(token)
         .filter(|p| p.window == owner)
         .ok_or("Предварительный просмотр истёк. Откройте файл заново.")?;
+    unlocked_generation(pending.lock_generation)?;
     if pending.target_hash != target_hash
         || pending
             .password_hash
@@ -910,6 +927,7 @@ fn run(
                 )
             })
             .collect();
+        unlocked_generation(lock_generation)?;
         vault.compare_and_set_many(&refs)?;
     } else {
         let c: Config = serde_json::from_slice(&bytes).map_err(|_| error())?;
@@ -980,6 +998,7 @@ fn run(
                 return Err(error());
             }
         }
+        unlocked_generation(lock_generation)?;
         transaction(&root, &files, &after)?;
     }
     entries.remove(token);
