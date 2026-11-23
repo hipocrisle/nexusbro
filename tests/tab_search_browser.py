@@ -31,8 +31,12 @@ with sync_playwright() as pw:
  page.keyboard.press('Control+Shift+A');field.fill('почта');field.press('Enter');expect(dialog).not_to_be_visible();assert page.evaluate('window.__activated[1].window')=='browser-42'
  page.keyboard.press('Control+Shift+A');field.fill('неттакогосайта');expect(dialog.get_by_text('Ничего не найдено')).to_be_visible()
  field.fill('Почта');page.evaluate('window.__activateFails=true');field.press('Enter');expect(dialog.get_by_role('alert')).to_contain_text('изменился');expect(dialog).to_be_visible();field.press('Escape');expect(dialog).not_to_be_visible()
+ page.keyboard.press('Shift+Escape');tasks=page.get_by_role('dialog',name='Диспетчер задач NexusBro');expect(tasks).to_be_visible()
+ page.keyboard.press('Control+Shift+A');expect(page.get_by_role('dialog')).to_have_count(1);expect(tasks).to_be_visible()
+ page.keyboard.press('Control+Shift+Delete');expect(page.get_by_role('dialog')).to_have_count(1)
+ page.keyboard.press('Escape');expect(tasks).not_to_be_visible()
  assert len(page.evaluate('window.__activated'))==2
- assert page.evaluate('window.__args.filter(x=>x.cmd==="pokazat_dvizhki").at(-1).args.vidno') is True
+ page.wait_for_function('window.__args.filter(x=>x.cmd==="pokazat_dvizhki").at(-1)?.args.vidno===true')
  browser.close()
 server.shutdown()
 print(json.dumps({'real_chromium':True,'native_ipc':'fixture','thousand_rows_bounded_render':True,'multiword_name_super_url_search':True,'exact_tab_window_activation':True,'no_engine_launch_while_searching':True,'stale_activation_visible_error':True,'keyboard_escape_restore':True}))

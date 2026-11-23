@@ -1,3 +1,4 @@
+import {claimModal,settleModal,renderedModal,restoreModalContent} from "./modalGate";
 import ImportWizard from "./ImportWizard";
 import ClearBrowsingData from "./ClearBrowsingData";
 import {shortcutKey} from "./shortcuts";
@@ -18,15 +19,16 @@ export default function Biblioteka({superId,superName}:{superId:string|null;supe
  const [loading,setLoading]=useState(false),[removing,setRemoving]=useState<string|null>(null);
  function select(section:Razdel){opening.current++;if(current.current===section){setQuery('');return;}current.current=section;request.current++;inflight.current=null;setItems([]);setDownloads([]);setQuery('');setError('');setInfo('');setImportOpen(false);setLoading(true);setRemoving(null);setOpen(section);}
  async function show(section:Razdel){
-  if(!Object.prototype.hasOwnProperty.call(titles,section))return;
-  const token=++opening.current;await invoke('pokazat_dvizhki',{vidno:false});await invoke('fokus_obolochke');if(opening.current!==token)return;setClearOpen(false);select(section);
+  if(!Object.prototype.hasOwnProperty.call(titles,section)||!claimModal("library",".library-panel,.clear-data-panel"))return;
+  const token=++opening.current;try{await invoke('pokazat_dvizhki',{vidno:false});await invoke('fokus_obolochke');}catch(e){settleModal('library');setError(String(e));return;}if(opening.current!==token)return;setClearOpen(false);select(section);renderedModal("library");
  }
- async function close(){opening.current++;current.current=null;request.current++;inflight.current=null;setOpen(null);setItems([]);setDownloads([]);await invoke('pokazat_dvizhki',{vidno:true});}
+ async function close(){settleModal("library");opening.current++;current.current=null;request.current++;inflight.current=null;setOpen(null);setItems([]);setDownloads([]);await restoreModalContent();}
  async function showClear(){
-  const token=++opening.current;await invoke('pokazat_dvizhki',{vidno:false});await invoke('fokus_obolochke');if(opening.current!==token)return;
-  current.current=null;request.current++;inflight.current=null;setOpen(null);setItems([]);setDownloads([]);setClearOpen(true);
+  if(!claimModal("library",".library-panel,.clear-data-panel"))return;
+  const token=++opening.current;try{await invoke('pokazat_dvizhki',{vidno:false});await invoke('fokus_obolochke');}catch(e){settleModal('library');setError(String(e));return;}if(opening.current!==token)return;
+  current.current=null;request.current++;inflight.current=null;setOpen(null);setItems([]);setDownloads([]);setClearOpen(true);renderedModal("library");
  }
- async function closeClear(){opening.current++;setClearOpen(false);await invoke('pokazat_dvizhki',{vidno:true});}
+ async function closeClear(){settleModal("library");opening.current++;setClearOpen(false);await restoreModalContent();}
  async function refresh(section=current.current){
   if(!section||current.current!==section||inflight.current!==null)return;
   const token=++request.current;inflight.current=token;

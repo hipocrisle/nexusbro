@@ -315,6 +315,14 @@ jobs:
           rm -rf "src-tauri/target/${{ matrix.target }}/release/bundle"
           npm run tauri build -- --target ${{ matrix.target }}
 
+      - name: Verify real backup crypto and rollback filesystem
+        working-directory: desktop/src-tauri
+        shell: bash
+        run: |
+          export PATH="$CEF_PATH:$PATH"
+          export LD_LIBRARY_PATH="$CEF_PATH:${LD_LIBRARY_PATH:-}"
+          cargo test --release --target ${{ matrix.target }} --lib browser_backup::tests -- --test-threads=1
+
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
@@ -355,6 +363,10 @@ jobs:
           python3 tests/cloud_supers.py
           python3 tests/memory_safety_browser.py
           python3 tests/memory_bootstrap_browser.py
+          python3 tests/tab_search_browser.py
+          python3 tests/browser_tasks_browser.py
+          python3 tests/backup_browser.py
+          python3 tests/updater_startup_browser.py
 
       - name: Проверить CEF и окна Linux под Xvfb
         if: matrix.os == 'ubuntu-24.04'
@@ -522,6 +534,34 @@ jobs:
             .dev-check/windows-render/data/zhurnal.log
             .dev-check/windows-render/data/profili/*/cef*.log
             .dev-check/windows-render/data/profili/*/obychnye.json
+          retention-days: 14
+
+      - name: Native search task metrics and network retry
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            python tests/gui/browser_essentials_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/browser-essentials
+          else
+            python3 tests/gui/browser_essentials_native.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/browser-essentials
+          fi
+      - name: Native crash recovery and guarded history undo
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
+          python3 tests/gui/session_recovery.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/session-recovery-native
+          python3 tests/gui/sync_history_native.py --exe "$BIN" --cef desktop/src-tauri/cef --out .dev-check/sync-history-native
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: browser-essentials-${{ matrix.os }}
+          path: |
+            .dev-check/browser-essentials/results.json
+            .dev-check/browser-essentials/*.png
+            .dev-check/browser-essentials/*.log
+            .dev-check/session-recovery-native/results.json
+            .dev-check/session-recovery-native/*.log
+            .dev-check/sync-history-native/results.json
+            .dev-check/sync-history-native/*.png
           retention-days: 14
 
       - name: Проверить содержимое установщика Windows
