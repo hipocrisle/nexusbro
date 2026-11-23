@@ -62,7 +62,7 @@ server.daemon_threads=True
 threading.Thread(target=server.serve_forever,daemon=True).start()
 try:
     with sync_playwright() as p:
-        channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','')
+        channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome')
         browser=p.chromium.launch(headless=True,**({'channel':channel} if channel else {}))
         page=browser.new_page(viewport={'width':1200,'height':900})
         errors=[];external=[]

@@ -899,7 +899,7 @@ jobs:
         with:
           node-version: "22"
       - name: Install native acceptance QR decoder and TypeScript
-        run: npm ci --prefix desktop
+        run: npm ci --prefix desktop && npm run build --prefix desktop
       - name: Verify app sources match the binary run
         env:
           GH_TOKEN: ${{ github.token }}
@@ -940,7 +940,7 @@ jobs:
           fi
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 xvfb xdotool libnss3-tools
-          python3 -m pip install --break-system-packages websocket-client psutil Pillow cryptography
+          python3 -m pip install --break-system-packages websocket-client psutil Pillow cryptography playwright
           curl -fSL --connect-timeout 20 --max-time 180 --retry 3 --retry-max-time 240 -o /tmp/cef.tar.bz2 'https://cef-builds.spotifycdn.com/cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88_linux64_minimal.tar.bz2'
           echo 'cacfbb7d7261fea682fb67c108de7e4347519ff7 /tmp/cef.tar.bz2' | sha1sum -c -
           mkdir -p .dev-check/cef
@@ -949,6 +949,24 @@ jobs:
           mv .dev-check/cef/Resources/* .dev-check/cef/
           chmod +x .dev-check/native-binary/nexusbro .dev-check/backend-package/nexusbro-sync-server
           (cd .dev-check/backend-package && sha256sum -c SHA256SUMS)
+      - name: Check corrected browser fixtures against unchanged application sources
+        if: ${{ !inputs.linux_memory_diagnostic }}
+        run: |
+          python3 tests/backup_browser.py
+          python3 tests/updater_startup_browser.py
+          python3 tests/updater_app_startup_browser.py
+      - name: Native Linux smoke from exact existing binary
+        if: ${{ !inputs.linux_memory_diagnostic }}
+        run: python3 tests/gui/linux_smoke.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/linux-runtime
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.linux_memory_diagnostic
+        with:
+          name: linux-runtime-verification
+          path: |
+            .dev-check/linux-runtime/results.json
+            .dev-check/linux-runtime/*.png
+            .dev-check/linux-runtime/*.log
+          retention-days: 14
       - name: Native memory-bootstrap diagnostics only
         if: ${{ inputs.linux_memory_diagnostic }}
         timeout-minutes: 4
@@ -998,6 +1016,30 @@ jobs:
             .dev-check/security-native/*.png
             .dev-check/security-native/*.log
             .dev-check/security-native/*/*.log
+          retention-days: 14
+
+      - name: Native browser essentials from exact existing binary
+        if: ${{ !inputs.linux_memory_diagnostic }}
+        run: |
+          BIN=.dev-check/native-binary/nexusbro
+          python3 tests/gui/browser_essentials_native.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/browser-essentials
+          python3 tests/gui/session_recovery.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/session-recovery-native
+          python3 tests/gui/sync_history_native.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/sync-history-native
+          python3 tests/gui/backup_native.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/backup-native
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.linux_memory_diagnostic
+        with:
+          name: browser-essentials-linux-runtime
+          path: |
+            .dev-check/browser-essentials/results.json
+            .dev-check/browser-essentials/*.png
+            .dev-check/browser-essentials/*.log
+            .dev-check/session-recovery-native/results.json
+            .dev-check/session-recovery-native/*.log
+            .dev-check/sync-history-native/results.json
+            .dev-check/sync-history-native/*.png
+            .dev-check/backup-native/results.json
+            .dev-check/backup-native/*.log
           retention-days: 14
 
   publish-tested:
