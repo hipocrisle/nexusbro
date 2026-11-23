@@ -1,4 +1,6 @@
 //! Selected portable records only. No profile directories, cookies, private data or proxy secrets.
+#[path = "sync_history.rs"]
+mod sync_history;
 use crate::{
     browser_account::{AccountState, SyncItem},
     secure_vault::VaultState,
@@ -127,6 +129,72 @@ fn id(kind: &str, key: &str) -> String {
 }
 fn portable_super(n: &crate::Nastrojki) -> Value {
     json!({"id":n.id,"nazvanie":n.nazvanie,"cvet":n.cvet,"adres":n.adres,"rezat_reklamu":n.rezat_reklamu,"pustaya":n.pustaya,"poryadok":n.poryadok})
+}
+static HISTORY: Mutex<()> = Mutex::new(());
+fn history_load(v: &VaultState) -> Result<sync_history::History, String> {
+    let raw = v.get(sync_history::KEY)?;
+    sync_history::History::parse(raw.as_deref().map(String::as_str))
+}
+/// Capture BEFORE a destructive local mutation. No history files or plaintext routes.
+/// Sync requires an unlocked vault; a browser without a vault has no cloud history.
+pub fn archive_super(v: &VaultState, n: &crate::Nastrojki, reason: &str) -> Result<(), String> {
+    if n.privatnaya || crate::privatnost::eto_id(&n.id) || !v.status().exists {
+        return Ok(());
+    }
+    identity(&id("super", &n.id))?;
+    if !matches!(
+        reason,
+        "local_delete" | "cloud_delete" | "cloud_change" | "history_restore"
+    ) {
+        return Err("Неизвестная причина записи истории".into());
+    }
+    let _guard = HISTORY
+        .lock()
+        .map_err(|_| "История восстановления занята")?;
+    let mut history = history_load(v)?;
+    history.push(sync_history::Entry {
+        id: crate::passwords::random_id(),
+        scope: slot(v)?,
+        super_id: n.id.clone(),
+        name: n.nazvanie.chars().take(80).collect(),
+        reason: reason.into(),
+        created_at: crate::passwords::now(),
+        local_settings: serde_json::to_value(n).map_err(|_| "Ошибка истории восстановления")?,
+    })?;
+    v.put(sync_history::KEY, &Zeroizing::new(history.encoded()?))
+}
+fn history_guard(
+    entry: &sync_history::Entry,
+    current: Option<&crate::Nastrojki>,
+) -> Result<String, String> {
+    Ok(hash(
+        &json!([
+            entry.id,
+            current
+                .map(serde_json::to_value)
+                .transpose()
+                .map_err(|_| "Ошибка проверки восстановления")?
+        ])
+        .to_string(),
+    ))
+}
+fn history_record(v: &VaultState, entry_id: &str) -> Result<sync_history::Entry, String> {
+    Ok(history_load(v)?.get(entry_id, &slot(v)?)?.clone())
+}
+fn historical_settings(entry: &sync_history::Entry) -> Result<crate::Nastrojki, String> {
+    let n: crate::Nastrojki = serde_json::from_value(entry.local_settings.clone())
+        .map_err(|_| "Повреждена запись восстановления")?;
+    if n.id != entry.super_id
+        || n.privatnaya
+        || crate::privatnost::eto_id(&n.id)
+        || n.nazvanie.trim().is_empty()
+        || n.nazvanie.chars().count() > 80
+        || !crate::supervkladki::cvet_dopustim(&n.cvet)
+    {
+        return Err("Недопустимая запись восстановления".into());
+    }
+    identity(&id("super", &n.id))?;
+    Ok(n)
 }
 fn all_supers(s: &crate::Sostoyanie) -> Result<BTreeMap<String, crate::Nastrojki>, String> {
     let saved = match std::fs::read(crate::fajl_sohranennyh()) {
@@ -442,6 +510,9 @@ async fn apply(
                 {
                     return Err("Супер-вкладка изменилась во время синхронизации".into());
                 }
+                if let Some(previous) = saved.iter().find(|n| n.id == key) {
+                    archive_super(v, previous, "cloud_delete")?;
+                }
                 saved.retain(|n| n.id != key);
                 crate::sohranit_sohranennye(&saved)?;
             } else {
@@ -482,6 +553,11 @@ async fn apply(
                     != expected
                 {
                     return Err("Супер-вкладка изменилась во время синхронизации".into());
+                }
+                if let Some(previous) = existing.as_ref() {
+                    if portable_super(previous).to_string() != item.value {
+                        archive_super(v, previous, "cloud_change")?;
+                    }
                 }
                 let mut n = existing.unwrap_or(crate::Nastrojki {
                     id: key.into(),
@@ -547,6 +623,82 @@ async fn apply(
         }
         _ => return Err("Неизвестный тип данных NexusBro".into()),
     }
+    Ok(())
+}
+fn restore_history(
+    app: &tauri::AppHandle,
+    s: &crate::Sostoyanie,
+    v: &VaultState,
+    entry: &sync_history::Entry,
+    guard: &str,
+) -> Result<(), String> {
+    let mut restored = historical_settings(entry)?;
+    let mut map = s.vkladki.lock().map_err(|_| "Супер-вкладки заняты")?;
+    let _saved_guard = crate::supervkladki::SOHRANENNYE
+        .lock()
+        .map_err(|_| "Сохранённые супер-вкладки заняты")?;
+    let mut saved = match std::fs::read(crate::fajl_sohranennyh()) {
+        Ok(raw) => serde_json::from_slice::<Vec<crate::Nastrojki>>(&raw)
+            .map_err(|_| "Повреждён список сохранённых супер-вкладок")?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => vec![],
+        Err(_) => return Err("Не удалось прочитать сохранённые супер-вкладки".into()),
+    };
+    let current = map
+        .get(&entry.super_id)
+        .map(|v| v.nastrojki.clone())
+        .or_else(|| saved.iter().find(|n| n.id == entry.super_id).cloned());
+    if history_guard(entry, current.as_ref())? != guard {
+        return Err(
+            "Супер-вкладка изменилась после просмотра восстановления; откройте предпросмотр заново"
+                .into(),
+        );
+    }
+    if let Some(current) = current.as_ref() {
+        if current.privatnaya || crate::privatnost::eto_id(&current.id) {
+            return Err("Приватные супер-вкладки не восстанавливаются из облачной истории".into());
+        }
+        // An undo of portable metadata must never switch an existing account's route.
+        restored.proxy = current.proxy.clone();
+        restored.proxy_uzel = current.proxy_uzel.clone();
+        archive_super(v, current, "history_restore")?;
+    }
+    // An absent Super keeps its archived local route exactly; never replace an
+    // unavailable connection with Direct. Normal route admission remains fail-closed.
+    if map.contains_key(&entry.super_id) {
+        let all: Vec<_> = map
+            .values()
+            .map(|v| {
+                if v.nastrojki.id == entry.super_id {
+                    restored.clone()
+                } else {
+                    v.nastrojki.clone()
+                }
+            })
+            .collect();
+        let old_saved = saved.clone();
+        let saved_index = saved.iter().position(|n| n.id == entry.super_id);
+        if let Some(index) = saved_index {
+            saved[index] = restored.clone();
+            crate::sohranit_sohranennye(&saved)?;
+        }
+        let open_bytes = serde_json::to_vec(&all).map_err(|_| "Ошибка восстановления")?;
+        if let Err(error) = atomic(&crate::fajl_spiska(), &open_bytes) {
+            if saved_index.is_some() && crate::sohranit_sohranennye(&old_saved).is_err() {
+                return Err("Восстановление прервано; резервная версия сохранена в истории".into());
+            }
+            return Err(error);
+        }
+        if let Some(current) = map.get_mut(&entry.super_id) {
+            current.nastrojki = restored;
+        }
+    } else {
+        // Trash restore is lazy: no engine, network request, cookie copy or tab launch.
+        saved.retain(|n| n.id != entry.super_id);
+        saved.push(restored);
+        crate::sohranit_sohranennye(&saved)?;
+    }
+    drop(map);
+    let _ = app.emit("vkladki-izmenilis", &entry.super_id);
     Ok(())
 }
 // Called only for an authenticated remote echo after matching/applying its value.
@@ -682,6 +834,113 @@ pub async fn security_sync(
     let data = data.unwrap_or(Value::Null);
     match action.as_str() {
         "status" => status(&state, &local),
+        "history" => {
+            let history = history_load(&vault)?;
+            let scope = slot(&vault)?;
+            let existing = all_supers(&state)?;
+            let rows: Vec<_> = history
+                .entries
+                .iter()
+                .rev()
+                .filter(|entry| entry.scope == scope)
+                .map(|entry| {
+                    json!({"entry_id":entry.id,"super_id":entry.super_id,
+                    "name":entry.name,"reason":entry.reason,"created_at":entry.created_at,
+                    "currently_exists":existing.contains_key(&entry.super_id)})
+                })
+                .collect();
+            Ok(json!({"entries":rows,"limit":100,"encrypted_local_only":true}))
+        }
+        "history_forget" => {
+            if data["confirm"] != Value::Bool(true) {
+                return Err("Подтвердите удаление резервной версии из локальной истории".into());
+            }
+            let entry_id = data["entry_id"]
+                .as_str()
+                .ok_or("Не выбрана запись истории")?;
+            let scope = slot(&vault)?;
+            let _guard = HISTORY
+                .lock()
+                .map_err(|_| "История восстановления занята")?;
+            let mut history = history_load(&vault)?;
+            history.get(entry_id, &scope)?;
+            history
+                .entries
+                .retain(|entry| !(entry.id == entry_id && entry.scope == scope));
+            vault.put(sync_history::KEY, &Zeroizing::new(history.encoded()?))?;
+            Ok(json!({"forgotten":true,"local_data_unchanged":true}))
+        }
+        "history_preview" => {
+            let entry = history_record(
+                &vault,
+                data["entry_id"]
+                    .as_str()
+                    .ok_or("Не выбрана запись истории")?,
+            )?;
+            let previous = historical_settings(&entry)?;
+            let existing = all_supers(&state)?;
+            let current = existing.get(&entry.super_id);
+            Ok(
+                json!({"entry_id":entry.id,"super_id":entry.super_id,"name":entry.name,
+                "reason":entry.reason,"created_at":entry.created_at,
+                "previous":portable_super(&previous),"current":current.map(portable_super),
+                "guard":history_guard(&entry,current)?,"restores_saved_only":current.is_none(),
+                "restores_profile_data":false,"restores":"super_definition_only",
+                "route_policy":if current.is_some(){"keep_current"}else{"restore_previous_no_direct_fallback"}}),
+            )
+        }
+        "history_restore" => {
+            if data["confirm"] != Value::Bool(true) {
+                return Err("Подтвердите восстановление выбранной версии".into());
+            }
+            let entry = history_record(
+                &vault,
+                data["entry_id"]
+                    .as_str()
+                    .ok_or("Не выбрана запись истории")?,
+            )?;
+            let guard = data["guard"]
+                .as_str()
+                .ok_or("Сначала откройте предпросмотр восстановления")?;
+            let record_id = id("super", &entry.super_id);
+            let _mutation = {
+                let mut active = MUTATING.lock().map_err(|_| "Супер-вкладка занята")?;
+                if active.contains(&record_id) {
+                    return Err(
+                        "Супер-вкладка сейчас изменяется; повторите восстановление позже".into(),
+                    );
+                }
+                active.push(record_id.clone());
+                Mutation(record_id.clone())
+            };
+            restore_history(&app, &state, &vault, &entry, guard)?;
+            let modified = crate::passwords::now().max(
+                local
+                    .meta
+                    .get(&record_id)
+                    .map_or(0, |m| m.modified)
+                    .max(local.tombstones.get(&record_id).copied().unwrap_or(0))
+                    .saturating_add(1),
+            );
+            let restored = all_supers(&state)?
+                .remove(&entry.super_id)
+                .ok_or("Восстановленная запись отсутствует")?;
+            local.meta.insert(
+                record_id.clone(),
+                Meta {
+                    hash: hash(&portable_super(&restored).to_string()),
+                    modified,
+                },
+            );
+            local.tombstones.remove(&record_id);
+            if let Some(generation) = delete_intents()?.get(&record_id) {
+                local.intent_seen.insert(record_id.clone(), *generation);
+            }
+            local.super_receipts.remove(&record_id);
+            local.report.conflicts.retain(|id| id != &record_id);
+            save(&vault, &key, &local)?;
+            status(&state, &local)
+        }
         "configure" => {
             let selection: Selection = serde_json::from_value(data["selection"].clone())
                 .map_err(|_| "Неверный выбор данных")?;
