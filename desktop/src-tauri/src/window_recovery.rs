@@ -77,10 +77,28 @@ fn read(root: &Path) -> Vec<WindowSession> {
 /// caller must retain not-yet-attached recovery windows until restore finishes.
 /// Only ordinary windows/Supers are accepted. Never call with private metadata.
 pub fn save(root: &Path, windows: Vec<WindowSession>) -> anyhow::Result<()> {
+    save_filtered(root, windows, None)
+}
+
+/// Definition-aware entry point: both the new primary and retained previous
+/// snapshot must exclude legacy private IDs, not merely pvt-prefixed IDs.
+pub fn save_allowed(root: &Path, windows: Vec<WindowSession>, allowed: &HashSet<String>) -> anyhow::Result<()> {
+    save_filtered(root, windows, Some(allowed))
+}
+fn filter_allowed(windows: Vec<WindowSession>, allowed: Option<&HashSet<String>>) -> Vec<WindowSession> {
+    windows.into_iter().filter_map(|mut window| {
+        if let Some(allowed) = allowed {
+            if !allowed.contains(&window.active_super) { return None; }
+            window.views.retain(|view| allowed.contains(&view.super_id));
+        }
+        window.sanitized()
+    }).collect()
+}
+fn save_filtered(root: &Path, windows: Vec<WindowSession>, allowed: Option<&HashSet<String>>) -> anyhow::Result<()> {
     let _guard = WRITES.lock().unwrap_or_else(|e| e.into_inner());
     if windows.len() > 64 { anyhow::bail!("Too many recovery windows"); }
     let mut keys = HashSet::new();
-    let windows = windows.into_iter().filter_map(WindowSession::sanitized)
+    let windows = filter_allowed(windows, allowed).into_iter()
         .filter(|w| keys.insert(w.key.clone())).collect();
     let bytes = serde_json::to_vec_pretty(&Document { schema: 1, windows })?;
     if bytes.len() > 64 * 1024 * 1024 { anyhow::bail!("Recovery snapshot too large"); }
@@ -89,7 +107,7 @@ pub fn save(root: &Path, windows: Vec<WindowSession>) -> anyhow::Result<()> {
     if previous.as_deref() == Some(bytes.as_slice()) { return Ok(()); }
     if let Some(windows) = previous.as_deref().and_then(decode) {
         durable_replace(&root.join("windows-recovery.backup.json"),
-            &serde_json::to_vec_pretty(&Document { schema: 1, windows })?)?;
+            &serde_json::to_vec_pretty(&Document { schema: 1, windows: filter_allowed(windows, allowed) })?)?;
     }
     durable_replace(&target, &bytes)?;
     Ok(())

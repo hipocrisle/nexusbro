@@ -208,7 +208,16 @@ impl Sessiya {
         // an uncommitted .tmp file as recovery authority.
         if let Ok(bytes) = recovery_read(&primary) {
             let forensic = profil.join("obychnye.povrezhdena.json");
-            if !forensic.exists() { let _ = durable_replace(&forensic, &bytes); }
+            // Unparseable fragments cannot be reliably stripped of private
+            // URLs. Keep forensic copies only when privacy can be inspected.
+            if !forensic.exists() {
+                if let Ok(source) = serde_json::from_slice::<Self>(&bytes) {
+                    let safe = if source.vkladki.iter().chain(source.zakrytye.iter()).any(|v|v.privatnaya) {
+                        serde_json::to_vec_pretty(&source.public_snapshot()).ok()
+                    } else { Some(bytes) };
+                    if let Some(safe) = safe { let _ = durable_replace(&forensic, &safe); }
+                }
+            }
         }
         read_session(&profil.join("obychnye.backup.json"))
             .unwrap_or_else(|| Self::novaya("about:blank"))
@@ -342,7 +351,7 @@ mod tests {
         restored.sohranit(&p.0).unwrap();
         assert_eq!(Sessiya::zagruzit(&p.0).vkladki[0].adres, "https://first.test");
         assert_eq!(read_session(&p.0.join("obychnye.backup.json")).unwrap().vkladki[0].adres, "https://first.test");
-        assert_eq!(std::fs::read(p.0.join("obychnye.povrezhdena.json")).unwrap(), b"{truncated");
+        assert!(!p.0.join("obychnye.povrezhdena.json").exists());
     }
 
     #[test]

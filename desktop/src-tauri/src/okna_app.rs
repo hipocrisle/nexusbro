@@ -237,7 +237,7 @@ fn persist(app:&tauri::AppHandle,s:&Sostoyanie){
     }
     let committed=windows.clone();
     let mut windows=windows.into_values().collect::<Vec<_>>();windows.sort_by(|a,b|a.key.cmp(&b.key));
-    if crate::window_recovery::save(&recovery_root(),windows).is_err(){let _=app.emit("oshibka-dvizhka","Не удалось сохранить окна для восстановления");}
+    if crate::window_recovery::save_allowed(&recovery_root(),windows,&allowed).is_err(){let _=app.emit("oshibka-dvizhka","Не удалось сохранить окна для восстановления");}
     else{state.committed=committed;}
 }
 

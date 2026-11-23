@@ -95,4 +95,20 @@ mod disk_tests {
         assert!(window_recovery::user_command_can_wake(&Komanda::Vybrat { id: 1 }));
     }
 
+    #[test]
+    fn definition_allowlist_sanitizes_private_legacy_windows_in_primary_and_backup() {
+        let p = Temporary::new();
+        let mut legacy = window("https://private-legacy.test");
+        legacy.active_super = "legacy-private".into();
+        legacy.views[0].super_id = "legacy-private".into();
+        window_recovery::save(&p.0, vec![legacy, window("https://ordinary.test")]).unwrap();
+        window_recovery::save_allowed(&p.0, vec![window("https://ordinary-updated.test")],
+            &std::collections::HashSet::from(["normal".to_string()])).unwrap();
+        for name in ["windows-recovery.json", "windows-recovery.backup.json"] {
+            let text = std::fs::read_to_string(p.0.join(name)).unwrap();
+            assert!(!text.contains("private-legacy.test"));
+            assert!(!text.contains("legacy-private"));
+        }
+    }
+
 }
