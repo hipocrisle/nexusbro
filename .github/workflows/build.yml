@@ -816,6 +816,22 @@ jobs:
             .dev-check/windows-memory/data/profili/*/cef*.log
             .dev-check/windows-memory/data/profili/*/obychnye.json
           retention-days: 14
+      - name: Native browser essentials of the same Windows installer
+        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          python tests/gui/browser_essentials_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/browser-essentials
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
+        with:
+          name: browser-essentials-windows-runtime
+          path: |
+            .dev-check/browser-essentials/results.json
+            .dev-check/browser-essentials/*.png
+            .dev-check/browser-essentials/*.log
+          retention-days: 14
       - name: Save screen and diagnostics
         if: always()
         uses: actions/upload-artifact@v4
