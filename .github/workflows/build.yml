@@ -367,6 +367,7 @@ jobs:
           python3 tests/browser_tasks_browser.py
           python3 tests/backup_browser.py
           python3 tests/updater_startup_browser.py
+          python3 tests/updater_app_startup_browser.py
 
       - name: Проверить CEF и окна Linux под Xvfb
         if: matrix.os == 'ubuntu-24.04'

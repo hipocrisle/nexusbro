@@ -96,7 +96,7 @@ export default function App() {
     void getVersion().then(setVersiya).catch(() => {});
     void invoke<NastrojkiApp>("nastrojki_poluchit").then((n) => {
       panel(n);
-      if (n.avtoobnovleniya) void runUpdate(false);
+      if (n.avtoobnovleniya && !new URLSearchParams(location.search).has("okno")) void runUpdate(false);
     }).catch((e) => setOshibka(String(e)));
   }, []);
   useEffect(() => {
