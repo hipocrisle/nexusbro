@@ -5,6 +5,8 @@ process-tree kill, actual restart and explicit-close/graceful-exit behavior.
 All URLs and browsing data belong to one loopback fixture.
 """
 import argparse
+import ctypes
+import ctypes.util
 import http.server
 import json
 import os
@@ -39,6 +41,113 @@ def free_port():
     with socket.socket() as sock:
         sock.bind(('127.0.0.1', 0))
         return sock.getsockname()[1]
+
+
+def close_owned_secondary(client, app, exe, display):
+    """Send the same WM_DELETE_WINDOW client message a window manager sends.
+
+    Xvfb intentionally has no window manager. Do not widen application IPC ACLs
+    or use XDestroyWindow: the app must receive its actual close-request event.
+    """
+    label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    assert isinstance(label, str) and label.startswith('browser-'), 'Refusing to close a non-secondary window'
+    client.command('fokus_obolochke')
+    xenv = {**os.environ, 'DISPLAY': display}
+    focused = int(subprocess.check_output(['xdotool', 'getwindowfocus'], env=xenv, text=True).strip())
+    assert focused not in (0, 1), 'Native secondary shell did not obtain X11 focus'
+    owned_shells = set()
+    for child in psutil.Process(app.pid).children(recursive=True):
+        try:
+            args = child.cmdline()
+            if pathlib.Path(child.exe()) == exe and '--nb-dvizhok' not in args and not any(a.startswith('--type=') for a in args):
+                owned_shells.add(child.pid)
+        except psutil.NoSuchProcess:
+            pass
+    assert len(owned_shells) == 1, 'Isolated app shell PID is ambiguous'
+
+    atom = ctypes.c_ulong
+    window = ctypes.c_ulong
+    pointer = ctypes.c_void_p
+    x11 = ctypes.CDLL(ctypes.util.find_library('X11') or 'libX11.so.6')
+    x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+    x11.XOpenDisplay.restype = pointer
+    x11.XCloseDisplay.argtypes = [pointer]
+    x11.XInternAtom.argtypes = [pointer, ctypes.c_char_p, ctypes.c_int]
+    x11.XInternAtom.restype = atom
+    x11.XGetWMProtocols.argtypes = [pointer, window, ctypes.POINTER(ctypes.POINTER(atom)), ctypes.POINTER(ctypes.c_int)]
+    x11.XGetWMProtocols.restype = ctypes.c_int
+    x11.XQueryTree.argtypes = [pointer, window, ctypes.POINTER(window), ctypes.POINTER(window), ctypes.POINTER(ctypes.POINTER(window)), ctypes.POINTER(ctypes.c_uint)]
+    x11.XQueryTree.restype = ctypes.c_int
+    x11.XFree.argtypes = [pointer]
+    x11.XFlush.argtypes = [pointer]
+    x11.XSync.argtypes = [pointer, ctypes.c_int]
+
+    class Data(ctypes.Union):
+        _fields_ = [('b', ctypes.c_char * 20), ('s', ctypes.c_short * 10), ('l', ctypes.c_long * 5)]
+
+    class Message(ctypes.Structure):
+        _fields_ = [('type', ctypes.c_int), ('serial', ctypes.c_ulong), ('send_event', ctypes.c_int),
+                    ('display', pointer), ('window', window), ('message_type', atom), ('format', ctypes.c_int), ('data', Data)]
+
+    class Event(ctypes.Union):
+        _fields_ = [('client', Message), ('pad', ctypes.c_long * 24)]
+
+    x11.XSendEvent.argtypes = [pointer, window, ctypes.c_int, ctypes.c_long, ctypes.POINTER(Event)]
+    x11.XSendEvent.restype = ctypes.c_int
+    connection = x11.XOpenDisplay(display.encode())
+    assert connection, 'Could not open the owned Xvfb display'
+    try:
+        protocols_atom = x11.XInternAtom(connection, b'WM_PROTOCOLS', False)
+        delete_atom = x11.XInternAtom(connection, b'WM_DELETE_WINDOW', False)
+        candidate = focused
+        verified = None
+        for _ in range(16):
+            protocols = ctypes.POINTER(atom)()
+            count = ctypes.c_int()
+            supports_delete = False
+            if x11.XGetWMProtocols(connection, candidate, ctypes.byref(protocols), ctypes.byref(count)):
+                try:
+                    supports_delete = delete_atom in [protocols[i] for i in range(count.value)]
+                finally:
+                    if protocols:
+                        x11.XFree(protocols)
+            if supports_delete:
+                pid = int(subprocess.check_output(['xdotool', 'getwindowpid', str(candidate)], env=xenv, text=True).strip())
+                assert pid in owned_shells, 'Focused X11 client does not belong to the isolated app shell'
+                title = subprocess.check_output(['xdotool', 'getwindowname', str(candidate)], env=xenv, text=True).strip()
+                assert title == 'NexusBro — Recovery', 'Focused X11 client is not the expected secondary shell'
+                raw = subprocess.check_output(['xdotool', 'getwindowgeometry', '--shell', str(candidate)], env=xenv, text=True)
+                geometry = dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
+                viewport = client.js('({width:innerWidth,height:innerHeight,scale:devicePixelRatio||1})')
+                width, height = int(geometry['WIDTH']), int(geometry['HEIGHT'])
+                assert width >= 300 and height >= 200, 'Secondary native window has invalid geometry'
+                assert abs(width - viewport['width'] * viewport['scale']) <= 64 and abs(height - viewport['height'] * viewport['scale']) <= 96, 'Focused X11 geometry does not match the inspected secondary renderer'
+                verified = candidate
+                break
+            root, parent = window(), window()
+            children = ctypes.POINTER(window)()
+            nchildren = ctypes.c_uint()
+            assert x11.XQueryTree(connection, candidate, ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(nchildren)), 'Could not resolve focused X11 shell ancestry'
+            if children:
+                x11.XFree(children)
+            if parent.value in (0, root.value, candidate):
+                break
+            candidate = parent.value
+        assert verified is not None, 'Owned secondary shell does not advertise WM_DELETE_WINDOW'
+        event = Event()
+        event.client.type = 33  # ClientMessage
+        event.client.send_event = True
+        event.client.display = connection
+        event.client.window = verified
+        event.client.message_type = protocols_atom
+        event.client.format = 32
+        event.client.data.l[0] = delete_atom
+        event.client.data.l[1] = 0  # CurrentTime
+        assert x11.XSendEvent(connection, verified, False, 0, ctypes.byref(event)), 'WM_DELETE_WINDOW was not sent'
+        x11.XFlush(connection)
+        x11.XSync(connection, False)
+    finally:
+        x11.XCloseDisplay(connection)
 
 
 def run(exe, cef, out, display=':97'):
@@ -213,11 +322,7 @@ def run(exe, cef, out, display=':97'):
         assert len(json.loads((data / 'windows-recovery.json').read_text())['windows']) == 1
         checks.append({'graceful_app_exit_retains_open_window_recovery_snapshot': True})
         main, secondary = start()
-        label = secondary.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
-        try:
-            secondary.command('plugin:window|close', label=label)
-        except WebSocketException:
-            pass
+        close_owned_secondary(secondary, app, exe, display)
         wait(lambda: json.loads((data / 'windows-recovery.json').read_text())['windows'] == [], 'Explicit window close did not remove its recovery record')
         checks.append({'explicit_secondary_window_close_commits_removal': True})
         stop(crash=False)
