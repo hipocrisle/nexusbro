@@ -38,6 +38,23 @@ def keys(device, *names):
             env={**os.environ,'DISPLAY':device.display},check=True,timeout=5)
 
 
+
+def fill_search(client,text):
+    selector='input[aria-label="Найти вкладку или супервкладку"]'
+    if sys.platform!='win32':
+        client.fill(selector,text)
+        return
+    # These fixture queries are deliberately ASCII; no clipboard or DOM input
+    # injection is used. WindowsClient inherits a Linux-only fill() otherwise.
+    require(text.isascii(),'Physical search fixture requires an ASCII query')
+    import pyautogui
+    client.click(selector)
+    pyautogui.hotkey('ctrl','a')
+    pyautogui.write(text,interval=.01)
+    js_wait(client,'document.querySelector('+json.dumps(selector)+').value==='+json.dumps(text),
+            'Physical Windows typing did not reach the actual search input',5)
+
+
 def foreground(client):
     call(client,'fokus_obolochke')
     click_control(client,'input[aria-label="Адрес страницы"]',15)
@@ -289,7 +306,7 @@ def run(args):
             require(counts['/lazy-target']==0 and counts['/sleeping-super']==0,'Search snapshot launched a lazy tab or engine')
         states=call(client,'spisok')
         require(not next(r for r in states if r['id']=='essentials-sleeping')['zapushchena'],'Search launched a sleeping Super engine')
-        client.fill('input[aria-label="Найти вкладку или супервкладку"]','lazy-target')
+        fill_search(client,'lazy-target')
         js_wait(client,'document.querySelectorAll("#tab-search-results [role=option]").length===1','Search did not filter exact lazy target')
         keys(device,'enter');lazy=loaded(client,base+'/lazy-target')
         require(lazy['route']=={'kind':'direct'},'Search changed the lazy target route')
@@ -324,7 +341,7 @@ def run(args):
         before=main_rows(client)['aktivnaya']
         foreground(client);keys(device,'ctrl','shift','a')
         js_wait(client,'!!document.querySelector('+json.dumps(search)+')','Search absent for cold secondary target')
-        client.fill('input[aria-label="Найти вкладку или супервкладку"]','cold-secondary-target')
+        fill_search(client,'cold-secondary-target')
         js_wait(client,'document.querySelectorAll("#tab-search-results [role=option]").length===1','Cold-window result was not unique')
         keys(device,'enter')
         js_wait(client,'!document.querySelector('+json.dumps(search)+')','Cold-window native selection did not finish',40)
@@ -348,7 +365,7 @@ def run(args):
                  'Actual extra-window navigation absent from global search')
         foreground(client);keys(device,'ctrl','shift','a')
         js_wait(client,'!!document.querySelector('+json.dumps(search)+')','Main search absent for cross-window target')
-        client.fill('input[aria-label="Найти вкладку или супервкладку"]','window-target')
+        fill_search(client,'window-target')
         js_wait(client,'document.querySelectorAll("#tab-search-results [role=option]").length===1','Cross-window result was not unique')
         keys(device,'enter')
         js_wait(client,'!document.querySelector('+json.dumps(search)+')','Cross-window activation did not finish')
