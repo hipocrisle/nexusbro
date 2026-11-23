@@ -1,0 +1,13 @@
+{
+  "version": "0.2.24",
+  "build_source": "ec6dcdc4f1617eb5da0c209c8820844490f41182",
+  "build_run": 45189247031,
+  "producer_conclusion": "success",
+  "windows_acceptance_run": 45189247031,
+  "windows_acceptance_conclusion": "success",
+  "linux_acceptance_run": 45189247031,
+  "linux_acceptance_conclusion": "success",
+  "application_diff_from_build": "empty",
+  "scope": "Correct explicit tab path changes after normal page interaction/loading; real authenticated SOCKS5 and concise route dialog.",
+  "paired_performance_benchmark": "not rerun; native background and AUTO/media regression gates passed"
+}

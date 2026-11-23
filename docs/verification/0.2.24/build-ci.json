@@ -1,0 +1,876 @@
+{
+  "conclusion": "success",
+  "headSha": "ec6dcdc4f1617eb5da0c209c8820844490f41182",
+  "jobs": [
+    {
+      "completedAt": "2026-11-23T14:00:39Z",
+      "conclusion": "success",
+      "databaseId": 137742907746,
+      "name": "security",
+      "startedAt": "2026-11-23T13:58:31Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-11-23T13:58:33Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-11-23T13:58:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T13:58:33Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "startedAt": "2026-11-23T13:58:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T13:58:34Z",
+          "conclusion": "success",
+          "name": "Run dtolnay/rust-toolchain@stable",
+          "number": 3,
+          "startedAt": "2026-11-23T13:58:33Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:35Z",
+          "conclusion": "success",
+          "name": "Test encrypted vault and independent account server",
+          "number": 4,
+          "startedAt": "2026-11-23T13:58:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:37Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 5,
+          "startedAt": "2026-11-23T14:00:35Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:37Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 10,
+          "startedAt": "2026-11-23T14:00:37Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:37Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 11,
+          "startedAt": "2026-11-23T14:00:37Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137742907746"
+    },
+    {
+      "completedAt": "2026-11-23T13:58:29Z",
+      "conclusion": "skipped",
+      "databaseId": 137742909997,
+      "name": "frontend",
+      "startedAt": "2026-11-23T13:58:29Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137742909997"
+    },
+    {
+      "completedAt": "2026-11-23T13:58:29Z",
+      "conclusion": "skipped",
+      "databaseId": 137742910315,
+      "name": "Windows many-tab performance measurement",
+      "startedAt": "2026-11-23T13:58:29Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137742910315"
+    },
+    {
+      "completedAt": "2026-11-23T13:58:29Z",
+      "conclusion": "skipped",
+      "databaseId": 137742910800,
+      "name": "runtime",
+      "startedAt": "2026-11-23T13:58:29Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137742910800"
+    },
+    {
+      "completedAt": "2026-11-23T13:58:29Z",
+      "conclusion": "skipped",
+      "databaseId": 137742912048,
+      "name": "Publish runtime-verified existing packages",
+      "startedAt": "2026-11-23T13:58:29Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137742912048"
+    },
+    {
+      "completedAt": "2026-11-23T13:58:29Z",
+      "conclusion": "skipped",
+      "databaseId": 137742961564,
+      "name": "Native Linux from existing matching binary",
+      "startedAt": "2026-11-23T13:58:35Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137742961564"
+    },
+    {
+      "completedAt": "2026-11-23T14:29:55Z",
+      "conclusion": "success",
+      "databaseId": 137744195421,
+      "name": "build (windows-latest, x86_64-pc-windows-msvc, nexusbro-windows)",
+      "startedAt": "2026-11-23T14:00:42Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-11-23T14:00:44Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-11-23T14:00:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:51Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "startedAt": "2026-11-23T14:00:44Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:51Z",
+          "conclusion": "skipped",
+          "name": "Refuse publication from a Linux-only diagnostic",
+          "number": 3,
+          "startedAt": "2026-11-23T14:00:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:56Z",
+          "conclusion": "success",
+          "name": "Node.js",
+          "number": 4,
+          "startedAt": "2026-11-23T14:00:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:56Z",
+          "conclusion": "skipped",
+          "name": "\u0421\u0432\u0435\u0440\u0438\u0442\u044c \u043c\u0435\u0442\u043a\u0443 \u0441 \u0432\u0435\u0440\u0441\u0438\u0435\u0439",
+          "number": 5,
+          "startedAt": "2026-11-23T14:00:56Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:04Z",
+          "conclusion": "success",
+          "name": "Rust stable",
+          "number": 6,
+          "startedAt": "2026-11-23T14:00:56Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:04Z",
+          "conclusion": "success",
+          "name": "Identify runner image for the native compiler cache",
+          "number": 7,
+          "startedAt": "2026-11-23T14:01:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:04Z",
+          "conclusion": "success",
+          "name": "\u0417\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c \u0441\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u0439 \u043a\u044d\u0448",
+          "number": 8,
+          "startedAt": "2026-11-23T14:01:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:04Z",
+          "conclusion": "skipped",
+          "name": "\u0417\u0430\u0432\u0438\u0441\u0438\u043c\u043e\u0441\u0442\u0438 Linux",
+          "number": 9,
+          "startedAt": "2026-11-23T14:01:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:04Z",
+          "conclusion": "success",
+          "name": "\u041a\u044d\u0448 CEF",
+          "number": 10,
+          "startedAt": "2026-11-23T14:01:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:38Z",
+          "conclusion": "success",
+          "name": "\u041f\u043e\u043b\u043e\u0436\u0438\u0442\u044c CEF \u0432\u043d\u0443\u0442\u0440\u044c",
+          "number": 11,
+          "startedAt": "2026-11-23T14:01:04Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:38Z",
+          "conclusion": "success",
+          "name": "\u041f\u0443\u0442\u044c \u043a CEF \u0434\u043b\u044f \u0441\u0431\u043e\u0440\u043a\u0438",
+          "number": 12,
+          "startedAt": "2026-11-23T14:02:38Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:40Z",
+          "conclusion": "success",
+          "name": "\u041f\u043e\u043b\u043e\u0436\u0438\u0442\u044c xray \u0432\u043d\u0443\u0442\u0440\u044c",
+          "number": 13,
+          "startedAt": "2026-11-23T14:02:38Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:48Z",
+          "conclusion": "success",
+          "name": "\u041f\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0437\u0430\u0432\u0438\u0441\u0438\u043c\u043e\u0441\u0442\u0438",
+          "number": 14,
+          "startedAt": "2026-11-23T14:02:40Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:19:21Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0431\u0440\u0430\u0442\u044c",
+          "number": 15,
+          "startedAt": "2026-11-23T14:02:48Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:12Z",
+          "conclusion": "success",
+          "name": "Verify real backup crypto and rollback filesystem",
+          "number": 16,
+          "startedAt": "2026-11-23T14:19:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0441\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u0439 \u043a\u044d\u0448 \u0434\u043e runtime-\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438",
+          "number": 17,
+          "startedAt": "2026-11-23T14:20:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c Linux-\u0431\u0438\u043d\u0430\u0440\u043d\u0438\u043a \u0434\u043b\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 \u0431\u0435\u0437 \u043f\u043e\u0432\u0442\u043e\u0440\u043d\u043e\u0439 \u0441\u0431\u043e\u0440\u043a\u0438",
+          "number": 18,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0441\u043f\u0438\u0441\u043a\u0438 \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438 \u0432 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0435",
+          "number": 19,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c CEF \u0438 \u043e\u043a\u043d\u0430 Linux \u043f\u043e\u0434 Xvfb",
+          "number": 20,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "Run actions/download-artifact@v4",
+          "number": 21,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "Verify backend artifact",
+          "number": 22,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "Native per-tab routes, isolated profiles and trusted HTTPS",
+          "number": 23,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 24,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "Native encrypted vault, CEF credentials and two-device sync",
+          "number": 25,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 26,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:20:42Z",
+          "conclusion": "skipped",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c Linux runtime \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0443",
+          "number": 27,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:24:18Z",
+          "conclusion": "success",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u043e\u0442\u0440\u0438\u0441\u043e\u0432\u043a\u0443 Windows \u043d\u0430 \u044d\u043a\u0440\u0430\u043d\u0435",
+          "number": 28,
+          "startedAt": "2026-11-23T14:20:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:26:23Z",
+          "conclusion": "success",
+          "name": "Native Windows per-tab routes and trusted HTTPS",
+          "number": 29,
+          "startedAt": "2026-11-23T14:24:18Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:26:24Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 30,
+          "startedAt": "2026-11-23T14:26:23Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:27:58Z",
+          "conclusion": "success",
+          "name": "Verify real background lifecycle and restored native input",
+          "number": 31,
+          "startedAt": "2026-11-23T14:26:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:27:59Z",
+          "conclusion": "success",
+          "name": "Retain native background lifecycle evidence",
+          "number": 32,
+          "startedAt": "2026-11-23T14:27:58Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:12Z",
+          "conclusion": "success",
+          "name": "Verify actual tab unloading, media protection and private memory recovery",
+          "number": 33,
+          "startedAt": "2026-11-23T14:27:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:14Z",
+          "conclusion": "success",
+          "name": "Retain native memory acceptance evidence",
+          "number": 34,
+          "startedAt": "2026-11-23T14:29:12Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:15Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c Windows runtime \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0443",
+          "number": 35,
+          "startedAt": "2026-11-23T14:29:14Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:32Z",
+          "conclusion": "success",
+          "name": "Native search task metrics and network retry",
+          "number": 36,
+          "startedAt": "2026-11-23T14:29:15Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:32Z",
+          "conclusion": "skipped",
+          "name": "Native crash recovery and guarded history undo",
+          "number": 37,
+          "startedAt": "2026-11-23T14:29:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:34Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 38,
+          "startedAt": "2026-11-23T14:29:32Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:41Z",
+          "conclusion": "success",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0441\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0449\u0438\u043a\u0430 Windows",
+          "number": 39,
+          "startedAt": "2026-11-23T14:29:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:48Z",
+          "conclusion": "success",
+          "name": "\u0412\u044b\u043b\u043e\u0436\u0438\u0442\u044c \u0433\u043e\u0442\u043e\u0432\u043e\u0435",
+          "number": 40,
+          "startedAt": "2026-11-23T14:29:41Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:48Z",
+          "conclusion": "skipped",
+          "name": "\u041f\u0440\u0438\u043b\u043e\u0436\u0438\u0442\u044c \u043a \u0432\u044b\u043f\u0443\u0441\u043a\u0443",
+          "number": 41,
+          "startedAt": "2026-11-23T14:29:48Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:51Z",
+          "conclusion": "success",
+          "name": "Post \u041a\u044d\u0448 CEF",
+          "number": 80,
+          "startedAt": "2026-11-23T14:29:48Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:51Z",
+          "conclusion": "success",
+          "name": "Post Node.js",
+          "number": 81,
+          "startedAt": "2026-11-23T14:29:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:53Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 82,
+          "startedAt": "2026-11-23T14:29:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:29:53Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 83,
+          "startedAt": "2026-11-23T14:29:53Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137744195421"
+    },
+    {
+      "completedAt": "2026-11-23T14:13:51Z",
+      "conclusion": "success",
+      "databaseId": 137744195515,
+      "name": "build (ubuntu-24.04, x86_64-unknown-linux-gnu, nexusbro-linux)",
+      "startedAt": "2026-11-23T14:00:42Z",
+      "status": "completed",
+      "steps": [
+        {
+          "completedAt": "2026-11-23T14:00:46Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-11-23T14:00:43Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:51Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@v4",
+          "number": 2,
+          "startedAt": "2026-11-23T14:00:46Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:51Z",
+          "conclusion": "skipped",
+          "name": "Refuse publication from a Linux-only diagnostic",
+          "number": 3,
+          "startedAt": "2026-11-23T14:00:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:54Z",
+          "conclusion": "success",
+          "name": "Node.js",
+          "number": 4,
+          "startedAt": "2026-11-23T14:00:51Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:54Z",
+          "conclusion": "skipped",
+          "name": "\u0421\u0432\u0435\u0440\u0438\u0442\u044c \u043c\u0435\u0442\u043a\u0443 \u0441 \u0432\u0435\u0440\u0441\u0438\u0435\u0439",
+          "number": 5,
+          "startedAt": "2026-11-23T14:00:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:59Z",
+          "conclusion": "success",
+          "name": "Rust stable",
+          "number": 6,
+          "startedAt": "2026-11-23T14:00:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:00:59Z",
+          "conclusion": "success",
+          "name": "Identify runner image for the native compiler cache",
+          "number": 7,
+          "startedAt": "2026-11-23T14:00:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:00Z",
+          "conclusion": "success",
+          "name": "\u0417\u0430\u043f\u043e\u043c\u043d\u0438\u0442\u044c \u0441\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u0439 \u043a\u044d\u0448",
+          "number": 8,
+          "startedAt": "2026-11-23T14:00:59Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:42Z",
+          "conclusion": "success",
+          "name": "\u0417\u0430\u0432\u0438\u0441\u0438\u043c\u043e\u0441\u0442\u0438 Linux",
+          "number": 9,
+          "startedAt": "2026-11-23T14:01:00Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:01:42Z",
+          "conclusion": "success",
+          "name": "\u041a\u044d\u0448 CEF",
+          "number": 10,
+          "startedAt": "2026-11-23T14:01:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:24Z",
+          "conclusion": "success",
+          "name": "\u041f\u043e\u043b\u043e\u0436\u0438\u0442\u044c CEF \u0432\u043d\u0443\u0442\u0440\u044c",
+          "number": 11,
+          "startedAt": "2026-11-23T14:01:42Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:24Z",
+          "conclusion": "success",
+          "name": "\u041f\u0443\u0442\u044c \u043a CEF \u0434\u043b\u044f \u0441\u0431\u043e\u0440\u043a\u0438",
+          "number": 12,
+          "startedAt": "2026-11-23T14:02:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:25Z",
+          "conclusion": "success",
+          "name": "\u041f\u043e\u043b\u043e\u0436\u0438\u0442\u044c xray \u0432\u043d\u0443\u0442\u0440\u044c",
+          "number": 13,
+          "startedAt": "2026-11-23T14:02:24Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:02:28Z",
+          "conclusion": "success",
+          "name": "\u041f\u043e\u0441\u0442\u0430\u0432\u0438\u0442\u044c \u0437\u0430\u0432\u0438\u0441\u0438\u043c\u043e\u0441\u0442\u0438",
+          "number": 14,
+          "startedAt": "2026-11-23T14:02:25Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:07:54Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0431\u0440\u0430\u0442\u044c",
+          "number": 15,
+          "startedAt": "2026-11-23T14:02:28Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:08:16Z",
+          "conclusion": "success",
+          "name": "Verify real backup crypto and rollback filesystem",
+          "number": 16,
+          "startedAt": "2026-11-23T14:07:54Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:08:35Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c \u0441\u0431\u043e\u0440\u043e\u0447\u043d\u044b\u0439 \u043a\u044d\u0448 \u0434\u043e runtime-\u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438",
+          "number": 17,
+          "startedAt": "2026-11-23T14:08:16Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:08:37Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c Linux-\u0431\u0438\u043d\u0430\u0440\u043d\u0438\u043a \u0434\u043b\u044f \u043f\u0440\u043e\u0432\u0435\u0440\u043a\u0438 \u0431\u0435\u0437 \u043f\u043e\u0432\u0442\u043e\u0440\u043d\u043e\u0439 \u0441\u0431\u043e\u0440\u043a\u0438",
+          "number": 18,
+          "startedAt": "2026-11-23T14:08:35Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:09:53Z",
+          "conclusion": "success",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0441\u043f\u0438\u0441\u043a\u0438 \u0438 \u043f\u043e\u0434\u043f\u0438\u0441\u043a\u0438 \u0432 \u0438\u043d\u0442\u0435\u0440\u0444\u0435\u0439\u0441\u0435",
+          "number": 19,
+          "startedAt": "2026-11-23T14:08:37Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:10:06Z",
+          "conclusion": "success",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c CEF \u0438 \u043e\u043a\u043d\u0430 Linux \u043f\u043e\u0434 Xvfb",
+          "number": 20,
+          "startedAt": "2026-11-23T14:09:53Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:10:07Z",
+          "conclusion": "success",
+          "name": "Run actions/download-artifact@v4",
+          "number": 21,
+          "startedAt": "2026-11-23T14:10:06Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:10:07Z",
+          "conclusion": "success",
+          "name": "Verify backend artifact",
+          "number": 22,
+          "startedAt": "2026-11-23T14:10:07Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:11:29Z",
+          "conclusion": "success",
+          "name": "Native per-tab routes, isolated profiles and trusted HTTPS",
+          "number": 23,
+          "startedAt": "2026-11-23T14:10:07Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:11:30Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 24,
+          "startedAt": "2026-11-23T14:11:29Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:21Z",
+          "conclusion": "success",
+          "name": "Native encrypted vault, CEF credentials and two-device sync",
+          "number": 25,
+          "startedAt": "2026-11-23T14:11:30Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:21Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 26,
+          "startedAt": "2026-11-23T14:12:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "success",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c Linux runtime \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0443",
+          "number": 27,
+          "startedAt": "2026-11-23T14:12:21Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u043e\u0442\u0440\u0438\u0441\u043e\u0432\u043a\u0443 Windows \u043d\u0430 \u044d\u043a\u0440\u0430\u043d\u0435",
+          "number": 28,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "Native Windows per-tab routes and trusted HTTPS",
+          "number": 29,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 30,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "Verify real background lifecycle and restored native input",
+          "number": 31,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "Retain native background lifecycle evidence",
+          "number": 32,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "Verify actual tab unloading, media protection and private memory recovery",
+          "number": 33,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "Retain native memory acceptance evidence",
+          "number": 34,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:22Z",
+          "conclusion": "skipped",
+          "name": "\u0421\u043e\u0445\u0440\u0430\u043d\u0438\u0442\u044c Windows runtime \u0434\u0438\u0430\u0433\u043d\u043e\u0441\u0442\u0438\u043a\u0443",
+          "number": 35,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:12:34Z",
+          "conclusion": "success",
+          "name": "Native search task metrics and network retry",
+          "number": 36,
+          "startedAt": "2026-11-23T14:12:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:22Z",
+          "conclusion": "success",
+          "name": "Native crash recovery and guarded history undo",
+          "number": 37,
+          "startedAt": "2026-11-23T14:12:34Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:23Z",
+          "conclusion": "success",
+          "name": "Run actions/upload-artifact@v4",
+          "number": 38,
+          "startedAt": "2026-11-23T14:13:22Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:23Z",
+          "conclusion": "skipped",
+          "name": "\u041f\u0440\u043e\u0432\u0435\u0440\u0438\u0442\u044c \u0441\u043e\u0434\u0435\u0440\u0436\u0438\u043c\u043e\u0435 \u0443\u0441\u0442\u0430\u043d\u043e\u0432\u0449\u0438\u043a\u0430 Windows",
+          "number": 39,
+          "startedAt": "2026-11-23T14:13:23Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:45Z",
+          "conclusion": "success",
+          "name": "\u0412\u044b\u043b\u043e\u0436\u0438\u0442\u044c \u0433\u043e\u0442\u043e\u0432\u043e\u0435",
+          "number": 40,
+          "startedAt": "2026-11-23T14:13:23Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:45Z",
+          "conclusion": "skipped",
+          "name": "\u041f\u0440\u0438\u043b\u043e\u0436\u0438\u0442\u044c \u043a \u0432\u044b\u043f\u0443\u0441\u043a\u0443",
+          "number": 41,
+          "startedAt": "2026-11-23T14:13:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:49Z",
+          "conclusion": "success",
+          "name": "Post \u041a\u044d\u0448 CEF",
+          "number": 80,
+          "startedAt": "2026-11-23T14:13:45Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:49Z",
+          "conclusion": "success",
+          "name": "Post Node.js",
+          "number": 81,
+          "startedAt": "2026-11-23T14:13:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:49Z",
+          "conclusion": "success",
+          "name": "Post Run actions/checkout@v4",
+          "number": 82,
+          "startedAt": "2026-11-23T14:13:49Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-11-23T14:13:49Z",
+          "conclusion": "success",
+          "name": "Complete job",
+          "number": 83,
+          "startedAt": "2026-11-23T14:13:49Z",
+          "status": "completed"
+        }
+      ],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137744195515"
+    },
+    {
+      "completedAt": "2026-11-23T14:29:55Z",
+      "conclusion": "skipped",
+      "databaseId": 137762413939,
+      "name": "\u041c\u0430\u043d\u0438\u0444\u0435\u0441\u0442 \u0430\u0432\u0442\u043e\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d\u0438\u044f",
+      "startedAt": "2026-11-23T14:29:56Z",
+      "status": "completed",
+      "steps": [],
+      "url": "https://github.com/hipocrisle/nexusbro/actions/runs/45189247031/job/137762413939"
+    }
+  ],
+  "status": "completed"
+}
