@@ -14,7 +14,10 @@ mod fon_konteynera;
 mod okna_app;
 mod brauzer;
 mod sessiya;
+mod window_recovery;
 mod tab_search;
+mod browser_tasks;
+mod browser_backup;
 mod tab_routes;
 mod tab_route_parent;
 mod route_network;
@@ -720,7 +723,7 @@ fn sohranit_aktivnuyu(id: &str) {
         .parent()
         .unwrap_or_else(|| std::path::Path::new("."))
         .join("aktivnaya.json");
-    let _ = std::fs::write(f, serde_json::to_string(id).unwrap_or_default());
+    let _ = sessiya::durable_replace(&f, serde_json::to_string(id).unwrap_or_default().as_bytes());
 }
 
 fn zagruzit_aktivnuyu() -> Option<String> {
@@ -926,6 +929,10 @@ fn steret_profil(id: &str) {
 #[tauri::command]
 async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
     let _sync_mutation=browser_sync::mutation("super",&id);
+    if !sohranit {
+        let settings=s.vkladki.lock().map_err(|_|"Список занят")?.get(&id).map(|v|v.nastrojki.clone());
+        if let Some(settings)=settings{browser_sync::archive_super(&app.state::<std::sync::Arc<secure_vault::VaultState>>(),&settings,"local_delete")?;}
+    }
     okna_app::zakryt_super(&app,&s,&id);
     perevod::otmenit_super(&id);
     let udalena = {
@@ -1012,7 +1019,10 @@ async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State
 async fn udalit_sohranennuyu(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
     let _sync_mutation=browser_sync::mutation("super",&id);
     let otkryta = s.vkladki.lock().map_err(|e| e.to_string())?.contains_key(&id);
-    if !otkryta&&!privatnost::eto_id(&id){browser_sync::record_delete("super",&id)?;}
+    if !otkryta&&!privatnost::eto_id(&id){
+        if let Some(settings)=zagruzit_sohranennye().into_iter().find(|n|n.id==id){browser_sync::archive_super(&app.state::<std::sync::Arc<secure_vault::VaultState>>(),&settings,"local_delete")?;}
+        browser_sync::record_delete("super",&id)?;
+    }
     tauri::async_runtime::spawn_blocking(move || {
         supervkladki::obnovit_sohranennye(|list| list.retain(|n| n.id != id))?;
         // Открытую вкладку удаляем из библиотеки, её живой профиль не трогаем.
@@ -1080,6 +1090,7 @@ async fn obychnye_spisok(window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, i
 
 #[tauri::command]
 async fn obychnaya_komanda(window:tauri::WebviewWindow,s: State<'_, Sostoyanie>, id: String, komanda: sessiya::Komanda) -> Result<(),String> {
+    let komanda=if window.label()!="main"{okna_app::ready_command(window.app_handle(),&s,window.label(),komanda).await?}else{komanda};
     let kanal=okna_app::kanal(&s,window.label(),&id)?;
     let komanda=if window.label()=="main"{komanda}else{sessiya::Komanda::OknoKomanda{label:window.label().into(),komanda:Box::new(komanda)}};
     kanal.try_send(komanda).map_err(|e| match e {
@@ -1236,6 +1247,12 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let recovery_root=brauzer::papka_profilej();
+    if let Err(error)=browser_backup::recover_pending(recovery_root.parent().expect("Не найдена папка данных")){
+        eprintln!("Не удалось безопасно завершить восстановление резервной копии: {error}");
+        return; // Never load a partially committed settings/profile configuration.
+    }
+
     let command_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
         Box::new(tauri::generate_handler![
 
@@ -1252,7 +1269,7 @@ pub fn run() {
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
-            tab_search::tab_search_snapshot, tab_search::tab_search_activate, fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            browser_backup::security_backup, browser_tasks::browser_tasks_snapshot, tab_search::tab_search_snapshot, tab_search::tab_search_activate, fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             tab_route_parent::tab_route_choices, tab_route_parent::tab_route_set,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
@@ -1299,6 +1316,7 @@ pub fn run() {
                     v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
                 }
             }
+            if !browser_lock::locked_global(){okna_app::restore_windows(app.handle());}
             // Самопроверка: NEXUSBRO_PROBA=1 сразу создаёт супер-вкладку,
             // чтобы весь путь (запуск → поиск окна → встраивание) можно было
             // проверить без рук.
@@ -1443,6 +1461,7 @@ pub fn run() {
             // Восстановление встроенного окна после сворачивания/фокуса:
             // чужое окно само не возвращается — показываем и ставим на место.
             match &sobytie {
+                tauri::RunEvent::ExitRequested{..}=>{okna_app::before_exit(app);}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label=="main"=>{
                     let s:State<Sostoyanie>=app.state();
                     if !s.okna.0.lock().unwrap().is_empty(){

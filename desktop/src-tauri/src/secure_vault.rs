@@ -523,6 +523,24 @@ impl VaultState {
         vault.touched = Instant::now();
         Ok(())
     }
+    /// A batch imports credentials with one encrypted durable commit. No partial RAM or disk mutation.
+    pub(crate) fn compare_and_set_many(&self, entries: &[(&str, Option<&str>, Option<&str>)]) -> Result<()> {
+        if entries.len()>1000 {return Err("Слишком много записей".into());}
+        let mut seen=std::collections::HashSet::new();
+        for (key,expected,value) in entries {
+            if key.is_empty()||key.len()>512||!seen.insert(*key)||expected.is_some_and(|v|v.len()>MAX_VALUE)||value.is_some_and(|v|v.len()>MAX_VALUE){return Err("Недопустимые записи хранилища".into());}
+        }
+        let mut inner=self.inner.lock().map_err(|_|LOCKED.to_string())?;
+        expire(&mut inner);
+        let root=inner.root.clone().ok_or_else(||LOCKED.to_string())?;
+        let vault=inner.unlocked.as_mut().ok_or_else(||LOCKED.to_string())?;
+        for (key,expected,_) in entries {if vault.secrets.get(*key).map(|v|v.as_str())!=*expected{return Err("Записи изменились; повторите предпросмотр".into());}}
+        let mut next=vault.secrets.clone();
+        for(key,_,value)in entries{match value{Some(value)=>{next.insert((*key).into(),Zeroizing::new((*value).into()));},None=>{next.remove(*key);}}}
+        let bytes=encode(vault,&next)?;
+        persist(&root,&bytes,false)?;
+        vault.secrets=next;vault.touched=Instant::now();Ok(())
+    }
     fn mutate(&self, change: impl FnOnce(&mut Secrets)) -> Result<()> {
         let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
         expire(&mut inner);
@@ -805,4 +823,15 @@ mod tests {
         let second = VaultState::default();
         assert!(second.unlock(&other.0, PASSWORD).is_err());
     }
+    #[test]
+    fn batch_import_stale_second_entry_never_partially_writes_first() {
+        let root=Directory::new();let vault=VaultState::default();vault.create(&root.0,PASSWORD).unwrap();
+        vault.put("a","old-a").unwrap();vault.put("b","old-b").unwrap();let before=fs::read(root.0.join(FILE_NAME)).unwrap();
+        assert!(vault.compare_and_set_many(&[("a",Some("old-a"),Some("new-a")),("b",Some("stale"),Some("new-b"))]).is_err());
+        assert_eq!(vault.get("a").unwrap().unwrap().as_str(),"old-a");assert_eq!(before,fs::read(root.0.join(FILE_NAME)).unwrap());
+        vault.compare_and_set_many(&[("a",Some("old-a"),Some("new-a")),("b",Some("old-b"),None),("c",None,Some("new-c"))]).unwrap();
+        vault.lock();vault.unlock(&root.0,PASSWORD).unwrap();assert_eq!(vault.get("a").unwrap().unwrap().as_str(),"new-a");assert!(vault.get("b").unwrap().is_none());assert_eq!(vault.get("c").unwrap().unwrap().as_str(),"new-c");
+        assert!(vault.compare_and_set_many(&[("same",None,Some("x")),("same",None,Some("y"))]).is_err());
+    }
+
 }

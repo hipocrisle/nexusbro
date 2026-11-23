@@ -1,3 +1,4 @@
+import {networkError} from "./networkError";
 import BookmarkBar from "./BookmarkBar";
 import "./addressSuggestions.css";
 import AddressMenu from "./AddressMenu";
@@ -30,6 +31,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [suggestionIndex,setSuggestionIndex]=useState(-1);
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
+  const [networkFailure,setNetworkFailure]=useState<{owner:string;tabId:number;generation:number;code:number}|null>(null);
+  useEffect(()=>{setNetworkFailure(null);},[id]);
   const [routeDialog,setRouteDialog]=useState<{owner:string;tabId:number}|null>(null);
   const routeOwner=useRef(id),routesAlive=useRef(true);
   routeOwner.current=id;
@@ -140,6 +143,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   useEffect(()=>{let live=true;const refresh=()=>invoke<{adres:string}[]>("biblioteka_spisok",{razdel:"zakladki"}).then(rows=>{if(live)setBookmarked(rows.some(x=>x.adres===aktivnaya?.adres));}).catch(()=>{});void refresh();const off=listen("zakladki-izmenilis",refresh);return()=>{live=false;void off.then(f=>f());};},[aktivnaya?.adres]);
   async function toggleBookmark(){if(!aktivnaya)return;try{const added=await invoke<boolean>("zakladki_pereklyuchit",{adres:aktivnaya.adres,nazvanie:aktivnaya.zagolovok});setBookmarked(added);setBookmarkMessage(added?"Закладка добавлена":"Закладка удалена");}catch(e){setOshibka(String(e));}}
   useEffect(() => { if (!pravka) setAdres(aktivnaya?.adres ?? ""); }, [aktivnaya?.adres, aktivnaya?.id, pravka]);
+  useEffect(()=>{setNetworkFailure(null);},[aktivnaya?.adres,aktivnaya?.id,aktivnaya?.route_generation]);
+  useEffect(()=>{if(aktivnaya?.zagruzka)setNetworkFailure(null);},[aktivnaya?.zagruzka]);
   useEffect(()=>{
     let live=true;
     if(!pravka||!adres.trim()){setSuggestions([]);completedValue.current=null;return;}
@@ -248,8 +253,10 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     setTranslation(null);setToolsOpen(false);setFindOpen(false);setFindText("");setMatches({count:0,active:0});
   }, [id,aktivnaya?.id,aktivnaya?.adres]);
   useEffect(() => {
-    const off=listen<{super_id:string;data:{tip:string;id:number;open?:boolean;auto?:boolean;count?:number;active?:number;procent?:number;start?:boolean;original?:boolean;done?:number;total?:number;error?:string|null}}>("stranica-ui",e=>{
+    const off=listen<{super_id:string;data:{tip:string;id:number;open?:boolean;auto?:boolean;count?:number;active?:number;procent?:number;code?:number;route_generation?:number;start?:boolean;original?:boolean;done?:number;total?:number;error?:string|null}}>("stranica-ui",e=>{
       if(e.payload.super_id!==id||e.payload.data.id!==aktivnaya?.id)return;
+      if(e.payload.data.tip==="navigation-error"){const d=e.payload.data;setNetworkFailure({owner:id!,tabId:d.id,generation:d.route_generation??-1,code:d.code??-2});return;}
+      if(e.payload.data.tip==="browser-tasks"){window.dispatchEvent(new Event("nexusbro-tasks"));return;}
       if(e.payload.data.tip==="tab-search"){window.dispatchEvent(new Event("nexusbro-tab-search"));return;}
       if(e.payload.data.tip==="panel-zakladok"){onToggleBookmarks();return;}
       if(e.payload.data.tip==="zakladka"){void toggleBookmark();return;}
@@ -346,6 +353,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
       <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/><SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
+       {label:"Резервные копии",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-backup"))},
+       {label:"Диспетчер задач",shortcut:"Shift+Esc",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-tasks"))},
        {label:"Поиск по вкладкам",shortcut:"Ctrl+Shift+A",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-tab-search"))},
        {label:"Новое окно",shortcut:"Ctrl+N",action:()=>invoke("novoe_okno",{id,privatnaya:false})},
        {label:"Новое приватное окно",shortcut:"Ctrl+Shift+N",action:()=>invoke("novoe_okno",{id,privatnaya:true})},null,
@@ -355,6 +364,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
        {label:"Настройки NexusBro",keepsHidden:true,action:()=>{window.dispatchEvent(new Event('nexusbro-settings'));}}
       ]}><Icon name="menu" size={18}/></BrowserMenu>
       {bookmarkMessage&&<span className="sr-only" role="status">{bookmarkMessage}</span>}
+      {networkFailure&&networkFailure.owner===id&&networkFailure.tabId===aktivnaya?.id&&networkFailure.generation===aktivnaya?.route_generation&&<div role="alert" className="oshibka-navigacii">{networkError(networkFailure.code)} Путь: {routeLabel(aktivnaya.route,routeOptions.choices)}. Автоматической смены пути нет. <button onClick={()=>{setNetworkFailure(null);void poslat({deystvie:"obnovit",id:aktivnaya.id});}}>Повторить</button><button aria-label="Скрыть сетевую ошибку" onClick={()=>setNetworkFailure(null)}>×</button></div>}
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
     </form>
     {pravka&&suggestions.length>0&&<div id="address-history" className="address-suggestions" role="listbox" aria-label="Подсказки адреса">

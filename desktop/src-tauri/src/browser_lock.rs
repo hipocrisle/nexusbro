@@ -499,6 +499,7 @@ pub async fn browser_unlock(
     transition(false);
     engine_lock(&app, false);
     restore_all(&app);
+    crate::okna_app::restore_windows(&app);
     let result = publish(&app);
     // At startup the native RunEvent autostart is deliberately gated. Resume
     // only the last active Super after a successful master-password check.

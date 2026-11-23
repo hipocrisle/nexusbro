@@ -4,7 +4,7 @@ use tauri::Emitter;
 use std::sync::{Mutex,OnceLock};
 use std::collections::HashMap;
 use std::path::PathBuf;
-static IO:Mutex<()>=Mutex::new(());
+pub(crate) static IO:Mutex<()>=Mutex::new(());
 static SEEN:OnceLock<Mutex<HashMap<(String,u64),String>>>=OnceLock::new();
 #[derive(Clone,Serialize,Deserialize)]
 pub struct Zapis {#[serde(default,skip_serializing_if="Option::is_none")]pub super_id:Option<String>,pub id:String,pub adres:String,pub nazvanie:String,pub vremya:u64,#[serde(default)]pub papka:String}

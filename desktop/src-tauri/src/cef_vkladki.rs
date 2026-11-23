@@ -23,7 +23,8 @@ pub(crate) enum Sobytie {
     MemoryMessage(u64,i32,serde_json::Value),
     MemoryFrozen(u64,i32,String,bool),
     MemoryLoaded(u64,i32),
-    MainLoadFailed(u64,i32,String,u64,String),
+    MainLoadFailed(u64,i32,String,u64,String,i32),
+    NavigationFailed(u64,i32,String,i32),
     Ikonka(u64, String, String),
     AdresnyiVvod,
     #[cfg(target_os = "windows")]
@@ -85,6 +86,8 @@ wrap_load_handler! {
             error_text: Option<&CefString>, _failed_url: Option<&CefString>) {
             if error_code!=Errorcode::ABORTED&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let (Some(browser),Some(url))=(_browser.as_ref(),_failed_url){
                 let failed_url=url.to_string();let identity=browser.identifier();
+                let native_code:cef::sys::cef_errorcode_t=error_code.into();
+                let _=self.tx.send(Sobytie::NavigationFailed(self.id,identity,failed_url.clone(),native_code as i32));
                 let accepted=crate::memory_guard::native_load_error(identity,&failed_url);
                 eprintln!("NEXUSBRO_ROUTE_ERROR browser={identity} native_candidate={accepted}");
                 if accepted{
@@ -92,7 +95,7 @@ wrap_load_handler! {
                         if let Some(logical_target)=self.bootstrap.mark_terminal_failure(identity,&failed_url,epoch){
                             // Loading(false) may already have been suppressed;
                             // settle the failed request without claiming success.
-                            let _=self.tx.send(Sobytie::MainLoadFailed(self.id,identity,failed_url,epoch,logical_target));
+                            let _=self.tx.send(Sobytie::MainLoadFailed(self.id,identity,failed_url,epoch,logical_target,native_code as i32));
                             eprintln!("NEXUSBRO_ROUTE_ERROR browser={identity} terminal_initial=true");
                         }
                     }
@@ -978,7 +981,7 @@ impl Rabota {
             // Поиск, перевод и отчёты защиты не меняют сохранённую сессию.
             // Пробуждение отложенной страницы при этом обязательно публикуем.
             let session_dirty = razbuzhen.is_some() || !matches!(&sobytie,
-                Sobytie::Sluzhebnoe(_) | Sobytie::PoiskVybratPervoe(..) | Sobytie::DevtoolsGotovy(..) |
+                Sobytie::Sluzhebnoe(_) | Sobytie::NavigationFailed(..) | Sobytie::PoiskVybratPervoe(..) | Sobytie::DevtoolsGotovy(..) |
                 Sobytie::DevtoolsZakryty(_) | Sobytie::AdresnyiVvod |
                 Sobytie::Komanda(Komanda::Nayti{..} | Komanda::PoiskZakryt{..} |
                     Komanda::Perevesti{..} | Komanda::PerevodOriginal{..} |
@@ -1212,11 +1215,18 @@ impl Rabota {
                         }
                     }
                 }
-                Sobytie::MainLoadFailed(id,identity,failed_url,epoch,logical_target)=>{
+                Sobytie::NavigationFailed(id,identity,url,code)=>{
+                    if !brauzery.get(&id).is_some_and(|browser|browser.identifier()==identity){continue;}
+                    if let Some(tab)=s.vkladki.iter().find(|t|t.id==id&&t.adres==url&&!t.route_pending){
+                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"navigation-error","id":id,"code":code,"route":tab.route,"route_generation":tab.route_generation})));
+                    }
+                }
+                Sobytie::MainLoadFailed(id,identity,failed_url,epoch,logical_target,code)=>{
                     if !brauzery.get(&id).is_some_and(|browser|browser.identifier()==identity)
                         ||crate::memory_guard::native_error_epoch(identity,&failed_url)!=Some(epoch){continue;}
                     if let Some(tab)=s.vkladki.iter_mut().find(|tab|tab.id==id&&(tab.adres==failed_url||tab.adres==logical_target)){
                         tab.zagruzka=false;izmeneno=true;
+                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"navigation-error","id":id,"code":code,"route":tab.route,"route_generation":tab.route_generation})));
                     }
                 }
                 Sobytie::MemoryLoaded(id,identity)=>{

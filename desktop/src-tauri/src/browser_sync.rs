@@ -654,6 +654,8 @@ fn restore_history(
         );
     }
     if let Some(current) = current.as_ref() {
+        let live=map.get(&entry.super_id).is_some_and(|v|v.proc.is_some()||v.zapusk_idet);
+        if live&&(current.adres!=restored.adres||current.rezat_reklamu!=restored.rezat_reklamu||current.pustaya!=restored.pustaya){return Err("Чтобы восстановить эти настройки, сначала сохраните и закройте супервкладку. Работающие сайты не прерывались.".into());}
         if current.privatnaya || crate::privatnost::eto_id(&current.id) {
             return Err("Приватные супер-вкладки не восстанавливаются из облачной истории".into());
         }

@@ -1,7 +1,7 @@
 //! Настройки оболочки. Чтение/запись вызываются только из фоновых команд.
 use serde::{Deserialize, Serialize};
 use std::sync::Mutex;
-static ZAPIS: Mutex<()> = Mutex::new(());
+pub(crate) static ZAPIS: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Vyhod { pub id: String, pub nazvanie: String, pub adres: String, #[serde(default)] pub proxy_uzel: String }

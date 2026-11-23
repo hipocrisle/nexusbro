@@ -1,3 +1,5 @@
+import BackupDialog from "./BackupDialog";
+import BrowserTasks from "./BrowserTasks";
 import {editableTarget} from "./addressSelection";
 import {popupMenu} from "./nativeMenu";
 import TabSearch from "./TabSearch";
@@ -52,6 +54,10 @@ export default function App() {
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
   const [securityOpen,setSecurityOpen]=useState(false);
   const [tabSearchOpen,setTabSearchOpen]=useState(false);
+  const [tasksOpen,setTasksOpen]=useState(false);
+  const [backupOpen,setBackupOpen]=useState(false);
+  useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setBackupOpen(true)).catch(e=>setOshibka(String(e)));};window.addEventListener("nexusbro-backup",open);return()=>window.removeEventListener("nexusbro-backup",open);},[]);
+  useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setTasksOpen(true)).catch(e=>setOshibka(String(e)));};const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.ctrlKey||e.altKey||e.metaKey||!e.shiftKey||e.key!=="Escape")return;e.preventDefault();open();};window.addEventListener("nexusbro-tasks",open);document.addEventListener("keydown",key);return()=>{window.removeEventListener("nexusbro-tasks",open);document.removeEventListener("keydown",key);};},[]);
   useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setTabSearchOpen(true)).catch(e=>setOshibka(String(e)));};const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.altKey||!(e.ctrlKey||e.metaKey)||!e.shiftKey||shortcutKey(e)!=="a")return;e.preventDefault();open();};window.addEventListener("nexusbro-tab-search",open);document.addEventListener("keydown",key);return()=>{window.removeEventListener("nexusbro-tab-search",open);document.removeEventListener("keydown",key);};},[]);
   const cloud=useSuperCloud(securityOpen);
   const [cloudSaved,setCloudSaved]=useState<Nastrojki[]>([]);
@@ -531,6 +537,8 @@ export default function App() {
         </div>
       </div>
 
+      {backupOpen&&<BackupDialog onClose={()=>{setBackupOpen(false);void invoke("pokazat_dvizhki",{vidno:true}).catch(e=>setOshibka(String(e)));}}/>}
+      {tasksOpen&&<BrowserTasks onClose={()=>{setTasksOpen(false);void invoke("pokazat_dvizhki",{vidno:true}).catch(e=>setOshibka(String(e)));}}/>}
       {tabSearchOpen&&<TabSearch onClose={()=>{setTabSearchOpen(false);void invoke("pokazat_dvizhki",{vidno:true}).catch(e=>setOshibka(String(e)));}}/>}
       {securityOpen&&<SecuritySettings onClose={()=>{setSecurityOpen(false);void invoke("pokazat_dvizhki",{vidno:true});}}/>}
       {nastroykiOtkryty && <NastrojkiOkno value={nastrojki} onSave={sohranitNastrojki} onClose={() => {
