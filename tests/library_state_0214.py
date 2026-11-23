@@ -16,12 +16,13 @@ root = pathlib.Path(__file__).resolve().parents[1]
 base = (root / "tests/frontend_controls.py").read_text().split("mock=r'''", 1)[1].split("'''", 1)[0]
 mock = base + r'''
 const originalInvoke=window.__TAURI_INTERNALS__.invoke;
-window.__bookPending=null;window.__deferBook=false;window.__sitePending=null;window.__deferHide=false;window.__hidePending=null;
+window.__hideQueue=null;window.__bookPending=null;window.__deferBook=false;window.__sitePending=null;window.__deferHide=false;window.__hidePending=null;
 window.__history=[{id:'h-1',adres:'https://history.example.test/',nazvanie:'History only',vremya:1790000000,papka:''}];
 window.__books=[{id:'b-1',adres:'https://bookmark.example.test/',nazvanie:'Bookmark only',vremya:1790000000,papka:'Saved'}];
 window.__downloads=[{id:'d-1',super_id:'layout',name:'download-only.zip',url:'https://downloads.example.test/file?secret=never-render',path:'fixture.zip',percent:100,received:5,total:5,speed:0,status:'Готово',privatnaya:false}];
 window.__TAURI_INTERNALS__.invoke=async(cmd,args)=>{
  window.__args.push({cmd,args});
+ if(cmd==='pokazat_dvizhki'&&args.vidno===false&&window.__hideQueue)return new Promise((resolve,reject)=>window.__hideQueue.push({resolve,reject}));
  if(cmd==='pokazat_dvizhki'&&args.vidno===false&&window.__deferHide){window.__deferHide=false;return new Promise(resolve=>window.__hidePending=resolve);}
  if(cmd==='biblioteka_spisok'){
   if(args.razdel==='zakladki'&&window.__deferBook){window.__deferBook=false;return new Promise(resolve=>window.__bookPending=()=>resolve(window.__books));}
@@ -68,6 +69,21 @@ try:
         page.evaluate("window.__hidePending(null)")
         page.wait_for_timeout(100)
         expect(page.get_by_role("dialog", name="Закладки", exact=True)).not_to_be_visible()
+        first_history.get_by_role("button", name="Закрыть библиотеку", exact=True).click()
+        # An older failed hide must not release a newer library request's gate.
+        page.evaluate("window.__hideQueue=[];window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:'zakladki'}))")
+        page.wait_for_function("window.__hideQueue.length===1")
+        page.evaluate("window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:'istoriya'}))")
+        page.wait_for_function("window.__hideQueue.length===2")
+        page.evaluate("window.__hideQueue[0].reject('old native hide rejected')")
+        page.wait_for_timeout(50)
+        page.evaluate("window.dispatchEvent(new Event('nexusbro-tasks'))")
+        page.wait_for_timeout(50)
+        expect(page.get_by_role("dialog")).to_have_count(0)
+        assert page.evaluate("window.__hideQueue.length") == 2, "Stale error released the newer modal gate"
+        page.evaluate("const q=window.__hideQueue;window.__hideQueue=null;q[1].resolve(null)")
+        expect(first_history.get_by_text("History only", exact=True)).to_be_visible()
+        expect(page.get_by_role("dialog")).to_have_count(1)
         first_history.get_by_role("button", name="Закрыть библиотеку", exact=True).click()
         page.evaluate("window.__deferBook=true;window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:'zakladki'}))")
         books = page.get_by_role("dialog", name="Закладки", exact=True)
