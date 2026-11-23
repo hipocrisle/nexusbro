@@ -18,6 +18,8 @@ pub struct Okno {
     pub closing:bool,
     pub privatnaya:bool,
     pub generation:Arc<AtomicU64>,
+    pub recovery_key:String,
+    pub recovery_lazy:bool,
 }
 #[derive(Default)]
 pub struct Okna(pub Mutex<HashMap<String,Okno>>);
@@ -43,10 +45,11 @@ pub fn sobytie(app:&tauri::AppHandle,s:&Sostoyanie,super_id:&str,data:&serde_jso
     }
     if !["okno-ready","okno-session"].contains(&data["tip"].as_str().unwrap_or("")){return false;}
     let session={let mut map=s.okna.0.lock().unwrap();let Some(w)=map.get_mut(label)else{return true};
-        if w.super_id!=super_id{if let Some(v)=w.others.get_mut(super_id){if let Some(h)=data["hwnd"].as_u64(){v.hwnd=Some(h as u32);let _=sistema::pokazat(h as u32,false);}if let Ok(session)=serde_json::from_value::<Sessiya>(data["sessiya"].clone()){v.sessiya=Some(session);}}return true;}
+        if w.super_id!=super_id{if let Some(v)=w.others.get_mut(super_id){if let Some(h)=data["hwnd"].as_u64(){v.hwnd=Some(h as u32);let _=sistema::pokazat(h as u32,false);}if let Ok(session)=serde_json::from_value::<Sessiya>(data["sessiya"].clone()){v.sessiya=Some(session);}}drop(map);persist(app,s);return true;}
         if let Some(hwnd)=data["hwnd"].as_u64(){w.hwnd=Some(hwnd as u32);}
         if let Ok(session)=serde_json::from_value::<Sessiya>(data["sessiya"].clone()){w.sessiya=Some(session);}
         w.sessiya.clone()};
+    persist(app,s);
     obolochka(app,s,label);
     if let Some(session)=session{for tab in &session.vkladki{crate::biblioteka::poseshchenie(super_id,tab);}let _=app.emit_to(label,"obychnye-izmenilis",serde_json::json!({"id":super_id,"sessiya":session}));}
     true
@@ -74,8 +77,15 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let id=id.or_else(||s.aktivnaya.lock().unwrap().clone()).ok_or("Сначала откройте супер-вкладку")?;
     let running=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.proc.is_some());
     if !running{let result=crate::zapustit_vnutri(&app,&s,&id).await;if !result.ok{return Err(result.soobshchenie);}}
+    create_window(&app,&s,id,privatnaya,None)
+}
+fn create_window(app:&tauri::AppHandle,s:&Sostoyanie,id:String,privatnaya:bool,recovery:Option<crate::window_recovery::WindowSession>)->Result<(),String>{
     static NEXT:AtomicU64=AtomicU64::new(1);
-    let label=format!("browser-{}",NEXT.fetch_add(1,Ordering::Relaxed));
+    let label=loop{let label=format!("browser-{}",NEXT.fetch_add(1,Ordering::Relaxed));if app.get_webview_window(&label).is_none(){break label;}};
+    let recovering=recovery.is_some();
+    let recovery_key=recovery.as_ref().map(|w|w.key.clone()).unwrap_or_else(||format!("window-{}-{}",std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos(),NEXT.fetch_add(1,Ordering::Relaxed)));
+    let mut session=None;let mut others=HashMap::new();
+    if let Some(recovery)=recovery{for view in recovery.views{if view.super_id==id{session=Some(view.session);}else{others.insert(view.super_id,Vid{hwnd:None,sessiya:Some(view.session),engine:0});}}}
     let mut query=reqwest::Url::parse("http://localhost/index.html").map_err(|e|e.to_string())?;
     query.query_pairs_mut().append_pair("okno",&label).append_pair("super",&id);
     let url=format!("index.html?{}",query.query().unwrap_or(""));
@@ -85,15 +95,16 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let preferred=main.as_ref().and_then(|w|Some((w.inner_size().ok()?,w.scale_factor().ok()?))).map(|(size,k)|(size.width as f64/k,size.height as f64/k)).unwrap_or((1200.,800.));
     let width=preferred.0.min(1200.).min(limit_w).max(900_f64.min(limit_w));let height=preferred.1.min(800.).min(limit_h).max(560_f64.min(limit_h));
     let theme=main.as_ref().and_then(|w|w.theme().ok());let maximized=main.as_ref().is_some_and(|w|w.is_maximized().unwrap_or(false));
-    s.okna.0.lock().unwrap().insert(label.clone(),Okno{others:Default::default(),pending_close:Default::default(),super_id:id,engine:0,hwnd:None,mesto:None,sessiya:None,hidden:false,closing:false,privatnaya,generation:Default::default()});
-    match tauri::WebviewWindowBuilder::new(&app,&label,tauri::WebviewUrl::App(url.into())).title(title).inner_size(width,height).min_inner_size(900_f64.min(limit_w),560_f64.min(limit_h)).theme(theme).disable_drag_drop_handler().enable_clipboard_access().build(){
-        Ok(window)=>{crate::browser_lock::install_shortcut(&window);if let Some(m)=monitor{let area=m.work_area();let pos=if area.size.width>0{area.position}else{*m.position()};let _=window.set_position(tauri::PhysicalPosition::new(pos.x+20,pos.y+20));}if maximized{let _=window.maximize();}Ok(())},Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
+    s.okna.0.lock().unwrap().insert(label.clone(),Okno{others,pending_close:Default::default(),super_id:id,engine:0,hwnd:None,mesto:None,sessiya:session,hidden:false,closing:false,privatnaya,generation:Default::default(),recovery_key,recovery_lazy:recovering});
+    match tauri::WebviewWindowBuilder::new(app,&label,tauri::WebviewUrl::App(url.into())).title(title).focused(!recovering).inner_size(width,height).min_inner_size(900_f64.min(limit_w),560_f64.min(limit_h)).theme(theme).disable_drag_drop_handler().enable_clipboard_access().build(){
+        Ok(window)=>{crate::browser_lock::install_shortcut(&window);if let Some(m)=monitor{let area=m.work_area();let pos=if area.size.width>0{area.position}else{*m.position()};let _=window.set_position(tauri::PhysicalPosition::new(pos.x+20,pos.y+20));}if maximized{let _=window.maximize();}persist(app,s);Ok(())},Err(e)=>{s.okna.0.lock().unwrap().remove(&label);Err(e.to_string())}
     }
 }
 #[tauri::command]
 pub async fn okno_gotovo(app:tauri::AppHandle,window:tauri::WebviewWindow,s:tauri::State<'_,Sostoyanie>,)->Result<(),String>{
     let label=window.label().to_owned();
     let id=s.okna.0.lock().unwrap().get(&label).map(|w|w.super_id.clone()).ok_or("Окно не найдено")?;
+    if s.okna.0.lock().unwrap().get(&label).is_some_and(|w|w.recovery_lazy){return Ok(());}
     // BrowserGuard remounts the shell after a master-password unlock. Keep the
     // existing native container/session: the utility already owns this label.
     let existing = {
@@ -122,12 +133,13 @@ fn podklyuchit(app:&tauri::AppHandle,s:&Sostoyanie,label:&str)->Result<(),String
 pub fn vosstanovit(app:&tauri::AppHandle,s:&Sostoyanie,id:&str,engine:u64){
     let closed=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.closing).map(|(label,_)|label.clone()).collect::<Vec<_>>();
     for label in closed{sobytie(app,s,id,&serde_json::json!({"tip":"okno-closed","label":label}));}
-    let labels=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.engine!=engine&&!w.closing).map(|(label,_)|label.clone()).collect::<Vec<_>>();
+    let labels=s.okna.0.lock().unwrap().iter().filter(|(_,w)|w.super_id==id&&w.engine!=engine&&!w.closing&&!w.recovery_lazy).map(|(label,_)|label.clone()).collect::<Vec<_>>();
     for label in labels{if let Err(e)=podklyuchit(app,s,&label){let _=app.emit_to(&label,"oshibka-dvizhka",e);}}
 }
 pub fn zakryt_super(app:&tauri::AppHandle,s:&Sostoyanie,id:&str){
  let labels={let mut map=s.okna.0.lock().unwrap();let mut labels=Vec::new();for(label,w) in map.iter_mut(){w.others.remove(id);if w.super_id==id{if let Some(h)=w.hwnd.take(){let _=sistema::pokazat(h,false);}w.super_id.clear();w.sessiya=None;w.engine=0;labels.push(label.clone());}}labels};
  for label in labels{obolochka(app,s,&label);}
+ persist(app,s);
 }
 // Сначала CEF завершает BrowserHost, затем уничтожаем родителя Tauri.
 // Обратный порядок мог пересоздать последнюю вкладку в уже удалённом HWND.
@@ -135,6 +147,7 @@ pub fn nachat_zakrytie(app:&tauri::AppHandle,label:&str)->bool{
     let s:tauri::State<Sostoyanie>=app.state();
     let ids={let mut map=s.okna.0.lock().unwrap();let Some(w)=map.get_mut(label)else{return false};if w.closing{return true;}
         let mut ids=w.others.keys().cloned().collect::<HashSet<_>>();if !w.super_id.is_empty(){ids.insert(w.super_id.clone());}w.pending_close=ids.clone();w.closing=true;ids};
+    persist(app,&s);
     if let Some(window)=app.get_webview_window(label){let _=window.hide();}
     if ids.is_empty(){if let Some(window)=app.get_webview_window(label){let _=window.destroy();}return true;}
     for id in ids {
@@ -153,6 +166,7 @@ pub fn zakryt(app:&tauri::AppHandle,label:&str){
     if let Some(w)=s.okna.0.lock().unwrap().remove(label){
         if let Ok(k)=kanal(&s,"main",&w.super_id){let _=k.try_send(Komanda::OknoZakryt{label:label.into()});}
     }
+    persist(app,&s);
     // Главная оболочка скрывается, пока открыты другие окна. Последнее окно завершает приложение.
     if s.okna.0.lock().unwrap().is_empty()&&app.get_webview_window("main").is_some_and(|w|!w.is_visible().unwrap_or(true)){app.exit(0);}
 }
@@ -168,15 +182,137 @@ pub async fn vybrat(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,window:ta
             let next=w.others.remove(&id);w.super_id=id.clone();w.hwnd=next.as_ref().and_then(|v|v.hwnd);w.sessiya=next.as_ref().and_then(|v|v.sessiya.clone());w.engine=next.as_ref().map(|v|v.engine).unwrap_or(0);
         }
         w.hidden=false;
+        w.recovery_lazy=false;
         w.engine==engine&&w.hwnd.is_some_and(sistema::okno_zhivo)
     };
     if cached{obolochka(&app,&s,&label);let session=s.okna.0.lock().unwrap().get(&label).and_then(|w|w.sessiya.clone());if let Some(session)=session{let _=app.emit_to(&label,"obychnye-izmenilis",serde_json::json!({"id":id,"sessiya":session}));}}
     else{podklyuchit(&app,&s,&label)?;}
     let private=s.okna.0.lock().unwrap().get(&label).is_some_and(|w|w.privatnaya);let _=window.set_title(&zagolovok(&s,&id,private));
+    persist(&app,&s);
     Ok(crate::da())
 }
 
 fn zagolovok(s:&Sostoyanie,id:&str,private:bool)->String{
  let (name,private)=s.vkladki.lock().unwrap().get(id).map(|v|(Some(v.nastrojki.nazvanie.clone()),private||v.nastrojki.privatnaya)).unwrap_or((None,private));
  format!("NexusBro{}{}",name.map(|n|format!(" — {n}")).unwrap_or_default(),if private{" · приватное окно"}else{""})
+}
+
+#[derive(Default)]
+struct RecoveryState {
+    initialized:bool,
+    restoring:bool,
+    shutting_down:bool,
+    pending:HashMap<String,crate::window_recovery::WindowSession>,
+    committed:HashMap<String,crate::window_recovery::WindowSession>,
+}
+fn recovery_state()->&'static Mutex<RecoveryState>{
+    static STATE:std::sync::OnceLock<Mutex<RecoveryState>>=std::sync::OnceLock::new();
+    STATE.get_or_init(||Mutex::new(RecoveryState::default()))
+}
+fn recovery_root()->std::path::PathBuf{
+    crate::brauzer::papka_profilej().parent().unwrap_or_else(||std::path::Path::new(".")).to_path_buf()
+}
+fn ordinary_supers(s:&Sostoyanie)->HashSet<String>{
+    s.vkladki.lock().unwrap().iter().filter(|(id,v)|!v.nastrojki.privatnaya&&!crate::privatnost::eto_id(id)).map(|(id,_)|id.clone()).collect()
+}
+fn persist(app:&tauri::AppHandle,s:&Sostoyanie){
+    let mut state=recovery_state().lock().unwrap_or_else(|e|e.into_inner());
+    if !state.initialized||state.restoring||state.shutting_down{return;}
+    let allowed=ordinary_supers(s);
+    state.pending.retain(|_,window|allowed.contains(&window.active_super));
+    let mut windows=state.committed.clone();
+    windows.extend(state.pending.clone());
+    {
+        let map=s.okna.0.lock().unwrap();
+        let live=map.values().filter(|w|!w.closing&&!w.privatnaya&&allowed.contains(&w.super_id)).map(|w|w.recovery_key.clone()).collect::<HashSet<_>>();
+        windows.retain(|key,window|allowed.contains(&window.active_super)&&(live.contains(key)||state.pending.contains_key(key)));
+        for w in map.values(){
+            if w.closing{windows.remove(&w.recovery_key);continue;}
+            if w.privatnaya||!allowed.contains(&w.super_id){continue;}
+            let mut views=w.others.iter().filter(|(id,_)|allowed.contains(*id)).filter_map(|(id,v)|v.sessiya.clone().map(|session|crate::window_recovery::SuperSession{super_id:id.clone(),session})).collect::<Vec<_>>();
+            if let Some(session)=w.sessiya.clone(){views.push(crate::window_recovery::SuperSession{super_id:w.super_id.clone(),session});}
+            views.sort_by(|a,b|a.super_id.cmp(&b.super_id));
+            if views.iter().any(|v|v.super_id==w.super_id){windows.insert(w.recovery_key.clone(),crate::window_recovery::WindowSession{key:w.recovery_key.clone(),active_super:w.super_id.clone(),views,privatnaya:false});}
+        }
+    }
+    let committed=windows.clone();
+    let mut windows=windows.into_values().collect::<Vec<_>>();windows.sort_by(|a,b|a.key.cmp(&b.key));
+    if crate::window_recovery::save(&recovery_root(),windows).is_err(){let _=app.emit("oshibka-dvizhka","Не удалось сохранить окна для восстановления");}
+    else{state.committed=committed;}
+}
+
+/// Run once after successful master-password unlock (or normal unlocked startup).
+/// Recreate shells with lazy session snapshots, but start NO CEF engines here.
+pub fn restore_windows(app:&tauri::AppHandle){
+    if crate::browser_lock::locked_global(){return;}
+    let s:tauri::State<Sostoyanie>=app.state();
+    let allowed=ordinary_supers(&s);
+    let pending={
+        let mut state=recovery_state().lock().unwrap_or_else(|e|e.into_inner());
+        if state.initialized{return;}
+        state.initialized=true;state.restoring=true;
+        for mut window in crate::window_recovery::load(&recovery_root()){
+            window.views.retain(|view|allowed.contains(&view.super_id));
+            if allowed.contains(&window.active_super)&&window.views.iter().any(|v|v.super_id==window.active_super){state.pending.insert(window.key.clone(),window);}
+        }
+        state.committed=state.pending.clone();
+        state.pending.values().cloned().collect::<Vec<_>>()
+    };
+    for window in pending{
+        let key=window.key.clone();let id=window.active_super.clone();
+        match create_window(app,&s,id,false,Some(window)){
+            Ok(())=>{recovery_state().lock().unwrap_or_else(|e|e.into_inner()).pending.remove(&key);},
+            Err(_)=>{let _=app.emit("oshibka-dvizhka","Не удалось восстановить одно из окон. Его сессия сохранена для следующего запуска.");},
+        }
+    }
+    recovery_state().lock().unwrap_or_else(|e|e.into_inner()).restoring=false;
+    persist(app,&s);
+}
+
+/// Call on app-wide ExitRequested before window destruction. Explicit user
+/// window close is persisted by nachat_zakrytie; teardown must not erase others.
+pub fn before_exit(app:&tauri::AppHandle){
+    let s:tauri::State<Sostoyanie>=app.state();
+    persist(app,&s);
+    recovery_state().lock().unwrap_or_else(|e|e.into_inner()).shutting_down=true;
+}
+
+/// Prepare an ordinary command for a lazily restored secondary window. Waiting
+/// for the native session ACK is mandatory: old disk IDs are not browser IDs.
+pub async fn ready_command(app:&tauri::AppHandle,s:&Sostoyanie,label:&str,command:Komanda)->Result<Komanda,String>{
+    if crate::browser_lock::locked_global(){return Err("Браузер заблокирован".into());}
+    static SERIAL:tokio::sync::Mutex<()>=tokio::sync::Mutex::const_new(());
+    let _serial=SERIAL.lock().await;
+    let (id,before,lazy)={let map=s.okna.0.lock().unwrap();let w=map.get(label).filter(|w|!w.closing).ok_or("Окно уже закрыто")?;(w.super_id.clone(),w.sessiya.clone(),w.recovery_lazy)};
+    if lazy{
+        if !crate::window_recovery::user_command_can_wake(&command){return Err("Окно восстановлено и ожидает выбора вкладки".into());}
+        if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){
+            if let Komanda::Vybrat{id}= &command {
+                let session=w.sessiya.as_mut().ok_or("Сессия окна недоступна")?;
+                if !session.vkladki.iter().any(|v|v.id==*id){return Err("Вкладка уже закрыта".into());}
+                session.aktivnaya=*id;
+            }
+            w.recovery_lazy=false;
+        }
+        let running=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.proc.is_some()&&!v.zapusk_idet);
+        if !running{
+            let previous=s.aktivnaya.lock().unwrap().clone();
+            let result=crate::zapustit_vnutri(app,&app.state(),&id).await;
+            if let Some(previous)=previous{crate::pereklyuchit_vnutri(&app.state(),&previous);}
+            if !result.ok{if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.recovery_lazy=true;}return Err(result.soobshchenie);}
+        }
+        let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).ok_or("Супер-вкладка уже закрыта")?;
+        let needs=s.okna.0.lock().unwrap().get(label).is_some_and(|w|w.engine!=engine);
+        if needs{podklyuchit(app,s,label)?;}
+    }
+    let deadline=std::time::Instant::now()+std::time::Duration::from_secs(25);
+    let after=loop{
+        if crate::browser_lock::locked_global(){return Err("Браузер заблокирован".into());}
+        let session={let map=s.okna.0.lock().unwrap();let w=map.get(label).filter(|w|!w.closing&&w.super_id==id).ok_or("Окно уже изменилось")?;if w.hwnd.is_some(){w.sessiya.clone()}else{None}};
+        if let Some(session)=session{break session;}
+        if std::time::Instant::now()>=deadline{return Err("Движок не подтвердил восстановление окна. Повторите действие.".into());}
+        tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+    };
+    persist(app,s);
+    match before{Some(before)=>crate::window_recovery::remap_command(&before,&after,command),None=>Ok(command)}
 }

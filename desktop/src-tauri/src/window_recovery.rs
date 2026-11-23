@@ -130,3 +130,47 @@ mod tests {
         }
     }
 }
+
+/// Secondary CEF views allocate fresh IDs when recreated. Only the initiating
+/// command may translate by row, and only while URL/route/privacy still match.
+/// Never silently select a different row if a stale search/result has changed.
+pub fn remap_command(before: &Sessiya, after: &Sessiya, mut command: crate::sessiya::Komanda) -> Result<crate::sessiya::Komanda, String> {
+    use crate::sessiya::Komanda;
+    let changed = before.vkladki.iter().map(|v|v.id).collect::<Vec<_>>()
+        != after.vkladki.iter().map(|v|v.id).collect::<Vec<_>>();
+    if !changed { return Ok(command); }
+    let target = |id: &mut u64| -> Result<(), String> {
+        let index = before.vkladki.iter().position(|v|v.id==*id).ok_or("Вкладка уже закрыта")?;
+        let old = &before.vkladki[index];
+        let new = after.vkladki.get(index).filter(|new| new.adres==old.adres && new.route==old.route && new.privatnaya==old.privatnaya)
+            .ok_or("Список вкладок изменился. Повторите действие.")?;
+        *id = new.id; Ok(())
+    };
+    match &mut command {
+        Komanda::Vybrat{id}|Komanda::Zakryt{id}|Komanda::Usypit{id}|Komanda::MemoryAuto{id}
+        |Komanda::MemoryKeep{id,..}|Komanda::ZakrytDrugie{id,..}|Komanda::Zakrepit{id,..}
+        |Komanda::Pereyti{id,..}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Obnovit{id}
+        |Komanda::ObnovitBezKesha{id}|Komanda::Instrumenty{id}|Komanda::Nayti{id,..}
+        |Komanda::PoiskZakryt{id}|Komanda::Perevesti{id}|Komanda::PerevodOriginal{id}
+        |Komanda::PerevodAvto{id,..}|Komanda::Issledovat{id,..}|Komanda::Iskhodnik{id} => target(id)?,
+        Komanda::OpenLink{opener_id,..} => target(opener_id)?,
+        Komanda::Peremestit{id,pered} => { target(id)?; if let Some(id)=pered { target(id)?; } },
+        Komanda::RouteApply{..}|Komanda::RouteFailed{..}|Komanda::PasswordForm{..}|Komanda::PerevodOtvet{..}
+        |Komanda::OknoKomanda{..} => return Err("Операция относится к прежнему движку".into()),
+        _ => {},
+    }
+    Ok(command)
+}
+
+/// Initial renderer effects (theme and interface refresh) are not user intent.
+/// Keep a positive list so new maintenance commands cannot wake every window.
+pub fn user_command_can_wake(command: &crate::sessiya::Komanda) -> bool {
+    use crate::sessiya::Komanda;
+    matches!(command, Komanda::Novaya{..}|Komanda::NovayaPrivatnaya{..}|Komanda::OpenLink{..}
+        |Komanda::VosstanovitZakrytuyu|Komanda::Skachat{..}|Komanda::Vybrat{..}|Komanda::Zakryt{..}
+        |Komanda::ZakrytDrugie{..}|Komanda::Zakrepit{..}|Komanda::Pereyti{..}|Komanda::Nazad{..}
+        |Komanda::Vpered{..}|Komanda::Obnovit{..}|Komanda::ObnovitBezKesha{..}|Komanda::Instrumenty{..}
+        |Komanda::Nayti{..}|Komanda::PoiskZakryt{..}|Komanda::Perevesti{..}|Komanda::PerevodOriginal{..}
+        |Komanda::PerevodAvto{..}|Komanda::Issledovat{..}|Komanda::Iskhodnik{..}
+        |Komanda::Peremestit{..}|Komanda::Sleduyushchaya{..}|Komanda::Masshtab{..})
+}

@@ -61,4 +61,38 @@ mod disk_tests {
         assert_eq!(std::fs::read(target.join("sentinel")).unwrap(), b"original");
         assert_eq!(std::fs::read_dir(&p.0).unwrap().count(), 1, "failed temp is cleaned up");
     }
+    #[test]
+    fn initiating_selection_remaps_only_unchanged_route_and_url() {
+        let before = sessiya::Sessiya::novaya("https://same.test");
+        let mut after = before.clone();
+        after.vkladki[0].id = 1_000_000;
+        match window_recovery::remap_command(&before, &after, sessiya::Komanda::Vybrat { id: 1 }).unwrap() {
+            sessiya::Komanda::Vybrat { id } => assert_eq!(id, 1_000_000),
+            _ => panic!("wrong command"),
+        }
+        after.vkladki[0].route = tab_routes::RouteChoice::Direct;
+        assert!(window_recovery::remap_command(&before, &after, sessiya::Komanda::Vybrat { id: 1 }).is_err());
+        after.vkladki[0].route = before.vkladki[0].route.clone();
+        after.vkladki[0].adres = "https://different.test".into();
+        assert!(window_recovery::remap_command(&before, &after, sessiya::Komanda::Vybrat { id: 1 }).is_err());
+    }
+    #[test]
+    fn recovery_refuses_stale_internal_engine_receipt() {
+        let before = sessiya::Sessiya::novaya("https://same.test");
+        let mut after = before.clone(); after.vkladki[0].id = 1_000_000;
+        assert!(window_recovery::remap_command(&before, &after, sessiya::Komanda::RouteFailed {
+            id: 1, generation: 7, expected_browser: 99, error: "stale".into(),
+        }).is_err());
+    }
+
+    #[test]
+    fn renderer_mount_and_maintenance_do_not_wake_recovered_windows() {
+        use sessiya::Komanda;
+        for command in [Komanda::FonKonteynera { rgb: 0x123456 }, Komanda::ObnovitInterfeys,
+            Komanda::MemorySettings { enabled: true, minutes: 30 }, Komanda::BrowserLocked { locked: false, generation: 1 }] {
+            assert!(!window_recovery::user_command_can_wake(&command));
+        }
+        assert!(window_recovery::user_command_can_wake(&Komanda::Vybrat { id: 1 }));
+    }
+
 }
