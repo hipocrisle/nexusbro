@@ -1,4 +1,4 @@
-# Individual tab routes — implementation contract, not a released feature
+# Individual tab routes — implementation contract and release history
 
 Owner priority: each ordinary tab can inherit its Super route, use Direct, or select an existing saved VPN connection. No domain-based substitute and no changing the route of neighboring tabs.
 
@@ -65,3 +65,12 @@ The real Linux cookie witness in [44765959144](https://github.com/hipocrisle/nex
 The corrected layout keeps the unchanged Super root and `root/Default` for its original effective route. Every override is `root/route-<64 lowercase hexadecimal effective-key characters>`, an immediate child. Descriptor identity, legacy binding marker and authentication policy do not change. No cookies, Local State or authentication are moved. Earlier nested override directories belonged to an unreleased implementation whose contexts were OffTheRecord; they are left untouched and are not reopened or treated as persisted authentication.
 
 Stats/clear enumerate only `Default` and strict direct-child `route-<key>` directories, validating their canonical immediate parent and exact leaf before any context is returned. Symlink/junction escapes and same-root profile aliases fail closed. Unmatched directories remain untouched. Enumeration is bounded to 1024 root entries and 128 owned historical profiles; the existing 256-context process bound remains. Private contexts still have no disk cache. Pure filesystem tests import the same helper used by CEF. Persistence and historical clear require a new actual native run; this source correction is not itself a passed acceptance result.
+
+
+## Explicit reload correction (0.2.24 candidate, 23 November)
+
+A user-requested path change is an explicit page reload into another isolated profile. It must work after ordinary interaction and on pages with blank forms, canvas, workers or sessionStorage, including a currently loading page. The automatic memory-eviction purity probe must not gate this manual action. It continues to protect automatic eviction unchanged.
+
+Keep target-context preparation before close, exact browser/window/generation validation, active native capture and download/DevTools exclusion, non-forced CEF close and actual beforeunload refusal. An actual site warning cancels the route transaction and retains the old page; an ordinary click or a historical use of a media API is not such a warning. A manually requested reload can restart its own playback, while other tabs and background-media memory protection remain unaffected. Authentication is not copied and missing/broken connections never fall back to Direct.
+
+Only whitelisted engine error codes become actionable user messages; arbitrary native/renderer text and proxy credentials are never echoed by the parent. UI help is one sentence about reload and possible sign-in. Native interaction/loading/beforeunload and authenticated SOCKS regression acceptance is pending, not inferred from unit tests.

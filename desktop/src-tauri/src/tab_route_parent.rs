@@ -347,15 +347,16 @@ pub fn receive(
                     let result = if data["ok"] == true {
                         Ok(())
                     } else {
-                        Err("Движок отклонил смену пути. Текущий профиль сохранён.".into())
+                        Err(crate::tab_routes::change_error_message(data["error_code"].as_str()).into())
                     };
                     let _ = p.sender.send(result);
                 }
             }
         }
         crate::zapisat_v_zhurnal(format!(
-            "route-result engine={engine} tab={id} attempt={generation} ok={}",
-            data["ok"] == true
+            "route-result engine={engine} tab={id} attempt={generation} ok={} reason={}",
+            data["ok"] == true,
+            if data["ok"] == true { "none" } else { crate::tab_routes::change_error_code(data["error_code"].as_str()) }
         ));
         return true;
     }

@@ -101,21 +101,20 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
   }}>
    <header><h2>Путь вкладки</h2><button type="button" aria-label="Закрыть выбор пути вкладки" disabled={busy} onClick={onClose}><Icon name="close" size={17}/></button></header>
    <strong className="tab-route-tab-title">{tab.zagolovok||'Новая вкладка'}</strong>
-   <p className="tab-route-current">Подтверждённый путь: {routeStateKnown(tab)?routeLabel(tab.route,choices):'ещё не получен'}</p>
-   <label className="tab-route-choice">Использовать для этой вкладки<Vybor aria-label="Выберите путь вкладки" value={draft} disabled={busy||!choices} onChange={event=>{setDraft(event.target.value);setError('');setNotice('');}}>
+   <p className="tab-route-current">Текущий путь: {routeStateKnown(tab)?routeLabel(tab.route,choices):'ещё не получен'}</p>
+   <label className="tab-route-choice">Подключение<Vybor aria-label="Выберите путь вкладки" value={draft} disabled={busy||!choices} onChange={event=>{setDraft(event.target.value);setError('');setNotice('');}}>
     {draft==='blocked'&&<option value="blocked" disabled>Сохранённый путь недоступен — выберите другой</option>}
     {missing&&<option value={draft} disabled>Выбранное подключение недоступно</option>}
     <option value="inherit">{choices?'Как у супервкладки: '+choices.inheritLabel:'Как у супервкладки'}</option>
     <option value="direct">Прямое соединение</option>
     {choices?.connections.map(value=><option key={value.id} value={'connection:'+value.id}>{value.name}</option>)}
    </Vybor></label>
-   <p id="tab-route-profile-warning" className="tab-route-warning">Страница откроется заново. Вкладки этой супервкладки с одинаковым путём используют общий профиль. У другого пути — свой профиль. При переходе на другой путь входы на сайты не копируются — может понадобиться новый вход. Перед сменой пути сохраните ввод и остановите воспроизведение.</p>
-   <p className="tab-route-scope">Другие вкладки и другие супервкладки не меняют свой путь. Если выбранное подключение недоступно, прямое соединение вместо него не включается.</p>
+   <p id="tab-route-profile-warning" className="tab-route-warning">Страница перезагрузится. Может понадобиться повторный вход.</p>
    {!choices&&!choicesError&&<p role="status">Загружаю сохранённые подключения…</p>}
    {choicesError&&<div className="tab-route-error" role="alert"><span>{choicesError}</span><button type="button" disabled={busy} onClick={onRefresh}>Повторить получение подключений</button></div>}
    {(error||tab.route_error)&&<p className="tab-route-error" role="alert">{error||tab.route_error}</p>}
    {notice&&<p role="status">{notice}</p>}
-   {busy&&<p role="status" aria-live="polite">Применяем путь… Ожидаем подтверждение.</p>}
+   {busy&&<p role="status" aria-live="polite">Меняем путь…</p>}
    <div className="knopki"><button ref={cancel} type="button" disabled={busy} onClick={onClose}>Отмена</button><button type="button" className="glavnaya" disabled={busy||!choices||!choiceAvailable||!routeStateKnown(tab)||(draft===routeKey(tab.route)&&!tab.route_error)} onClick={()=>void apply()}>{busy?'Применяем…':'Применить путь'}</button></div>
   </section>
  </div>,document.body);

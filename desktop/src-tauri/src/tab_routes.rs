@@ -11,6 +11,34 @@ use std::fmt;
 
 pub const MAX_CONNECTION_ID_BYTES: usize = 128;
 
+/// Only engine-owned reason codes cross into user-visible route errors.
+/// Never echo arbitrary renderer text, connection addresses or credentials.
+pub fn change_error_code(code: Option<&str>) -> &'static str {
+    match code {
+        Some("capture") => "capture",
+        Some("busy") => "busy",
+        Some("before_unload") => "before_unload",
+        Some("locked") => "locked",
+        Some("stale") => "stale",
+        Some("timeout") => "timeout",
+        Some("profile_unavailable") => "profile_unavailable",
+        _ => "unknown",
+    }
+}
+pub fn change_error_message(code: Option<&str>) -> &'static str {
+    match change_error_code(code) {
+        "capture" => "Остановите доступ к камере, микрофону или экрану и повторите.",
+        "busy" => "Завершите загрузку файла или закройте DevTools и повторите.",
+        "before_unload" => "Страница не разрешила перезагрузку. Сохраните введённые данные и повторите.",
+        "locked" => "Разблокируйте браузер и повторите.",
+        "stale" => "Вкладка изменилась. Откройте выбор пути заново.",
+        "timeout" => "Подготовка пути заняла слишком много времени. Повторите попытку.",
+        "profile_unavailable" => "Не удалось открыть выбранный путь. Попробуйте ещё раз.",
+        _ => "Не удалось сменить путь. Попробуйте ещё раз.",
+    }
+}
+
+
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnectionId(String);
 

@@ -290,3 +290,19 @@ mod transport_validation {
         }
     }
 }
+
+#[cfg(test)]
+mod route_error_messages {
+    use super::tab_routes::{change_error_code,change_error_message};
+    #[test]
+    fn user_sees_known_actionable_reason_not_engine_or_connection_payload() {
+        assert!(change_error_message(Some("capture")).contains("камере"));
+        assert!(change_error_message(Some("before_unload")).contains("Сохраните"));
+        assert!(change_error_message(Some("locked")).contains("Разблокируйте"));
+        let fallback=change_error_message(None);
+        for unsafe_code in ["socks5://fixture-user:fixture-password@127.0.0.1:9", "before_unload\ncredential", "<script>"] {
+            assert_eq!(change_error_code(Some(unsafe_code)),"unknown");
+            assert_eq!(change_error_message(Some(unsafe_code)),fallback);
+        }
+    }
+}
