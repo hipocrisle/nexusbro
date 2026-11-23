@@ -589,6 +589,55 @@ def run(args):
     def cloud_painted(client, device, identifier, kind):
         from PIL import ImageGrab
         check_cloud_stroke_model()
+        label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        def save_paint_diagnostics(stage):
+            # Numeric owned-window geometry/focus only; never include page text,
+            # form values, process command lines or credentials in diagnostics.
+            diagnostic = {'stage': stage, 'owner_label': label}
+            try:
+                ImageGrab.grab(xdisplay=device.display).save(
+                    root / ('cloud-' + identifier + '-' + kind + '-full-desktop-failure.png'))
+            except Exception as error:
+                diagnostic['screenshot_error_type'] = type(error).__name__
+            try:
+                diagnostic['shell_focus'] = client.js('({document:document.hasFocus(),'
+                    'active_tag:document.activeElement?.tagName,active_label:document.activeElement?.getAttribute("aria-label"),'
+                    'inner_width:innerWidth,inner_height:innerHeight,dpr:devicePixelRatio||1})')
+                diagnostic['owned_origin'] = client.command('plugin:window|inner_position', label=label)
+                diagnostic['owned_size'] = client.command('plugin:window|inner_size', label=label)
+                diagnostic['owned_window_focused'] = client.command('plugin:window|is_focused', label=label)
+            except Exception as error:
+                diagnostic['owner_query_error_type'] = type(error).__name__
+            env = {**os.environ, 'DISPLAY': device.display}
+            try:
+                focus = subprocess.run(['xdotool', 'getwindowfocus'], env=env,
+                    capture_output=True, text=True, timeout=3)
+                diagnostic['x_focus_exit'] = focus.returncode
+                if focus.returncode == 0 and focus.stdout.strip().isdigit():
+                    focused = focus.stdout.strip()
+                    diagnostic['x_focus_window'] = int(focused)
+                    geometry = subprocess.run(['xdotool', 'getwindowgeometry', '--shell', focused],
+                        env=env, capture_output=True, text=True, timeout=3)
+                    diagnostic['x_focus_geometry_exit'] = geometry.returncode
+                    diagnostic['x_focus_geometry'] = {
+                        key: int(value) for line in geometry.stdout.splitlines() if '=' in line
+                        for key, value in [line.split('=', 1)]
+                        if key in ('WINDOW', 'X', 'Y', 'WIDTH', 'HEIGHT', 'SCREEN') and value.lstrip('-').isdigit()}
+            except Exception as error:
+                diagnostic['x_focus_error_type'] = type(error).__name__
+            # Existing artifact retention includes *.log (not arbitrary *.json).
+            (root / ('cloud-' + identifier + '-' + kind + '-paint-diagnostics.log')).write_text(
+                json.dumps(diagnostic, indent=2) + '\n')
+        try:
+            # Restart now recreates ordinary extra windows. A DOM-accurate crop
+            # can otherwise sample another window stacked over this owner. Raise
+            # the real owner through its native GTK/WebKit focus path first.
+            call(client, 'fokus_obolochke')
+            js_wait(client, 'document.hasFocus()', 'Cloud paint owner did not acquire native shell focus')
+            painted(client)
+        except Exception:
+            save_paint_diagnostics('focus_precondition')
+            raise
         # A physical cloud click leaves the pointer over a long native title.
         # GTK can paint that tooltip over the next row's SVG. Move the real
         # pointer to empty CEF content before requiring unobstructed glyph ink.
@@ -628,6 +677,7 @@ def run(args):
                 return
             time.sleep(.1)
         pixels.save(root / ('cloud-' + identifier + '-' + kind + '-paint-failure.png'))
+        save_paint_diagnostics('strict_ink_failure')
         require(False, 'Native cloud icon color exists in DOM but was not painted on screen: ' +
                 json.dumps({'identifier': identifier, 'kind': kind, 'crop': box, 'color': value['rgb'], 'ink': ink}))
 
