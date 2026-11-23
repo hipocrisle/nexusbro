@@ -250,6 +250,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   useEffect(() => {
     const off=listen<{super_id:string;data:{tip:string;id:number;open?:boolean;auto?:boolean;count?:number;active?:number;procent?:number;start?:boolean;original?:boolean;done?:number;total?:number;error?:string|null}}>("stranica-ui",e=>{
       if(e.payload.super_id!==id||e.payload.data.id!==aktivnaya?.id)return;
+      if(e.payload.data.tip==="tab-search"){window.dispatchEvent(new Event("nexusbro-tab-search"));return;}
       if(e.payload.data.tip==="panel-zakladok"){onToggleBookmarks();return;}
       if(e.payload.data.tip==="zakladka"){void toggleBookmark();return;}
       if(e.payload.data.tip==="perevod"){const d=e.payload.data;setTranslation(d.original&&!d.auto?null:{done:d.done??0,total:d.total??0,auto:!!d.auto,error:d.error});return;}
@@ -345,6 +346,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
       <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/><SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
+       {label:"Поиск по вкладкам",shortcut:"Ctrl+Shift+A",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-tab-search"))},
        {label:"Новое окно",shortcut:"Ctrl+N",action:()=>invoke("novoe_okno",{id,privatnaya:false})},
        {label:"Новое приватное окно",shortcut:"Ctrl+Shift+N",action:()=>invoke("novoe_okno",{id,privatnaya:true})},null,
        ...([['История','Ctrl+H','istoriya'],['Закладки','Ctrl+B','zakladki'],['Загрузки','Ctrl+J','zagruzki']] as const).map(([label,shortcut,section])=>({label,shortcut,keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent('nexusbro-library',{detail:section}));}})),null,

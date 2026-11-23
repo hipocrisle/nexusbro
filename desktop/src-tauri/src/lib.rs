@@ -14,6 +14,7 @@ mod fon_konteynera;
 mod okna_app;
 mod brauzer;
 mod sessiya;
+mod tab_search;
 mod tab_routes;
 mod tab_route_parent;
 mod route_network;
@@ -1251,7 +1252,7 @@ pub fn run() {
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
-            fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            tab_search::tab_search_snapshot, tab_search::tab_search_activate, fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             tab_route_parent::tab_route_choices, tab_route_parent::tab_route_set,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit

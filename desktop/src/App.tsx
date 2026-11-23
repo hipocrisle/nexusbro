@@ -1,5 +1,7 @@
 import {editableTarget} from "./addressSelection";
 import {popupMenu} from "./nativeMenu";
+import TabSearch from "./TabSearch";
+import {shortcutKey} from "./shortcuts";
 import SecuritySettings from "./SecuritySettings";
 import Biblioteka from "./Biblioteka";
 import Vybor from "./Vybor";
@@ -49,6 +51,8 @@ export default function App() {
   const nastrojkiRef = useRef(nastrojki);
   const [nastroykiOtkryty, setNastroykiOtkryty] = useState(false);
   const [securityOpen,setSecurityOpen]=useState(false);
+  const [tabSearchOpen,setTabSearchOpen]=useState(false);
+  useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>setTabSearchOpen(true)).catch(e=>setOshibka(String(e)));};const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.altKey||!(e.ctrlKey||e.metaKey)||!e.shiftKey||shortcutKey(e)!=="a")return;e.preventDefault();open();};window.addEventListener("nexusbro-tab-search",open);document.addEventListener("keydown",key);return()=>{window.removeEventListener("nexusbro-tab-search",open);document.removeEventListener("keydown",key);};},[]);
   const cloud=useSuperCloud(securityOpen);
   const [cloudSaved,setCloudSaved]=useState<Nastrojki[]>([]);
   useEffect(()=>{const open=()=>{void invoke("pokazat_dvizhki",{vidno:false}).then(()=>{setNastroykiOtkryty(false);setSecurityOpen(true);}).catch(e=>setOshibka(String(e)));};window.addEventListener("nexusbro-security",open);return()=>window.removeEventListener("nexusbro-security",open);},[]);
@@ -79,7 +83,7 @@ export default function App() {
     void getVersion().then(setVersiya).catch(() => {});
     void invoke<NastrojkiApp>("nastrojki_poluchit").then((n) => {
       panel(n);
-      if (n.avtoobnovleniya) void proverit_obnovlenie();
+      if (n.avtoobnovleniya) void runUpdate(false);
     }).catch((e) => setOshibka(String(e)));
   }, []);
   useEffect(() => {
@@ -120,6 +124,12 @@ export default function App() {
   // Контекстное меню супервкладки (правый клик).
   // Прогресс скачивания обновления: байты и общий размер (0 = неизвестен).
   const [progress, setProgress] = useState<{ polucheno: number; vsego: number } | null>(null);
+  async function runUpdate(force:boolean){
+    if(force)setObnovlenie("Проверяю…");
+    try{await proverit_obnovlenie(force,!force,message=>{setObnovlenie(message);},(polucheno,vsego)=>setProgress({polucheno,vsego}));}
+    finally{setProgress(null);setObnovlenie(current=>current==="Проверяю…"?"":current);}
+  }
+
   const [oshibka, setOshibka] = useState("");
   const [zanyat, setZanyat] = useState(false);
   const [zarezano, setZarezano] = useState(0);
@@ -444,18 +454,7 @@ export default function App() {
             className="plyus"
             title="Проверить обновления"
             onClick={async () => {
-              setObnovlenie("Проверяю…");
-              await proverit_obnovlenie(
-                true,
-                false,
-                (s) => {
-                  setObnovlenie(s);
-                  setTimeout(() => setObnovlenie(""), 8000);
-                },
-                (polucheno, vsego) => setProgress({ polucheno, vsego })
-              );
-              setProgress(null);
-              if (obnovlenie === "Проверяю…") setObnovlenie("");
+              await runUpdate(true);
             }}
           >
             <Icon name="reload" />
@@ -532,6 +531,7 @@ export default function App() {
         </div>
       </div>
 
+      {tabSearchOpen&&<TabSearch onClose={()=>{setTabSearchOpen(false);void invoke("pokazat_dvizhki",{vidno:true}).catch(e=>setOshibka(String(e)));}}/>}
       {securityOpen&&<SecuritySettings onClose={()=>{setSecurityOpen(false);void invoke("pokazat_dvizhki",{vidno:true});}}/>}
       {nastroykiOtkryty && <NastrojkiOkno value={nastrojki} onSave={sohranitNastrojki} onClose={() => {
         setNastroykiOtkryty(false); void invoke("pokazat_dvizhki", { vidno: true });

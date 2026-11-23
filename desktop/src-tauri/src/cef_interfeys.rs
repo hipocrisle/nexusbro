@@ -28,6 +28,7 @@ wrap_keyboard_handler! {
             if ctrl && e.modifiers & (1 << 3) != 0 {if let Some(b)=browser.as_ref(){crate::memory_guard::edited(b.identifier());}return 0;}
             let key=shortcut_code(e);
             let shift = e.modifiers & (1 << 1) != 0;
+            if ctrl&&shift&&key==65{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"tab-search","id":self.id})));return 1;}
             if ctrl&&shift&&key==76{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"browser-lock","id":self.id})));return 1;}
             if ctrl&&shift&&key==46{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"ochistit-dannye","id":self.id})));return 1;}
             if ctrl&&key==78{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"novoe-okno","id":self.id,"privatnaya":shift})));return 1;}
