@@ -362,6 +362,9 @@ def run(args):
         task='[role="dialog"][aria-label="Диспетчер задач NexusBro"]'
         js_wait(client,'!!document.querySelector('+json.dumps(task)+')&&!!document.querySelector('+json.dumps(task+' tbody tr')+')',
                 'Physical Shift+Escape did not open measured task manager')
+        task_layout=client.js('(()=>{const t=document.querySelector(".browser-task-table"),p=t?.parentElement;if(!t||!p)return null;const r=p.getBoundingClientRect();return {width:document.querySelector(".browser-tasks").getBoundingClientRect().width,overflow:p.scrollWidth>p.clientWidth+1,cells:[...t.querySelectorAll("th,td")].every(c=>{const q=c.getBoundingClientRect();return q.left>=r.left-1&&q.right<=r.right+1;})};})()')
+        require(task_layout and not task_layout['overflow'] and task_layout['cells'],'Native task table clipped a column or required horizontal scrolling')
+        report['task_layout']=task_layout
         image(device,out/'native-task-manager.png')
         measured=call(client,'browser_tasks_snapshot')
         samples=measured['totals']['cpu_samples'];pids={s['pid'] for s in samples}
@@ -415,10 +418,22 @@ def run(args):
         require(isinstance(error['data']['code'],int) and error['data']['code']<0,'Network witness was not a Chromium failure')
         banner=js_wait(client,'(()=>{const e=document.querySelector(".oshibka-navigacii[role=alert]");return e&&e.getBoundingClientRect().height>0?e.textContent:null})()',
                        'Real failed navigation did not display the network error banner')
-        require('Путь: Прямое соединение' in banner and 'Автоматической смены пути нет' in banner,
+        require('Путь: Прямое соединение' in banner and 'Путь не менялся' in banner,
                 'Network failure lost the effective direct route or promised automatic fallback')
         current=next(t for t in main_rows(client)['vkladki'] if t['id']==active)
         require(current['route']=={'kind':'direct'} and current['adres']==failed_url,'Failed navigation changed route or logical target')
+        network_layout=client.js('(()=>{const e=document.querySelector(".network-error"),b=e?.querySelector(".network-error-retry");if(!e||!b)return null;const r=e.getBoundingClientRect(),n=document.querySelector(".navigaciya").getBoundingClientRect(),p=document.querySelector(".pole").getBoundingClientRect(),q=b.getBoundingClientRect();return {outsideForm:!e.closest("form"),top:r.top,bottom:r.bottom,navBottom:n.bottom,pageTop:p.top,noHorizontalClip:e.scrollWidth<=e.clientWidth+1,retryType:b.type,retryLeft:q.left,retryRight:q.right,width:innerWidth,x:q.x+12,y:q.y+5,k:devicePixelRatio||1,rgb:getComputedStyle(b).backgroundColor.match(/\\d+/g).slice(0,3).map(Number)};})()')
+        require(network_layout and network_layout['outsideForm'] and network_layout['top']>=network_layout['navBottom']-1 and network_layout['bottom']<=network_layout['pageTop']+1 and network_layout['noHorizontalClip'] and network_layout['retryType']=='button' and 0<=network_layout['retryLeft']<network_layout['retryRight']<=network_layout['width'],'Native error banner or Retry was clipped/inside the address form')
+        # Actual screen pixels must show the accent Retry above native CEF, not merely DOM visibility.
+        from PIL import ImageGrab
+        origin=client.command('plugin:window|inner_position',label='main')
+        point=(round(origin['x']+network_layout['x']*network_layout['k']),round(origin['y']+network_layout['y']*network_layout['k']))
+        def retry_painted():
+            screen=ImageGrab.grab() if sys.platform=='win32' else ImageGrab.grab(xdisplay=device.display)
+            rgb=screen.convert('RGB').getpixel(point)
+            return list(rgb) if max(abs(rgb[i]-network_layout['rgb'][i]) for i in range(3))<24 else None
+        report['network_retry_painted_rgb']=wait_for(retry_painted,'Native CEF covered the visible Retry control',8)
+        report['network_layout']=network_layout
         image(device,out/'native-real-network-error.png')
         retry_port=blocked.getsockname()[1];blocked.close();blocked=None
         recovered_server=http.server.ThreadingHTTPServer(('127.0.0.1',retry_port),Page)

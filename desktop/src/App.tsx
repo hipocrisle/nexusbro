@@ -57,8 +57,8 @@ export default function App() {
   const [tabSearchOpen,setTabSearchOpen]=useState(false);
   const [tasksOpen,setTasksOpen]=useState(false);
   const [backupOpen,setBackupOpen]=useState(false);
-  async function openGlobalModal(owner:string,setter:()=>void){
-    if(!claimModal(owner))return;
+  async function openGlobalModal(owner:string,setter:()=>void,allowedParent?:string){
+    if(!claimModal(owner,allowedParent))return;
     try{await invoke("pokazat_dvizhki",{vidno:false});setter();renderedModal(owner);}
     catch(e){settleModal(owner);setOshibka(String(e));}
   }
@@ -68,7 +68,7 @@ export default function App() {
   useEffect(()=>{const open=()=>{void openGlobalModal("tab-search",()=>setTabSearchOpen(true));};const key=(e:KeyboardEvent)=>{if(e.defaultPrevented||e.altKey||!(e.ctrlKey||e.metaKey)||!e.shiftKey||shortcutKey(e)!=="a")return;e.preventDefault();open();};window.addEventListener("nexusbro-tab-search",open);document.addEventListener("keydown",key);return()=>{window.removeEventListener("nexusbro-tab-search",open);document.removeEventListener("keydown",key);};},[]);
   const cloud=useSuperCloud(securityOpen);
   const [cloudSaved,setCloudSaved]=useState<Nastrojki[]>([]);
-  useEffect(()=>{const open=()=>{void openGlobalModal("security",()=>setSecurityOpen(true));};window.addEventListener("nexusbro-security",open);return()=>window.removeEventListener("nexusbro-security",open);},[]);
+  useEffect(()=>{const open=()=>{void openGlobalModal("security",()=>setSecurityOpen(true),".nastrojki-okno");};window.addEventListener("nexusbro-security",open);return()=>window.removeEventListener("nexusbro-security",open);},[]);
   useEffect(()=>{const open=()=>{void openGlobalModal("settings",()=>setNastroykiOtkryty(true));};window.addEventListener("nexusbro-settings",open);return()=>window.removeEventListener("nexusbro-settings",open);},[]);
   useEffect(()=>{const off=listen<NastrojkiApp>("nastrojki-izmenilis",e=>panel(e.payload));return()=>{void off.then(f=>f());};},[]);
   const [tyanem, setTyanem] = useState(false);
@@ -548,9 +548,9 @@ export default function App() {
       {tasksOpen&&<BrowserTasks onClose={()=>{setTasksOpen(false);void restoreModalContent().catch(e=>setOshibka(String(e)));}}/>}
       {tabSearchOpen&&<TabSearch onClose={()=>{setTabSearchOpen(false);void restoreModalContent().catch(e=>setOshibka(String(e)));}}/>}
       {securityOpen&&<SecuritySettings onClose={()=>{setSecurityOpen(false);void restoreModalContent().catch(e=>setOshibka(String(e)));}}/>}
-      {nastroykiOtkryty && <NastrojkiOkno value={nastrojki} onSave={sohranitNastrojki} onClose={() => {
+      {nastroykiOtkryty && <div hidden={securityOpen}><NastrojkiOkno value={nastrojki} onSave={sohranitNastrojki} onClose={() => {
         setNastroykiOtkryty(false); void restoreModalContent().catch(e=>setOshibka(String(e)));
-      }} />}
+      }} /></div>}
       {dialog && (
         <Dialog
           zanyat={zanyat}

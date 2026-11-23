@@ -1,0 +1,7 @@
+.network-error.oshibka-navigacii{display:flex;align-items:center;gap:14px;flex:0 0 auto;min-width:0;max-width:none;width:100%;box-sizing:border-box;overflow:visible;white-space:normal;text-overflow:clip;padding:10px 14px;border-bottom:1px solid var(--kraj);background:var(--fon2);color:var(--tekst);font:inherit;font-size:.94em}
+.network-error-message{min-width:0;flex:1 1 auto;display:flex;flex-direction:column;gap:3px;line-height:1.4;overflow-wrap:anywhere}
+.network-error-message strong{font-weight:500}.network-error-message small{color:var(--tiho)}
+.network-error-actions{display:flex;align-items:center;gap:8px;flex:0 0 auto}
+.network-error-actions button{border:1px solid var(--kraj);border-radius:8px;padding:7px 12px;background:var(--fon3);color:var(--tekst);font:inherit;cursor:pointer;white-space:nowrap}
+.network-error-actions .network-error-retry{background:var(--akcent);border-color:var(--akcent);color:var(--fon)}
+.network-error-actions button:focus-visible{outline:2px solid var(--akcent);outline-offset:3px}

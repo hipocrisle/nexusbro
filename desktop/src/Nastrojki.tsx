@@ -27,7 +27,7 @@ export default function Nastrojki({ value, onSave, onClose }: { value: Nastrojki
   const field = <K extends keyof NastrojkiApp>(key: K, val: NastrojkiApp[K]) => setN((n) => ({ ...n, [key]: val }));
   const sectionNames: [Section, string, string][] = [["vid", "text", "Внешний вид"], ["vkladki", "tabs", "Вкладки и поиск"], ["set", "network", "Сеть и VPN"], ["privacy", "shield", "Приватность"], ["about", "globe", "Обновления и версия"]];
   return <div className="zatemnenie" onKeyDown={(e) => { if (e.key === "Escape" && !busy) onClose(); }}>
-    <form className="dialog nastrojki-okno" aria-label="Настройки NexusBro" onSubmit={async (e) => {
+    <form className="dialog nastrojki-okno" role="dialog" aria-modal="true" aria-label="Настройки NexusBro" onSubmit={async (e) => {
       e.preventDefault(); setBusy(true); setError(""); try { await onSave(n); onClose(); } catch (err) { setError(String(err)); } finally { setBusy(false); }
     }}>
       <header className="settings-header"><div><span className="eyebrow">ПОД ВАШ ПРИВЫЧНЫЙ РИТМ</span><h2>Настройки браузера</h2></div><button type="button" className="icon-button" aria-label="Закрыть настройки" disabled={busy} onClick={onClose}><Icon name="close" /></button></header>

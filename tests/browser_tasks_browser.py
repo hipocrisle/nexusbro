@@ -73,6 +73,13 @@ def main():
             group = dialog.get_by_role('row').filter(has=page.get_by_role('rowheader', name='Ресурсная Super', exact=True))
             expect(group).to_be_visible()
             expect(group.locator('td').nth(0)).to_have_text('…')
+            for width in [1280,900]:
+                page.set_viewport_size({'width':width,'height':820})
+                page.evaluate('()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)))')
+                fit=dialog.locator('table').evaluate('t=>{const p=t.parentElement,r=p.getBoundingClientRect();return {overflow:p.scrollWidth>p.clientWidth+1,cells:[...t.querySelectorAll("th,td")].every(c=>{const q=c.getBoundingClientRect();return q.left>=r.left-1&&q.right<=r.right+1;})};}')
+                assert not fit['overflow'] and fit['cells'],fit
+            page.set_viewport_size({'width':1280,'height':820})
+
             expect(dialog.get_by_role('button',name='Закрыть диспетчер задач')).to_be_focused()
             page.keyboard.press('Tab')
             expect(dialog.get_by_role('button',name='Закрыть диспетчер задач')).to_be_focused()

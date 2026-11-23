@@ -1,3 +1,4 @@
+import "./networkError.css";
 import {networkError} from "./networkError";
 import BookmarkBar from "./BookmarkBar";
 import "./addressSuggestions.css";
@@ -364,9 +365,10 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
        {label:"Настройки NexusBro",keepsHidden:true,action:()=>{window.dispatchEvent(new Event('nexusbro-settings'));}}
       ]}><Icon name="menu" size={18}/></BrowserMenu>
       {bookmarkMessage&&<span className="sr-only" role="status">{bookmarkMessage}</span>}
-      {networkFailure&&networkFailure.owner===id&&networkFailure.tabId===aktivnaya?.id&&networkFailure.generation===aktivnaya?.route_generation&&<div role="alert" className="oshibka-navigacii">{networkError(networkFailure.code)} Путь: {routeLabel(aktivnaya.route,routeOptions.choices)}. Автоматической смены пути нет. <button onClick={()=>{setNetworkFailure(null);void poslat({deystvie:"obnovit",id:aktivnaya.id});}}>Повторить</button><button aria-label="Скрыть сетевую ошибку" onClick={()=>setNetworkFailure(null)}>×</button></div>}
+
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
     </form>
+    {networkFailure&&networkFailure.owner===id&&networkFailure.tabId===aktivnaya?.id&&networkFailure.generation===aktivnaya?.route_generation&&<div role="alert" className="network-error oshibka-navigacii" data-network-error-code={networkFailure.code}><div className="network-error-message"><strong>{networkError(networkFailure.code)}</strong><small>Путь: {routeLabel(aktivnaya.route,routeOptions.choices)} · Путь не менялся.</small></div><div className="network-error-actions"><button type="button" className="network-error-retry" onClick={()=>{setNetworkFailure(null);void poslat({deystvie:"obnovit",id:aktivnaya.id});}}>Повторить</button><button type="button" aria-label="Скрыть сетевую ошибку" onClick={()=>setNetworkFailure(null)}>×</button></div></div>}
     {pravka&&suggestions.length>0&&<div id="address-history" className="address-suggestions" role="listbox" aria-label="Подсказки адреса">
       {suggestions.map((row,index)=><button type="button" role="option" id={`address-option-${index}`} key={row.adres} aria-selected={suggestionIndex===index} onMouseDown={e=>e.preventDefault()} onClick={()=>{if(!aktivnaya)return;setAdres(row.adres);setSuggestions([]);setSuggestionIndex(-1);pole.current?.blur();void poslat({deystvie:"pereyti",id:aktivnaya.id,adres:row.adres});}}><span>{row.nazvanie||row.adres}</span><small>{row.adres}</small></button>)}
     </div>}
