@@ -1,0 +1,7 @@
+{
+  "version": "0.2.22",
+  "build_source": "9d5f375b529437ddf74f7425e9cba89b1f308a28",
+  "build_run": 45134075950,
+  "scope": "Remove per-Super cloud icons and redundant padding; retain group sync control and authoritative status. Native implementation unchanged except package version.",
+  "paired_performance_benchmark": "not rerun for this UI-only update"
+}
