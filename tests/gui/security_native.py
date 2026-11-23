@@ -516,6 +516,7 @@ def run(args):
                 'Aggregate native status does not justify the cloud header state')
         require('pvt-cloud-ui' not in status['super_states'] and 'pvt-native-private' not in status['super_states'],
                 'Private definitions entered the authoritative cloud receipt map')
+        require(client.js('!document.querySelector(".super-cloud-badge")'), 'A Super row retained a cloud status/control')
         js_wait(client, 'document.querySelector(`[data-super-id="native-credentials"]`)?.dataset.cloudState===' +
                 json.dumps(selected), 'Super cloud state did not refresh from native status')
         require(client.js('(()=>{const e=document.querySelector(`[data-super-id="native-credentials"]`);'
@@ -549,7 +550,7 @@ def run(args):
                               'e.title.includes("синхронизац")})()'),
                     'Cloud header is not one compact row with its date confined to tooltip metadata')
 
-    def cloud_click_sync(client, *, device=None, selector='[data-testid="cloud-last-account-sync"] button.super-cloud-heading-icon', expected='selected'):
+    def cloud_click_sync(client, *, device=None, selector='[data-testid="cloud-last-account-sync"] button.super-cloud-heading-icon', expected='selected', key=None):
         # After app restart the selected row is deliberately lazy. Open it by
         # the same real tab click as an owner before asserting that sync keeps
         # an already working CEF page visible; sync itself must not wake it.
@@ -562,7 +563,16 @@ def run(args):
         open_ids = [row['id'] for row in call(client, 'spisok')]
         require(client.js('!document.querySelector(".security-panel,.security-overlay")'),
                 'Cloud click should be accepted without opening security settings')
-        client.click(selector)
+        require(client.js('!document.querySelector(".super-cloud-badge")&&document.querySelectorAll("[data-cloud-group=cloud] button.super-cloud-heading-icon").length===1'),
+                'Sync must have exactly one group-header cloud control and none on rows')
+        if key is None:
+            client.click(selector)
+        else:
+            require(device is not None and key in ('Return', 'space'), 'Unsupported native cloud keyboard action')
+            call(client, 'fokus_obolochke')
+            require(client.js('(()=>{const e=document.querySelector(' + json.dumps(selector) + ');e?.focus();return !!e&&document.activeElement===e})()'),
+                    'Group cloud button did not receive keyboard focus')
+            subprocess.run(['xdotool', 'key', key], env={**os.environ, 'DISPLAY': device.display}, check=True)
         js_wait(client, '(()=>{const e=document.querySelector(`[data-testid="cloud-last-account-sync"]`);'
                 'return e?.dataset.cloudState===' + json.dumps(expected) +
                 '&&!e.querySelector("button").disabled})()', 'Cloud click did not complete with honest native status', 90)
@@ -591,7 +601,7 @@ def run(args):
                        env={**os.environ, 'DISPLAY': device.display}, check=True)
         painted(client)
         value = client.js('(()=>{const e=document.querySelector(' +
-                          json.dumps('[data-super-row="' + identifier + '"] .super-cloud-badge') + ');'
+                          json.dumps('[data-testid="cloud-last-account-sync"] button.super-cloud-heading-icon') + ');'
                           'const svg=e?.querySelector("svg");if(!svg)return null;const r=svg.getBoundingClientRect();'
                           'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1,'
                           'rgb:getComputedStyle(svg).color.match(/\\d+/g).slice(0,3).map(Number)}})()')
@@ -629,14 +639,14 @@ def run(args):
                 client.click('[aria-label="' + ('Свернуть левую панель' if collapsed else 'Развернуть левую панель') + '"]')
             js_wait(client, '!!document.querySelector(' + json.dumps(desired) + ')', 'Panel did not change layout')
             painted(client)
-            require(client.js('(()=>{const e=document.querySelector(`[data-super-row="native-credentials"] .super-cloud-badge`);'
+            require(client.js('(()=>{const e=document.querySelector(`[data-testid="cloud-last-account-sync"] button.super-cloud-heading-icon`);'
                               'if(!e)return false;const r=e.getBoundingClientRect(),s=getComputedStyle(e);'
                               'return r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
                               's.display!=="none"&&s.visibility!=="hidden"&&Number(s.opacity)>0&&!!e.querySelector("svg")})()'),
                     'Cloud marker is not visible in ' + ('collapsed' if collapsed else 'expanded') + ' panel')
             cloud_painted(client, device, 'native-credentials', kind)
-            require(client.js('!document.querySelector(`[data-super-row="local-cloud-ui"] .super-cloud-badge`)'),
-                    'Local Super has an unwanted cloud control')
+            require(client.js('!document.querySelector(".super-cloud-badge")&&document.querySelectorAll("[data-cloud-group=cloud] button.super-cloud-heading-icon").length===1'),
+                    'Rows retained cloud controls or the cloud group does not have exactly one status/sync control')
             require(client.js('(()=>{const collapsed=' + json.dumps(collapsed) + ';'
                               'const ids=["native-credentials","retained-super","local-cloud-ui","pvt-cloud-ui"];'
                               'return ids.every(id=>{const row=document.querySelector(`[data-super-id="${id}"]`);'
@@ -1046,9 +1056,11 @@ def run(args):
                     'Real imported Super conflict did not reach the sidebar')
             painted(cb)
             require(cb.js('(()=>{const row=document.querySelector(`[data-super-id="retained-super"]`);'
-                          'const badge=row?.closest(`[data-super-row]`)?.querySelector(`.super-cloud-badge[data-cloud-state="conflict"]`);'
+                          'const heading=document.querySelector(`[data-testid="cloud-last-account-sync"][data-cloud-state="error"]`);'
+                          'const badge=heading?.querySelector(`button.super-cloud-heading-icon`);'
                           'if(!badge)return false;const r=badge.getBoundingClientRect(),style=getComputedStyle(badge);'
-                          'return row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
+                          'return row.dataset.cloudState==="conflict"&&row.title.includes("Конфликт версий")&&!document.querySelector(".super-cloud-badge")&&'
+                          'row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
                           'r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
                           'style.display!=="none"&&style.visibility!=="hidden"&&Number(style.opacity)>0&&'
                           '!!badge.querySelector("svg")})()'),
@@ -1253,7 +1265,7 @@ def run(args):
                 'Local Super edit fabricated a new account receipt')
         painted(ca)
         cloud_painted(ca, a, normal_id, 'gray')
-        changed_report = cloud_click_sync(ca, device=a, selector='[data-super-row="native-credentials"] button.super-cloud-badge')
+        changed_report = cloud_click_sync(ca, device=a, key='Return')
         report_ok(changed_report)
         require(changed_report['pushed'] >= 1, 'Changed portable Super was not actually sent to the server')
         cloud_refresh(ca)
@@ -1325,7 +1337,7 @@ def run(args):
                                           stdout=server_log, stderr=subprocess.STDOUT, start_new_session=True)
         processes.append(server_process)
         wait_for(health, 'Same isolated server DB and deployment key did not restart', 20)
-        report_ok(cloud_click_sync(ca, device=a, selector='[data-super-row="retained-super"] button.super-cloud-badge'))
+        report_ok(cloud_click_sync(ca, device=a, key='space'))
         cloud_refresh(ca)
         cloud_state(ca, selected='selected', receipt=True)
         cloud_layouts(ca, a, 'cloud-real-network-recovered')
