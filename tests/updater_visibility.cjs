@@ -11,6 +11,7 @@ function fixture({ failure, accepted = true, available = true } = {}) {
   let visible = true;
   const update = {
     version: 'test',
+    async close() {}, // Real Update owns a backend resource and downloaded bytes.
     async download(onEvent) {
       calls.push('download');
       assert.equal(visible, true, 'сайты видны при начале скачивания');
