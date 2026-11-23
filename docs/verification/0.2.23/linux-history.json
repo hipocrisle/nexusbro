@@ -1,0 +1,22 @@
+{
+  "completed": true,
+  "checks": [
+    {
+      "actual_saved_delete_archives_ordinary_only_private_legacy_excluded": true
+    },
+    {
+      "physical_history_preview_confirmation_restores_saved_only_exact_prior_route_without_ack_or_network": true
+    },
+    {
+      "real_metadata_change_after_preview_rejects_stale_restore_guard": true
+    },
+    {
+      "history_forget_requires_confirmation_and_never_deletes_actual_saved_super": true
+    },
+    {
+      "main_and_backup_vault_contain_no_plaintext_history_name_route_url_or_master": true
+    }
+  ],
+  "uses_sync_server": false,
+  "uses_ipc_mocks": false
+}

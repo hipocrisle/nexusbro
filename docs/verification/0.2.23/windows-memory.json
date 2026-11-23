@@ -1,0 +1,2952 @@
+{
+  "schema": 2,
+  "automatic_only": true,
+  "completed": true,
+  "platform": "Windows-2025Server-10.0.26100-SP0",
+  "heap_mb": 192,
+  "min_private_drop_mb": 64,
+  "normal_policy_minutes": 30,
+  "isolated_idle_seconds": 8,
+  "checks": [
+    {
+      "saved_tabs_lazy_without_page_requests": true
+    },
+    {
+      "default_automatic_on_normal_30_minutes_without_settings_mutation": true
+    },
+    {
+      "active_download_retained_without_manual_exception": true
+    },
+    {
+      "manual_memory_commands_absent_from_actual_tab_menus": true
+    },
+    {
+      "active_heap_retained_beyond_idle_interval": true,
+      "active_seconds": 10.047000000000025
+    },
+    {
+      "actual_automatic_two_phase_close": true,
+      "drop_private_bytes": 237096960,
+      "isolated_idle_seconds": 8,
+      "normal_policy_minutes": 30
+    },
+    {
+      "only_heap_automatically_closed_legacy_exception_ignored": true
+    },
+    {
+      "pinned_loading_devtools_draft_private_active_and_paused_download_retained": true
+    },
+    {
+      "actual_unsaved_draft_preserved_without_exception": true
+    },
+    {
+      "automatic_same_row_wake_cookie_storage_scroll_preserved": true
+    }
+  ],
+  "memory": {
+    "cold_keeper": {
+      "median_private_bytes": 247017472,
+      "samples": [
+        {
+          "private_bytes": 244760576,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 11620352,
+              "working_set_bytes": 39510016
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 42553344,
+              "working_set_bytes": 124084224
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 30105600,
+              "working_set_bytes": 96735232
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 13975552,
+              "working_set_bytes": 43204608
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 12062720,
+              "working_set_bytes": 36270080
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8593408,
+              "working_set_bytes": 24780800
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 17801216,
+              "working_set_bytes": 41889792
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19857408,
+              "working_set_bytes": 65982464
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 2715648,
+              "working_set_bytes": 9637888
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11882496,
+              "working_set_bytes": 39436288
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 18800640,
+              "working_set_bytes": 59166720
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7634944,
+              "working_set_bytes": 19439616
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 47157248,
+              "working_set_bytes": 104161280
+            }
+          ]
+        },
+        {
+          "private_bytes": 241811456,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 11620352,
+              "working_set_bytes": 39510016
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 42553344,
+              "working_set_bytes": 124084224
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 30105600,
+              "working_set_bytes": 96735232
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 13979648,
+              "working_set_bytes": 43208704
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 12062720,
+              "working_set_bytes": 36270080
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8593408,
+              "working_set_bytes": 24780800
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 17801216,
+              "working_set_bytes": 41889792
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19857408,
+              "working_set_bytes": 65982464
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 2715648,
+              "working_set_bytes": 9637888
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11882496,
+              "working_set_bytes": 39436288
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15847424,
+              "working_set_bytes": 56213504
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7634944,
+              "working_set_bytes": 19439616
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 47157248,
+              "working_set_bytes": 104161280
+            }
+          ]
+        },
+        {
+          "private_bytes": 252891136,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 11620352,
+              "working_set_bytes": 39518208
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 42635264,
+              "working_set_bytes": 124190720
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 33988608,
+              "working_set_bytes": 103108608
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 13983744,
+              "working_set_bytes": 43212800
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 12062720,
+              "working_set_bytes": 36278272
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8593408,
+              "working_set_bytes": 24780800
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 17801216,
+              "working_set_bytes": 41889792
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19857408,
+              "working_set_bytes": 65986560
+            },
+            {
+              "pid": 6500,
+              "created": 1795436853.6554728,
+              "role": "cef/utility",
+              "private_bytes": 7192576,
+              "working_set_bytes": 24215552
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 2715648,
+              "working_set_bytes": 9637888
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11878400,
+              "working_set_bytes": 39432192
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15847424,
+              "working_set_bytes": 56213504
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7634944,
+              "working_set_bytes": 19439616
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 47079424,
+              "working_set_bytes": 104022016
+            }
+          ]
+        },
+        {
+          "private_bytes": 247017472,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 11620352,
+              "working_set_bytes": 39518208
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 42078208,
+              "working_set_bytes": 123633664
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 35856384,
+              "working_set_bytes": 105578496
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 13987840,
+              "working_set_bytes": 43216896
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 12066816,
+              "working_set_bytes": 36311040
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8593408,
+              "working_set_bytes": 24780800
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 17801216,
+              "working_set_bytes": 41889792
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19857408,
+              "working_set_bytes": 65986560
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 2715648,
+              "working_set_bytes": 9637888
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11878400,
+              "working_set_bytes": 39432192
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15847424,
+              "working_set_bytes": 56213504
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7634944,
+              "working_set_bytes": 19439616
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 47079424,
+              "working_set_bytes": 104022016
+            }
+          ]
+        },
+        {
+          "private_bytes": 247021568,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 11620352,
+              "working_set_bytes": 39518208
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 42078208,
+              "working_set_bytes": 123633664
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 35856384,
+              "working_set_bytes": 105578496
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 13987840,
+              "working_set_bytes": 43216896
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 12070912,
+              "working_set_bytes": 36315136
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8593408,
+              "working_set_bytes": 24780800
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 17801216,
+              "working_set_bytes": 41889792
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19857408,
+              "working_set_bytes": 65986560
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 2715648,
+              "working_set_bytes": 9637888
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11878400,
+              "working_set_bytes": 39432192
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15847424,
+              "working_set_bytes": 56209408
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7634944,
+              "working_set_bytes": 19439616
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 47079424,
+              "working_set_bytes": 104026112
+            }
+          ]
+        }
+      ]
+    },
+    "before_automatic_sleep_active_heap": {
+      "median_private_bytes": 896479232,
+      "samples": [
+        {
+          "private_bytes": 896479232,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41529344
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 49045504,
+              "working_set_bytes": 137375744
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 66367488,
+              "working_set_bytes": 171560960
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19574784,
+              "working_set_bytes": 81158144
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16097280,
+              "working_set_bytes": 40910848
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 9076736,
+              "working_set_bytes": 21184512
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 62816256
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19316736,
+              "working_set_bytes": 60690432
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 63197184
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 81567744
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140902400
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 65093632
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 67330048
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 69238784
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 67973120
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 25878528,
+              "working_set_bytes": 76369920
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 31526912,
+              "working_set_bytes": 83156992
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 25481216
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24997888,
+              "working_set_bytes": 72261632
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22867968,
+              "working_set_bytes": 70451200
+            },
+            {
+              "pid": 12228,
+              "created": 1795436867.4396703,
+              "role": "cef/renderer",
+              "private_bytes": 228024320,
+              "working_set_bytes": 273506304
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 43835392
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3608576,
+              "working_set_bytes": 18661376
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11812864,
+              "working_set_bytes": 39768064
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 16261120,
+              "working_set_bytes": 48001024
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7680000,
+              "working_set_bytes": 19267584
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 61493248,
+              "working_set_bytes": 115036160
+            }
+          ]
+        },
+        {
+          "private_bytes": 896180224,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41529344
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 49045504,
+              "working_set_bytes": 137375744
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 66367488,
+              "working_set_bytes": 171560960
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19574784,
+              "working_set_bytes": 81158144
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16097280,
+              "working_set_bytes": 40509440
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 9076736,
+              "working_set_bytes": 20967424
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 62238720
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19316736,
+              "working_set_bytes": 60268544
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 62603264
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 80834560
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140902400
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 64454656
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 66715648
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 68554752
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 67870720
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 25669632,
+              "working_set_bytes": 78094336
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 31526912,
+              "working_set_bytes": 83156992
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 25219072
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24903680,
+              "working_set_bytes": 72196096
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22872064,
+              "working_set_bytes": 70451200
+            },
+            {
+              "pid": 12228,
+              "created": 1795436867.4396703,
+              "role": "cef/renderer",
+              "private_bytes": 228024320,
+              "working_set_bytes": 273506304
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 43835392
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3608576,
+              "working_set_bytes": 18661376
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11812864,
+              "working_set_bytes": 39768064
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 16261120,
+              "working_set_bytes": 48001024
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7680000,
+              "working_set_bytes": 19267584
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 61493248,
+              "working_set_bytes": 115007488
+            }
+          ]
+        },
+        {
+          "private_bytes": 896188416,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41529344
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 49045504,
+              "working_set_bytes": 137375744
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 66371584,
+              "working_set_bytes": 171692032
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19574784,
+              "working_set_bytes": 81158144
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16097280,
+              "working_set_bytes": 40509440
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 9076736,
+              "working_set_bytes": 20967424
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 62238720
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19316736,
+              "working_set_bytes": 60268544
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 62603264
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 80834560
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140902400
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 64454656
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 66715648
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 68554752
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 67870720
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 25669632,
+              "working_set_bytes": 78094336
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 31526912,
+              "working_set_bytes": 83156992
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 25219072
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24903680,
+              "working_set_bytes": 72196096
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22872064,
+              "working_set_bytes": 70451200
+            },
+            {
+              "pid": 12228,
+              "created": 1795436867.4396703,
+              "role": "cef/renderer",
+              "private_bytes": 228028416,
+              "working_set_bytes": 273510400
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 43835392
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3608576,
+              "working_set_bytes": 18661376
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11812864,
+              "working_set_bytes": 39768064
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 16261120,
+              "working_set_bytes": 48001024
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7680000,
+              "working_set_bytes": 19267584
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 61493248,
+              "working_set_bytes": 115007488
+            }
+          ]
+        },
+        {
+          "private_bytes": 897257472,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41529344
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 49045504,
+              "working_set_bytes": 137375744
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 66371584,
+              "working_set_bytes": 171692032
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19574784,
+              "working_set_bytes": 81158144
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16097280,
+              "working_set_bytes": 40509440
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 9076736,
+              "working_set_bytes": 20967424
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 62238720
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19316736,
+              "working_set_bytes": 60268544
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 62603264
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 80834560
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140902400
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 64454656
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 66715648
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 68554752
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 67870720
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 26738688,
+              "working_set_bytes": 78180352
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 31526912,
+              "working_set_bytes": 83156992
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 25219072
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24903680,
+              "working_set_bytes": 72196096
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22872064,
+              "working_set_bytes": 70451200
+            },
+            {
+              "pid": 12228,
+              "created": 1795436867.4396703,
+              "role": "cef/renderer",
+              "private_bytes": 228028416,
+              "working_set_bytes": 273510400
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 43835392
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3608576,
+              "working_set_bytes": 18661376
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11812864,
+              "working_set_bytes": 39768064
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 16261120,
+              "working_set_bytes": 48001024
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7680000,
+              "working_set_bytes": 19267584
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 61493248,
+              "working_set_bytes": 115007488
+            }
+          ]
+        },
+        {
+          "private_bytes": 897261568,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41529344
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 49045504,
+              "working_set_bytes": 137375744
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 66375680,
+              "working_set_bytes": 171696128
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19574784,
+              "working_set_bytes": 81158144
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16097280,
+              "working_set_bytes": 40132608
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 9076736,
+              "working_set_bytes": 20791296
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 61640704
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19316736,
+              "working_set_bytes": 59731968
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 61988864
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 80031744
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140898304
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 63848448
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 66048000
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 67895296
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 67854336
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 26738688,
+              "working_set_bytes": 78180352
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 31526912,
+              "working_set_bytes": 83156992
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 24961024
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24903680,
+              "working_set_bytes": 72196096
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22872064,
+              "working_set_bytes": 70508544
+            },
+            {
+              "pid": 12228,
+              "created": 1795436867.4396703,
+              "role": "cef/renderer",
+              "private_bytes": 228028416,
+              "working_set_bytes": 273510400
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 43831296
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3608576,
+              "working_set_bytes": 18661376
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11812864,
+              "working_set_bytes": 39768064
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 16261120,
+              "working_set_bytes": 48001024
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7680000,
+              "working_set_bytes": 19267584
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 61493248,
+              "working_set_bytes": 115007488
+            }
+          ]
+        }
+      ]
+    },
+    "after_automatic_sleep_0": {
+      "median_private_bytes": 659382272,
+      "samples": [
+        {
+          "private_bytes": 659382272,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41541632
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 47579136,
+              "working_set_bytes": 137285632
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 62980096,
+              "working_set_bytes": 164712448
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19120128,
+              "working_set_bytes": 79028224
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16125952,
+              "working_set_bytes": 39530496
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8953856,
+              "working_set_bytes": 19243008
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 61370368
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19312640,
+              "working_set_bytes": 59854848
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 60239872
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 73809920
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140726272
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 59322368
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 62177280
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 62038016
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 59723776
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 27000832,
+              "working_set_bytes": 72163328
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 34164736,
+              "working_set_bytes": 83320832
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 21323776
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24965120,
+              "working_set_bytes": 65904640
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22904832,
+              "working_set_bytes": 64229376
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 40493056
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3284992,
+              "working_set_bytes": 12787712
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11730944,
+              "working_set_bytes": 39763968
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15761408,
+              "working_set_bytes": 47132672
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7548928,
+              "working_set_bytes": 19218432
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 55099392,
+              "working_set_bytes": 109330432
+            }
+          ]
+        },
+        {
+          "private_bytes": 659382272,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41541632
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 47579136,
+              "working_set_bytes": 137285632
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 62980096,
+              "working_set_bytes": 164716544
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19120128,
+              "working_set_bytes": 79028224
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16125952,
+              "working_set_bytes": 39530496
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8953856,
+              "working_set_bytes": 19243008
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 61370368
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19312640,
+              "working_set_bytes": 59854848
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 60239872
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 73809920
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140726272
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 59322368
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 62177280
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 62038016
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 59723776
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 27000832,
+              "working_set_bytes": 72163328
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 34164736,
+              "working_set_bytes": 83320832
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 21323776
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24965120,
+              "working_set_bytes": 65904640
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22904832,
+              "working_set_bytes": 64229376
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 40493056
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3284992,
+              "working_set_bytes": 12787712
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11730944,
+              "working_set_bytes": 39763968
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15761408,
+              "working_set_bytes": 47132672
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7548928,
+              "working_set_bytes": 19218432
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 55099392,
+              "working_set_bytes": 109338624
+            }
+          ]
+        },
+        {
+          "private_bytes": 659386368,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41541632
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 47579136,
+              "working_set_bytes": 137285632
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 62980096,
+              "working_set_bytes": 164716544
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19120128,
+              "working_set_bytes": 79028224
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16125952,
+              "working_set_bytes": 39530496
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8953856,
+              "working_set_bytes": 19243008
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 61370368
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19312640,
+              "working_set_bytes": 59854848
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 60239872
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 73809920
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140726272
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 59322368
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 62177280
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 62038016
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 59723776
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 27000832,
+              "working_set_bytes": 72163328
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 34164736,
+              "working_set_bytes": 83320832
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 21323776
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24965120,
+              "working_set_bytes": 65904640
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22904832,
+              "working_set_bytes": 64229376
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 40493056
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3284992,
+              "working_set_bytes": 12787712
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11730944,
+              "working_set_bytes": 39763968
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15761408,
+              "working_set_bytes": 47132672
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7548928,
+              "working_set_bytes": 19218432
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 55103488,
+              "working_set_bytes": 109342720
+            }
+          ]
+        },
+        {
+          "private_bytes": 659853312,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41541632
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 47579136,
+              "working_set_bytes": 137285632
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 63115264,
+              "working_set_bytes": 164970496
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19120128,
+              "working_set_bytes": 79028224
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16125952,
+              "working_set_bytes": 39530496
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8953856,
+              "working_set_bytes": 19243008
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 61370368
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19644416,
+              "working_set_bytes": 60510208
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 60239872
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 73809920
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140726272
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 59322368
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 62177280
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 62038016
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 59723776
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 27000832,
+              "working_set_bytes": 71651328
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 34164736,
+              "working_set_bytes": 82513920
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 21139456
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24965120,
+              "working_set_bytes": 65904640
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22904832,
+              "working_set_bytes": 64229376
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 40083456
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3284992,
+              "working_set_bytes": 12787712
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11730944,
+              "working_set_bytes": 39763968
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15761408,
+              "working_set_bytes": 47132672
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7548928,
+              "working_set_bytes": 19218432
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 55103488,
+              "working_set_bytes": 108974080
+            }
+          ]
+        },
+        {
+          "private_bytes": 658907136,
+          "processes": [
+            {
+              "pid": 8548,
+              "created": 1795436849.7860155,
+              "role": "shell",
+              "private_bytes": 13705216,
+              "working_set_bytes": 41541632
+            },
+            {
+              "pid": 12112,
+              "created": 1795436849.8784513,
+              "role": "webview2/browser",
+              "private_bytes": 46632960,
+              "working_set_bytes": 136339456
+            },
+            {
+              "pid": 12500,
+              "created": 1795436850.8760269,
+              "role": "cef/browser",
+              "private_bytes": 63115264,
+              "working_set_bytes": 164970496
+            },
+            {
+              "pid": 8328,
+              "created": 1795436850.9791815,
+              "role": "cef/gpu-process",
+              "private_bytes": 19120128,
+              "working_set_bytes": 79028224
+            },
+            {
+              "pid": 10560,
+              "created": 1795436850.982682,
+              "role": "cef/utility",
+              "private_bytes": 16125952,
+              "working_set_bytes": 39530496
+            },
+            {
+              "pid": 10496,
+              "created": 1795436850.9998865,
+              "role": "cef/utility",
+              "private_bytes": 8953856,
+              "working_set_bytes": 19243008
+            },
+            {
+              "pid": 6968,
+              "created": 1795436851.4793327,
+              "role": "cef/renderer",
+              "private_bytes": 22151168,
+              "working_set_bytes": 61370368
+            },
+            {
+              "pid": 12468,
+              "created": 1795436851.4836,
+              "role": "cef/renderer",
+              "private_bytes": 19644416,
+              "working_set_bytes": 60510208
+            },
+            {
+              "pid": 1232,
+              "created": 1795436854.801656,
+              "role": "cef/renderer",
+              "private_bytes": 22269952,
+              "working_set_bytes": 60239872
+            },
+            {
+              "pid": 3688,
+              "created": 1795436855.378276,
+              "role": "cef/renderer",
+              "private_bytes": 29425664,
+              "working_set_bytes": 73809920
+            },
+            {
+              "pid": 8704,
+              "created": 1795436855.9573936,
+              "role": "cef/renderer",
+              "private_bytes": 80842752,
+              "working_set_bytes": 140726272
+            },
+            {
+              "pid": 4544,
+              "created": 1795436857.2290533,
+              "role": "cef/renderer",
+              "private_bytes": 19685376,
+              "working_set_bytes": 59322368
+            },
+            {
+              "pid": 12340,
+              "created": 1795436858.1318424,
+              "role": "cef/renderer",
+              "private_bytes": 22642688,
+              "working_set_bytes": 62177280
+            },
+            {
+              "pid": 8248,
+              "created": 1795436858.96893,
+              "role": "cef/renderer",
+              "private_bytes": 21655552,
+              "working_set_bytes": 62038016
+            },
+            {
+              "pid": 12268,
+              "created": 1795436861.9897587,
+              "role": "cef/renderer",
+              "private_bytes": 22155264,
+              "working_set_bytes": 59723776
+            },
+            {
+              "pid": 10784,
+              "created": 1795436864.0344305,
+              "role": "cef/renderer",
+              "private_bytes": 27000832,
+              "working_set_bytes": 71651328
+            },
+            {
+              "pid": 10876,
+              "created": 1795436864.0481112,
+              "role": "cef/renderer",
+              "private_bytes": 34164736,
+              "working_set_bytes": 82513920
+            },
+            {
+              "pid": 9664,
+              "created": 1795436864.1821108,
+              "role": "cef/utility",
+              "private_bytes": 7819264,
+              "working_set_bytes": 21139456
+            },
+            {
+              "pid": 12660,
+              "created": 1795436865.5808628,
+              "role": "cef/renderer",
+              "private_bytes": 24965120,
+              "working_set_bytes": 65904640
+            },
+            {
+              "pid": 11060,
+              "created": 1795436866.562908,
+              "role": "cef/renderer",
+              "private_bytes": 22904832,
+              "working_set_bytes": 64229376
+            },
+            {
+              "pid": 13048,
+              "created": 1795436884.1974971,
+              "role": "cef/renderer",
+              "private_bytes": 20496384,
+              "working_set_bytes": 40083456
+            },
+            {
+              "pid": 12160,
+              "created": 1795436849.8937328,
+              "role": "webview2/crashpad-handler",
+              "private_bytes": 3284992,
+              "working_set_bytes": 12787712
+            },
+            {
+              "pid": 5292,
+              "created": 1795436850.011798,
+              "role": "webview2/utility",
+              "private_bytes": 11730944,
+              "working_set_bytes": 39763968
+            },
+            {
+              "pid": 9128,
+              "created": 1795436850.0132196,
+              "role": "webview2/gpu-process",
+              "private_bytes": 15761408,
+              "working_set_bytes": 47132672
+            },
+            {
+              "pid": 7576,
+              "created": 1795436850.0523977,
+              "role": "webview2/utility",
+              "private_bytes": 7548928,
+              "working_set_bytes": 19218432
+            },
+            {
+              "pid": 2836,
+              "created": 1795436850.1808288,
+              "role": "webview2/renderer",
+              "private_bytes": 55103488,
+              "working_set_bytes": 108978176
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "coverage": {
+    "beforeunload_refusal": "actual_automatic_refusal_and_retry",
+    "user_close_during_sleep": "not_executed",
+    "automatic_unload": "actual_native_two_phase_auto_close_private_commit_drop_and_wake",
+    "fake_capture": "not_executed_no_fake_capture_interface",
+    "media": "actual_html_playing_paused_webaudio_clocks_and_local_rtc_retained_across_native_minimize"
+  },
+  "live_session_observer": {
+    "source": "actual_readonly_Tauri_IPC",
+    "window": "main",
+    "runtime_session_command": "obychnye_spisok",
+    "engine_membership_command": "spisok",
+    "python_disk_runtime_fallback": false,
+    "background_poll": false,
+    "ipc_requests": 138,
+    "live_sessions": 69,
+    "dormant_snapshots": 0,
+    "transient_unavailable": 0,
+    "attach_attempts": 1,
+    "last_stage": "ready"
+  },
+  "receipts": [
+    {
+      "page": "MemoryKeeper",
+      "received_seconds": 1.844000000000051
+    },
+    {
+      "page": "MemoryPinned",
+      "received_seconds": 5.1400000000001
+    },
+    {
+      "page": "MemoryTools",
+      "received_seconds": 6.312000000000012
+    },
+    {
+      "page": "MemoryDownload",
+      "received_seconds": 8.547000000000025
+    },
+    {
+      "page": "MemoryBeforeUnload",
+      "received_seconds": 9.297000000000025
+    },
+    {
+      "page": "MemoryBeforeUnload",
+      "guard": true,
+      "trusted": true,
+      "received_seconds": 9.484000000000037
+    },
+    {
+      "page": "MemoryDraft",
+      "received_seconds": 10.125
+    },
+    {
+      "page": "MemoryPrivate",
+      "received_seconds": 13.156000000000063
+    },
+    {
+      "page": "MemoryAudio",
+      "received_seconds": 14.422000000000025
+    },
+    {
+      "page": "MemoryAudio",
+      "reason": "start",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 0,
+      "duration": 120,
+      "paused": false,
+      "ready_state": 4,
+      "received_seconds": 15.5150000000001
+    },
+    {
+      "page": "MemoryAudioPaused",
+      "received_seconds": 15.937000000000012
+    },
+    {
+      "page": "MemoryAudioPaused",
+      "reason": "start",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 0,
+      "duration": 120,
+      "paused": false,
+      "ready_state": 4,
+      "received_seconds": 16.187000000000012
+    },
+    {
+      "page": "MemoryAudioPaused",
+      "reason": "pause",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 0.032635,
+      "duration": 120,
+      "paused": true,
+      "ready_state": 4,
+      "received_seconds": 16.281000000000063
+    },
+    {
+      "page": "MemoryWebAudio",
+      "received_seconds": 16.922000000000025
+    },
+    {
+      "page": "MemoryWebAudio",
+      "reason": "start",
+      "trusted": true,
+      "kind": "webaudio",
+      "current_time": 0,
+      "context_state": "running",
+      "received_seconds": 17.172000000000025
+    },
+    {
+      "page": "MemoryRTC",
+      "received_seconds": 17.828000000000088
+    },
+    {
+      "page": "MemoryRTC",
+      "reason": "start",
+      "trusted": true,
+      "kind": "rtc",
+      "connection_state": "new",
+      "signaling_state": "stable",
+      "received_seconds": 18.062000000000012
+    },
+    {
+      "page": "MemoryAutoHeap",
+      "reason": "allocated",
+      "trusted": false,
+      "bytes": 201326592,
+      "first": 41,
+      "last": 41,
+      "seen": null,
+      "cookie": "",
+      "scroll_y": 0,
+      "received_seconds": 34.57800000000009
+    },
+    {
+      "page": "MemoryAutoHeap",
+      "reason": "native-scroll",
+      "trusted": true,
+      "bytes": 201326592,
+      "first": 41,
+      "last": 41,
+      "seen": null,
+      "cookie": "",
+      "scroll_y": 600,
+      "received_seconds": 34.85900000000004
+    },
+    {
+      "page": "MemoryAudio",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 50.252761,
+      "duration": 120,
+      "paused": false,
+      "ready_state": 4,
+      "received_seconds": 64.96900000000005
+    },
+    {
+      "page": "MemoryAudio",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 51.157654,
+      "duration": 120,
+      "paused": false,
+      "ready_state": 4,
+      "received_seconds": 65.875
+    },
+    {
+      "page": "MemoryAudioPaused",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 0.032635,
+      "duration": 120,
+      "paused": true,
+      "ready_state": 4,
+      "received_seconds": 66.48400000000004
+    },
+    {
+      "page": "MemoryWebAudio",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "webaudio",
+      "current_time": 49.960634920634924,
+      "context_state": "running",
+      "received_seconds": 67.10900000000004
+    },
+    {
+      "page": "MemoryRTC",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "rtc",
+      "connection_state": "new",
+      "signaling_state": "stable",
+      "received_seconds": 67.81200000000001
+    },
+    {
+      "page": "MemoryDraft",
+      "reason": "draft-snapshot",
+      "trusted": true,
+      "value": "actual unsaved draft",
+      "received_seconds": 68.42200000000003
+    },
+    {
+      "page": "MemoryAutoHeap",
+      "reason": "allocated",
+      "trusted": false,
+      "bytes": 201326592,
+      "first": 41,
+      "last": 41,
+      "seen": "preserved",
+      "cookie": "memoryauto=preserved",
+      "scroll_y": 0,
+      "received_seconds": 69.90600000000006
+    },
+    {
+      "page": "MemoryAutoHeap",
+      "reason": "native-scroll",
+      "trusted": true,
+      "bytes": 201326592,
+      "first": 41,
+      "last": 41,
+      "seen": "preserved",
+      "cookie": "memoryauto=preserved",
+      "scroll_y": 600,
+      "received_seconds": 69.92200000000003
+    },
+    {
+      "page": "MemoryAutoHeap",
+      "reason": "snapshot",
+      "trusted": true,
+      "bytes": 201326592,
+      "first": 41,
+      "last": 41,
+      "seen": "preserved",
+      "cookie": "memoryauto=preserved",
+      "scroll_y": 600,
+      "received_seconds": 70.125
+    }
+  ],
+  "hits": {
+    "/keeper": 1,
+    "/favicon.ico": 15,
+    "/pinned": 1,
+    "/loading": 1,
+    "/tools": 1,
+    "/.well-known/appspecific/com.chrome.devtools.json": 1,
+    "/downloads": 1,
+    "/download": 1,
+    "/unload": 1,
+    "/draft": 1,
+    "/private": 1,
+    "/audio": 1,
+    "/tone.wav": 2,
+    "/audio-paused": 1,
+    "/web-audio": 1,
+    "/rtc": 1,
+    "/auto-heap": 2
+  },
+  "download_paused_at_seconds": 20.125,
+  "automatic_wheel_input": {
+    "transport": "win32_mouse_event",
+    "delta": -720,
+    "notches": 6,
+    "required_scroll_pixels": 200
+  },
+  "actual_minimize_interval": {
+    "started_seconds": 47.53100000000006,
+    "finished_seconds": 62.98400000000004,
+    "duration_seconds": 15.452999999999975,
+    "automatic_close_observed_while_minimized": true,
+    "first_closed_observed_seconds": 56.422000000000025,
+    "selected_tab_id": 2
+  },
+  "automatic_media_refusal_proofs": {
+    "11": {
+      "kind": "html",
+      "actual_native_automatic_refusals": [
+        {
+          "browser_id": 10,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 10,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 10,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 10,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 10,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        }
+      ]
+    },
+    "12": {
+      "kind": "html",
+      "actual_native_automatic_refusals": [
+        {
+          "browser_id": 11,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 11,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 11,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 11,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        },
+        {
+          "browser_id": 11,
+          "reason": "Form, media, frame, canvas or shadow DOM"
+        }
+      ]
+    },
+    "13": {
+      "kind": "webaudio",
+      "actual_native_automatic_refusals": [
+        {
+          "browser_id": 12,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 12,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 12,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 12,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 12,
+          "reason": "Media, connection or worker API used"
+        }
+      ]
+    },
+    "14": {
+      "kind": "rtc",
+      "actual_native_automatic_refusals": [
+        {
+          "browser_id": 13,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 13,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 13,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 13,
+          "reason": "Media, connection or worker API used"
+        },
+        {
+          "browser_id": 13,
+          "reason": "Media, connection or worker API used"
+        }
+      ]
+    }
+  },
+  "automatic_beforeunload_refusals": [
+    "Before-unload listener registered",
+    "Before-unload listener registered",
+    "Before-unload listener registered",
+    "Before-unload listener registered",
+    "Before-unload listener registered",
+    "Before-unload listener registered"
+  ],
+  "html_audio_followup_clock": {
+    "first": {
+      "page": "MemoryAudio",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 50.252761,
+      "duration": 120,
+      "paused": false,
+      "ready_state": 4,
+      "received_seconds": 64.96900000000005
+    },
+    "second": {
+      "page": "MemoryAudio",
+      "reason": "snapshot",
+      "trusted": true,
+      "kind": "html",
+      "current_time": 51.157654,
+      "duration": 120,
+      "paused": false,
+      "ready_state": 4,
+      "received_seconds": 65.875
+    }
+  },
+  "media_clock_proofs": {
+    "before": {
+      "MemoryAudio": {
+        "page": "MemoryAudio",
+        "reason": "start",
+        "trusted": true,
+        "kind": "html",
+        "current_time": 0,
+        "duration": 120,
+        "paused": false,
+        "ready_state": 4,
+        "received_seconds": 15.5150000000001
+      },
+      "MemoryAudioPaused": {
+        "page": "MemoryAudioPaused",
+        "reason": "pause",
+        "trusted": true,
+        "kind": "html",
+        "current_time": 0.032635,
+        "duration": 120,
+        "paused": true,
+        "ready_state": 4,
+        "received_seconds": 16.281000000000063
+      },
+      "MemoryWebAudio": {
+        "page": "MemoryWebAudio",
+        "reason": "start",
+        "trusted": true,
+        "kind": "webaudio",
+        "current_time": 0,
+        "context_state": "running",
+        "received_seconds": 17.172000000000025
+      },
+      "MemoryRTC": {
+        "page": "MemoryRTC",
+        "reason": "start",
+        "trusted": true,
+        "kind": "rtc",
+        "connection_state": "new",
+        "signaling_state": "stable",
+        "received_seconds": 18.062000000000012
+      }
+    },
+    "after": {
+      "MemoryAudio": {
+        "page": "MemoryAudio",
+        "reason": "snapshot",
+        "trusted": true,
+        "kind": "html",
+        "current_time": 51.157654,
+        "duration": 120,
+        "paused": false,
+        "ready_state": 4,
+        "received_seconds": 65.875
+      },
+      "MemoryAudioPaused": {
+        "page": "MemoryAudioPaused",
+        "reason": "snapshot",
+        "trusted": true,
+        "kind": "html",
+        "current_time": 0.032635,
+        "duration": 120,
+        "paused": true,
+        "ready_state": 4,
+        "received_seconds": 66.48400000000004
+      },
+      "MemoryWebAudio": {
+        "page": "MemoryWebAudio",
+        "reason": "snapshot",
+        "trusted": true,
+        "kind": "webaudio",
+        "current_time": 49.960634920634924,
+        "context_state": "running",
+        "received_seconds": 67.10900000000004
+      },
+      "MemoryRTC": {
+        "page": "MemoryRTC",
+        "reason": "snapshot",
+        "trusted": true,
+        "kind": "rtc",
+        "connection_state": "new",
+        "signaling_state": "stable",
+        "received_seconds": 67.81200000000001
+      }
+    }
+  },
+  "total_seconds": 70.625
+}

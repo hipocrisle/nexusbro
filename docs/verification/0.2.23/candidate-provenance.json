@@ -1,0 +1,21 @@
+{
+  "version": "0.2.23",
+  "build_source": "90af999e87080bec5994b11c77f82c37b1be7cb2",
+  "build_run": 45166201134,
+  "producer_conclusion": "failure",
+  "producer_failure": "Frontend close-transition attribution and Windows fixture platform input; unchanged binaries accepted by replacement native runs.",
+  "windows_acceptance_run": 45169728107,
+  "windows_acceptance_conclusion": "success",
+  "linux_acceptance_run": 45172164458,
+  "linux_acceptance_conclusion": "success",
+  "test_source": "e3f262703ccc1c2192df50175e1bb7ce5fa72809",
+  "application_diff_from_build": "empty",
+  "scope": "All six browser essentials and startup updater fixes in one public release.",
+  "paired_performance_benchmark": "not rerun; native background and AUTO/media gates required",
+  "publication_run": 45173277037,
+  "publication_conclusion": "success",
+  "fresh_windows_native_conclusion": "success",
+  "fresh_linux_native_conclusion": "success",
+  "fresh_test_source": "e3f262703ccc1c2192df50175e1bb7ce5fa72809",
+  "tag": "v0.2.23"
+}

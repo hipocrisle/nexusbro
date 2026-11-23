@@ -1,0 +1,63 @@
+{
+  "schema": 1,
+  "completed": true,
+  "platform": "linux",
+  "checks": [
+    "physical_shell_search_lazy_exact_row_route_no_background_engine_start",
+    "physical_cef_search_shortcut_and_private_ordinary_exclusion",
+    "cold_secondary_search_second_row_native_ID_remap_no_previous_active_HTTP",
+    "search_targets_actual_other_window_without_changing_main_selection",
+    "physical_task_shortcut_real_owned_OS_metrics_other_process_excluded",
+    "real_connection_refusal_native_event_visible_route_and_physical_retry_recovery"
+  ],
+  "scope": "one native app; real CEF/IPC, OS metrics and physical input",
+  "coverage": {
+    "search": "passed",
+    "tasks": "passed",
+    "network_error": "passed"
+  },
+  "task_cef_trusted_pointer_http_witness": true,
+  "task_layout": {
+    "width": 880,
+    "overflow": false,
+    "cells": true
+  },
+  "native_metrics": {
+    "owned_processes": 15,
+    "working_set_bytes": 2604900352,
+    "private_bytes": 793911296,
+    "complete": true,
+    "unrelated_sibling_excluded": true,
+    "root_rss_bracket_matches": true
+  },
+  "network_retry_painted_rgb": [
+    182,
+    201,
+    226
+  ],
+  "network_layout": {
+    "outsideForm": true,
+    "top": 95,
+    "bottom": 152,
+    "navBottom": 95,
+    "pageTop": 198,
+    "noHorizontalClip": true,
+    "retryType": "button",
+    "retryLeft": 1121,
+    "retryRight": 1221,
+    "width": 1280,
+    "x": 1133,
+    "y": 110.5,
+    "k": 1,
+    "rgb": [
+      182,
+      201,
+      226
+    ]
+  },
+  "network_witness": {
+    "native_code": -324,
+    "route_preserved": true,
+    "same_url_retry_reached_real_server": true
+  }
+}
