@@ -13,7 +13,7 @@ import NastrojkiOkno, { NastrojkiApp, poUmolchaniyu, shrifty, Vyhod } from "./Na
 import ObychnyeVkladki from "./ObychnyeVkladki";
 import { proverit_obnovlenie } from "./updater";
 import "./superColors.css";
-import {useSuperCloud,SuperCloudBadge,SuperCloudHeading} from "./SuperCloud";
+import {useSuperCloud,SuperCloudHeading} from "./SuperCloud";
 
 const superColors = [{value:"",label:"Без цвета"},{value:"#5b9ee8",label:"Синий"},{value:"#56b6a2",label:"Бирюзовый"},{value:"#72b566",label:"Зелёный"},{value:"#d4ae55",label:"Золотой"},{value:"#dc9365",label:"Оранжевый"},{value:"#d77d8f",label:"Розовый"},{value:"#b48ad8",label:"Фиолетовый"}];
 function superColor(value?:string){return superColors.some(c=>c.value===value)?value:undefined;}
@@ -395,11 +395,11 @@ export default function App() {
               <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
-            </button>{cloud.selected(v.id,v.privatnaya)&&<SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)} busy={cloud.busy} onSync={syncCloud}/>}</div>
+            </button></div>
   );}
   function renderSaved(v:Nastrojki){return <div className="super-cloud-row super-cloud-row-saved" data-super-row={v.id} key={v.id}><button type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-saved"+(cloud.selected(v.id)?" super-cloud-selected":"")+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} title={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
     <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
-  </button>{cloud.selected(v.id,v.privatnaya)&&<SuperCloudBadge state={cloud.state(v.id)} label={cloud.label(v.id)} busy={cloud.busy} onSync={syncCloud}/>}</div>;}
+  </button></div>;}
   return (
     <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:

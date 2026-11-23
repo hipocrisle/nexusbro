@@ -13,10 +13,6 @@ export function accountSyncReceipt(value:SyncStatus['last_sync']){const date=sta
 export function CloudGlyph({state='selected'}:{state?:SuperCloudState}){
  return <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6.5 18a4.5 4.5 0 1 1 .6-9A6 6 0 0 1 18.5 8a5 5 0 0 1-.5 10H6.5Z"/>{state==='paused'?<path d="m4 3 16 18"/>:state==='conflict'||state==='error'?<><path d="M12 10v4"/><circle cx="12" cy="17" r=".7" fill="currentColor" stroke="none"/></>:state==='pending'?<><circle cx="9" cy="13" r=".8" fill="currentColor" stroke="none"/><circle cx="12" cy="13" r=".8" fill="currentColor" stroke="none"/><circle cx="15" cy="13" r=".8" fill="currentColor" stroke="none"/></>:null}</svg>;
 }
-export function SuperCloudBadge({state,label,busy,onSync}:{state:SuperCloudState;label:string;busy:boolean;onSync:()=>void}){
- const action=busy?'Синхронизация выполняется':'Синхронизировать выбранные данные';
- return <button type="button" className="super-cloud-badge" data-cloud-state={state} title={label+'. '+action} aria-label={action+'. '+label} aria-busy={busy} disabled={busy} onClick={onSync}><CloudGlyph state={state}/></button>;
-}
 export function SuperCloudHeading({cloud,receipt,state='local',busy=false,onSync}:{cloud:boolean;receipt?:SyncStatus['last_sync'];state?:SuperCloudState;busy?:boolean;onSync?:()=>void}){
  const label=cloud?'Облако':'На устройстве';
  const status=state==='selected'?'Выбранные супервкладки подтверждены сервером':state==='error'||state==='conflict'?'Ошибка синхронизации':state==='local'?'Синхронизация выключена':'Ожидает подтверждения синхронизации';
