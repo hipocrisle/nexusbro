@@ -131,8 +131,15 @@ fn podklyuchit(app:&tauri::AppHandle,s:&Sostoyanie,label:&str)->Result<(),String
     let parent=crate::nash_descriptor(&window).ok_or("Не найден дескриптор окна")?;
     let (id,private,session,mesto)={let map=s.okna.0.lock().unwrap();let w=map.get(label).ok_or("Окно уже закрыто")?;if w.closing{return Err("Окно уже закрывается".into());}(w.super_id.clone(),w.privatnaya,w.sessiya.clone(),w.mesto.unwrap_or(Mesto{x:0,y:100,w:1200,h:700}))};
     let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).ok_or("Супер-вкладка закрыта")?;
-    kanal(s,label,&id)?.try_send(Komanda::OknoNovoe{label:label.into(),parent,x:mesto.x,y:mesto.y,w:mesto.w,h:mesto.h,privatnaya:private,sessiya:session}).map_err(|e|e.to_string())?;
-    if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.engine=engine;w.hwnd=None;w.initial_session=None;}
+    let channel=kanal(s,label,&id)?;
+    // Reserve ACK state before enqueueing: a fast native reply must not be
+    // erased by a subsequent hwnd/initial_session reset on this thread.
+    let previous={let mut map=s.okna.0.lock().unwrap();let w=map.get_mut(label).ok_or("Окно уже закрыто")?;
+        let previous=(w.engine,w.hwnd,w.initial_session.take());w.engine=engine;w.hwnd=None;previous};
+    if let Err(error)=channel.try_send(Komanda::OknoNovoe{label:label.into(),parent,x:mesto.x,y:mesto.y,w:mesto.w,h:mesto.h,privatnaya:private,sessiya:session}){
+        if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){if w.engine==engine&&w.hwnd.is_none(){w.engine=previous.0;w.hwnd=previous.1;w.initial_session=previous.2;}}
+        return Err(error.to_string());
+    }
     obolochka(app,s,label);Ok(())
 }
 pub fn vosstanovit(app:&tauri::AppHandle,s:&Sostoyanie,id:&str,engine:u64){
