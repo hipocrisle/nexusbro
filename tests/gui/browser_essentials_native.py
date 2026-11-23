@@ -57,39 +57,63 @@ def loaded(client, address, timeout=35):
 
 
 def connect_window(device,label):
-    if sys.platform!='win32':
-        for index in range(8):
-            candidate=None
-            try:
-                candidate=Client(display=device.display,port=device.inspector,page_index=index)
-                if candidate.js('window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label')==label:
-                    return candidate
-            except (OSError,ConnectionError,RuntimeError,websocket.WebSocketException):
-                pass
-            if candidate:
-                candidate.close()
-        return None
+    """One retained inspector connection per native shell route.
+
+    WebKit disconnects an existing inspector when another attaches to the same
+    route. Never probe a route already owned by this fixture's main/extra client.
+    """
+    clients=getattr(device,'essentials_clients',None)
+    if clients is None:
+        clients={};device.essentials_clients=clients;device.essentials_routes=set()
+    if label in clients:
+        require(device.app.poll() is None,'Native application exited before inspector lookup')
+        require(clients[label].js('window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label')==label,
+                'Retained inspector no longer belongs to its recorded native window')
+        return clients[label]
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
-    with opener.open(f'http://127.0.0.1:{device.inspector}/json/list',timeout=3) as response:
-        pages=json.load(response)
-    for page in pages:
-        endpoint=urllib.parse.urlsplit(page.get('webSocketDebuggerUrl',''))
-        if page.get('type')!='page' or not endpoint.scheme:
+    if sys.platform!='win32':
+        with opener.open(f'http://127.0.0.1:{device.inspector}',timeout=3) as response:
+            import re
+            routes=re.findall(r'/socket/\d+/\d+/WebPage',response.read().decode())
+        endpoints=[f'ws://127.0.0.1:{device.inspector}'+route for route in routes]
+    else:
+        with opener.open(f'http://127.0.0.1:{device.inspector}/json/list',timeout=3) as response:
+            pages=json.load(response)
+        endpoints=[page['webSocketDebuggerUrl'] for page in pages
+                   if page.get('type')=='page' and page.get('webSocketDebuggerUrl')]
+    for endpoint_url in endpoints:
+        if endpoint_url in device.essentials_routes:
             continue
+        endpoint=urllib.parse.urlsplit(endpoint_url)
         require(endpoint.scheme=='ws' and endpoint.hostname in ('127.0.0.1','localhost')
                 and endpoint.port==device.inspector and not endpoint.username and not endpoint.password,
                 'Inspector target escaped the owned loopback endpoint')
         transport=socket.create_connection(('127.0.0.1',device.inspector),timeout=3)
-        candidate=WindowsClient.__new__(WindowsClient)
-        candidate.seq=0
+        candidate=WindowsClient.__new__(WindowsClient) if sys.platform=='win32' else Client.__new__(Client)
+        candidate.seq=0;candidate.display=getattr(device,'display',None)
         try:
-            candidate.ws=websocket.create_connection(page['webSocketDebuggerUrl'],socket=transport,
+            candidate.ws=websocket.create_connection(endpoint_url,socket=transport,
                 timeout=5,suppress_origin=True,http_proxy_host=None,http_no_proxy=['127.0.0.1','localhost'])
-            if candidate.js('window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label')==label:
+            if sys.platform!='win32':
+                candidate.target='page-7';candidate.ws.settimeout(.3)
+                try:
+                    event=json.loads(candidate.ws.recv())
+                    if event.get('method')=='Target.targetCreated':
+                        candidate.target=event['params']['targetInfo']['targetId']
+                except websocket.WebSocketTimeoutException:
+                    pass
+                candidate.ws.settimeout(5)
+            actual=candidate.js('window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label')
+            if not isinstance(actual,str) or not actual:
+                candidate.close();continue
+            require(actual not in clients,'One shell label advertised multiple inspector routes')
+            candidate.essentials_endpoint=endpoint_url
+            clients[actual]=candidate;device.essentials_routes.add(endpoint_url)
+            if actual==label:
                 return candidate
-            candidate.close()
         except (OSError,RuntimeError,websocket.WebSocketException):
-            transport.close()
+            if getattr(candidate,'ws',None): candidate.close()
+            else: transport.close()
     return None
 
 
@@ -151,10 +175,12 @@ def run(args):
                     'aktivnaya':901,'sleduyushchaya':903,'zakrytye':[]}}]}]})
         unrelated=subprocess.Popen([sys.executable,'-c','import time; time.sleep(180)'],
                                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
-        client=device.start()
-        if client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')!='main':
-            main_client=wait_for(lambda:connect_window(device,'main'),'Main native inspector unavailable',30)
-            client.close();client=main_client;device.client=client
+        initial_client=device.start()
+        # Device's bootstrap connection has no recorded endpoint. Close it
+        # explicitly before creating the fixture-owned, route-cached observers.
+        initial_client.close();device.client=None
+        client=wait_for(lambda:connect_window(device,'main'),'Main native inspector unavailable',30)
+        device.client=client
         activate_saved(client,'essentials-main')
         loaded(client,base+'/loaded')
         with count_lock:
@@ -318,13 +344,24 @@ def run(args):
     except Exception as error:
         report['failure_type']=type(error).__name__
         report['failure']=str(error)[:1200]
+        if device and device.app:
+            report['app_exit_code_at_failure']=device.app.poll()
+            try:
+                process=psutil.Process(device.app.pid)
+                report['owned_tree_alive_at_failure']=len(process.children(recursive=True))
+            except psutil.NoSuchProcess:
+                report['owned_tree_alive_at_failure']=0
         raise
     finally:
         write_json(out/'results.json',report)
         if extra_client:
             try: extra_client.close()
             except Exception: pass
-        if device: device.close()
+        if device:
+            for observed in getattr(device,'essentials_clients',{}).values():
+                try: observed.close()
+                except Exception: pass
+            device.close()
         if blocked: blocked.close()
         for fixture in (server,recovered_server):
             if fixture: fixture.shutdown();fixture.server_close()
