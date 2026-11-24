@@ -52,7 +52,125 @@ def dialogs(device):
     for pid in owned:
         result=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(pid)],env={**os.environ,'DISPLAY':device.display},capture_output=True,text=True,timeout=4)
         if result.returncode==0:found.update(int(x) for x in result.stdout.splitlines() if x.isdecimal())
-    return found
+    # GTK maps owned child/tooltip windows while entering a filename. They are
+    # not native file dialogs: accepting the first new arbitrary XID selected
+    # a transient 1021x48 non-dialog in the real no-overwrite checkpoint.
+    require(len(found)<=64,'Native dialog observation bound exceeded')
+    actual=set()
+    for window in found:
+        properties=subprocess.run(['xprop','-id',str(window),'_NET_WM_WINDOW_TYPE'],
+            env={**os.environ,'DISPLAY':device.display},capture_output=True,text=True,timeout=3)
+        if properties.returncode==0 and len(properties.stdout)<=4096 and '_NET_WM_WINDOW_TYPE_DIALOG' in properties.stdout:
+            actual.add(window)
+    return actual
+
+
+
+def windows_dialog_observation(device):
+    """Best-effort evidence must never replace the real native test outcome."""
+    try:return _windows_dialog_observation(device)
+    except Exception:return {'dialogs':[],'complete':False,'observation_unavailable':True}
+
+
+def _windows_dialog_observation(device):
+    """Read-only bounded metadata, including foreign dialogs; never authorize input."""
+    if sys.platform!='win32':return None
+    import ctypes
+    from ctypes import wintypes
+    from pywinauto import Desktop
+    from youtube_player_native import native_owner
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];user.GetWindow.restype=wintypes.HWND
+    root=native_owner(device).handle;owned=owned_pids(device)
+    result={'dialogs':[],'complete':True}
+    expected='YouTube-BaW_jenozKc-fixture-video.webm'
+    known_titles={'Save As','Save as','Сохранить как','Сохранение','Speichern unter'}
+    for window in Desktop(backend='uia').windows():
+        if window.class_name()!='#32770' or not window.is_visible():continue
+        if len(result['dialogs'])>=8:result['complete']=False;break
+        item={'owned_process':False,'process':'other','root_owner_match':False,
+              'root_owner_depth':None,'owner_chain_complete':False,'known_save_as_title':False,
+              'filename_edit_1001':False,'expected_fixture_filename':False,
+              'save_button':False,'cancel_button':False,'controls_complete':True}
+        result['dialogs'].append(item)
+        try:
+            pid=window.process_id();item['owned_process']=pid in owned
+            name=psutil.Process(pid).name().lower()
+            item['process']={'nexusbro.exe':'nexusbro','msedgewebview2.exe':'msedgewebview2',
+                             'explorer.exe':'explorer','dllhost.exe':'dllhost'}.get(name,'other')
+            cursor=window.handle;seen=set()
+            for depth in range(8):
+                if not cursor: item['owner_chain_complete']=True;break
+                if cursor in seen:break
+                if cursor==root:
+                    item['root_owner_match']=True;item['root_owner_depth']=depth
+                    item['owner_chain_complete']=True;break
+                seen.add(cursor);cursor=user.GetWindow(cursor,4)
+            item['known_save_as_title']=window.window_text() in known_titles
+            pending=list(window.children())[:33];inspected=0
+            while pending and inspected<32:
+                control=pending.pop(0);inspected+=1
+                info=control.element_info;identity=info.automation_id;kind=info.control_type
+                if kind=='Edit' and identity=='1001':
+                    item['filename_edit_1001']=True
+                    value=control.get_value()
+                    item['expected_fixture_filename']=isinstance(value,str) and len(value)<=256 and value==expected
+                if kind=='Button':
+                    item['save_button'] |= identity=='1' or info.name in {'Save','Сохранить','Speichern'}
+                    item['cancel_button'] |= identity=='2' or info.name in {'Cancel','Отмена','Abbrechen'}
+                remaining=33-inspected-len(pending)
+                if remaining>0:pending.extend(list(control.children())[:remaining])
+            item['controls_complete']=not pending
+        except Exception:
+            item['observation_unavailable']=True;result['complete']=False
+    return result
+
+
+def capture_owned_linux_dialog(device,out,report):
+    """Best-effort evidence only; no input and no full-screen capture."""
+    receipt={'saved':False,'incomplete':True}
+    report['native_dialog_capture']=receipt
+    if sys.platform=='win32':return
+    try:
+        from PIL import ImageGrab
+        root=psutil.Process(device.app.pid)
+        birth=root.create_time()
+        require(device.app.poll() is None,'Capture owner exited')
+        owned={p.pid:p.create_time() for p in [root,*root.children(recursive=True)]}
+        candidates=dialogs(device)
+        require(len(candidates)==1,'Capture dialog ambiguous')
+        window=next(iter(candidates))
+        env={**os.environ,'DISPLAY':device.display}
+        def identity():
+            require(device.app.poll() is None and root.is_running() and root.create_time()==birth,'Capture owner changed')
+            result=subprocess.run(['xprop','-id',str(window),'_NET_WM_PID','_NET_WM_WINDOW_TYPE'],env=env,capture_output=True,text=True,timeout=3)
+            require(result.returncode==0 and len(result.stdout)<=4096,'Capture metadata unavailable')
+            import re
+            match=re.search(r'_NET_WM_PID[^=]*=\s*(\d+)',result.stdout)
+            require(match is not None and '_NET_WM_WINDOW_TYPE_DIALOG' in result.stdout,'Capture dialog identity missing')
+            pid=int(match[1]);require(pid in owned and psutil.Process(pid).create_time()==owned[pid],'Capture dialog owner changed')
+            require(dialogs(device)=={window},'Capture dialog changed')
+            return pid
+        pid=identity()
+        result=subprocess.run(['xdotool','getwindowgeometry','--shell',str(window)],env=env,capture_output=True,text=True,timeout=3)
+        require(result.returncode==0 and len(result.stdout)<=4096,'Capture geometry unavailable')
+        values={}
+        for line in result.stdout.splitlines():
+            key,_,value=line.partition('=')
+            if key in {'X','Y','WIDTH','HEIGHT'} and value.lstrip('-').isdecimal():values[key]=int(value)
+        require(set(values)=={'X','Y','WIDTH','HEIGHT'},'Capture geometry invalid')
+        x,y,w,h=(values[k] for k in ('X','Y','WIDTH','HEIGHT'))
+        screen=subprocess.check_output(['xdotool','getdisplaygeometry'],env=env,text=True,timeout=3).split()
+        require(len(screen)==2 and all(v.isdecimal() for v in screen),'Capture screen invalid')
+        sw,sh=map(int,screen)
+        require(80<=w<=1600 and 80<=h<=1200 and x>=0 and y>=0 and x+w<=sw and y+h<=sh,'Capture bounds invalid')
+        image=ImageGrab.grab(bbox=(x,y,x+w,y+h),xdisplay=device.display)
+        require(identity()==pid,'Capture identity changed')
+        # Commit evidence only after the same live owner and dialog recheck.
+        image.save(out/'native-save-dialog.png')
+        receipt.update(saved=True,incomplete=False,width=w,height=h)
+    except Exception:
+        pass  # Preserve the original native test failure, never substitute it.
 
 
 def backtabs(*,busy=False,audio=False):
@@ -86,6 +204,10 @@ def focus_download(client,device,tab,target,diagnostics):
 
 
 def start_chooser(client,device,diagnostics,*,audio=False):
+    if sys.platform=='win32':
+        observed=diagnostics.setdefault('windows_dialog_observations',[])
+        if len(observed)<8:
+            observed.append({'phase':'before_activation','state':windows_dialog_observation(device)})
     before=dialogs(device)
     # Painted native Play establishes genuine CEF focus; derive the complete
     # shipped native tab order, including footer links, before physical input.
@@ -315,6 +437,8 @@ def run(args):
         require(clean_output(output),'Temporary leftovers after owned exit')
         report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
+        if device is not None and sys.platform!='win32':
+            capture_owned_linux_dialog(device,out,report)
         report['failure_class']=type(error).__name__
         report['failure_code']={
             'Native replacement confirmation did not appear':'replacement_confirmation_missing',
@@ -350,6 +474,7 @@ def run(args):
                             seen.add(cursor);cursor=user.GetWindow(cursor,4)
                         counts['owned_process' if window.process_id() in owned else 'owned_window_chain' if owner_match else 'other']+=1
                     report['native_dialog_counts']=counts
+                    report['windows_dialog_observation_after_failure']=windows_dialog_observation(device)
             except Exception:
                 report['native_download_diagnostic_unavailable']=True
         trace=error.__traceback__
