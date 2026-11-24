@@ -138,8 +138,9 @@ def native_owner(device):
         if len(matches)==1 and counts['scan_complete']:
             record['ready']=True
             return matches[0]
-        record['zero_observations']+=1
-        time.sleep(.1)
+        if not matches:record['zero_observations']+=1
+        if not counts['scan_complete']:break
+        time.sleep(min(.1,max(0,deadline-time.monotonic())))
     require(False,'Native minimize owner ambiguous')
 
 
