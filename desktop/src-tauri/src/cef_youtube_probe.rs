@@ -108,6 +108,60 @@ fn decode(bytes: &[u8]) -> Reply {
     }
     Ok(Value::Object(clean))
 }
+/// Diagnostic only, invoked after strict decode refuses a result. Never returns
+/// protocol content, field names, exception text or remote string values.
+fn diagnose(bytes: &[u8]) -> &'static str {
+    if bytes.len() > MAX_BYTES {
+        return "snapshot_oversized";
+    }
+    let raw = Zeroizing::new(bytes.to_vec());
+    let Ok(value) = serde_json::from_slice::<Value>(&raw) else {
+        return "snapshot_invalid_json";
+    };
+    let tree = Clear(value);
+    let Some(envelope) = tree.0.as_object() else {
+        return "snapshot_not_object";
+    };
+    if envelope.contains_key("exceptionDetails") {
+        return "snapshot_exception";
+    }
+    let Some(result) = envelope.get("result") else {
+        return "snapshot_result_absent";
+    };
+    let Some(result) = result.as_object() else {
+        return "snapshot_not_object";
+    };
+    if result.get("type").and_then(Value::as_str) == Some("undefined") {
+        return "snapshot_undefined";
+    }
+    if result.get("type").and_then(Value::as_str) != Some("object") {
+        return "snapshot_not_object";
+    }
+    let Some(value) = result.get("value") else {
+        return "snapshot_value_absent";
+    };
+    let Some(source) = value.as_object() else {
+        return "snapshot_not_object";
+    };
+    const FIELDS: &[&str] = &[
+        "configured",
+        "disposed",
+        "playing",
+        "separate",
+        "position",
+        "duration",
+        "skew",
+        "decoded",
+        "dropped",
+        "audio_position",
+        "video_width",
+        "video_height",
+    ];
+    if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
+        return "snapshot_schema_mismatch";
+    }
+    "snapshot_field_invalid"
+}
 struct Completion {
     done: bool,
     reply: Option<Reply>,
@@ -131,7 +185,7 @@ wrap_dev_tools_message_observer! {
    if message_id!=self.message{return;}
    let Ok(mut state)=self.state.lock()else{return;};if state.done{return;}
    state.done=true;
-   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v).map_err(|_|"snapshot_value_unavailable"))});
+   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v).map_err(|_|diagnose(v)))});
   }
   fn on_dev_tools_agent_detached(&self,browser:Option<&mut Browser>){
    if browser.is_some_and(|b|b.identifier()!=self.identity){return;}
@@ -302,5 +356,43 @@ mod tests {
         assert!(decode(b"null").is_err());
         assert!(decode(br#"{"result":{"type":"undefined"}}"#).is_err());
         assert!(decode(br#"{"result":{"type":"object","value":{"position":1e999}}}"#).is_err());
+    }
+    #[test]
+    fn diagnostics_classify_only_fixed_shapes_without_echoing_content() {
+        let cases: &[(&[u8], &str)] = &[
+            (b"", "snapshot_invalid_json"),
+            (b"null", "snapshot_not_object"),
+            (
+                br#"{"secret":"https://private/?token=secret"}"#,
+                "snapshot_result_absent",
+            ),
+            (
+                br#"{"exceptionDetails":{"text":"secret"}}"#,
+                "snapshot_exception",
+            ),
+            (br#"{"result":{"type":"undefined"}}"#, "snapshot_undefined"),
+            (
+                br#"{"result":{"type":"string","value":"secret"}}"#,
+                "snapshot_not_object",
+            ),
+            (
+                br#"{"result":{"type":"object","description":"secret"}}"#,
+                "snapshot_value_absent",
+            ),
+            (
+                br#"{"result":{"type":"object","value":{"secret":"secret"}}}"#,
+                "snapshot_schema_mismatch",
+            ),
+        ];
+        for (bytes, expected) in cases {
+            assert!(decode(bytes).is_err());
+            assert_eq!(diagnose(bytes), *expected);
+            assert!(!diagnose(bytes).contains("secret"));
+        }
+        assert_eq!(diagnose(&vec![b'x'; MAX_BYTES + 1]), "snapshot_oversized");
+        let mut invalid = data();
+        invalid["position"] = json!(-1);
+        assert!(decode(&envelope(invalid.clone())).is_err());
+        assert_eq!(diagnose(&envelope(invalid)), "snapshot_field_invalid");
     }
 }
