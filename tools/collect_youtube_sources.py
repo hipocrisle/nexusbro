@@ -3,6 +3,7 @@
 No upstream code, DEPS, build scripts or extracted executables are executed.
 """
 import argparse
+import posixpath
 import concurrent.futures
 import hashlib
 import io
@@ -42,26 +43,85 @@ def is_notice(name):
     return base.startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE', 'AUTHORS', 'COPYRIGHT'))
 
 
-def crate_notices(data, name, version):
-    # Original checksum-verified source archive retained independently. Only
-    # regular notice bytes are copied; no link, device or path is extracted.
-    result = []
+def has_grant(data):
+    # Actual rights/conditions prose, not an SPDX label or README reference.
+    text = b' '.join(data.lower().split())
+    if len(text) < 64: return False
+    permissive = any(marker in text for marker in (
+        b'permission is hereby granted', b'redistribution and use in source and binary forms',
+        b'this is free and unencumbered software', b'permission to use, copy, modify, and'))
+    apache = b'apache license' in text and b'terms and conditions for use, reproduction, and distribution' in text
+    gnu = b'general public license' in text and b'you can redistribute it and/or modify' in text
+    mpl = b'mozilla public license' in text and b'this source code form is subject to' in text
+    cc0 = b'creative commons' in text and b'waiver' in text and b'copyright and related rights' in text
+    return permissive or apache or gnu or mpl or cc0
+
+
+def crate_material(data, name, version):
+    result, auxiliary = [], {}
     with tarfile.open(fileobj=io.BytesIO(data), mode='r:gz') as archive:
         members = archive.getmembers()
         if len(members) > 20000 or sum(m.size for m in members) > 256 * 1024 ** 2:
             raise ValueError('crate_expanded_bound')
+        explicit_license = None
+        try:
+            import tomllib
+            manifest = archive.extractfile(f'{name}-{version}/Cargo.toml').read()
+            package = tomllib.loads(manifest.decode()).get('package', {})
+            candidate = package.get('license-file')
+            if isinstance(candidate, str):
+                explicit_license = safe_path(candidate).as_posix()
+        except (ImportError, KeyError, ValueError, AttributeError):
+            pass
         for member in members:
             rel = safe_path(member.name)
             if rel.parts[0] != f'{name}-{version}': raise ValueError('crate_root_mismatch')
             if not member.isdir() and not member.isfile():
-                # Preserve source tar but never follow archive links, even when
-                # a project places its license behind one.
                 if is_notice(member.name): raise ValueError('notice_not_regular')
                 continue
-            if member.isfile() and is_notice(member.name):
+            leaf = rel.name
+            if member.isfile() and (is_notice(member.name) or leaf in ('Cargo.toml', '.cargo_vcs_info.json')
+                                    or leaf.upper().startswith('README')
+                                    or '/'.join(rel.parts[1:]) == explicit_license):
                 if member.size > 2 * 1024 ** 2: raise ValueError('notice_file_bound')
-                result.append((rel.as_posix(), archive.extractfile(member).read()))
-    return result
+                contents = archive.extractfile(member).read()
+                if is_notice(member.name): result.append((rel.as_posix(), contents))
+                auxiliary['/'.join(rel.parts[1:])] = contents
+        return result, auxiliary
+
+
+def crate_notices(data, name, version):
+    return crate_material(data, name, version)[0]
+
+
+def github_repository(value):
+    if not isinstance(value, str): return None
+    if value.startswith('git+'): value = value[4:]
+    parsed = urllib.parse.urlsplit(value)
+    parts = parsed.path.strip('/').split('/')
+    if parsed.scheme != 'https' or parsed.hostname != 'github.com' or len(parts) != 2:
+        return None
+    repo = '/'.join(parts).removesuffix('.git')
+    return repo if re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo) else None
+
+
+def repository_relative(directory, path):
+    if not isinstance(path, str) or '\\' in path or path.startswith('/') or '\0' in path:
+        raise ValueError('unsafe_repository_path')
+    joined = posixpath.normpath(posixpath.join(directory, path))
+    safe_path(joined)
+    return joined
+
+
+class PrimaryRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, fp, code, msg, headers, newurl):
+        old, new = urllib.parse.urlsplit(request.full_url), urllib.parse.urlsplit(newurl)
+        if new.scheme != 'https' or new.hostname not in (
+                'raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com'):
+            raise ValueError('source_redirect_host')
+        if request.has_header('Authorization') and new.hostname != old.hostname:
+            raise ValueError('authenticated_api_crosshost_redirect')
+        return super().redirect_request(request, fp, code, msg, headers, newurl)
 
 
 class Collector:
@@ -71,6 +131,9 @@ class Collector:
         self.lock = threading.Lock()
         self.sources = self.notices = 0
         self.records, self.gaps = [], []
+        self.repository_archives, self.workspace_packages = [], []
+        self.tree_cache = {}
+        self.tree_lock = threading.Lock()
         out.mkdir(parents=True, exist_ok=False)
 
     def gap(self, scope, reason):
@@ -80,14 +143,19 @@ class Collector:
         if time.monotonic() >= self.deadline: raise ValueError('collector_deadline')
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != 'https' or parsed.hostname not in (
-            'raw.githubusercontent.com', 'api.github.com', 'static.crates.io'):
+            'raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com'):
             raise ValueError('nonprimary_source_host')
-        request = urllib.request.Request(url, headers={'User-Agent': 'NexusBro-source-inventory/1'})
-        # No credentials, cookies, ambient proxy or upstream executable calls.
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        headers = {'User-Agent': 'NexusBro-source-inventory/2'}
+        if parsed.hostname == 'api.github.com':
+            token = os.environ.get('GITHUB_TOKEN', '')
+            if token and len(token) <= 8192:
+                headers['Authorization'] = 'Bearer ' + token
+        request = urllib.request.Request(url, headers=headers)
+        # Ephemeral API-only token above; no cookies, ambient proxy or upstream execution.
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), PrimaryRedirect())
         with opener.open(request, timeout=20) as response:
             final = urllib.parse.urlsplit(response.geturl())
-            if final.scheme != 'https' or final.hostname not in ('raw.githubusercontent.com', 'api.github.com', 'static.crates.io'):
+            if final.scheme != 'https' or final.hostname not in ('raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com'):
                 raise ValueError('source_redirect_host')
             data = bytearray()
             while True:
@@ -125,7 +193,10 @@ class Collector:
             self.gap('cargo', 'invalid_package_identifier'); return
         source = package.get('source', '')
         if not source:
-            self.gap(ident, 'workspace_source_in_deno_snapshot_not_archived'); return
+            with self.lock:
+                self.workspace_packages.append(dict(name=name, version=version,
+                    coverage='exact_Deno_source_archive_see_repository_archives_review_status'))
+            return
         if source != 'registry+https://github.com/rust-lang/crates.io-index':
             self.gap(ident, 'nonregistry_source_requires_exact_git_snapshot'); return
         checksum = package.get('checksum', '')
@@ -136,12 +207,114 @@ class Collector:
             data = self.download(url)
             if sha(data) != checksum: raise ValueError('crate_sha256_mismatch')
             self.store('sources/crates/' + ident + '.crate', data, url, 'cargo_lock_sha256')
-            notices = crate_notices(data, name, version)
+            notices, auxiliary = crate_material(data, name, version)
             for filename, contents in notices:
                 self.store('notices/crates/' + filename, contents, url, 'inside_verified_crate', True)
-            if not notices: self.gap(ident, 'no_regular_notice_file_found_in_verified_source')
+            grant = any(len(PurePosixPath(filename).parts) == 2 and has_grant(contents)
+                        for filename, contents in notices)
+            if not grant:
+                grant = self.recover_crate_notice(ident, url, auxiliary)
+            if not grant: self.gap(ident, 'actual_license_grant_not_proven_in_source_or_exact_vcs')
         except (ValueError, OSError, urllib.error.URLError, tarfile.TarError):
             self.gap(ident, 'source_or_notice_collection_failed')
+
+    def repository_tree(self, repo, commit):
+        key = (repo, commit)
+        # Serial cache fill avoids duplicate huge API fetches for sibling crates.
+        with self.tree_lock:
+            if key in self.tree_cache: return self.tree_cache[key]
+            if len(self.tree_cache) >= 128: raise ValueError('repository_tree_cache_bound')
+            url = f'https://api.github.com/repos/{repo}/git/trees/{commit}?recursive=1'
+            data = self.download(url, INDEX_LIMIT)
+            tree = json.loads(data)
+            if tree.get('truncated'): raise ValueError('repository_tree_truncated')
+            entries = {x['path']: x for x in tree.get('tree', []) if x.get('type') == 'blob'}
+            if len(entries) > 100000: raise ValueError('repository_tree_entry_bound')
+            self.tree_cache[key] = entries
+            return entries
+
+    def recover_crate_notice(self, ident, crate_url, auxiliary):
+        try:
+            import tomllib
+            package = tomllib.loads(auxiliary.get('Cargo.toml', b'').decode()).get('package', {})
+            license_file = package.get('license-file')
+            # A nonempty explicit in-archive file may carry a grant under an
+            # unconventional name. README must contain actual grant prose.
+            for filename, contents in auxiliary.items():
+                if (filename == license_file or ('/' not in filename and filename.upper().startswith('README'))) and has_grant(contents):
+                    self.store('notices/recovered/' + ident + '/' + filename, contents,
+                               crate_url, 'grant_in_verified_crate_file', True)
+                    return True
+            vcs = json.loads(auxiliary.get('.cargo_vcs_info.json', b'{}'))
+            if vcs.get('git', {}).get('dirty') is True: return False
+            commit = vcs.get('git', {}).get('sha1', '')
+            directory = vcs.get('path_in_vcs', '').strip('/')
+            if directory: safe_path(directory)
+            repo = github_repository(package.get('repository'))
+            if not repo or not re.fullmatch('[0-9a-f]{40}', commit): return False
+            entries = self.repository_tree(repo, commit)
+            parents = ['']
+            if directory:
+                parts = directory.split('/')
+                parents = ['/'.join(parts[:i]) for i in range(len(parts), -1, -1)]
+            candidates = []
+            if isinstance(license_file, str):
+                candidates.append(repository_relative(directory, license_file))
+            for path in sorted(entries):
+                parent = str(PurePosixPath(path).parent)
+                if parent == '.': parent = ''
+                if parent in parents and (is_notice(path) or PurePosixPath(path).name.upper().startswith('README')):
+                    candidates.append(path)
+            found = False
+            for path in dict.fromkeys(candidates):
+                entry = entries.get(path)
+                if not entry or entry.get('size', 0) > 2 * 1024 ** 2 or entry.get('mode') != '100644': continue
+                safe_path(path)
+                url = f'https://raw.githubusercontent.com/{repo}/{commit}/{urllib.parse.quote(path)}'
+                contents = self.download(url, 2 * 1024 ** 2)
+                git_sha = hashlib.sha1(b'blob ' + str(len(contents)).encode() + b'\0' + contents).hexdigest()
+                if git_sha != entry['sha']: raise ValueError('recovered_notice_git_blob_mismatch')
+                # Empty/test fixture files do not satisfy grant coverage.
+                if not has_grant(contents): continue
+                self.store('notices/recovered/' + ident + '/' + path, contents, url,
+                           'crate_vcs_exact_commit_and_upstream_tree_git_blob_sha1', True)
+                found = True
+            return found
+        except (ValueError, KeyError, OSError, urllib.error.URLError):
+            return False
+
+    def source_archive(self, pin):
+        repo, commit = pin['repository'], pin['commit']
+        expected = pin.get('archive_sha256', '')
+        if not re.fullmatch('[0-9a-f]{40}', commit) or (expected and not re.fullmatch('[0-9a-f]{64}', expected)):
+            raise ValueError('invalid_repository_pin')
+        url = f'https://codeload.github.com/{repo}/tar.gz/{commit}'
+        try:
+            data = self.download(url)
+            actual = sha(data)  # BEFORE parsing any tar headers.
+            if expected and actual != expected: raise ValueError('source_archive_sha256_mismatch')
+            prefix = repo.split('/')[1] + '-' + commit
+            expanded, count = 0, 0
+            with tarfile.open(fileobj=io.BytesIO(data), mode='r|gz') as archive:
+                for member in archive:
+                    if time.monotonic() >= self.deadline: raise ValueError('collector_deadline')
+                    rel = safe_path(member.name)
+                    if rel.parts[0] != prefix: raise ValueError('repository_archive_root_mismatch')
+                    count += 1; expanded += member.size
+                    if count > 100000 or expanded > 512 * 1024 ** 2: raise ValueError('repository_archive_expanded_bound')
+                    if not (member.isdir() or member.isfile() or member.issym()):
+                        raise ValueError('repository_archive_special_entry')
+                    if member.issym():
+                        target = repository_relative('/'.join(rel.parts[:-1]), member.linkname)
+                        if PurePosixPath(target).parts[0] != prefix: raise ValueError('repository_link_escape')
+            self.store('sources/repos/' + repo.replace('/', '-') + '-' + commit + '.tar.gz',
+                       data, url, 'reviewed_archive_sha256' if expected else 'bootstrap_sha256_unreviewed_exact_commit_url')
+            self.repository_archives.append(dict(repository=repo, commit=commit, sha256=actual,
+                                                  reviewed=bool(expected), bytes=len(data), complete_source_archive=True))
+            if not expected: self.gap(repo, 'source_archive_bootstrap_sha256_requires_review')
+        except (ValueError, OSError, urllib.error.URLError, tarfile.TarError):
+            self.gap(repo, 'source_archive_collection_or_verification_failed')
+            self.repository_archives.append(dict(repository=repo, commit=commit, reviewed=False, complete_source_archive=False))
 
     def repository_provenance(self, repo, revision, expected_commit=None):
         # GitHub API resolves exact tag to commit. Mutable tag identity remains
@@ -179,7 +352,6 @@ class Collector:
                                (json.dumps([x.decode('ascii') for x in references], indent=2) + '\n').encode(),
                                url, 'literal_references_only_not_selected_native_graph')
                     self.gap(repo, 'deps_saved_unexecuted_conditions_cipd_and_native_build_selection_unresolved')
-            self.gap(repo, 'full_corresponding_source_archive_hash_not_pinned_no_archive_downloaded')
         except (ValueError, KeyError, OSError, urllib.error.URLError):
             self.gap(repo, 'repository_provenance_collection_incomplete')
 
@@ -187,6 +359,7 @@ class Collector:
         inventory = dict(schema=1, product_notices_cleared=False,
                          dependency_scope='all_Deno_Cargo_lock_superset_not_exact_linked_binary_graph',
                          sources_bytes=self.sources, notices_bytes=self.notices,
+                         repository_archives=self.repository_archives, workspace_packages=self.workspace_packages,
                          files=sorted(self.records, key=lambda item: item['filename']),
                          pending_gaps=sorted(self.gaps, key=lambda item: (item['scope'], item['reason'])))
         data = (json.dumps(inventory, indent=2) + '\n').encode()
@@ -195,7 +368,7 @@ class Collector:
         (self.out / 'gaps.json').write_text(json.dumps(dict(product_notices_cleared=False, gaps=inventory['pending_gaps']), indent=2) + '\n')
 
 
-def collect(pins, out):
+def collect(pins, source_pins, out):
     import tomllib  # CI Python3.12; offline archive tests also support3.10.
     c = Collector(out)
     try:
@@ -209,13 +382,16 @@ def collect(pins, out):
         if lock is None: raise ValueError('missing_deno_lock')
         packages = lock.get('package', [])
         if len(packages) > 2048: raise ValueError('cargo_package_bound')
+        for pin in source_pins['repositories']:
+            c.source_archive(pin)
+            c.repository_provenance(pin['repository'], pin['commit'], pin['commit'])
+        deno = next((x for x in c.repository_archives if x['repository'] == 'denoland/deno'), None)
+        if not deno or not deno.get('complete_source_archive'):
+            c.gap('Deno-workspace', 'complete_workspace_source_archive_missing')
+        elif not deno.get('reviewed'):
+            c.gap('Deno-workspace', 'complete_workspace_archive_present_sha256_review_pending')
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(c.crate, packages))
-        for repo, rev, exact in [('denoland/deno', 'v2.9.8', None),
-                                 ('denoland/rusty_v8', 'v150.4.0', None),
-                                 ('denoland/v8', V8_COMMIT, V8_COMMIT),
-                                 ('yt-dlp/yt-dlp', '2026.11.23', None)]:
-            c.repository_provenance(repo, rev, exact)
         c.gap('yt-dlp-PyInstaller', 'aggregate_notice_retained_exact_bundled_dependency_source_versions_not_machine_proven')
         c.gap('deno-native-V8', 'prebuilt_v8_asset_provenance_selected_DEPS_and_release_feature_graph_not_proven')
         c.gap('distribution', 'source_offer_retention_and_license_review_not_completed')
@@ -227,6 +403,40 @@ def collect(pins, out):
 
 
 def self_test():
+    assert not has_grant(b'')
+    assert not has_grant(b'Licensed under Apache License 2.0. See the license file for details.' * 2)
+    assert has_grant(b'Permission is hereby granted, free of charge, to any person obtaining a copy of this software.')
+    assert repository_relative('crates/member', '../../LICENSE') == 'LICENSE'
+    for relative in ('../../../escape', '/absolute', 'bad\\name'):
+        try: repository_relative('crates/member', relative)
+        except ValueError: pass
+        else: raise AssertionError('repository_escape_accepted')
+    assert github_repository('https://github.com/owner/project.git') == 'owner/project'
+    assert github_repository('https://evil.invalid/owner/project') is None
+    request = urllib.request.Request('https://api.github.com/repos/example/tree', headers={'Authorization': 'Bearer FAKE'})
+    try: PrimaryRedirect().redirect_request(request, None, 302, '', {}, 'https://raw.githubusercontent.com/example/path')
+    except ValueError: pass
+    else: raise AssertionError('api_token_crosshost_redirect_accepted')
+    import tempfile
+    commit = 'a' * 40
+    archive_bytes = io.BytesIO()
+    with tarfile.open(fileobj=archive_bytes, mode='w:gz') as archive:
+        entry = tarfile.TarInfo('demo-' + commit + '/LICENSE')
+        text = b'Permission is hereby granted, free of charge, to any person obtaining a copy of this software.'
+        entry.size = len(text)
+        archive.addfile(entry, io.BytesIO(text))
+    with tempfile.TemporaryDirectory() as temp:
+        collector = Collector(Path(temp) / 'valid')
+        collector.download = lambda *_: archive_bytes.getvalue()
+        collector.source_archive(dict(repository='owner/demo', commit=commit, archive_sha256=sha(archive_bytes.getvalue())))
+        assert collector.repository_archives[0]['reviewed'] is True
+        assert collector.repository_archives[0]['complete_source_archive'] is True
+        assert not collector.gaps
+        rejected = Collector(Path(temp) / 'invalid')
+        rejected.download = lambda *_: archive_bytes.getvalue()
+        rejected.source_archive(dict(repository='owner/demo', commit=commit, archive_sha256='0' * 64))
+        assert rejected.repository_archives[0]['complete_source_archive'] is False
+        assert not list((Path(temp) / 'invalid').rglob('*.tar.gz'))
     for bad in ('../escape', '/abs', 'a/../b', 'a\\b', 'a//b'):
         try: safe_path(bad)
         except ValueError: pass
@@ -253,11 +463,12 @@ def self_test():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--pins', type=Path, default=Path('docs/YOUTUBE-COMPONENTS.json'))
+    parser.add_argument('--source-pins', type=Path, default=Path('docs/YOUTUBE-SOURCE-PINS.json'))
     parser.add_argument('--out', type=Path, default=Path('.dev-check/youtube-source-inventory'))
     parser.add_argument('--self-test', action='store_true')
     args = parser.parse_args()
     if args.self_test: self_test(); return
     if os.environ.get('GITHUB_ACTIONS') != 'true': raise SystemExit('ci_only')
-    collect(json.loads(args.pins.read_text()), args.out)
+    collect(json.loads(args.pins.read_text()), json.loads(args.source_pins.read_text()), args.out)
 
 if __name__ == '__main__': main()

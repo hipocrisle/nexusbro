@@ -1,0 +1,11 @@
+{
+  "schema": 1,
+  "repositories": [
+    {"repository": "denoland/deno", "version": "2.9.8", "commit": "fe7ed012d92c642fd8e5607ac5a45d517538b5c5", "archive_sha256": ""},
+    {"repository": "denoland/rusty_v8", "version": "150.4.0", "commit": "5c15a6995c9bb4bacd3e341b59fff32c909c80bf", "archive_sha256": ""},
+    {"repository": "denoland/v8", "commit": "ac1e23989121713ca642f6650b34deff7b686896", "archive_sha256": ""},
+    {"repository": "yt-dlp/yt-dlp", "version": "2026.11.23", "commit": "6f73a8d1664a58cdef8c25f01ffb5ab9cf730408", "archive_sha256": ""}
+  ],
+  "commit_pin_provenance": "Exact upstream tag resolutions and Git blob checks recorded by CI45456015776; empty archive SHA requires CI bootstrap receipt review before product reuse",
+  "product_notices_cleared": false
+}

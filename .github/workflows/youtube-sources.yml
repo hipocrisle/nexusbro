@@ -16,6 +16,8 @@ jobs:
       - name: Offline adversarial archive and path checks
         run: python tools/collect_youtube_sources.py --self-test
       - name: Collect pinned source archives, actual notices and explicit gaps
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: python tools/collect_youtube_sources.py
       - name: Preserve review evidence (never a clearance assertion)
         if: always()
