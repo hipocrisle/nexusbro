@@ -1024,6 +1024,16 @@ jobs:
           mv .dev-check/cef/Resources/* .dev-check/cef/
           chmod +x .dev-check/native-binary/nexusbro .dev-check/backend-package/nexusbro-sync-server
           (cd .dev-check/backend-package && sha256sum -c SHA256SUMS)
+      - name: Diagnose native cookie prerequisite against exact existing binary
+        timeout-minutes: 8
+        run: |
+          python3 tests/gui/hibernation_cookie_probe.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/hibernation-cookie-diagnostic
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cookie-prerequisite-diagnostic-not-product-acceptance
+          path: .dev-check/hibernation-cookie-diagnostic/results.json
+          retention-days: 14
       - name: Check corrected browser fixtures against unchanged application sources
         if: ${{ !inputs.linux_memory_diagnostic }}
         run: |
