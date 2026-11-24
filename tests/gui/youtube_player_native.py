@@ -519,6 +519,7 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     physical(client,device,'play',diagnostics)
     started=wait_for(lambda:(lambda v:v if v.get('playing') and v['decoded']>=6 and v['audio_position']>1 else None)(observe(client,identifier,tab,diagnostics=diagnostics)),
                      'Lock fixture did not start actual media',25)
+    browser_before=next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)
     # No generic Tauri lock command: the CEF view still owns keyboard focus
     # after the single actual Play click.
     client.js('window.__playerStopped=[];true')
@@ -547,6 +548,8 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     client.text_button('Разблокировать браузер')
     js_wait(client,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
             'Actual master UI did not unlock browser',25)
+    require(next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)==browser_before,
+            'Lock unexpectedly replaced the actual player browser')
     # Old authority must remain revoked after unlocking. This is distinct from
     # an explicit, new fixture admission below (no claim about production CtrlR).
     client.js('window.__playerObserved=[];true')
@@ -575,7 +578,7 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     return {'name':'native-lock-stops-both-media-'+lane,'physical_lock':True,'native_stop_complete':True,
             'disposed':True,'video_paused':True,'audio_paused':True,'video_source_empty':True,'audio_source_empty':True,
             'stop_position':state['position'],'stop_audio_position':state['audio_position'],
-            'actual_master_ui_unlock':True,'old_grant_refused':True,'new_admission_initially_paused':True,
+            'actual_master_ui_unlock':True,'same_native_browser_after_unlock':True,'old_grant_refused':True,'new_admission_initially_paused':True,
             'explicit_play_decoded':resumed['decoded'],'direct_connections':0,'production_reload_tested':False}
 
 
@@ -707,6 +710,7 @@ def run(args):
                'Native unlock input missing':'unlock_input_missing',
                'Trusted unlock input did not match':'unlock_input_mismatch',
                'Actual master UI did not unlock browser':'master_unlock_failed',
+               'Lock unexpectedly replaced the actual player browser':'lock_browser_changed',
                'Old player authority refusal missing':'old_grant_refusal_missing',
                'Old player authority survived browser lock':'old_grant_survived',
                'New fixture started without explicit Play':'new_fixture_autoplay',
