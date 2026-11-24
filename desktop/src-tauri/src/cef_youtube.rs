@@ -259,7 +259,7 @@ pub fn open_webm(
         .collect();
     qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
     let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
-    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"position":position,"resume_available":restored.is_some(),"source":data.metadata.id().watch_url()});
+    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"captions":data.captions.iter().map(|t|t.metadata()).collect::<Vec<_>>(),"position":position,"resume_available":restored.is_some(),"source":data.metadata.id().watch_url()});
     let json = zeroize::Zeroizing::new(
         serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
     );
@@ -294,6 +294,7 @@ pub fn on_navigation(browser: i32, target: &str) {
     if leaving {
         crate::youtube_light_aux::cancel(browser);
         crate::cef_youtube_resume::closed(browser);
+        crate::cef_youtube_captions::closed(browser);
     }
 }
 pub fn on_loaded(browser: &Browser, frame: &Frame) {
@@ -337,6 +338,7 @@ pub fn stop(browser: &Browser) {
     crate::youtube_light_jobs::cancel(browser.identifier());
     crate::youtube_light_aux::cancel(browser.identifier());
     crate::cef_youtube_resume::closed(browser.identifier());
+    crate::cef_youtube_captions::closed(browser.identifier());
     let active = documents()
         .0
         .lock()
@@ -401,6 +403,7 @@ pub fn poll_probes() {
 pub fn clear_probes() {
     PROBES.with(|p| p.borrow_mut().clear());
     crate::cef_youtube_resume::clear();
+    crate::cef_youtube_captions::clear();
 }
 
 /// Protocol/media fixture only. Does not replace real anonymous extraction.

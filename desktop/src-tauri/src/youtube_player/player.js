@@ -13,6 +13,18 @@
   const quality = document.getElementById('quality');
   const qualities = new Map();
   const sponsor = document.getElementById('sponsor');
+  const captions = document.getElementById('captions');
+  const captionStatus = document.getElementById('caption-status');
+  let textTrack = null;
+  function captionsClear() {
+    if (!textTrack) return;
+    textTrack.mode = 'disabled';
+    for (const cue of Array.from(textTrack.cues || [])) textTrack.removeCue(cue);
+  }
+  captions.addEventListener('change', () => {
+    captionsClear(); captionStatus.textContent = '';
+    if (!disposed && configured) console.debug('__NEXUSBRO_LIGHT_CAPTION__:' + captions.value);
+  });
   let segments = [];
   let configured = false, disposed = false, intended = false, separate = false;
   let epoch = 0, syncing = false, duration = 0, timer = null;
@@ -42,7 +54,7 @@
   function sourcesClear() {
     for (const m of [video, audio]) { m.pause(); m.removeAttribute('src'); m.load(); }
   }
-  function dispose() { disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); }
+  function dispose() { captionsClear(); disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); }
   button.addEventListener('click', () => intended ? pause() : void play());
   seek.addEventListener('input', () => {
     if (!duration || !configured) return;
@@ -118,6 +130,14 @@
         const ordinary = document.getElementById('ordinary');
         ordinary.href = config.source; ordinary.hidden = false;
       }
+      if (Array.isArray(config.captions) && config.captions.length <= 256) {
+        config.captions.forEach((item, index) => {
+          if (!item || typeof item.label !== 'string') return;
+          const option = document.createElement('option'); option.value = String(index);
+          option.textContent = item.label.slice(0,80) + (item.automatic ? ' · авто' : ''); captions.append(option);
+        });
+        captions.hidden = captions.options.length < 2;
+      }
       configured = true; separate = Boolean(config.audio);
       for (const item of config.qualities || []) {
         if (qualities.has(item.id)) continue;
@@ -141,6 +161,16 @@
       video.muted = separate; video.src = config.video;
       if (separate) audio.src = config.audio;
       button.disabled = false; setStatus(config.resume_available === false ? 'Готово к воспроизведению · сохранение позиции недоступно' : 'Готово к воспроизведению'); return true;
+    },
+    setCaptions(data) {
+      if (disposed || !configured || !data) return;
+      captionsClear();
+      captionStatus.textContent = data.loading ? 'Загрузка субтитров…' : typeof data.error === 'string' ? 'Субтитры недоступны' : '';
+      if (data.error || data.loading || captions.value === '-1' || !Array.isArray(data.cues) || data.cues.length > 10000) return;
+      if (!data.cues.every(c => c && Number.isFinite(c.start) && Number.isFinite(c.end) && c.start >= 0 && c.end > c.start && c.end <= 604800 && typeof c.text === 'string' && c.text.length <= 8192)) return;
+      textTrack ||= video.addTextTrack('subtitles', 'Субтитры');
+      for (const cue of data.cues) textTrack.addCue(new VTTCue(cue.start, cue.end, cue.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')));
+      textTrack.mode = 'showing';
     },
     setAux(data) {
       if (disposed || !configured || !data) return;

@@ -59,3 +59,6 @@ pub mod youtube_light_resume;
 pub mod youtube_light_resume_service;
 #[path = "../../../desktop/src-tauri/src/youtube_light_aux.rs"]
 pub mod youtube_light_aux;
+
+#[path = "../../../desktop/src-tauri/src/youtube_light_captions.rs"]
+pub mod youtube_light_captions;

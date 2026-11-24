@@ -12,6 +12,7 @@ pub(crate) enum Sobytie {
     Sluzhebnoe(serde_json::Value),
     YoutubeReady(crate::youtube_light_jobs::Ready),
     YoutubeAuxReady(crate::youtube_light_aux::Ready),
+    YoutubeCaptionReady(crate::cef_youtube_captions::Ready),
     PoiskVybratPervoe(u64,u64,String,bool),
     DownloadNachata(u64,String),
     DevtoolsGotovy(u64),
@@ -41,6 +42,7 @@ wrap_display_handler! {
     impl DisplayHandler {
         fn on_media_access_change(&self,browser:Option<&mut Browser>,has_video_access:i32,has_audio_access:i32){if let Some(b)=browser{crate::memory_guard::capture(b.identifier(),has_video_access!=0||has_audio_access!=0);}}
         fn on_console_message(&self,browser:Option<&mut Browser>,_level:LogSeverity,message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{
+            if let Some(index)=message.and_then(|m|m.to_string().strip_prefix("__NEXUSBRO_LIGHT_CAPTION__:").filter(|s|s.len()<=4).and_then(|s|s.parse::<i32>().ok())) {if let Some(browser)=browser.as_ref(){crate::cef_youtube_captions::select(browser,index,self.tx.clone());}return 1;}
             if message.is_some_and(|m|matches!(m.to_string().as_str(),"__NEXUSBRO_LIGHT_READY__"|"__NEXUSBRO_LIGHT_TICK__")){
                 if let Some(browser)=browser.as_ref(){crate::cef_youtube_resume::on_tick(browser,message.is_some_and(|m|m.to_string()=="__NEXUSBRO_LIGHT_READY__"));}return 1;
             }
@@ -155,6 +157,7 @@ wrap_life_span_handler! {
                 crate::youtube_light_jobs::cancel(identity);
                 crate::youtube_light_aux::cancel(identity);
                 crate::cef_youtube_resume::closed(identity);
+                crate::cef_youtube_captions::closed(identity);
                 crate::cef_youtube::documents().revoke(identity);
                 self.bootstrap.close(identity);
                 SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&identity);});
@@ -1088,6 +1091,10 @@ impl Rabota {
                     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":result.is_ok(),"error":result.err()})));
                     continue;
                 }
+                Sobytie::YoutubeCaptionReady(ready)=>{
+                    if !*browser_locked&&! *closing {if let Some(browser)=brauzery.values().find(|b|b.identifier()==crate::cef_youtube_captions::browser(&ready)){crate::cef_youtube_captions::ready(browser,ready);}}
+                    continue;
+                }
                 Sobytie::YoutubeAuxReady(ready)=>{
                     if !*browser_locked&&! *closing {if let Some(browser)=brauzery.values().find(|b|b.identifier()==ready.browser){crate::cef_youtube::apply_aux(browser,ready);}}
                     continue;
@@ -1110,6 +1117,8 @@ impl Rabota {
                                     let key=k.routes.borrow().key_for_browser(browser.identifier()).ok_or("Путь вкладки недоступен")?;
                                     let resume=crate::cef_youtube_resume::setup(browser,&key,tab.privatnaya||*force_private).ok();
                                     crate::cef_youtube::open_webm(browser,ready.operation,data,resume)?;
+                                    if let (Some(document),Some(route))=(crate::cef_youtube::current_document(browser.identifier()),k.routes.borrow().descriptor(&tab.route)){crate::cef_youtube_captions::attach(browser.identifier(),ready.operation,document,data.captions.clone(),route);}
+
                                     if let (Some(document),Some(duration),Some(route))=(crate::cef_youtube::current_document(browser.identifier()),data.metadata.duration_seconds(),k.routes.borrow().descriptor(&tab.route)){
                                         let sender=tx.clone();
                                         if let Err(error)=crate::youtube_light_aux::start(browser.identifier(),ready.operation,document.clone(),data.metadata.id().clone(),duration as f64,route,move|ready|sender.send(Sobytie::YoutubeAuxReady(ready)).is_ok()){crate::cef_youtube::apply_aux(browser,crate::youtube_light_aux::Ready{browser:browser.identifier(),operation:ready.operation,document,segments:None,dislikes:None,segment_error:Some(error),rating_error:Some(error)});}
