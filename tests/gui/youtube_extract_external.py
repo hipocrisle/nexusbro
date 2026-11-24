@@ -241,7 +241,7 @@ class OwnedTree:
         if self.job:self.kernel.CloseHandle(self.job);self.job=None
 
 
-def run_probe(executable,components,proxy,video):
+def run_probe(executable,components,proxy,video,diagnostics):
     kwargs={'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform=='win32' else {'start_new_session':True}
     env={k:os.environ[k] for k in ('SystemRoot','WINDIR','TEMP','TMP','TMPDIR') if k in os.environ}
     env['GITHUB_ACTIONS']='true'
@@ -262,6 +262,7 @@ def run_probe(executable,components,proxy,video):
     workers=[threading.Thread(target=reader,args=(process.stdout,'stdout'),daemon=True),threading.Thread(target=reader,args=(process.stderr,'stderr'),daemon=True)]
     for worker in workers:worker.start()
     deadline=time.monotonic()+70;external=False;network_complete=True;failure=None;network_samples=0;tree=None
+    transient_exits=0;access_denied=collections.Counter()
     try:
         tree=OwnedTree(process)
         process.stdin.write(b'GO\n');process.stdin.flush();process.stdin.close()
@@ -273,8 +274,20 @@ def run_probe(executable,components,proxy,video):
                         owned.add((member.pid,member.create_time()))
                         for connection in member.net_connections(kind='tcp'):
                             if connection.raddr and not ipaddress.ip_address(connection.raddr.ip).is_loopback:external=True
-                    except psutil.NoSuchProcess:pass
-                    except psutil.AccessDenied:network_complete=False
+                    except psutil.NoSuchProcess:transient_exits+=1
+                    except psutil.AccessDenied:
+                        # /proc may disappear between the ownership snapshot
+                        # and socket inspection. Only proven exit/zombie/PID
+                        # replacement is transient; a live denied PID is unknown.
+                        try:
+                            ended=(not member.is_running() or member.status()==psutil.STATUS_ZOMBIE
+                                   or (member.pid,member.create_time()) not in owned)
+                        except psutil.NoSuchProcess:ended=True
+                        except psutil.AccessDenied:ended=False
+                        if ended:transient_exits+=1
+                        else:
+                            network_complete=False
+                            access_denied['probe' if member.pid==process.pid else 'helper']+=1
                 network_samples+=1
             except psutil.NoSuchProcess:pass
             if external:failure='observed_child_direct_egress';break
@@ -328,13 +341,24 @@ def run_probe(executable,components,proxy,video):
         if any(worker.is_alive() for worker in workers):failure='probe_pipe_not_closed'
         if tree:tree.close()
         if not process.stdin.closed:process.stdin.close()
+    evidence={'observed_processes':len(owned),'tree_exit_verified':failure not in ('probe_descendants_survived','probe_reap_timeout'),
+        'network_samples':network_samples,'observed_child_direct_connections':int(external),
+        'network_observation_complete':network_complete,'transient_exited_process_observations':transient_exits,
+        'live_socket_access_denied':dict(access_denied),
+        'egress_coverage':'explicit_production_proxy_and_sampled_child_sockets_not_firewall'}
+    diagnostics.update(probe_exit_code=process.returncode,processes=evidence)
+    # Preserve the sanitized production outcome even if OS observation failed.
+    # Otherwise a network permission error hides the actual extractor result.
+    summary=None
+    try:
+        summary=safe_summary(bytes(streams['stdout']))
+        diagnostics['probe']=summary
+    except Exception as error:diagnostics['probe_summary_failure_class']=type(error).__name__
     require(failure is None,failure or 'probe_failed')
     require(network_complete,'probe_network_observation_incomplete')
     require(not failed.is_set(),'probe_pipe_limit_or_read')
-    summary=safe_summary(bytes(streams['stdout']))
-    return process.returncode,summary,{'observed_processes':len(owned),'tree_exit_verified':True,
-        'network_samples':network_samples,'observed_child_direct_connections':0,
-        'network_observation_complete':network_complete,'egress_coverage':'explicit_production_proxy_and_sampled_child_sockets_not_firewall'}
+    require(summary is not None,'probe_summary_unavailable')
+    return process.returncode,summary,evidence
 
 
 def self_test():
@@ -374,7 +398,7 @@ def main():
         report['component_verification']='packaged_files_match_manifest_and_pinned_asset_metadata_not_compiled_app_pins'
         report['probe_exe_sha256']=digest(executable,256*1024*1024)
         proxy=ConnectProxy();started=time.monotonic()
-        status,summary,processes=run_probe(executable,components,proxy,args.video)
+        status,summary,processes=run_probe(executable,components,proxy,args.video,report)
         report.update(wall_seconds=round(time.monotonic()-started,3),probe_exit_code=status,probe=summary,processes=processes,proxy=proxy.summary())
         require(status==0 and summary['ok'] and summary['stage']=='parsed','anonymous_extraction_or_supported_formats_failed')
         require(report['proxy']['connections'].get('connections_established',0)>0,'no_actual_proxy_connections')
@@ -387,7 +411,7 @@ def main():
             'observed_child_direct_egress','probe_pipe_limit_or_read','probe_timeout','probe_reap_timeout','probe_descendants_survived','probe_pipe_not_closed',
             'probe_network_observation_incomplete','probe_tree_terminate_failed','probe_tree_observation_failed','probe_job_create_failed',
             'probe_job_limit_failed','probe_job_assign_failed','probe_job_members_failed','probe_job_member_limit','probe_job_terminate_failed','probe_summary_size','probe_summary_lines','probe_summary_shape','probe_summary_unknown_fields','probe_summary_state',
-            'probe_summary_counter','probe_summary_false_ready','anonymous_extraction_or_supported_formats_failed','no_actual_proxy_connections','extractor_requested_unapproved_domain'}
+            'probe_summary_counter','probe_summary_false_ready','probe_summary_unavailable','anonymous_extraction_or_supported_formats_failed','no_actual_proxy_connections','extractor_requested_unapproved_domain'}
         report['failure_class']=type(error).__name__;report['failure_code']=str(error) if isinstance(error,AssertionError) and str(error) in allowed else 'unclassified'
         if proxy:report['proxy']=proxy.summary()
     finally:
