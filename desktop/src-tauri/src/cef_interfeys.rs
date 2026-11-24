@@ -28,6 +28,14 @@ wrap_keyboard_handler! {
             if ctrl && e.modifiers & (1 << 3) != 0 {if let Some(b)=browser.as_ref(){crate::memory_guard::edited(b.identifier());}return 0;}
             let key=shortcut_code(e);
             let shift = e.modifiers & (1 << 1) != 0;
+            // Embedded browsers use Alloy: unlike Chrome runtime, Escape is
+            // the embedder's responsibility (CefBrowserHost::ExitFullscreen).
+            // A real unmodified key acts only on the event's native browser.
+            if key==27 && !ctrl && !shift && e.modifiers & (1 << 3)==0 {
+                if let Some(host)=browser.as_ref().and_then(|b|b.host()) {
+                    if host.is_fullscreen()!=0 {host.exit_fullscreen(1);return 1;}
+                }
+            }
             if !ctrl&&shift&&key==27{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"browser-tasks","id":self.id})));return 1;}
             if ctrl&&shift&&key==65{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"tab-search","id":self.id})));return 1;}
             if ctrl&&shift&&key==76{let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"browser-lock","id":self.id})));return 1;}
