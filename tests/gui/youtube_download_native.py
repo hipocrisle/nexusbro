@@ -20,7 +20,7 @@ import urllib.parse
 
 import psutil
 from security_native import Device, call, js_wait, require, super_record, wait_for
-from tab_routes import WindowsDevice, switch_super, rows
+from tab_routes import WindowsDevice, switch_super, rows, click_control
 from youtube_player_native import Fixture, Trust, certificates, observe, physical, foreground
 from hibernation_cookie_probe import tls_proxy_preflight
 
@@ -197,6 +197,10 @@ def run(args):
         client.js('window.__playerObserved=[];window.__downloadObserved=[];window.__downloadReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{const t=e.payload?.data?.tip;if(t==="youtube-state")window.__playerObserved.push(e.payload);if(t==="youtube-download-state")window.__downloadObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__downloadReady=true);true')
         js_wait(client,'window.__downloadReady','Native event listener missing')
         switch_super(client,SUPER)
+        # A saved about:blank tab is deferred until the visible Open action.
+        # Exercise that native UI action before waiting for a real CEF browser.
+        if client.js('!!document.querySelector(".pusto button")'):
+            click_control(client,'.pusto button',20)
         session=wait_for(lambda:rows(client,SUPER) if any(t.get('browser_id',0)>0 and not t.get('zagruzka') for t in rows(client,SUPER)['vkladki']) else None,'Native browser missing',40);tab=session['aktivnaya']
         call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_fixture','id':tab})
         wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,SUPER,tab,admitting=True)),'Native player not configured',30)
