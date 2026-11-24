@@ -171,6 +171,7 @@ class WindowsFixtureTrust:
         self.thumb = certificate.fingerprint(hashes.SHA1()).hex().upper()
         self.leaf_sha = server.fingerprint(hashes.SHA256()).hex()
         self.attempted = False
+        self.added = {'machine':False,'user':False}
         self.receipts = []
         from cryptography.hazmat.primitives import serialization
         self.ca_der = root / 'trust-ca.der'; self.ca_der.write_bytes(certificate.public_bytes(serialization.Encoding.DER))
@@ -178,47 +179,95 @@ class WindowsFixtureTrust:
 
     def execute(self, operation):
         require(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'win32', 'windows_trust_scope_refused')
+        require(operation in {'observe','machine','user','remove'},'windows_chain_operation_invalid')
         script = self.root / 'fixture-trust.ps1'
-        script.write_text(r'''param([string]$Certificate,[string]$Leaf,[string]$Thumb,[string]$Operation)
+        script.write_text(r'''param([string]$Certificate,[string]$Leaf,[string]$Thumb,[string]$Operation,[string]$RemoveMachine,[string]$RemoveUser)
 $ErrorActionPreference='Stop'
-$ca=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Certificate)
-$leafCert=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Leaf)
-if($ca.Thumbprint -cne $Thumb){throw 'Fixture anchor mismatch'}
-$locations=@('Cert:\LocalMachine\Root','Cert:\CurrentUser\Root')
-function ExactAnchor($location){
- $p=Join-Path $location $Thumb
- if(!(Test-Path -LiteralPath $p)){return $false}
- return [Convert]::ToBase64String((Get-Item -LiteralPath $p).RawData) -ceq [Convert]::ToBase64String($ca.RawData)
+$stage='parse_ca'
+function SafeType($exception){
+ if($null -eq $exception){return 'None'}
+ $name=$exception.GetType().Name
+ $known=@('CryptographicException','InvalidOperationException','ArgumentException','ArgumentNullException','ItemNotFoundException','DriveNotFoundException','ProviderInvocationException','PSInvalidOperationException','RuntimeException','MethodInvocationException','NotSupportedException','UnauthorizedAccessException','SecurityException')
+ if($known -contains $name){return $name};return 'Unclassified'
 }
-if($Operation -eq 'machine' -or $Operation -eq 'user'){
- $location=if($Operation -eq 'machine'){$locations[0]}else{$locations[1]}
- Import-Certificate -FilePath $Certificate -CertStoreLocation $location -Confirm:$false -ErrorAction Stop | Out-Null
- if(!(ExactAnchor $location)){throw 'Fixture anchor bytes differ'}
-}
-if($Operation -eq 'remove'){
- foreach($location in $locations){
+try {
+ $ca=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Certificate)
+ $stage='parse_leaf'
+ $leafCert=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Leaf)
+ $stage='anchor_identity'
+ if($ca.Thumbprint -cne $Thumb){throw 'Fixture anchor mismatch'}
+ $locations=@('Cert:\LocalMachine\Root','Cert:\CurrentUser\Root')
+ function ExactAnchor($location){
   $p=Join-Path $location $Thumb
-  if(Test-Path -LiteralPath $p){if(!(ExactAnchor $location)){throw 'Refuse different anchor'};Remove-Item -LiteralPath $p -Force -ErrorAction Stop}
-  if(Test-Path -LiteralPath $p){throw 'Fixture anchor remains'}
+  if(!(Test-Path -LiteralPath $p)){return $false}
+  return [Convert]::ToBase64String((Get-Item -LiteralPath $p).RawData) -ceq [Convert]::ToBase64String($ca.RawData)
  }
- @{machine_present=$false;user_present=$false}|ConvertTo-Json -Compress;exit 0
+ if($Operation -eq 'machine' -or $Operation -eq 'user'){
+  $stage='import_anchor'
+  $location=if($Operation -eq 'machine'){$locations[0]}else{$locations[1]}
+  Import-Certificate -FilePath $Certificate -CertStoreLocation $location -Confirm:$false -ErrorAction Stop | Out-Null
+  $stage='import_postcondition'
+  if(!(ExactAnchor $location)){throw 'Fixture anchor bytes differ'}
+ }
+ if($Operation -eq 'remove'){
+  $stage='cleanup'
+  for($i=0;$i -lt 2;$i++){
+   $location=$locations[$i];$p=Join-Path $location $Thumb
+   $owned=if($i -eq 0){$RemoveMachine -eq '1'}else{$RemoveUser -eq '1'}
+   if($owned -and (Test-Path -LiteralPath $p)){
+    if(!(ExactAnchor $location)){throw 'Refuse different anchor'}
+    Remove-Item -LiteralPath $p -Force -ErrorAction Stop
+   }
+  }
+  $stage='cleanup_postcondition'
+  foreach($location in $locations){if(Test-Path -LiteralPath (Join-Path $location $Thumb)){throw 'Fixture anchor remains'}}
+  @{machine_present=$false;user_present=$false}|ConvertTo-Json -Compress;exit 0
+ }
+ $stage='chain_policy'
+ $chain=New-Object System.Security.Cryptography.X509Certificates.X509Chain
+ $chain.ChainPolicy.RevocationMode=[System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+ $chain.ChainPolicy.VerificationFlags=[System.Security.Cryptography.X509Certificates.X509VerificationFlags]::NoFlag
+ $chain.ChainPolicy.UrlRetrievalTimeout=[TimeSpan]::Zero
+ $stage='chain_build'
+ $built=$chain.Build($leafCert)
+ $stage='chain_observation'
+ $anchor=$false
+ if($chain.ChainElements.Count -gt 0){$anchor=[Convert]::ToBase64String($chain.ChainElements[$chain.ChainElements.Count-1].Certificate.RawData) -ceq [Convert]::ToBase64String($ca.RawData)}
+ @{build=[bool]$built;anchor_matches=[bool]$anchor;statuses=@($chain.ChainStatus|ForEach-Object{[int64]$_.Status});machine_present=[bool](ExactAnchor $locations[0]);user_present=[bool](ExactAnchor $locations[1])}|ConvertTo-Json -Compress
+ $chain.Dispose();$leafCert.Dispose();$ca.Dispose()
+} catch {
+ $err=$_.Exception
+ $inner=$err.InnerException
+ $innerCode=if($null -eq $inner){$null}else{[int64]$inner.HResult}
+ @{failed=$true;operation=$Operation;stage=$stage;error_type=(SafeType $err);hresult=[int64]$err.HResult;inner_error_type=(SafeType $inner);inner_hresult=$innerCode;category=[int64]$_.CategoryInfo.Category}|ConvertTo-Json -Compress
+ exit 2
 }
-$chain=New-Object System.Security.Cryptography.X509Certificates.X509Chain
-$chain.ChainPolicy.RevocationMode=[System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
-$chain.ChainPolicy.VerificationFlags=[System.Security.Cryptography.X509Certificates.X509VerificationFlags]::NoFlag
-$chain.ChainPolicy.UrlRetrievalTimeout=[TimeSpan]::Zero
-$built=$chain.Build($leafCert)
-$anchor=$false
-if($chain.ChainElements.Count -gt 0){$anchor=[Convert]::ToBase64String($chain.ChainElements[$chain.ChainElements.Count-1].Certificate.RawData) -ceq [Convert]::ToBase64String($ca.RawData)}
-@{build=[bool]$built;anchor_matches=[bool]$anchor;statuses=@($chain.ChainStatus|ForEach-Object{[int64]$_.Status});machine_present=[bool](ExactAnchor $locations[0]);user_present=[bool](ExactAnchor $locations[1])}|ConvertTo-Json -Compress
-$chain.Dispose();$leafCert.Dispose();$ca.Dispose()
 ''')
         result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script),
                                  '-Certificate', str(self.ca_der), '-Leaf', str(self.leaf_der),
-                                 '-Thumb', self.thumb, '-Operation', operation], check=True,
+                                 '-Thumb', self.thumb, '-Operation', operation,
+                                 '-RemoveMachine','1' if self.added['machine'] else '0',
+                                 '-RemoveUser','1' if self.added['user'] else '0'], check=False,
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
         require(len(result.stdout) <= 4096, 'windows_chain_receipt_oversized')
         receipt = json.loads(result.stdout.decode('utf-8-sig'))
+        if result.returncode:
+            fields={'failed','operation','stage','error_type','hresult','inner_error_type','inner_hresult','category'}
+            stages={'parse_ca','parse_leaf','anchor_identity','import_anchor','import_postcondition','cleanup',
+                    'cleanup_postcondition','chain_policy','chain_build','chain_observation'}
+            types={'None','Unclassified','CryptographicException','InvalidOperationException','ArgumentException',
+                   'ArgumentNullException','ItemNotFoundException','DriveNotFoundException','ProviderInvocationException',
+                   'PSInvalidOperationException','RuntimeException','MethodInvocationException','NotSupportedException',
+                   'UnauthorizedAccessException','SecurityException'}
+            require(result.returncode==2 and isinstance(receipt,dict) and set(receipt)==fields
+                    and receipt['failed'] is True and receipt['operation']==operation
+                    and receipt['stage'] in stages and receipt['error_type'] in types
+                    and receipt['inner_error_type'] in types,'windows_chain_error_shape')
+            require(type(receipt['hresult']) is int and -(1<<31)<=receipt['hresult']<(1<<31)
+                    and (receipt['inner_hresult'] is None or (type(receipt['inner_hresult']) is int and -(1<<31)<=receipt['inner_hresult']<(1<<31)))
+                    and type(receipt['category']) is int and 0<=receipt['category']<=1024,'windows_chain_error_shape')
+            self.receipts.append({'phase':'operation_failure',**receipt})
+            raise AssertionError('windows_chain_operation_failed')
         expected = {'machine_present','user_present'} if operation == 'remove' else {'build','anchor_matches','statuses','machine_present','user_present'}
         require(isinstance(receipt,dict) and set(receipt)==expected,'windows_chain_receipt_shape')
         require(all(type(receipt[k]) is bool for k in expected-{'statuses'}),'windows_chain_receipt_shape')
@@ -230,9 +279,22 @@ $chain.Dispose();$leafCert.Dispose();$ca.Dispose()
     def install(self):
         before = self.execute('observe'); self.receipts.append({'phase':'before',**before})
         require(not before['machine_present'] and not before['user_present'],'fixture_anchor_preexisting')
-        self.attempted = True  # cleanup both locations even on partial import
+        self.attempted = True
+        self.added['machine'] = True  # this exact fresh anchor only; also clean partial imports
         machine = self.execute('machine'); self.receipts.append({'phase':'after_machine',**machine})
-        user = self.execute('user'); self.receipts.append({'phase':'after_user',**user})
+        effective_user=(machine['machine_present'] and machine['user_present'] and machine['build']
+                        and machine['anchor_matches'] and not machine['statuses'])
+        if effective_user:
+            # CurrentUser Root is a logical collection and may expose the owned
+            # LocalMachine anchor. Do not attempt an unnecessary duplicate add.
+            user=self.execute('observe')
+            self.receipts.append({'phase':'after_user','verified_effective_user_anchor':True,
+                                  'skipped_already_trusted':True,'user_import_performed':False,**user})
+        else:
+            self.added['user'] = True
+            user=self.execute('user')
+            self.receipts.append({'phase':'after_user','verified_effective_user_anchor':False,
+                                  'skipped_already_trusted':False,'user_import_performed':True,**user})
         require(user['machine_present'] and user['user_present'] and user['build'] and user['anchor_matches']
                 and not user['statuses'],'windows_fixture_chain_not_trusted')
 
@@ -524,7 +586,7 @@ def main():
                    'expired_cookie_resurrected','other_context_or_empty_jar_received_auth','native_progress_stage_invalid',
                    'native_progress_count_exceeded','duplicate_native_diagnostic','native_diagnostic_schema_invalid',
                    'native_diagnostic_counts_invalid','native_diagnostic_boolean_invalid','native_diagnostic_fields_invalid',
-                   'windows_fixture_chain_not_trusted','tls_preflight_leaf_mismatch','tls_preflight_proxy_refused'}
+                   'windows_fixture_chain_not_trusted','windows_chain_operation_failed','tls_preflight_leaf_mismatch','tls_preflight_proxy_refused'}
         report['failure_code'] = str(error) if type(error) is AssertionError and str(error) in allowed else 'unclassified'
         if runner: report['last_native_probe'] = runner.last_probe
     finally:

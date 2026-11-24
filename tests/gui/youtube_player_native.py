@@ -343,7 +343,8 @@ def run(args):
                'Physical pause failed':'pause_failed','Physical seek did not move actual native media':'seek_failed',
                'Actual VP9/Opus geometry differs':'media_geometry','Actual OS video paint did not change':'video_paint_static',
                'Media bypassed actual selected route':'route_witness_missing','Native player viewport too small':'viewport_too_small',
-               'windows_fixture_chain_not_trusted':'windows_chain_untrusted'}
+               'windows_fixture_chain_not_trusted':'windows_chain_untrusted',
+               'windows_chain_operation_failed':'windows_chain_operation_failed'}
         report['failure_code']=codes.get(str(error),'unclassified')
     finally:
         if trust and trust.windows:report['windows_chain_preflight']=trust.windows.receipts
