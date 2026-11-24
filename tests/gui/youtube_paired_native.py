@@ -5,8 +5,9 @@ normal-quality fallback. Future reference hook MUST verify movie_player exists,
 no observed ad markers and getVideoData().video_id matches native expected ID.
 That guard is not universal ad detection. Unknown evidence blocks acceptance.
 Startup cost is WALL time; 5s sampling cannot count all short-lived startup CPU.
-Exit0 means valid DIAGNOSTIC measurement, not comparison acceptance. The current
-13-field reference schema cannot prove both audio outputs unmuted/volume=1.
+Exit0 means a valid policy-matched measurement, regardless of a resource win.
+Native snapshots prove output POLICY (volume=1/unmuted/default sink), not
+physical speaker output or PCM capture. There is no volume-setting JS injection.
 """
 import argparse
 import hashlib
@@ -74,13 +75,21 @@ def probe(client,super_id,tab,kind,video):
     return state
 
 
-def video_state(state,args):
+def audio_policy(state):
+    volume=state.get('volume')
+    if type(volume) not in (int,float) or not math.isfinite(volume) or volume!=1 or state.get('muted') is not False or state.get('default_sink') is not True:
+        raise Blocked('audio_output_policy_mismatch_or_unknown')
+    return {'volume':volume,'muted':False,'default_sink':True}
+
+
+def video_state(state,args,*,require_audio=True):
     for field in ('position','duration','decoded','dropped','video_width','video_height'):
         value=state.get(field)
         if type(value) not in (int,float) or not math.isfinite(value) or value<0:raise Blocked('video_observation_invalid')
     if abs(state['duration']-args.expected_duration)>2:raise Blocked('public_content_duration_mismatch')
     if (state['video_width'],state['video_height'])!=(args.width,args.height):raise Blocked('normal_or_light_quality_mismatch')
     if state.get('seeking') is True:raise Blocked('playback_seeking')
+    if require_audio:audio_policy(state)
     return {field:state[field] for field in ('position','duration','decoded','dropped','video_width','video_height','playing') if field in state}
 
 
@@ -107,7 +116,8 @@ def native_members(client,identifier):
     return cleaned
 
 
-def normal_play_key(device):
+def normal_key(device,key):
+    if key not in ('k','m'):raise Blocked('normal_key_invalid')
     # No blind video/consent click. Require real CEF keyboard focus before the
     # single ordinary public-player keyboard shortcut.
     if sys.platform=='win32':
@@ -125,8 +135,8 @@ def normal_play_key(device):
     process=psutil.Process(pid);owner=psutil.Process(device.app.pid)
     if pid not in {p.pid for p in owner.children(recursive=True)} or Path(process.exe()).resolve()!=device.exe.resolve() or not any(a=='--nb-dvizhok' or a.startswith('--type=') for a in process.cmdline()):raise Blocked('normal_cef_focus_unproven')
     if sys.platform=='win32':
-        import pyautogui;pyautogui.press('k')
-    else:subprocess.run(['xdotool','key','--clearmodifiers','k'],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+        import pyautogui;pyautogui.press(key)
+    else:subprocess.run(['xdotool','key','--clearmodifiers',key],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
 
 
 def metrics(samples,video,args):
@@ -170,15 +180,21 @@ def arm(args,proxy,mode,index,out):
                 except Blocked:time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
         else:state=probe(client,identifier,tab,mode,args.video_id)
-        video_state(state,args)
+        video_state(state,args,require_audio=False)
+        if mode=='normal' and state.get('muted') is True:
+            if state.get('ready_state',0)<2:raise Blocked('normal_audio_user_action_unavailable')
+            normal_key(device,'m')
+            state=wait_for(lambda:(lambda value:value if value.get('muted') is False else None)(probe(client,identifier,tab,mode,args.video_id)),'Normal physical unmute not observed',8)
+        audio_policy(state)
         if not state.get('playing'):
             if mode=='light':physical(client,device,'play',{})
-            elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_play_key(device)
+            elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_key(device,'k')
             else:raise Blocked('normal_user_play_required')
         state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(probe(client,identifier,tab,mode,args.video_id)),'Real public playback missing',15)
         decode=decode_state(probe(client,identifier,tab,'decode',args.video_id));result['decode']=decode
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
+        result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
         result['stage']='warmup';warm=time.monotonic()
         while time.monotonic()-warm<30:
             state=probe(client,identifier,tab,mode,args.video_id);video_state(state,args)
@@ -236,7 +252,7 @@ def run(args):
     if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size>131072:raise Blocked('component_manifest_input_invalid')
     manifest_sha=digest(manifest)
     exe=Path(args.exe).resolve();cef=Path(args.cef).resolve()/('libcef.dll' if sys.platform=='win32' else 'libcef.so')
-    provenance={'component_manifest_input_sha256':manifest_sha,'exe_sha256':digest(exe),'cef_sha256':digest(cef),'system':platform.system(),'machine':platform.machine(),'logical_cpus':psutil.cpu_count(),'video_id':args.video_id,'route_mode':'proxy' if proxy else 'direct','hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'normal_guard_scope':'observed_ad_markers_and_public_player_id_not_universal_ad_proof','order':list(ORDER),'warmup_seconds':30,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'windows_private_commit' if sys.platform=='win32' else 'linux_uss'}
+    provenance={'component_manifest_input_sha256':manifest_sha,'exe_sha256':digest(exe),'cef_sha256':digest(cef),'system':platform.system(),'machine':platform.machine(),'logical_cpus':psutil.cpu_count(),'video_id':args.video_id,'route_mode':'proxy' if proxy else 'direct','hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'normal_guard_scope':'observed_ad_markers_and_public_player_id_not_universal_ad_proof','order':list(ORDER),'warmup_seconds':30,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'windows_private_commit' if sys.platform=='win32' else 'linux_uss'}
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'provenance':provenance,'arms':[]}
     try:
         for index,mode in enumerate(ORDER):
@@ -253,17 +269,18 @@ def run(args):
         summary={mode:{key:statistics.median(r[key] for r in values) for key in ('cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio','observed_fps')} for mode,values in grouped.items()}
         if summary['normal']['cpu_core_percent']<=0 or summary['normal']['peak_private_bytes']<=0:raise Blocked('baseline_metrics_invalid')
         cpu=summary['light']['cpu_core_percent']/summary['normal']['cpu_core_percent'];memory=summary['light']['peak_private_bytes']/summary['normal']['peak_private_bytes']
-        report.update(completed=True,measurement_valid=True,comparison_valid=False,accepted_measurement=False,
-                      diagnostic_only=True,acceptance_passed=False,audio_equivalence_proven=False,
-                      acceptance_blocker='audio_output_equivalence_unproven',summary=summary,cpu_ratio=cpu,private_ratio=memory,
+        if not all(a.get('audio_policy_proven') is True and a.get('audio_policy')=={'volume':1,'muted':False,'default_sink':True} for a in report['arms']):raise Blocked('audio_output_policy_unproven')
+        report['provenance']['audio_output_policy_match_proven']=True
+        report.update(completed=True,measurement_valid=True,comparison_valid=True,accepted_measurement=True,
+                      diagnostic_only=False,acceptance_passed=True,audio_policy_proven=True,physical_audio_capture_proven=False,
+                      audio_evidence_scope='actual_element_volume_unmuted_default_sink_policy_not_physical_speaker_or_PCM_proof',summary=summary,cpu_ratio=cpu,private_ratio=memory,
                       improvement_observed=cpu<1 and memory<1,
                       drop_regression_observed=summary['light']['dropped_ratio']>summary['normal']['dropped_ratio']+.01,
-                      claim_scope='observed_software_same_vm_four_arms_audio_policy_unproven_not_general_hardware_performance')
+                      claim_scope='observed_software_same_vm_four_arms_audio_policy_matched_not_general_hardware_performance')
     except Exception as error:report['blocked_reason']=str(error) if isinstance(error,Blocked) else 'paired_experiment_unavailable';report['failure_class']=type(error).__name__
     (out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
-    # A completed honest diagnostic measurement is successful even if the light
-    # mode uses more resources. Acceptance remains explicitly blocked until
-    # both actual audio outputs are proven volume=1 and unmuted.
+    # Honest policy-matched measurements succeed even without a resource win.
+    # Missing/mismatched native audio fields block before measurement acceptance.
     return 0 if report['measurement_valid'] else 1
 
 
@@ -274,6 +291,11 @@ def self_test():
         try:route_file(path)
         except Blocked:pass
         else:raise AssertionError('Duplicate route keys accepted')
+    require(audio_policy({'volume':1,'muted':False,'default_sink':True})=={'volume':1,'muted':False,'default_sink':True},'Audio policy parsing failed')
+    for policy in ({},{'volume':1,'muted':True,'default_sink':True},{'volume':.5,'muted':False,'default_sink':True},{'volume':1,'muted':False,'default_sink':False}):
+        try:audio_policy(policy)
+        except Blocked:pass
+        else:raise AssertionError('Unknown or mismatched audio policy accepted')
     try:decode_state({'codec':'vp9','decoder':'vpx','platform_decoder':True,'decode_mode':'platform','hardware_activity_proven':False,'video_pipelines':1})
     except Blocked:pass
     else:raise AssertionError('Platform comparison accepted')
