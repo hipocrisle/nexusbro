@@ -473,11 +473,10 @@ impl CookieSnapshot {
                 p.insert("domain".into(), Value::String(domain.into()));
             }
             let host = domain.strip_prefix('.').unwrap_or(domain);
-            let scheme = if c["sourceScheme"] == "Secure" || c["secure"] == true {
-                "https"
-            } else {
-                "http"
-            };
+            // Chromium derives Secure from a cryptographic setter URL before
+            // applying explicit sourceScheme provenance. The URL is never
+            // navigated: choose it from the cookie attribute, not its origin.
+            let scheme = if c["secure"] == true { "https" } else { "http" };
             let port = c["sourcePort"].as_i64().ok_or(ERROR)?;
             let suffix = if port > 0 {
                 format!(":{port}")
@@ -947,5 +946,29 @@ mod tests {
                 .readback_diagnostic_at(&vec![b' '; MAX_BYTES + 1], 1000)
                 .parse_refused
         );
+    }
+    #[test]
+    fn https_origin_without_secure_attribute_keeps_attribute_and_provenance() {
+        let mut c = cookie();
+        c["name"] = json!("ordinary-session");
+        c["secure"] = json!(false);
+        c["sameSite"] = json!("Lax");
+        let snapshot = CookieSnapshot::from_cdp_result(&jar(c.clone())).unwrap();
+        let params: Value = serde_json::from_slice(&snapshot.session_params().unwrap()).unwrap();
+        assert_eq!(params[0]["url"], "http://example.com:443/");
+        assert_eq!(params[0]["secure"], false);
+        assert_eq!(params[0]["sourceScheme"], "Secure");
+        assert_eq!(params[0]["sourcePort"], 443);
+        snapshot.verify_readback_at(&jar(c.clone()), 100).unwrap();
+        let mut accidentally_upgraded = c.clone();
+        accidentally_upgraded["secure"] = json!(true);
+        assert!(snapshot
+            .verify_readback_at(&jar(accidentally_upgraded), 100)
+            .is_err());
+        c["secure"] = json!(true);
+        let secure = CookieSnapshot::from_cdp_result(&jar(c)).unwrap();
+        let params: Value = serde_json::from_slice(&secure.session_params().unwrap()).unwrap();
+        assert_eq!(params[0]["url"], "https://example.com:443/");
+        assert_eq!(params[0]["secure"], true);
     }
 }
