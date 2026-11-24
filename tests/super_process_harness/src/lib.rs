@@ -362,10 +362,27 @@ mod native_linux_tests {
         let group = words[at + 3].parse::<u32>().unwrap();
         assert_eq!(group, root.pid);
         let deadline = Instant::now() + Duration::from_secs(10);
-        while std::path::Path::new(&format!("/proc/{}/stat", root.pid)).exists() {
+        loop {
+            if let Some(status) = owner.try_wait().unwrap() {
+                assert_eq!(status.code(), Some(0));
+                break;
+            }
             assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(10));
+        }
+        // Some(status) is observational WNOWAIT, NOT waitpid reap. The original
+        // leader zombie pins this numeric PID/PGID while its grandchild lives.
+        for _ in 0..10 {
+            assert_eq!(owner.try_wait().unwrap().unwrap().code(), Some(0));
+            let stat = parse_proc_stat(
+                &std::fs::read_to_string(format!("/proc/{}/stat", root.pid)).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(stat.identity, root);
+            assert_eq!(stat.state, b'Z');
+            assert_eq!(stat.group, root.pid);
+            assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
         }
         assert!(std::path::Path::new(&format!("/proc/{grandchild}/stat")).exists());
         assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));

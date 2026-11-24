@@ -248,6 +248,9 @@ impl ProcessOwner {
             .id()
     }
     /// Launcher-only status, NEVER tree-exit or permission to release routes.
+    /// Linux observes with waitid(WNOWAIT): Some(status) intentionally keeps
+    /// the original leader zombie/PID reserved until the whole tree is done.
+    /// No external waitpid(-1), SIGCHLD=SIG_IGN or SA_NOCLDWAIT is permitted.
     pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
         let owned = self
             .owned
@@ -400,6 +403,16 @@ mod platform {
     #[cfg(target_arch = "x86_64")]
     pub fn configure(command: &mut std::process::Command) -> io::Result<()> {
         use std::os::unix::process::CommandExt;
+        // An ignored/auto-reaped SIGCHLD would remove the leader reservation
+        // behind the owner. This app must not install a generic waitpid(-1)
+        // reaper while guarded children exist.
+        let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+        if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if action.sa_sigaction == libc::SIG_IGN || action.sa_flags & libc::SA_NOCLDWAIT != 0 {
+            return Err(io::Error::other("automatic child reaping refused"));
+        }
         let parent = unsafe { libc::getpid() };
         unsafe {
             command.pre_exec(move || {
@@ -487,6 +500,8 @@ mod platform {
         failed: bool,
         proven: bool,
         root_exited: bool,
+        root_status: Option<std::process::ExitStatus>,
+        root_reaped: bool,
     }
     impl Tracker {
         pub fn adopt(child: &Child) -> Self {
@@ -505,6 +520,8 @@ mod platform {
                 failed: stat.is_none_or(|s| s.group != child.id()),
                 proven: false,
                 root_exited: false,
+                root_status: None,
+                root_reaped: false,
             }
         }
         pub fn contained(child: &mut Child) -> Self {
@@ -512,22 +529,82 @@ mod platform {
             tracker.proven = true;
             tracker
         }
+        fn leader_reserved(&self) -> io::Result<()> {
+            if self.root_reaped {
+                return Err(io::Error::other("leader reservation released"));
+            }
+            let root = self
+                .root
+                .ok_or_else(|| io::Error::other("leader identity missing"))?;
+            let raw = std::fs::read_to_string(format!("/proc/{}/stat", root.pid))?;
+            if parse_proc_stat(&raw).is_none_or(|s| s.identity != root || s.group != self.group) {
+                return Err(io::Error::other("leader reservation changed"));
+            }
+            let mut action: libc::sigaction = unsafe { std::mem::zeroed() };
+            if unsafe { libc::sigaction(libc::SIGCHLD, std::ptr::null(), &mut action) } != 0 {
+                return Err(io::Error::last_os_error());
+            }
+            if action.sa_sigaction == libc::SIG_IGN || action.sa_flags & libc::SA_NOCLDWAIT != 0 {
+                return Err(io::Error::other("automatic child reaping refused"));
+            }
+            Ok(())
+        }
         pub fn try_wait(
             &mut self,
             child: &mut Child,
         ) -> io::Result<Option<std::process::ExitStatus>> {
-            let status = child.try_wait()?;
-            if status.is_some() {
-                self.root_exited = true;
+            if self.root_reaped {
+                return Ok(self.root_status);
             }
-            Ok(status)
+            if let Err(error) = self.leader_reserved() {
+                self.failed = true;
+                return Err(error);
+            }
+            let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+            if unsafe {
+                libc::waitid(
+                    libc::P_PID,
+                    child.id(),
+                    &mut info,
+                    libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
+                )
+            } != 0
+            {
+                self.failed = true;
+                return Err(io::Error::last_os_error());
+            }
+            let pid = unsafe { info.si_pid() };
+            if pid == 0 {
+                return Ok(None);
+            }
+            if pid as u32 != child.id() {
+                self.failed = true;
+                return Err(io::Error::other("wait identity mismatch"));
+            }
+            let status = unsafe { info.si_status() };
+            let raw = match info.si_code {
+                libc::CLD_EXITED => status << 8,
+                libc::CLD_KILLED => status & 0x7f,
+                libc::CLD_DUMPED => (status & 0x7f) | 0x80,
+                _ => {
+                    self.failed = true;
+                    return Err(io::Error::other("unexpected wait state"));
+                }
+            };
+            use std::os::unix::process::ExitStatusExt;
+            self.root_status = Some(std::process::ExitStatus::from_raw(raw));
+            self.root_exited = true;
+            Ok(self.root_status)
         }
         pub fn terminate(&mut self, child: &mut Child) -> io::Result<()> {
             if !self.proven {
                 return Err(io::Error::other("unproven ownership"));
             }
-            // Never signal a recycled numeric process group after reaping its
-            // leader. Use durable pidfds for each freshly verified member.
+            // WNOWAIT preserves the original leader PID even after it exits:
+            // numeric PGID cannot be recycled into an unrelated new group.
+            // Once final probe reaps it, termination is permanently refused.
+            self.leader_reserved()?;
+            // pidfds additionally prevent individual member PID reuse.
             let entries = std::fs::read_dir("/proc")?;
             let mut signaled = 0usize;
             for (scanned, entry) in entries.enumerate() {
@@ -582,6 +659,7 @@ mod platform {
                 {
                     return Err(io::Error::other("process identity reused"));
                 }
+                self.leader_reserved()?;
                 let result = unsafe {
                     libc::syscall(
                         libc::SYS_pidfd_send_signal,
@@ -620,10 +698,8 @@ mod platform {
         }
         pub fn probe(&mut self, child: &mut Child) -> ExitProbe {
             // Reap only this actual Child. This never constitutes tree proof.
-            match child.try_wait() {
-                Ok(Some(_)) => self.root_exited = true,
-                Ok(None) => {}
-                Err(_) => self.failed = true,
+            if self.try_wait(child).is_err() {
+                self.failed = true;
             }
             let Ok(entries) = std::fs::read_dir("/proc") else {
                 return ExitProbe::Unknown(UnknownReason::ObservationFailed);
@@ -696,9 +772,25 @@ mod platform {
             if self.failed {
                 return ExitProbe::Unknown(UnknownReason::ObservationFailed);
             }
-            // kill(...,0) is ONLY an atomic existence probe, never a signal
-            // that kills anything. It closes /proc enumeration's fork race:
-            // a contained tree cannot recreate a group after it is empty.
+            // A pinned, exited leader cannot fork. Every descendant is in
+            // this still-reserved group. Only after NO live group member is
+            // observed may the owner perform its sole actual child reap.
+            if !self.root_reaped && self.root_exited && live == 0 {
+                if self.leader_reserved().is_err() {
+                    self.failed = true;
+                    return ExitProbe::Unknown(UnknownReason::IdentityUnavailable);
+                }
+                match child.try_wait() {
+                    Ok(Some(status)) if Some(status) == self.root_status => self.root_reaped = true,
+                    _ => {
+                        self.failed = true;
+                        return ExitProbe::Unknown(UnknownReason::ObservationFailed);
+                    }
+                }
+            }
+            // Group may retain non-writer zombies until init reaps them. Wait;
+            // ESRCH is still mandatory. After root_reaped no further signaling
+            // is allowed, even if this number is later recycled by the kernel.
             let group_empty = if unsafe { libc::kill(-(self.group as i32), 0) } == 0 {
                 false
             } else {
@@ -712,7 +804,7 @@ mod platform {
                 identity_verified: self.root.is_some(),
                 observation_complete: true,
                 live_processes: if group_empty { live } else { live.max(1) },
-                root_exited: self.root_exited,
+                root_exited: self.root_reaped,
             })
         }
     }
