@@ -65,6 +65,11 @@ class CookieFixture:
                 names = ('session_lax', 'session_strict', 'secure_session', 'persist', 'domain_auth', 'path_auth')
                 token = owner.tokens.get(name, '')
                 cookies = dict(pair.strip().split('=', 1) for pair in self.headers.get('Cookie', '').split(';') if '=' in pair)
+                # CONNECT tunnels preserve TLS byte-for-byte; their proxy lane
+                # is proven by the registered upstream TCP source port, not an
+                # HTTP header that cannot be injected into encrypted traffic.
+                with owner.routes.lock:
+                    lane = owner.routes.peers.get(self.client_address[1], 'Direct')
                 with owner.lock:
                     active = owner.current
                     owner.receipts.append({'cycle': cycle, 'proof': parsed.path == '/scoped/proof',
@@ -74,7 +79,7 @@ class CookieFixture:
                                            'expired_absent': 'expired_auth' not in cookies,
                                            'storage_matches': query.get('storage') == ['true'],
                                            'http_only_hidden': query.get('hidden') == ['true'],
-                                           'via_proxy': self.headers.get('X-Fixture-Route') == 'A'})
+                                           'via_proxy': lane == 'A'})
                 if parsed.path == '/scoped/proof':
                     body = b'/* real parser-blocking receipt */'
                     content_type = 'application/javascript'
@@ -270,6 +275,8 @@ class NativeRunner:
             actual_receipts = self.fixture.result(cycle)
             self.last_probe['origin_requests'] = len(actual_receipts)
             self.last_probe['origin_proofs'] = sum(bool(r['proof']) for r in actual_receipts)
+            self.last_probe['origin_before_admission_count'] = sum(r['before_admission'] for r in actual_receipts)
+            self.last_probe['origin_proxy_verified_count'] = sum(r['via_proxy'] for r in actual_receipts)
             with self.fixture.routes.lock:
                 self.last_probe['proxy_connect_count'] = len(self.fixture.routes.tunnels)
             logfile = profile / 'cef.log'
