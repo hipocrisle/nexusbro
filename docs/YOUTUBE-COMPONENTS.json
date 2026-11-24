@@ -1,0 +1,83 @@
+{
+  "schema": 1,
+  "platforms": {
+    "windows-x64": {
+      "yt-dlp": {
+        "version": "2026.11.23",
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp.exe",
+        "sha256": "622ed48023cac1daa52a3bf3a6ac38f03514de214b5f0fa069389fd0f6d17e5c",
+        "filename": "yt-dlp.exe",
+        "archive": false,
+        "source_url": "https://github.com/yt-dlp/yt-dlp/tree/2026.11.23"
+      },
+      "deno": {
+        "version": "2.9.8",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-pc-windows-msvc.zip",
+        "sha256": "cba84b26e0df5ae7f74fc66b86a95b866872a86292ebd84fa1e959927edd93bf",
+        "filename": "deno.exe",
+        "archive": true,
+        "entry": "deno.exe",
+        "source_url": "https://github.com/denoland/deno/tree/v2.9.8"
+      }
+    },
+    "linux-x64": {
+      "yt-dlp": {
+        "version": "2026.11.23",
+        "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.11.23/yt-dlp_linux",
+        "sha256": "249ddb058234276bc449b9cd9492aad9f133bda5923c61a9e39983ae114ef17d",
+        "filename": "yt-dlp",
+        "archive": false,
+        "source_url": "https://github.com/yt-dlp/yt-dlp/tree/2026.11.23"
+      },
+      "deno": {
+        "version": "2.9.8",
+        "url": "https://github.com/denoland/deno/releases/download/v2.9.8/deno-x86_64-unknown-linux-gnu.zip",
+        "sha256": "e890975bc2549807bbcc0b584ffafda72cc7c93349dd99c80483dd784f6c4609",
+        "filename": "deno",
+        "archive": true,
+        "entry": "deno",
+        "source_url": "https://github.com/denoland/deno/tree/v2.9.8"
+      }
+    }
+  },
+  "licenses": [
+    {
+      "filename": "YT-DLP-UNLICENSE.txt",
+      "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.11.23/LICENSE",
+      "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
+      "scope": "yt-dlp source"
+    },
+    {
+      "filename": "YT-DLP-THIRD-PARTY-LICENSES.txt",
+      "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.11.23/THIRD_PARTY_LICENSES.txt",
+      "sha256": "510233b06ab5222b087d3384ac82ee3f369fde9991fb71e08175d88b72383584",
+      "scope": "official PyInstaller executable aggregate GPL-3.0-or-later and bundled component notices"
+    },
+    {
+      "filename": "DENO-MIT.txt",
+      "url": "https://raw.githubusercontent.com/denoland/deno/v2.9.8/LICENSE.md",
+      "sha256": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588",
+      "scope": "Deno upstream root license; not a claim that every dependency is MIT"
+    },
+    {
+      "filename": "RUSTY-V8-MIT.txt",
+      "url": "https://raw.githubusercontent.com/denoland/rusty_v8/v150.4.0/LICENSE",
+      "sha256": "1c6356fb751d45f0c53093ebf8a7f5e580e802f51999178e19d60f3ec39e147d",
+      "scope": "v8 crate150.4.0 selected by Deno2.9.8 Cargo.lock"
+    },
+    {
+      "filename": "V8-LICENSE.txt",
+      "url": "https://raw.githubusercontent.com/denoland/v8/ac1e23989121713ca642f6650b34deff7b686896/LICENSE",
+      "sha256": "6ab33af8774a0f396ee3aeeb761e3229057682d6f9fa7f572e390c2cb3a6e509",
+      "scope": "V8 native code; exact rusty_v8 v150.4.0 gitlink ac1e23989121713ca642f6650b34deff7b686896; external libraries have separate licenses"
+    }
+  ],
+  "source_inventory": [
+    {
+      "filename": "DENO-Cargo.lock",
+      "url": "https://raw.githubusercontent.com/denoland/deno/v2.9.8/Cargo.lock",
+      "sha256": "36aab78913808a9fb2e5a3a3a27a74a1a1045011133f28beaac6eabf57fc9895",
+      "scope": "pinned runtime Rust dependency version/checksum inventory; not a substitute for dependency notices"
+    }
+  ]
+}
