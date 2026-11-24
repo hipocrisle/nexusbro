@@ -137,3 +137,245 @@ mod tests {
         }
     }
 }
+
+// Native process tests must run on the disposable GitHub Linux runner ONLY.
+// Do not execute this harness on DE-1. All fixtures re-exec this test binary;
+// no shell/external executable, force-kill or production profile is involved.
+#[cfg(all(test, target_os = "linux", target_arch = "x86_64"))]
+mod native_linux_tests {
+    use super::owner::*;
+    use std::{
+        io::{BufRead, BufReader, Read},
+        path::PathBuf,
+        process::Stdio,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
+    fn profile() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nexusbro-owned-fixture-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+    fn command(mode: &str) -> OwnedCommand {
+        let mut command = OwnedCommand::new_current_exe().unwrap();
+        command
+            .args([
+                "--exact",
+                "native_linux_tests::contained_fixture",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("NB_OWNED_FIXTURE", mode)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        command
+    }
+    fn exited(owner: &mut ProcessOwner) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            match owner.probe() {
+                ExitProbe::Exited => return,
+                ExitProbe::Unknown(reason) => panic!("owned tree probe unavailable: {reason:?}"),
+                ExitProbe::Alive { .. } => {}
+            }
+            assert!(
+                Instant::now() < deadline,
+                "owned fixture did not gracefully exit"
+            );
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    fn denied(result: libc::c_long) {
+        assert_eq!(result, -1);
+        assert_eq!(
+            std::io::Error::last_os_error().raw_os_error(),
+            Some(libc::EPERM)
+        );
+    }
+    fn assert_denials() {
+        unsafe {
+            denied(libc::setsid() as libc::c_long);
+            denied(libc::setpgid(0, 0) as libc::c_long);
+            denied(libc::unshare(libc::CLONE_NEWUSER) as libc::c_long);
+            denied(libc::setns(-1, 0) as libc::c_long);
+            denied(libc::syscall(
+                libc::SYS_clone,
+                (libc::CLONE_NEWUSER | libc::SIGCHLD) as libc::c_ulong,
+                0,
+                0,
+                0,
+                0,
+            ));
+            assert_eq!(libc::syscall(libc::SYS_clone3, 0, 0), -1);
+            assert_eq!(
+                std::io::Error::last_os_error().raw_os_error(),
+                Some(libc::ENOSYS)
+            );
+            denied(libc::syscall(
+                (libc::SYS_setsid as u64 | 0x4000_0000) as libc::c_long,
+            ));
+        }
+    }
+    #[test]
+    fn contained_fixture() {
+        let Ok(mode) = std::env::var("NB_OWNED_FIXTURE") else {
+            return;
+        };
+        match mode.as_str() {
+            "denial" => {
+                assert_denials();
+                // exec of a later descendant inherits the same restrictions.
+                let status = std::process::Command::new(std::env::current_exe().unwrap())
+                    .args([
+                        "--exact",
+                        "native_linux_tests::contained_fixture",
+                        "--nocapture",
+                        "--test-threads=1",
+                    ])
+                    .env("NB_OWNED_FIXTURE", "leaf-denial")
+                    .status()
+                    .unwrap();
+                assert!(status.success());
+                println!("DENIAL_OK");
+            }
+            "leaf-denial" => {
+                assert_denials();
+                println!("EXEC_INHERIT_OK");
+            }
+            "tree" => unsafe {
+                let mut ids = [-1; 2];
+                assert_eq!(libc::pipe2(ids.as_mut_ptr(), libc::O_CLOEXEC), 0);
+                let child = libc::fork();
+                assert!(child >= 0);
+                if child == 0 {
+                    libc::close(ids[0]);
+                    let grandchild = libc::fork();
+                    if grandchild < 0 {
+                        libc::_exit(91)
+                    }
+                    if grandchild == 0 {
+                        // Only libc calls in post-fork grandchild. Failure to
+                        // deny setsid exits nonzero and the parent detects EOF.
+                        if libc::setsid() != -1 || *libc::__errno_location() != libc::EPERM {
+                            libc::_exit(92)
+                        }
+                        if libc::setpgid(0, 0) != -1 || *libc::__errno_location() != libc::EPERM {
+                            libc::_exit(93)
+                        }
+                        let pid = libc::getpid();
+                        if libc::write(
+                            ids[1],
+                            &pid as *const _ as *const _,
+                            std::mem::size_of_val(&pid),
+                        ) != std::mem::size_of_val(&pid) as isize
+                        {
+                            libc::_exit(94)
+                        }
+                        libc::close(ids[1]);
+                        let mut byte = 0u8;
+                        loop {
+                            let n = libc::read(0, &mut byte as *mut _ as *mut _, 1);
+                            if n >= 0 {
+                                break;
+                            }
+                            if *libc::__errno_location() != libc::EINTR {
+                                libc::_exit(95)
+                            }
+                        }
+                        libc::_exit(0)
+                    }
+                    libc::_exit(0)
+                }
+                libc::close(ids[1]);
+                let mut grandchild = 0i32;
+                assert_eq!(
+                    libc::read(
+                        ids[0],
+                        &mut grandchild as *mut _ as *mut _,
+                        std::mem::size_of_val(&grandchild)
+                    ),
+                    std::mem::size_of_val(&grandchild) as isize
+                );
+                libc::close(ids[0]);
+                assert!(grandchild > 0);
+                let mut status = 0;
+                assert_eq!(libc::waitpid(child, &mut status, 0), child);
+                println!(
+                    "GRANDCHILD {grandchild} GROUP {}",
+                    libc::getpgid(grandchild)
+                );
+                use std::io::Write;
+                std::io::stdout().flush().unwrap();
+                // Root really exits while grandchild waits for the owner's
+                // stdin EOF. There is no sleep approximating a root exit.
+                libc::_exit(0)
+            },
+            _ => panic!("unknown owned fixture mode"),
+        }
+    }
+    #[test]
+    fn seccomp_denies_escape_in_root_and_exec_descendant() {
+        let dir = profile();
+        let lease = ProfileLease::acquire(&dir).unwrap();
+        let mut owner = ProcessOwner::spawn_owned(command("denial"), lease).unwrap();
+        assert_eq!(owner.hibernation_admission(), Ok(()));
+        let mut output = String::new();
+        owner
+            .take_stdout()
+            .unwrap()
+            .read_to_string(&mut output)
+            .unwrap();
+        assert!(output.contains("DENIAL_OK"));
+        assert!(output.contains("EXEC_INHERIT_OK"));
+        exited(&mut owner);
+        owner.complete().unwrap();
+        drop(ProfileLease::acquire(&dir).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn root_exit_with_live_grandchild_holds_lease_until_real_group_exit() {
+        let dir = profile();
+        let lease = ProfileLease::acquire(&dir).unwrap();
+        let mut owner = ProcessOwner::spawn_owned(command("tree"), lease).unwrap();
+        assert_eq!(owner.hibernation_admission(), Ok(()));
+        let root = owner.identity().unwrap();
+        let input = owner.take_stdin().unwrap();
+        let mut output = BufReader::new(owner.take_stdout().unwrap());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            assert!(output.read_line(&mut line).unwrap() > 0);
+            if line.contains("GRANDCHILD ") {
+                break;
+            }
+        }
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        let at = words.iter().position(|s| *s == "GRANDCHILD").unwrap();
+        let grandchild = words[at + 1].parse::<u32>().unwrap();
+        let group = words[at + 3].parse::<u32>().unwrap();
+        assert_eq!(group, root.pid);
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while std::path::Path::new(&format!("/proc/{}/stat", root.pid)).exists() {
+            assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(std::path::Path::new(&format!("/proc/{grandchild}/stat")).exists());
+        assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
+        assert!(ProfileLease::acquire(&dir).is_err());
+        owner = owner.complete().unwrap_err();
+        assert!(ProfileLease::acquire(&dir).is_err());
+        drop(input); // Graceful EOF, not a signal/kill/timeout shortcut.
+        exited(&mut owner);
+        owner.complete().unwrap();
+        drop(ProfileLease::acquire(&dir).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

@@ -3,10 +3,12 @@
 //! INTEGRATION CONTRACT:
 //! 1. Acquire ProfileLease BEFORE clearing Chromium Singleton* or spawning. Keep
 //!    its stable lock file/directory until release; never unlink/replace the lock.
-//! 2. Linux Command::process_group(0), existing PDEATHSIG, NO daemon/setsid are
-//!    required for observation. A process group is NOT secure containment:
-//!    adoption refuses hibernation admission and never reports Exited for it.
-//!    A future proven cgroup/pidfd lifecycle adapter is required to lift this.
+//! 2. Linux positive ownership uses OwnedCommand::new_current_exe() and
+//!    ProcessOwner::spawn_owned(). No caller pre_exec closure can run first.
+//!    Its group is created before inherited seccomp denies group/namespace
+//!    escape; unknown kernel/architecture fails spawn. Ordinary adopt() remains
+//!    unproven. This is lifecycle containment, NOT a replacement for CEF's
+//!    security sandbox or protection against external privileged actors.
 //! 3. Windows normal Child adoption is post-spawn and cannot exclude assignment
 //!    races. For proof, native CreateProcessW(CREATE_SUSPENDED) must return Child
 //!    plus its ORIGINAL primary-thread OwnedHandle. unsafe adopt_suspended checks
@@ -148,6 +150,62 @@ impl ProfileLease {
     }
 }
 
+/// Builder intentionally hides std::Command: an earlier user pre_exec could
+/// fork an escaping writer before our filter. Only this app's own executable
+/// can be spawned; CEF/test helper arguments remain the caller's responsibility.
+#[cfg(target_os = "linux")]
+pub struct OwnedCommand {
+    command: std::process::Command,
+}
+#[cfg(target_os = "linux")]
+impl OwnedCommand {
+    pub fn new_current_exe() -> io::Result<Self> {
+        Ok(Self {
+            command: std::process::Command::new(std::env::current_exe()?),
+        })
+    }
+    pub fn arg(&mut self, value: impl AsRef<std::ffi::OsStr>) -> &mut Self {
+        self.command.arg(value);
+        self
+    }
+    pub fn args<I, S>(&mut self, values: I) -> &mut Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<std::ffi::OsStr>,
+    {
+        self.command.args(values);
+        self
+    }
+    pub fn env(
+        &mut self,
+        key: impl AsRef<std::ffi::OsStr>,
+        value: impl AsRef<std::ffi::OsStr>,
+    ) -> &mut Self {
+        self.command.env(key, value);
+        self
+    }
+    pub fn env_remove(&mut self, key: impl AsRef<std::ffi::OsStr>) -> &mut Self {
+        self.command.env_remove(key);
+        self
+    }
+    pub fn current_dir(&mut self, path: impl AsRef<Path>) -> &mut Self {
+        self.command.current_dir(path);
+        self
+    }
+    pub fn stdin(&mut self, value: impl Into<std::process::Stdio>) -> &mut Self {
+        self.command.stdin(value);
+        self
+    }
+    pub fn stdout(&mut self, value: impl Into<std::process::Stdio>) -> &mut Self {
+        self.command.stdout(value);
+        self
+    }
+    pub fn stderr(&mut self, value: impl Into<std::process::Stdio>) -> &mut Self {
+        self.command.stderr(value);
+        self
+    }
+}
+
 struct Owned {
     child: Child,
     lease: ProfileLease,
@@ -162,6 +220,33 @@ impl std::fmt::Debug for ProcessOwner {
     }
 }
 impl ProcessOwner {
+    /// Sole safe origin of Linux containment proof. On spawn/pre_exec failure
+    /// std reaps its failed child before returning; the unadopted lease drops.
+    #[cfg(target_os = "linux")]
+    pub fn spawn_owned(mut command: OwnedCommand, lease: ProfileLease) -> io::Result<Self> {
+        platform::configure(&mut command.command)?;
+        let child = command.command.spawn()?;
+        let tracker = platform::Tracker::contained(&child);
+        Ok(Self {
+            owned: Some(Owned {
+                child,
+                lease,
+                tracker,
+            }),
+        })
+    }
+    pub fn pid(&self) -> Option<u32> {
+        self.owned.as_ref().map(|o| o.child.id())
+    }
+    pub fn take_stdin(&mut self) -> Option<std::process::ChildStdin> {
+        self.owned.as_mut()?.child.stdin.take()
+    }
+    pub fn take_stdout(&mut self) -> Option<std::process::ChildStdout> {
+        self.owned.as_mut()?.child.stdout.take()
+    }
+    pub fn take_stderr(&mut self) -> Option<std::process::ChildStderr> {
+        self.owned.as_mut()?.child.stderr.take()
+    }
     /// Observes a running child. No post-spawn assignment is containment proof.
     pub fn adopt(child: Child, lease: ProfileLease) -> Self {
         let tracker = platform::Tracker::adopt(&child);
@@ -281,11 +366,98 @@ mod platform {
     use std::collections::BTreeMap;
     const MAX_PROCESSES: usize = 32768;
     const MAX_OWNED: usize = 1024;
+    // Installed before exec; only plain stack values and async-signal-safe
+    // libc calls are used inside pre_exec. No heap/format/logging/locks.
+    #[cfg(target_arch = "x86_64")]
+    pub fn configure(command: &mut std::process::Command) -> io::Result<()> {
+        use std::os::unix::process::CommandExt;
+        let parent = unsafe { libc::getpid() };
+        unsafe {
+            command.pre_exec(move || {
+                if libc::setpgid(0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::prctl(
+                    libc::PR_SET_PDEATHSIG,
+                    libc::SIGKILL as libc::c_ulong,
+                    0,
+                    0,
+                    0,
+                ) != 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                if libc::getppid() != parent {
+                    return Err(io::Error::from_raw_os_error(libc::ESRCH));
+                }
+                if libc::prctl(libc::PR_SET_NO_NEW_PRIVS, 1 as libc::c_ulong, 0, 0, 0) != 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                let filter = containment_filter();
+                let program = libc::sock_fprog {
+                    len: filter.len() as u16,
+                    filter: filter.as_ptr() as *mut libc::sock_filter,
+                };
+                if libc::prctl(
+                    libc::PR_SET_SECCOMP,
+                    libc::SECCOMP_MODE_FILTER as libc::c_ulong,
+                    &program as *const libc::sock_fprog,
+                    0,
+                    0,
+                ) != 0
+                {
+                    return Err(io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        Ok(())
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    pub fn configure(_: &mut std::process::Command) -> io::Result<()> {
+        Err(io::Error::from_raw_os_error(libc::ENOTSUP))
+    }
+    #[cfg(target_arch = "x86_64")]
+    fn containment_filter() -> [libc::sock_filter; 21] {
+        const LD: u16 = (libc::BPF_LD | libc::BPF_W | libc::BPF_ABS) as u16;
+        const JEQ: u16 = (libc::BPF_JMP | libc::BPF_JEQ | libc::BPF_K) as u16;
+        const JSET: u16 = (libc::BPF_JMP | libc::BPF_JSET | libc::BPF_K) as u16;
+        const RET: u16 = (libc::BPF_RET | libc::BPF_K) as u16;
+        const AND: u16 = (libc::BPF_ALU | libc::BPF_AND | libc::BPF_K) as u16;
+        const fn i(code: u16, jt: u8, jf: u8, k: u32) -> libc::sock_filter {
+            libc::sock_filter { code, jt, jf, k }
+        }
+        [
+            i(LD, 0, 0, 4),            // seccomp_data.arch
+            i(JEQ, 1, 0, 0xc000_003e), // AUDIT_ARCH_X86_64; reject int80/i386
+            i(RET, 0, 0, libc::SECCOMP_RET_KILL_PROCESS),
+            i(LD, 0, 0, 0),             // seccomp_data.nr
+            i(AND, 0, 0, !0x4000_0000), // x32 ABI cannot bypass matching
+            i(JEQ, 0, 1, libc::SYS_setsid as u32),
+            i(RET, 0, 0, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+            i(JEQ, 0, 1, libc::SYS_setpgid as u32),
+            i(RET, 0, 0, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+            i(JEQ, 0, 1, libc::SYS_unshare as u32),
+            i(RET, 0, 0, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+            i(JEQ, 0, 1, libc::SYS_setns as u32),
+            i(RET, 0, 0, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+            i(JEQ, 0, 1, libc::SYS_clone3 as u32),
+            i(RET, 0, 0, libc::SECCOMP_RET_ERRNO | libc::ENOSYS as u32),
+            i(JEQ, 0, 4, libc::SYS_clone as u32),
+            i(LD, 0, 0, 16),            // low32 args[0] clone flags
+            i(JSET, 0, 1, 0x7e02_0080), // every namespace creation flag
+            i(RET, 0, 0, libc::SECCOMP_RET_ERRNO | libc::EPERM as u32),
+            i(RET, 0, 0, libc::SECCOMP_RET_ALLOW),
+            i(RET, 0, 0, libc::SECCOMP_RET_ALLOW),
+        ]
+    }
     pub struct Tracker {
         root: Option<ProcessIdentity>,
         group: u32,
         known: BTreeMap<u32, u64>,
         failed: bool,
+        proven: bool,
+        root_exited: bool,
     }
     impl Tracker {
         pub fn adopt(child: &Child) -> Self {
@@ -302,22 +474,37 @@ mod platform {
                 group: child.id(),
                 known,
                 failed: stat.is_none_or(|s| s.group != child.id()),
+                proven: false,
+                root_exited: false,
             }
+        }
+        pub fn contained(child: &Child) -> Self {
+            let mut tracker = Self::adopt(child);
+            tracker.proven = true;
+            tracker
         }
         pub fn identity(&self) -> Option<ProcessIdentity> {
             self.root
         }
         pub fn admission(&self) -> Result<(), UnknownReason> {
-            Err(if self.root.is_none() {
-                UnknownReason::IdentityUnavailable
+            if self.failed {
+                return Err(UnknownReason::ObservationFailed);
+            }
+            if self.root.is_none() {
+                return Err(UnknownReason::IdentityUnavailable);
+            }
+            if self.proven {
+                Ok(())
             } else {
-                UnknownReason::ContainmentUnproven
-            })
+                Err(UnknownReason::ContainmentUnproven)
+            }
         }
         pub fn probe(&mut self, child: &mut Child) -> ExitProbe {
             // Reap only this actual Child. This never constitutes tree proof.
-            if child.try_wait().is_err() {
-                self.failed = true;
+            match child.try_wait() {
+                Ok(Some(_)) => self.root_exited = true,
+                Ok(None) => {}
+                Err(_) => self.failed = true,
             }
             let Ok(entries) = std::fs::read_dir("/proc") else {
                 return ExitProbe::Unknown(UnknownReason::ObservationFailed);
@@ -390,14 +577,23 @@ mod platform {
             if self.failed {
                 return ExitProbe::Unknown(UnknownReason::ObservationFailed);
             }
-            // Even an empty group cannot prove absence of an unobserved setsid
-            // descendant. Do not release the lock on that incomplete evidence.
+            // kill(...,0) is ONLY an atomic existence probe, never a signal
+            // that kills anything. It closes /proc enumeration's fork race:
+            // a contained tree cannot recreate a group after it is empty.
+            let group_empty = if unsafe { libc::kill(-(self.group as i32), 0) } == 0 {
+                false
+            } else {
+                match io::Error::last_os_error().raw_os_error() {
+                    Some(libc::ESRCH) => true,
+                    _ => return ExitProbe::Unknown(UnknownReason::ObservationFailed),
+                }
+            };
             evaluate_exit(ExitEvidence {
-                containment_proven: false,
+                containment_proven: self.proven,
                 identity_verified: self.root.is_some(),
                 observation_complete: true,
-                live_processes: live,
-                root_exited: false,
+                live_processes: if group_empty { live } else { live.max(1) },
+                root_exited: self.root_exited,
             })
         }
     }
