@@ -259,7 +259,7 @@ async fn site(
         .map_err(|_| "Нет подтверждения от страницы".to_string())?
         .map_err(|_| "Страница закрыта".to_string())?
 }
-fn broadcast(app: &tauri::AppHandle, value: bool) {
+pub(crate) fn broadcast(app: &tauri::AppHandle, value: bool) {
     let changed = ENABLED.swap(value, Ordering::SeqCst) != value;
     if !value {
         PENDING.get_or_init(Default::default).lock().unwrap().clear();

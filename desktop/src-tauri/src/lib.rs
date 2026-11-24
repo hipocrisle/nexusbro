@@ -1260,6 +1260,7 @@ pub fn run() {
                 popup_menu::popup_menu_open,popup_menu::popup_menu_data,popup_menu::popup_menu_ready,
                 popup_menu::popup_menu_choose,popup_menu::popup_menu_dismiss,popup_menu::popup_menu_lock,
                 browser_lock::browser_lock_status,browser_lock::browser_lock,browser_lock::browser_unlock,
+                browser_lock::browser_vault_backups,browser_lock::browser_vault_reset,browser_lock::browser_vault_restore,
 
             okna_app::novoe_okno,okna_app::okno_gotovo,okna_app::pokazat_glavnoe,
             set_status::set_status,set_status::set_proverit_ip,
@@ -1449,7 +1450,8 @@ pub fn run() {
                 return true;
             }
             if browser_lock::locked_global() && !matches!(command,
-                "browser_lock_status" | "browser_lock" | "browser_unlock")
+                "browser_lock_status" | "browser_lock" | "browser_unlock" |
+                "browser_vault_backups" | "browser_vault_reset" | "browser_vault_restore")
             {
                 invoke.resolver.reject("Браузер заблокирован. Введите мастер-пароль.");
                 return true;

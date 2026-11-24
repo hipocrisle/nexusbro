@@ -18,7 +18,7 @@ use tauri::{Emitter, Manager};
 use zeroize::Zeroizing;
 #[derive(Default)]
 pub struct SyncState {
-    serial: tokio::sync::Mutex<()>,
+    pub(crate) serial: tokio::sync::Mutex<()>,
 }
 #[derive(Default, Clone, Serialize, Deserialize)]
 #[serde(default)]

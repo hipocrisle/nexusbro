@@ -496,6 +496,10 @@ pub async fn browser_unlock(
     if !vault.unlocked {
         return Err("Браузер остаётся заблокирован".into());
     }
+    Ok(finish_unlock(&app))
+}
+
+fn finish_unlock(app: &tauri::AppHandle) -> LockStatus {
     transition(false);
     engine_lock(&app, false);
     restore_all(&app);
@@ -522,5 +526,81 @@ pub async fn browser_unlock(
             });
         }
     }
-    Ok(result)
+    result
+}
+
+/// Recovery is available only to the trusted shell while sites remain hidden.
+#[tauri::command]
+pub async fn browser_vault_backups(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+) -> Result<Vec<crate::secure_vault::VaultBackup>, String> {
+    validate(&app, &window)?;
+    let serial = app.state::<BrowserLockState>();
+    let _guard = serial.serial.lock().await;
+    if !locked_global() {
+        return Err("Сначала заблокируйте браузер".into());
+    }
+    let vault = Arc::clone(&app.state::<Arc<VaultState>>());
+    tauri::async_runtime::spawn_blocking(move || vault.recovery_backups())
+        .await
+        .map_err(|_| "Не удалось прочитать список копий".to_string())?
+}
+async fn recover_vault(
+    app: &tauri::AppHandle,
+    window: &tauri::WebviewWindow,
+    password: String,
+    backup: Option<String>,
+) -> Result<LockStatus, String> {
+    validate(app, window)?;
+    let serial = app.state::<BrowserLockState>();
+    let _guard = serial.serial.lock().await;
+    if !locked_global() {
+        return Err("Сначала заблокируйте браузер".into());
+    }
+    // Drain any pre-lock exchange before changing the vault. An old request
+    // must never persist its account/session into the replacement vault.
+    let sync = app.state::<crate::browser_sync::SyncState>();
+    let _sync_guard = sync.serial.lock().await;
+    let vault = Arc::clone(&app.state::<Arc<VaultState>>());
+    let operation = tauri::async_runtime::spawn_blocking(move || {
+        let password = zeroize::Zeroizing::new(password);
+        match backup {
+            Some(id) => vault.restore_recovery_backup(&id, &password),
+            None => vault.reset_with_password(&password),
+        }
+    })
+    .await
+    .map_err(|_| "Не удалось изменить хранилище".to_string())?;
+    if let Err(error) = operation {
+        app.state::<Arc<VaultState>>().lock();
+        crate::passwords::broadcast(app, false);
+        return Err(error);
+    }
+    if !app.state::<Arc<VaultState>>().status().unlocked {
+        return Err("Хранилище не открыто; браузер остаётся заблокирован".into());
+    }
+    crate::passwords::broadcast(app, true);
+    Ok(finish_unlock(app))
+}
+#[tauri::command]
+pub async fn browser_vault_reset(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    password: String,
+    confirmation: String,
+) -> Result<LockStatus, String> {
+    if confirmation != "СБРОСИТЬ" {
+        return Err("Введите СБРОСИТЬ для подтверждения".into());
+    }
+    recover_vault(&app, &window, password, None).await
+}
+#[tauri::command]
+pub async fn browser_vault_restore(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    id: String,
+    password: String,
+) -> Result<LockStatus, String> {
+    recover_vault(&app, &window, password, Some(id)).await
 }
