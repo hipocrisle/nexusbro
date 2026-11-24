@@ -1,3 +1,6 @@
+#[path = "cef_super_hibernation.rs"]
+mod cef_super_hibernation;
+pub fn take_hibernate_shutdown_token()->Option<crate::super_hibernation_protocol::Token>{cef_super_hibernation::take_shutdown()}
 use crate::okna::{sistema, Mesto};
 use crate::sessiya::{Komanda, Sessiya};
 use cef::*;
@@ -489,6 +492,10 @@ pub fn rabotat(
     let (tx, rx) = channel();
     #[cfg(target_os = "windows")]
     let (rx, event_relay) = crate::cef_events::relay(&tx, rx, Sobytie::Komanda(Komanda::ObnovitInterfeys), request_wake)?;
+    let restored_scroll=if std::env::args().any(|a|a=="--nb-restore-escrow"){
+        cef_super_hibernation::restore_startup(&k,&mut s,&tx,&rx)?
+    }else{HashMap::new()};
+    for v in &s.vkladki{k.choices.borrow_mut().insert(v.id,v.route.clone());}
     let mut brauzery = HashMap::new();
     if initially_locked{for tab in &mut s.vkladki{tab.otlozhena=true;}let _=sistema::pokazat(k.okno,false);}
     for v in &s.vkladki {
@@ -529,7 +536,7 @@ pub fn rabotat(
         #[cfg(target_os = "windows")]
         native_visibility: Default::default(),
         brauzery,
-        deferred_actions:Default::default(),pending_downloads:Default::default(),data_requests:Default::default(),route_attempts:Default::default(),sleep_requests:Default::default(),memory_registrations:Default::default(),memory_last_used:Default::default(),memory_next_scan:std::time::Instant::now(),memory_enabled:crate::nastrojki::zagruzit().memory_saver,memory_minutes:crate::nastrojki::zagruzit().memory_saver_minutes,memory_scroll:Default::default(),
+        deferred_actions:Default::default(),pending_downloads:Default::default(),data_requests:Default::default(),route_attempts:Default::default(),sleep_requests:Default::default(),memory_registrations:Default::default(),memory_last_used:Default::default(),memory_next_scan:std::time::Instant::now(),memory_enabled:crate::nastrojki::zagruzit().memory_saver,memory_minutes:crate::nastrojki::zagruzit().memory_saver_minutes,memory_scroll:restored_scroll,hibernate:Default::default(),
         razmer,
         devtools: HashMap::new(), devtools_pending:HashMap::new(), devtools_procent:40,devtools_pixels:None, ui_last:String::new(), perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),
         label:String::new(), extras:HashMap::new(), closed_labels:Default::default(), closing:false, browser_locked:initially_locked, browser_lock_generation:initial_lock_generation, force_private:crate::privatnost::process_privatnyj(),
@@ -559,8 +566,11 @@ pub fn rabotat(
         loop {
             do_message_loop_work();
             rabota.shag()?;
+            if rabota.hibernate.stopped(){break;}
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
+        drop(rabota);
+        Ok(())
     }
 }
 
@@ -610,6 +620,7 @@ wrap_task! {
                     quit_message_loop();
                     return None;
                 }
+                if work.hibernate.stopped(){quit_message_loop();return None;}
                 Some(if work.has_live_devtools() { 16 } else { 100 })
             });
             if self.maintenance {
@@ -641,10 +652,14 @@ fn memory_refused(id:u64,error:&str,s:&mut Sessiya,tx:&Sender<Sobytie>,requests:
     registrations.remove(&id);
 }
 fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser>,pending_tools:&HashMap<u64,std::time::Instant>,force_private:bool)->Option<&'static str>{
+    memory_blocked_scoped(id,automatic,s,browsers,pending_tools,force_private,false)
+}
+fn memory_blocked_scoped(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser>,pending_tools:&HashMap<u64,std::time::Instant>,force_private:bool,allow_selected:bool)->Option<&'static str>{
     let Some(tab)=s.vkladki.iter().find(|v|v.id==id)else{return Some("Вкладка уже закрыта");};
     let Some(browser)=browsers.get(&id)else{return Some("Вкладка уже выгружена");};
+    if allow_selected&&browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).as_deref()!=Some(tab.adres.as_str()){return Some("Адрес документа ещё не подтверждён");}
     if tab.route_pending{return Some("Вкладка меняет сетевой путь");}
-    if s.aktivnaya==id{return Some("Активную вкладку нельзя выгрузить");}
+    if s.aktivnaya==id&&!allow_selected{return Some("Активную вкладку нельзя выгрузить");}
     if tab.privatnaya||force_private{return Some("Приватная вкладка остаётся в памяти");}
     if tab.zakreplena{return Some("Сначала открепите вкладку");}
     // Legacy per-tab keep flags no longer override the automatic browser policy.
@@ -728,6 +743,7 @@ struct Rabota {
     memory_enabled:bool,
     memory_minutes:u32,
     memory_scroll:HashMap<u64,(f64,f64)>,
+    hibernate:cef_super_hibernation::Engine,
     razmer: Option<(u32, u32)>,
     devtools: HashMap<u64,u32>,
     devtools_pending:HashMap<u64,std::time::Instant>,
@@ -748,6 +764,24 @@ struct Rabota {
 }
 
 impl Rabota {
+    fn hibernate_safe(&self)->bool{
+        self.label.is_empty()&&self.extras.is_empty()&&!self.force_private&&!self.browser_locked&&!self.closing
+        &&self.route_attempts.is_empty()&&self.sleep_requests.is_empty()&&self.pending_downloads.is_empty()&&self.devtools.is_empty()&&self.devtools_pending.is_empty()&&self.perevody.is_empty()&&self.data_requests.is_empty()&&self.deferred_actions.is_empty()
+        &&self.s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
+        &&self.brauzery.keys().all(|id|memory_blocked_scoped(*id,true,&self.s,&self.brauzery,&self.devtools_pending,self.force_private,true).is_none())
+    }
+    fn hibernate_shag(&mut self)->anyhow::Result<()>{
+        if self.hibernate.stopped(){return Ok(());}
+        let events=self.rx.try_iter().take(128).collect::<Vec<_>>();
+        for event in events{
+            if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&event{self.browser_locked=*locked;self.browser_lock_generation=*generation;}
+            if matches!(&event,Sobytie::Komanda(Komanda::GlavnoePokazat|Komanda::OknoNovoe{..})){self.hibernate.invalidate(&self.brauzery);}
+            if let Sobytie::Komanda(command)=&event{let safe=self.hibernate_safe();self.hibernate.command(command,&self.brauzery,safe)?;}
+            if let Sobytie::Zakryta(_,Some(identity))=&event{self.k.routes.borrow_mut().forget_browser(*identity);}
+            let safe=self.hibernate_safe();self.hibernate.event(&event,&self.k,&self.s,&mut self.brauzery,safe);
+        }
+        let safe=self.hibernate_safe();self.hibernate.tick(&self.s,&self.brauzery,safe)
+    }
     fn route_publish(&self)->anyhow::Result<()>{
         if self.label.is_empty(){println!("NB-VKLADKI {}",serde_json::to_string(&self.s)?);}else{println!("NB-UI {}",serde_json::json!({"tip":"okno-session","label":self.label,"sessiya":self.s}));}
         std::io::stdout().flush()?;Ok(())
@@ -875,6 +909,7 @@ impl Rabota {
         self.sync_native_visibility();
     }
     fn shag(&mut self) -> anyhow::Result<()> {
+        if self.hibernate.active()||self.hibernate.stopped(){return self.hibernate_shag();}
         self.route_tick()?;
         if !self.data_requests.is_empty(){
             let contexts=self.k.routes.borrow_mut().all_owned();
@@ -913,7 +948,7 @@ impl Rabota {
             tx,
             rx,
             brauzery,
-            deferred_actions,pending_downloads,data_requests,route_attempts,sleep_requests,memory_registrations,memory_last_used,memory_next_scan,memory_enabled,memory_minutes,memory_scroll,
+            deferred_actions,pending_downloads,data_requests,route_attempts,sleep_requests,memory_registrations,memory_last_used,memory_next_scan,memory_enabled,memory_minutes,memory_scroll,hibernate,
             razmer,
             devtools, devtools_pending, devtools_procent, devtools_pixels, ui_last, perevody, perevod_avto, perevod_due, perevod_ui, label, extras, closed_labels, closing, browser_locked, browser_lock_generation, force_private,
             #[cfg(target_os = "windows")]
@@ -928,6 +963,15 @@ impl Rabota {
         let mut handled_events = 0;
         for sobytie in rx.try_iter().take(128) {
             handled_events += 1;
+            if hibernate.active(){
+                if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&sobytie{*browser_locked=*locked;*browser_lock_generation=*generation;}
+                if matches!(&sobytie,Sobytie::Komanda(Komanda::GlavnoePokazat|Komanda::OknoNovoe{..})){hibernate.invalidate(brauzery);}
+                if let Sobytie::Komanda(command)=&sobytie{let safe=!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,brauzery,safe)?;}
+                let safe=!*browser_locked&&!*closing&&extras.is_empty();
+                if hibernate.event(&sobytie,k,s,brauzery,safe){continue;}
+                // Normal address/loading/UI updates are not committed after freeze.
+                continue;
+            }
             // A lock covers queued/in-flight UI actions too. Lifecycle events
             // still complete, while no key, popup or stale command can reopen a page.
             if *browser_locked && matches!(&sobytie,Sobytie::Komanda(command) if !matches!(command,
@@ -999,9 +1043,11 @@ impl Rabota {
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
                 Sobytie::Komanda(Komanda::HibernatePrepare{request})=>{
-                    let token=crate::super_hibernation_protocol::Token{generation:request.scope.generation,attempt:request.scope.attempt,revision:request.revision};
-                    let frame=crate::super_hibernation_protocol::Frame::Refused{token,reason:"not_integrated".into()};
-                    println!("NB-HIBERNATE {}",serde_json::to_string(&frame)?);std::io::stdout().flush()?;continue;
+                    let safe=label.is_empty()&&extras.is_empty()&&!*force_private&&!*browser_locked&&!*closing
+                        &&route_attempts.is_empty()&&sleep_requests.is_empty()&&pending_downloads.is_empty()&&devtools.is_empty()&&devtools_pending.is_empty()&&perevody.is_empty()&&data_requests.is_empty()&&deferred_actions.is_empty()
+                        &&s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
+                        &&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());
+                    hibernate.begin(request,k,s,brauzery,memory_scroll,safe,tx)?;continue;
                 }
                 Sobytie::Komanda(Komanda::HibernateCommit{..}|Komanda::HibernateAbort{..}|Komanda::HibernateFinalAck{..})=>{continue;}
                 Sobytie::Komanda(Komanda::OknoNovoe{label:new_label,parent,x,y,w,h,privatnaya,sessiya})=>{
@@ -1034,7 +1080,7 @@ impl Rabota {
                     match sozdat_brauzer(&child_k,tab.id,&tab.adres,&child_tx,tab.privatnaya){Ok(b)=>{if let Some(b)=b{child_b.insert(tab.id,b);}},Err(e)=>{eprintln!("cef: страница нового окна: {e}");println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}}
                     let hwnd=child_k.okno;let size=child_k.razmer();
                     let session=child_s.clone();
-                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,#[cfg(target_os = "windows")] native_visibility:Default::default(),brauzery:child_b,deferred_actions:Default::default(),pending_downloads:Default::default(),data_requests:Default::default(),route_attempts:Default::default(),sleep_requests:Default::default(),memory_registrations:Default::default(),memory_last_used:Default::default(),memory_next_scan:std::time::Instant::now(),memory_enabled:crate::nastrojki::zagruzit().memory_saver,memory_minutes:crate::nastrojki::zagruzit().memory_saver_minutes,memory_scroll:Default::default(),razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
+                    extras.insert(new_label.clone(),Rabota{k:child_k,s:child_s,tx:child_tx,rx:child_rx,#[cfg(target_os = "windows")] _event_relay:child_event_relay,#[cfg(target_os = "windows")] native_visibility:Default::default(),brauzery:child_b,deferred_actions:Default::default(),pending_downloads:Default::default(),data_requests:Default::default(),route_attempts:Default::default(),sleep_requests:Default::default(),memory_registrations:Default::default(),memory_last_used:Default::default(),memory_next_scan:std::time::Instant::now(),memory_enabled:crate::nastrojki::zagruzit().memory_saver,memory_minutes:crate::nastrojki::zagruzit().memory_saver_minutes,memory_scroll:Default::default(),hibernate:Default::default(),razmer:size,devtools:HashMap::new(),devtools_pending:HashMap::new(),devtools_procent:40,devtools_pixels:None,ui_last:String::new(),perevody:HashMap::new(),perevod_avto:HashMap::new(),perevod_due:HashMap::new(),perevod_ui:HashMap::new(),label:new_label.clone(),extras:HashMap::new(),closed_labels:Default::default(),closing:false,browser_locked:*browser_locked,browser_lock_generation:*browser_lock_generation,force_private:privatnaya||crate::privatnost::process_privatnyj()});
                     println!("NB-UI {}",serde_json::json!({"tip":"okno-ready","label":new_label,"hwnd":hwnd,"sessiya":session}));std::io::stdout().flush()?;
                     continue;
                 }
@@ -1616,6 +1662,7 @@ impl Rabota {
             }
             izmeneno |= session_dirty;
         }
+        if hibernate.active(){return Ok(());}
         let memory_now=std::time::Instant::now();
         memory_last_used.insert(s.aktivnaya,memory_now);
         for id in brauzery.keys(){memory_last_used.entry(*id).or_insert(memory_now);}
