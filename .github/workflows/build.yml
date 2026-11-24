@@ -108,6 +108,7 @@ jobs:
           cargo test --manifest-path tests/session_recovery_harness/Cargo.toml
           cargo test --manifest-path tests/sync_history_harness/Cargo.toml
           cargo test --manifest-path tests/browser_tasks_harness/Cargo.toml
+          cargo test --manifest-path tests/youtube_light_harness/Cargo.toml
           cargo test --manifest-path tests/tab_route_contracts/Cargo.toml
           cargo test --manifest-path tests/super_lifecycle_harness/Cargo.toml
           cargo test --manifest-path tests/super_cookie_harness/Cargo.toml
@@ -348,7 +349,7 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib browser_backup::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib super_hibernation_parent::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light::tests -- --test-threads=1
-          cargo test --release --target ${{ matrix.target }} --lib youtube_light_http::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib youtube_light_http -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
 

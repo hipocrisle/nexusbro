@@ -141,3 +141,128 @@ mod tests {
         }
     }
 }
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkipSegment {
+    pub start: f64,
+    pub end: f64,
+}
+
+/// API data is untrusted. Never seek from arbitrary JSON or caller categories.
+/// Unsupported actions/categories are ignored; malformed supported data fails.
+pub fn skip_segments(
+    value: &serde_json::Value,
+    duration: f64,
+) -> Result<Vec<SkipSegment>, ApiError> {
+    if !duration.is_finite() || duration <= 0.0 || duration > 7.0 * 86400.0 {
+        return Err(ApiError::InvalidInput);
+    }
+    let rows = value.as_array().ok_or(ApiError::InvalidResponse)?;
+    if rows.len() > 500 {
+        return Err(ApiError::Oversized);
+    }
+    let mut segments = Vec::new();
+    for row in rows {
+        if row.get("actionType").and_then(|v| v.as_str()) != Some("skip") {
+            continue;
+        }
+        if !matches!(
+            row.get("category").and_then(|v| v.as_str()),
+            Some("sponsor" | "selfpromo" | "interaction" | "intro" | "outro")
+        ) {
+            continue;
+        }
+        let pair = row
+            .get("segment")
+            .and_then(|v| v.as_array())
+            .filter(|v| v.len() == 2)
+            .ok_or(ApiError::InvalidResponse)?;
+        let start = pair[0].as_f64().ok_or(ApiError::InvalidResponse)?;
+        let end = pair[1].as_f64().ok_or(ApiError::InvalidResponse)?;
+        if !start.is_finite() || !end.is_finite() || start < 0.0 || end <= start || end > duration {
+            return Err(ApiError::InvalidResponse);
+        }
+        segments.push(SkipSegment { start, end });
+    }
+    segments.sort_by(|a, b| a.start.total_cmp(&b.start));
+    let mut merged: Vec<SkipSegment> = Vec::new();
+    for segment in segments {
+        if let Some(last) = merged.last_mut().filter(|last| segment.start <= last.end) {
+            last.end = last.end.max(segment.end);
+        } else {
+            merged.push(segment);
+        }
+    }
+    Ok(merged)
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DislikeEstimate {
+    pub likes: u64,
+    pub dislikes: u64,
+}
+/// Counts are third-party estimates, never labeled exact YouTube statistics.
+pub fn dislike_estimate(value: &serde_json::Value) -> Result<DislikeEstimate, ApiError> {
+    let count = |key| {
+        value
+            .get(key)
+            .and_then(|v| v.as_u64())
+            .filter(|n| *n <= (1u64 << 53) - 1)
+            .ok_or(ApiError::InvalidResponse)
+    };
+    Ok(DislikeEstimate {
+        likes: count("likes")?,
+        dislikes: count("dislikes")?,
+    })
+}
+
+#[cfg(test)]
+mod response_tests {
+    use super::*;
+    use serde_json::json;
+    #[test]
+    fn malicious_segment_never_becomes_a_seek() {
+        for pair in [
+            json!([-1, 20]),
+            json!([20, 10]),
+            json!([10, 101]),
+            json!(["10", 20]),
+            json!([10, 20, 30]),
+        ] {
+            assert!(skip_segments(
+                &json!([{"actionType":"skip","category":"sponsor","segment":pair}]),
+                100.0
+            )
+            .is_err());
+        }
+    }
+    #[test]
+    fn skips_only_supported_actions_and_merges_overlaps() {
+        let input = json!([
+            {"actionType":"skip","category":"sponsor","segment":[15,25]},
+            {"actionType":"skip","category":"sponsor","segment":[10,20]},
+            {"actionType":"full","category":"sponsor","segment":[0,100]},
+            {"actionType":"skip","category":"unknown","segment":[0,100]}
+        ]);
+        assert_eq!(
+            skip_segments(&input, 100.0).unwrap(),
+            vec![SkipSegment {
+                start: 10.0,
+                end: 25.0
+            }]
+        );
+    }
+    #[test]
+    fn dislike_counts_reject_negative_fractional_and_unbounded_values() {
+        assert_eq!(
+            dislike_estimate(&json!({"likes":3,"dislikes":2})).unwrap(),
+            DislikeEstimate {
+                likes: 3,
+                dislikes: 2
+            }
+        );
+        for bad in [json!(-1), json!(0.5), json!(1u64 << 53), json!("2")] {
+            assert!(dislike_estimate(&json!({"likes":3,"dislikes":bad})).is_err());
+        }
+    }
+}
