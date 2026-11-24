@@ -345,6 +345,24 @@ fn parse_range(text: &str) -> Result<(u64, u64, u64), DownloadError> {
     }
     Ok((start, end, total))
 }
+// Strict additional test CA for the fixed disposable fixture only. Normal
+// certificate/hostname validation stays enabled; no production host is affected.
+fn fixture_trust(builder:reqwest::ClientBuilder,format:&MediaFormat)->Result<reqwest::ClientBuilder,DownloadError>{
+    if std::env::var("GITHUB_ACTIONS").as_deref()!=Ok("true")||std::env::var_os("NEXUSBRO_TEST_DATA").is_none(){return Ok(builder);}
+    let url=reqwest::Url::parse(format.url.as_str()).map_err(|_|DownloadError::InvalidRange)?;
+    if url.host_str()!=Some("fixture.googlevideo.com"){return Ok(builder);}
+    let Some(path)=std::env::var_os("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA") else{return Ok(builder);};
+    let path=PathBuf::from(path);
+    let metadata=std::fs::symlink_metadata(&path).map_err(|_|DownloadError::Storage)?;
+    if !path.is_absolute()||!metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>16384{return Err(DownloadError::Storage);}
+    let pem=std::fs::read(path).map_err(|_|DownloadError::Storage)?;
+    let expected=std::env::var("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA_SHA256").map_err(|_|DownloadError::Storage)?;
+    use sha2::Digest;
+    let actual=format!("{:x}",sha2::Sha256::digest(&pem));
+    if expected.len()!=64||expected!=actual{return Err(DownloadError::Storage);}
+    let cert=reqwest::Certificate::from_pem(&pem).map_err(|_|DownloadError::Storage)?;
+    Ok(builder.add_root_certificate(cert))
+}
 async fn stream(
     format: &MediaFormat,
     route: &NativeRoute,
@@ -354,13 +372,14 @@ async fn stream(
     budget: &Mutex<Budget>,
 ) -> Result<(), DownloadError> {
     let proxy = reqwest::Proxy::all(&route.proxy).map_err(|_| DownloadError::RouteUnavailable)?;
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .no_proxy()
         .proxy(proxy)
         .no_gzip()
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
-        .timeout(Duration::from_secs(45))
+        .timeout(Duration::from_secs(45));
+    let client = fixture_trust(builder,format)?
         .build()
         .map_err(|_| DownloadError::RouteUnavailable)?;
     let mut file = new_file(path)?;

@@ -431,11 +431,15 @@ jobs:
           test -s "$MUXER_PACKAGE/components.json"
           python tools/package_youtube_components.py --platform "$PLATFORM" --muxer-package "$MUXER_PACKAGE"
 
-      - name: Preserve verified dated component archive beyond upstream retention
+      - name: Preserve verified minimal muxer source and exact recipe beyond upstream retention
         uses: actions/upload-artifact@v4
         with:
           name: youtube-component-upstream-${{ matrix.os }}
-          path: .dev-check/youtube-component-upstream/
+          path: |
+            .dev-check/minimal-muxer/.dev-check/muxer-build/source.tar.gz
+            .dev-check/minimal-muxer/.dev-check/muxer-build/source-receipt.json
+            .dev-check/minimal-muxer/tools/build_youtube_muxer.py
+            .dev-check/minimal-muxer/.github/workflows/youtube-muxer.yml
           retention-days: 90
           if-no-files-found: error
 
