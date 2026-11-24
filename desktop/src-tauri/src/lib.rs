@@ -19,6 +19,8 @@ mod tab_search;
 mod browser_tasks;
 mod browser_backup;
 mod tab_routes;
+mod youtube_light;
+mod youtube_light_http;
 mod tab_route_parent;
 mod route_network;
 mod nastrojki;

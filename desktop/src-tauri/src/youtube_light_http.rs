@@ -56,9 +56,9 @@ fn endpoint(api: AuxiliaryApi, video: &str) -> Result<reqwest::Url, ApiError> {
 pub async fn fetch(
     route: &NativeRoute,
     api: AuxiliaryApi,
-    video: &str,
+    video: &crate::youtube_light::VideoId,
 ) -> Result<serde_json::Value, ApiError> {
-    let url = endpoint(api, video)?;
+    let url = endpoint(api, video.as_str())?;
     if !route.validate() {
         return Err(ApiError::RouteUnavailable);
     }
