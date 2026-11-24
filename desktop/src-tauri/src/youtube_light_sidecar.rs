@@ -664,15 +664,6 @@ mod tests {
             (
                 "Video unavailable. This video has been removed",
                 ExtractError::VideoUnavailable,
-                ExtractError::HttpBadRequest,
-                ExtractError::HttpNotFound,
-                ExtractError::HttpServerError,
-                ExtractError::NetworkFailure,
-                ExtractError::RuntimeFailure,
-                ExtractError::ChallengeSolverUnavailable,
-                ExtractError::FormatUnavailable,
-                ExtractError::FfmpegUnavailable,
-                ExtractError::ExtractionFailure,
             ),
             ("opaque upstream failure", ExtractError::ProcessFailed),
         ] {
