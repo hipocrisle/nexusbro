@@ -18,7 +18,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{atomic::{AtomicU64, Ordering}, Arc, Mutex},
     time::{Duration, Instant},
 };
 use zeroize::Zeroizing;
@@ -105,6 +105,13 @@ struct Inner {
 pub struct VaultStatus {
     pub exists: bool,
     pub unlocked: bool,
+}
+/// Metadata only: recovery APIs never expose filesystem paths or plaintext.
+#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+pub struct VaultBackup {
+    pub id: String,
+    /// Unix seconds, matching NexuSSH's backup-date contract.
+    pub created: u64,
 }
 pub struct VaultState {
     inner: Arc<Mutex<Inner>>,
@@ -289,6 +296,107 @@ fn decode(bytes: &[u8], password: &str) -> Result<Unlocked> {
         touched: Instant::now(),
     })
 }
+fn validate_new_password(password: &str) -> Result<()> {
+    if password.chars().count() < 12 || password.len() > 1024 {
+        return Err("Мастер-пароль должен содержать от 12 символов (не более 1024 байт)".into());
+    }
+    Ok(())
+}
+fn fresh_vault(password: &str) -> Result<Unlocked> {
+    validate_new_password(password)?;
+    let header = Header::new(&random::<16>()?);
+    let wrapping_key = derive(password, &header)?;
+    let key = Zeroizing::new(random::<32>()?);
+    let nonce = random::<24>()?;
+    let mut wrapped = nonce.to_vec();
+    wrapped.extend(encrypt(&wrapping_key, &nonce, &*key, &header.aad()?)?);
+    Ok(Unlocked {
+        secrets: BTreeMap::new(), key, header,
+        wrapped_key: B64.encode(wrapped), touched: Instant::now(),
+    })
+}
+
+const RECOVERY_PREFIX: &str = "browser-vault.v1.recovery-";
+static RECOVERY_STAMP: AtomicU64 = AtomicU64::new(0);
+fn recovery_stamp() -> Result<u64> {
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)
+        .map_err(|_| "Неверное системное время")?.as_nanos();
+    let now = u64::try_from(now).map_err(|_| "Недопустимое системное время")?;
+    // Even a coarse or backwards-moving clock cannot randomly put .bak ahead
+    // of the subsequently archived active file in the same application run.
+    let previous = RECOVERY_STAMP.fetch_update(Ordering::SeqCst, Ordering::SeqCst,
+        |old| old.checked_add(1).map(|next| now.max(next)))
+        .map_err(|_| "Исчерпаны идентификаторы резервных копий")?;
+    Ok(now.max(previous + 1))
+}
+fn recovery_metadata(id: &str) -> Result<VaultBackup> {
+    let bytes = id.as_bytes();
+    if bytes.len() != 53 || bytes[20] != b'-'
+        || !bytes[..20].iter().all(u8::is_ascii_digit)
+        || !bytes[21..].iter().all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(b))
+    {
+        return Err("Недопустимый идентификатор резервной копии".into());
+    }
+    let nanos = id[..20].parse::<u64>().map_err(|_| "Недопустимая дата резервной копии")?;
+    Ok(VaultBackup { id: id.into(), created: nanos / 1_000_000_000 })
+}
+fn recovery_path(root: &Path, id: &str) -> Result<PathBuf> {
+    recovery_metadata(id)?;
+    Ok(root.join(format!("{RECOVERY_PREFIX}{id}")))
+}
+fn recovery_root(root: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(root).map_err(|_| "Каталог хранилища недоступен")?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err("Недопустимый каталог хранилища".into());
+    }
+    Ok(())
+}
+fn immutable_archive(root: &Path, bytes: &[u8]) -> Result<VaultBackup> {
+    // Stage ciphertext and fsync it before publishing a no-replace hard link.
+    // The archive is independent from the active inode and cannot be overwritten.
+    let temp = temporary(root, bytes)?;
+    for _ in 0..8 {
+        let nanos = recovery_stamp()?;
+        let suffix: String = random::<16>()?.iter().map(|b| format!("{b:02x}")).collect();
+        let id = format!("{nanos:020}-{suffix}");
+        let path = recovery_path(root, &id)?;
+        match fs::hard_link(&temp.0, &path) {
+            Ok(()) => { sync_dir(root); return recovery_metadata(&id); }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err("Не удалось сохранить зашифрованную резервную копию; сброс отменён".into()),
+        }
+    }
+    Err("Не удалось создать уникальную резервную копию".into())
+}
+fn archive_and_replace(root: &Path, original: &[u8], replacement: &[u8]) -> Result<VaultBackup> {
+    archive_and_replace_with(root, original, replacement, |from, to| fs::rename(from, to))
+}
+fn archive_and_replace_with(
+    root: &Path, original: &[u8], replacement: &[u8],
+    publish: impl FnOnce(&Path, &Path) -> std::io::Result<()>,
+) -> Result<VaultBackup> {
+    recovery_root(root)?;
+    let target = root.join(FILE_NAME);
+    if read_file(&target)?.as_slice() != original {
+        return Err("Хранилище изменилось; повторите действие".into());
+    }
+    let backup = root.join(format!("{FILE_NAME}.bak"));
+    let prior_backup = if regular(&backup)? { Some(read_file(&backup)?) } else { None };
+    let staged = temporary(root, replacement)?;
+    // Preserve the ordinary .bak too: a later normal write may replace it.
+    if let Some(bytes) = prior_backup { immutable_archive(root, &bytes)?; }
+    let archived = immutable_archive(root, original)?;
+    // A final disk-CAS refuses an unrelated writer's replacement. Within this
+    // application the inner mutex already serializes every vault operation.
+    if read_file(&target)?.as_slice() != original {
+        return Err("Хранилище изменилось; замена отменена".into());
+    }
+    // Never remove the active file. Rename publishes old OR new ciphertext,
+    // including on Windows. A failed publish leaves the old startup lock intact.
+    publish(&staged.0, &target).map_err(|_| IO_ERROR.to_string())?;
+    sync_dir(root);
+    Ok(archived)
+}
 fn regular(path: &Path) -> Result<bool> {
     match fs::symlink_metadata(path) {
         Ok(m) if m.is_file() && !m.file_type().is_symlink() => Ok(true),
@@ -408,11 +516,7 @@ impl VaultState {
     }
     pub fn create(&self, root: &Path, password: &str) -> Result<()> {
         self.configure(root)?;
-        if password.chars().count() < 12 || password.len() > 1024 {
-            return Err(
-                "Мастер-пароль должен содержать от 12 символов (не более 1024 байт)".into(),
-            );
-        }
+        validate_new_password(password)?;
         let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
         if !inner.timer_ready {
             return Err("Контроль автоблокировки недоступен".into());
@@ -420,22 +524,67 @@ impl VaultState {
         if regular(&root.join(FILE_NAME))? {
             return Err("Хранилище уже существует".into());
         }
-        let header = Header::new(&random::<16>()?);
-        let wrapping_key = derive(password, &header)?;
-        let key = Zeroizing::new(random::<32>()?);
-        let nonce = random::<24>()?;
-        let mut wrapped = nonce.to_vec();
-        wrapped.extend(encrypt(&wrapping_key, &nonce, &*key, &header.aad()?)?);
-        let vault = Unlocked {
-            secrets: BTreeMap::new(),
-            key,
-            header,
-            wrapped_key: B64.encode(wrapped),
-            touched: Instant::now(),
-        };
+        let vault = fresh_vault(password)?;
         persist(root, &encode(&vault, &vault.secrets)?, true)?;
         inner.unlocked = Some(vault);
         Ok(())
+    }
+    /// List immutable, program-created recovery archives, newest first.
+    /// Unknown entries and symbolic links are never accepted as backups.
+    pub fn recovery_backups(&self) -> Result<Vec<VaultBackup>> {
+        let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
+        expire(&mut inner);
+        let result: Result<Vec<VaultBackup>> = (|| {
+            let root = inner.root.as_ref().ok_or("Хранилище не настроено")?;
+            recovery_root(root)?;
+            let entries = fs::read_dir(root).map_err(|_| "Не удалось прочитать резервные копии")?;
+            let mut backups = Vec::new();
+            for entry in entries {
+                let entry = entry.map_err(|_| "Не удалось прочитать резервные копии")?;
+                let name = entry.file_name();
+                let Some(id) = name.to_str().and_then(|n| n.strip_prefix(RECOVERY_PREFIX)) else { continue; };
+                let Ok(metadata) = recovery_metadata(id) else { continue; };
+                let kind = entry.file_type().map_err(|_| "Не удалось проверить резервную копию")?;
+                if kind.is_file() && !kind.is_symlink() { backups.push(metadata); }
+            }
+            backups.sort_by(|a, b| b.created.cmp(&a.created).then_with(|| b.id.cmp(&a.id)));
+            Ok(backups)
+        })();
+        if result.is_err() { inner.unlocked = None; }
+        result
+    }
+    /// Forgotten-password escape hatch: keep all old ciphertext and atomically
+    /// publish a fresh empty vault. This does not contact or modify the cloud.
+    pub fn reset_with_password(&self, password: &str) -> Result<VaultBackup> {
+        let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
+        inner.unlocked = None;
+        let root = inner.root.clone().ok_or("Хранилище не настроено")?;
+        if !inner.timer_ready { return Err("Контроль автоблокировки недоступен".into()); }
+        validate_new_password(password)?;
+        recovery_root(&root)?;
+        let original = read_file(&root.join(FILE_NAME))?;
+        let mut vault = fresh_vault(password)?;
+        let bytes = encode(&vault, &vault.secrets)?;
+        let backup = archive_and_replace(&root, &original, &bytes)?;
+        vault.touched = Instant::now();
+        inner.unlocked = Some(vault);
+        Ok(backup)
+    }
+    /// Authenticate the selected archive before touching any current file.
+    /// On failure all keys are dropped and current ciphertext remains intact.
+    pub fn restore_recovery_backup(&self, id: &str, password: &str) -> Result<VaultBackup> {
+        let mut inner = self.inner.lock().map_err(|_| LOCKED.to_string())?;
+        inner.unlocked = None;
+        let root = inner.root.clone().ok_or("Хранилище не настроено")?;
+        if !inner.timer_ready { return Err("Контроль автоблокировки недоступен".into()); }
+        recovery_root(&root)?;
+        let selected = read_file(&recovery_path(&root, id)?)?;
+        let mut vault = decode(&selected, password)?;
+        let original = read_file(&root.join(FILE_NAME))?;
+        let backup = archive_and_replace(&root, &original, &selected)?;
+        vault.touched = Instant::now();
+        inner.unlocked = Some(vault);
+        Ok(backup)
     }
     pub fn unlock(&self, root: &Path, password: &str) -> Result<()> {
         self.configure(root)?;
@@ -577,6 +726,198 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.0);
         }
+    }
+    fn recovery_disk(root: &Path) -> BTreeMap<String, Vec<u8>> {
+        fs::read_dir(root).unwrap().map(|e| e.unwrap())
+            .filter(|e| e.file_type().unwrap().is_file())
+            .map(|e| (e.file_name().to_str().unwrap().to_owned(), fs::read(e.path()).unwrap()))
+            .collect()
+    }
+    fn archive_bytes(root: &Path, backup: &VaultBackup) -> Vec<u8> {
+        fs::read(recovery_path(root, &backup.id).unwrap()).unwrap()
+    }
+    #[test]
+    fn reset_empty_then_restore_old_preserves_both_passwords_and_restart_lock() {
+        const NEW: &str = "a separate new master password";
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.create(&root.0, PASSWORD).unwrap();
+        vault.put("password/old", "old credential secret").unwrap();
+        vault.put("account.browser.v1", "old account token").unwrap();
+        vault.put("history/protected", "old encrypted history").unwrap();
+        let old = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let old_bak = fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap();
+        vault.lock(); let old_copy = vault.reset_with_password(NEW).unwrap();
+        assert!(vault.status().unlocked); assert!(vault.keys("").unwrap().is_empty());
+        assert_eq!(archive_bytes(&root.0, &old_copy), old);
+        assert_eq!(fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap(), old_bak);
+        assert!(decode(&archive_bytes(&root.0, &old_copy), PASSWORD).is_ok());
+        assert!(decode(&archive_bytes(&root.0, &old_copy), NEW).is_err());
+        let empty_new = fs::read(root.0.join(FILE_NAME)).unwrap();
+        assert!(decode(&empty_new, NEW).unwrap().secrets.is_empty());
+        assert!(decode(&empty_new, PASSWORD).is_err());
+        assert_eq!(vault.recovery_backups().unwrap()[0], old_copy);
+        assert!(vault.recovery_backups().unwrap().iter().any(|b| archive_bytes(&root.0, b) == old_bak));
+        vault.put("password/new", "new credential secret").unwrap();
+        let current_new = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let bak_before_restore = fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(vault.restore_recovery_backup(&old_copy.id, NEW).is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        let new_copy = vault.restore_recovery_backup(&old_copy.id, PASSWORD).unwrap();
+        assert_eq!(archive_bytes(&root.0, &new_copy), current_new);
+        assert!(decode(&archive_bytes(&root.0, &new_copy), NEW).is_ok());
+        assert!(decode(&archive_bytes(&root.0, &new_copy), PASSWORD).is_err());
+        assert_eq!(fs::read(root.0.join(FILE_NAME)).unwrap(), old);
+        assert_eq!(fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap(), bak_before_restore);
+        assert_eq!(vault.get("password/old").unwrap().unwrap().as_str(), "old credential secret");
+        assert_eq!(vault.get("account.browser.v1").unwrap().unwrap().as_str(), "old account token");
+        assert_eq!(vault.get("history/protected").unwrap().unwrap().as_str(), "old encrypted history");
+        assert!(vault.get("password/new").unwrap().is_none());
+        for bytes in recovery_disk(&root.0).values() {
+            for secret in ["old credential secret", "new credential secret", "old account token", "old encrypted history"] {
+                assert!(!bytes.windows(secret.len()).any(|w| w == secret.as_bytes()));
+            }
+        }
+        let restarted = VaultState::for_browser_session(); restarted.configure(&root.0).unwrap();
+        assert!(restarted.status().exists); assert!(!restarted.status().unlocked);
+        assert!(restarted.get("password/old").is_err());
+        assert!(restarted.unlock(&root.0, NEW).is_err());
+        restarted.unlock(&root.0, PASSWORD).unwrap();
+        assert_eq!(restarted.get("password/old").unwrap().unwrap().as_str(), "old credential secret");
+    }
+    #[test]
+    fn recovery_invalid_password_corrupt_or_traversal_backup_preserves_current_locked() {
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.create(&root.0, PASSWORD).unwrap(); vault.put("item", "keep me").unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(vault.reset_with_password("too short").is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        let bad_id = format!("{:020}-{}", recovery_stamp().unwrap(), "e".repeat(32));
+        fs::write(recovery_path(&root.0, &bad_id).unwrap(), b"corrupt ciphertext").unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(vault.restore_recovery_backup(&bad_id, PASSWORD).is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        let missing_id = format!("{:020}-{}", recovery_stamp().unwrap(), "d".repeat(32));
+        let ids = ["../browser-vault.v1".to_owned(), "..\\browser-vault.v1".to_owned(),
+            "/tmp/arbitrary".to_owned(), String::new(), "x".repeat(100_000), format!("{bad_id}/.."),
+            format!("{bad_id}\\other"), format!("{:020}-{}", 1, "A".repeat(32)), missing_id];
+        for id in ids {
+            vault.unlock(&root.0, PASSWORD).unwrap();
+            assert!(vault.restore_recovery_backup(&id, PASSWORD).is_err());
+            assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        }
+    }
+    #[test]
+    fn recovery_missing_active_does_not_create_a_new_unlocked_vault() {
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.configure(&root.0).unwrap();
+        assert!(vault.recovery_backups().unwrap().is_empty());
+        assert!(vault.reset_with_password(PASSWORD).is_err());
+        assert!(!vault.status().exists); assert!(!vault.status().unlocked);
+        assert!(recovery_disk(&root.0).is_empty());
+    }
+    #[test]
+    fn recovery_archive_precondition_failure_never_replaces_active_or_keeps_keys() {
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.create(&root.0, PASSWORD).unwrap(); vault.put("item", "unchanged").unwrap();
+        let original = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let selected = immutable_archive(&root.0, &original).unwrap();
+        let ordinary_backup = root.0.join(format!("{FILE_NAME}.bak"));
+        fs::remove_file(&ordinary_backup).unwrap(); fs::create_dir(&ordinary_backup).unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(vault.reset_with_password("valid replacement password").is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        vault.unlock(&root.0, PASSWORD).unwrap();
+        assert!(vault.restore_recovery_backup(&selected.id, PASSWORD).is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+    }
+    #[test]
+    fn recovery_failed_publish_keeps_active_present_and_archives_are_ciphertext() {
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.create(&root.0, PASSWORD).unwrap(); vault.put("item", "original").unwrap(); vault.lock();
+        let original = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let bak = fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap();
+        let new = fresh_vault("replacement test password").unwrap(); let bytes = encode(&new, &new.secrets).unwrap();
+        let result = archive_and_replace_with(&root.0, &original, &bytes, |staged, target| {
+            assert_eq!(fs::read(target).unwrap(), original); // No remove-first gap.
+            assert_eq!(fs::read(staged).unwrap(), bytes);
+            Err(std::io::Error::new(std::io::ErrorKind::PermissionDenied, "injected publish failure"))
+        });
+        assert!(result.is_err()); assert!(!vault.status().unlocked);
+        assert_eq!(fs::read(root.0.join(FILE_NAME)).unwrap(), original);
+        assert_eq!(fs::read(root.0.join(format!("{FILE_NAME}.bak"))).unwrap(), bak);
+        let backups = vault.recovery_backups().unwrap(); assert_eq!(backups.len(), 2);
+        assert!(backups.iter().any(|b| archive_bytes(&root.0, b) == original));
+        assert!(backups.iter().any(|b| archive_bytes(&root.0, b) == bak));
+        assert!(!fs::read_dir(&root.0).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+    }
+    #[test]
+    fn repeated_resets_never_overwrite_archives_and_current_is_first() {
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.create(&root.0, PASSWORD).unwrap(); vault.put("old", "old value").unwrap();
+        let first = vault.reset_with_password("first replacement password").unwrap();
+        let prior: BTreeMap<_,_> = vault.recovery_backups().unwrap().into_iter()
+            .map(|b| (b.id.clone(), archive_bytes(&root.0, &b))).collect();
+        let current_before = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let second = vault.reset_with_password("second replacement password").unwrap();
+        let list = vault.recovery_backups().unwrap(); assert_eq!(list[0], second);
+        assert_ne!(first.id, second.id); assert_eq!(archive_bytes(&root.0, &second), current_before);
+        for (id, bytes) in prior { assert_eq!(fs::read(recovery_path(&root.0, &id).unwrap()).unwrap(), bytes); }
+        for pair in list.windows(2) {
+            assert!(pair[0].created > pair[1].created || (pair[0].created == pair[1].created && pair[0].id > pair[1].id));
+        }
+        let a = recovery_stamp().unwrap(); let b = recovery_stamp().unwrap(); assert!(b > a);
+    }
+    #[cfg(unix)]
+    #[test]
+    fn recovery_rejects_archive_and_root_symlinks_and_keeps_permissions_private() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let root = Directory::new(); let vault = VaultState::for_browser_session();
+        vault.create(&root.0, PASSWORD).unwrap(); vault.put("item", "private").unwrap();
+        let original = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let created = vault.reset_with_password("another replacement password").unwrap();
+        for backup in vault.recovery_backups().unwrap() {
+            assert_eq!(fs::metadata(recovery_path(&root.0, &backup.id).unwrap()).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+        let outside = Directory::new(); let outside_file = outside.0.join("outside"); fs::write(&outside_file, &original).unwrap();
+        let fake = format!("{:020}-{}", recovery_stamp().unwrap(), "f".repeat(32));
+        symlink(&outside_file, recovery_path(&root.0, &fake).unwrap()).unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(!vault.recovery_backups().unwrap().iter().any(|b| b.id == fake));
+        assert!(vault.restore_recovery_backup(&fake, PASSWORD).is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        assert_eq!(fs::read(&outside_file).unwrap(), original);
+        let link_root = outside.0.join("linked-root"); symlink(&root.0, &link_root).unwrap();
+        let linked = VaultState::for_browser_session(); linked.configure(&link_root).unwrap();
+        assert!(linked.reset_with_password("replacement master password").is_err());
+        assert!(linked.restore_recovery_backup(&created.id, PASSWORD).is_err());
+        assert!(!linked.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn recovery_never_follows_active_or_ordinary_backup_symlinks() {
+        use std::os::unix::fs::symlink;
+        let root = Directory::new(); let outside = Directory::new();
+        let vault = VaultState::for_browser_session(); vault.create(&root.0, PASSWORD).unwrap();
+        vault.put("item", "keep original").unwrap();
+        let original = fs::read(root.0.join(FILE_NAME)).unwrap();
+        let selected = immutable_archive(&root.0, &original).unwrap();
+        let outside_file = outside.0.join("must-not-change"); fs::write(&outside_file, &original).unwrap();
+        let bak = root.0.join(format!("{FILE_NAME}.bak")); let bak_bytes = fs::read(&bak).unwrap();
+        fs::remove_file(&bak).unwrap(); symlink(&outside_file, &bak).unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(vault.reset_with_password("new recovery password").is_err());
+        assert!(vault.restore_recovery_backup(&selected.id, PASSWORD).is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        assert_eq!(fs::read_link(&bak).unwrap(), outside_file);
+        fs::remove_file(&bak).unwrap(); fs::write(&bak, bak_bytes).unwrap();
+        let active = root.0.join(FILE_NAME); fs::remove_file(&active).unwrap(); symlink(&outside_file, &active).unwrap();
+        let before = recovery_disk(&root.0);
+        assert!(vault.reset_with_password("new recovery password").is_err());
+        assert!(vault.restore_recovery_backup(&selected.id, PASSWORD).is_err());
+        assert!(!vault.status().unlocked); assert_eq!(before, recovery_disk(&root.0));
+        assert_eq!(fs::read_link(&active).unwrap(), outside_file);
+        assert_eq!(fs::read(&outside_file).unwrap(), original);
     }
     #[test]
     fn persistence_wrong_password_and_plaintext_absence() {
