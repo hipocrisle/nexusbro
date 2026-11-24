@@ -135,9 +135,7 @@ jobs:
       impersonate_chrome: false
   process-ownership:
     if: >-
-      !(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) &&
-      !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      inputs.youtube_native_reuse == '' && (!(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     strategy:
       fail-fast: false
       matrix:
@@ -151,15 +149,11 @@ jobs:
         run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
   youtube-sources:
     if: >-
-      inputs.youtube_sources_inventory ||
-      (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+      inputs.youtube_native_reuse == '' && (inputs.youtube_sources_inventory || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)))
     uses: ./.github/workflows/youtube-sources.yml
   youtube-minimal-muxer:
     if: >-
-      (inputs.youtube_muxer_only && inputs.youtube_muxer_reuse == '') ||
-      (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
+      inputs.youtube_native_reuse == '' && ((inputs.youtube_muxer_only && inputs.youtube_muxer_reuse == '') || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)))
     needs: [youtube-media-fixture]
     uses: ./.github/workflows/youtube-muxer.yml
     with:
@@ -175,9 +169,7 @@ jobs:
       source_run: ${{ inputs.youtube_muxer_reuse }}
   security:
     if: >-
-      !(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) &&
-      !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      inputs.youtube_native_reuse == '' && (!(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -209,7 +201,8 @@ jobs:
           path: .dev-check/backend-package/
           retention-days: 14
   frontend:
-    if: github.event_name == 'workflow_dispatch' && inputs.frontend_only && !(inputs.youtube_muxer_only || inputs.youtube_sources_inventory)
+    if: >-
+      inputs.youtube_native_reuse == '' && (github.event_name == 'workflow_dispatch' && inputs.frontend_only && !(inputs.youtube_muxer_only || inputs.youtube_sources_inventory))
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
@@ -240,8 +233,7 @@ jobs:
           python3 tests/memory_bootstrap_browser.py
   youtube-media-fixture:
     if: >-
-      (inputs.youtube_muxer_only || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build)) &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      inputs.youtube_native_reuse == '' && ((inputs.youtube_muxer_only || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
@@ -269,9 +261,7 @@ jobs:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
-      !inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
-      (github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository)
+      inputs.youtube_native_reuse == '' && (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     strategy:
       fail-fast: false
       matrix:
