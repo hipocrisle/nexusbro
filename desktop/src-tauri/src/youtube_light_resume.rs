@@ -222,6 +222,13 @@ impl ResumeBook {
         entry.used = used;
         Some(entry.point.clone())
     }
+    /// Worker-only immutable copy for publishing a small RAM read snapshot.
+    pub fn points(&self) -> Vec<ResumePoint> {
+        self.entries
+            .values()
+            .map(|entry| entry.point.clone())
+            .collect()
+    }
     pub fn remove(&mut self, video: &VideoId) -> bool {
         self.entries.remove(video.as_str()).is_some()
     }
