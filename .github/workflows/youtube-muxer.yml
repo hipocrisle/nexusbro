@@ -112,6 +112,9 @@ jobs:
             .dev-check/muxer-build/package/
             .dev-check/muxer-build/*log
             .dev-check/muxer-build/verified-*.txt
+            .dev-check/muxer-build/failure-*.txt
+            .dev-check/muxer-build/failure-*.json
+            .dev-check/muxer-build/pre-execution-inventory.json
             .dev-check/muxer-build/runtime-dependencies.txt
             .dev-check/muxer-build/smoke-summary.json
             .dev-check/muxer-build/source/FFmpeg-*/ffbuild/config.log

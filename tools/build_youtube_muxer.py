@@ -86,13 +86,32 @@ def fetch(expected):
                 target.chmod(0o755 if member.mode & 0o111 else 0o644)
 
 
-def run(args, env, timeout=30):
-    # All commands fixed/trusted local source/output paths. No signed URLs.
-    result = subprocess.run([str(a) for a in args], env=env, stdin=subprocess.DEVNULL,
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
-    if len(result.stdout) + len(result.stderr) > 4 * 1024 * 1024:
-        raise ValueError('verification_output_bound')
-    if result.returncode:
+def failure_receipt(stage, stdout=b'', stderr=b'', *, returncode=None, timeout=False, os_error=False):
+    if not re.fullmatch('[a-z0-9_-]{1,48}', stage): raise ValueError('invalid_verification_stage')
+    ROOT.mkdir(parents=True, exist_ok=True)
+    # Commands have only fixed CI fixtures/local build inputs. Never store argv.
+    stdout, stderr = stdout or b'', stderr or b''
+    limit = 32 * 1024
+    (ROOT / ('failure-' + stage + '-stdout.txt')).write_bytes(stdout[:limit])
+    (ROOT / ('failure-' + stage + '-stderr.txt')).write_bytes(stderr[:limit])
+    (ROOT / ('failure-' + stage + '.json')).write_text(json.dumps(dict(
+        stage=stage, returncode=returncode, timeout=timeout, os_error=os_error,
+        stdout_bytes=len(stdout), stderr_bytes=len(stderr),
+        truncated=len(stdout)>limit or len(stderr)>limit)) + '\n')
+
+
+def run(args, env, timeout=30, *, stage):
+    try:
+        result = subprocess.run([str(a) for a in args], env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        failure_receipt(stage, error.stdout, error.stderr, timeout=True)
+        raise ValueError('native_verification_timeout') from None
+    except OSError:
+        failure_receipt(stage, os_error=True)
+        raise ValueError('native_verification_spawn_failed') from None
+    if len(result.stdout) + len(result.stderr) > 4 * 1024 * 1024 or result.returncode:
+        failure_receipt(stage, result.stdout, result.stderr, returncode=result.returncode)
         raise ValueError('native_verification_failed')
     return result.stdout + result.stderr
 
@@ -114,6 +133,26 @@ def self_test():
         except ValueError: pass
         else: raise AssertionError('wrong_license_accepted')
     assert '--enable-protocol=file,pipe' in shlex.split("--enable-protocol='file,pipe'")
+    # Exercise the actual runner without executing a native binary on DE-1.
+    import tempfile
+    from unittest.mock import patch
+    with tempfile.TemporaryDirectory() as directory, patch.dict(globals(), ROOT=Path(directory)):
+        failure = subprocess.CompletedProcess([], 7, b'o' * 40000, b'e' * 40000)
+        with patch.object(subprocess, 'run', return_value=failure):
+            try: run(['fixed-fixture'], {}, stage='stream-copy')
+            except ValueError as error: assert str(error) == 'native_verification_failed'
+            else: raise AssertionError('failed_native_accepted')
+        receipt = json.loads((ROOT / 'failure-stream-copy.json').read_text())
+        assert receipt['returncode'] == 7 and receipt['truncated'] and not receipt['timeout']
+        assert sum((ROOT / ('failure-stream-copy-' + name + '.txt')).stat().st_size for name in ('stdout', 'stderr')) == 65536
+        expired = subprocess.TimeoutExpired(['fixed-fixture'], 1, output=b'partial-out', stderr=b'partial-error')
+        with patch.object(subprocess, 'run', side_effect=expired):
+            try: run(['fixed-fixture'], {}, stage='ffprobe-streams')
+            except ValueError as error: assert str(error) == 'native_verification_timeout'
+            else: raise AssertionError('native_timeout_accepted')
+        assert json.loads((ROOT / 'failure-ffprobe-streams.json').read_text())['timeout']
+        assert 'argv' not in receipt
+
 
 
 def package(platform, media):
@@ -146,13 +185,34 @@ def package(platform, media):
     source = ROOT / 'source' / f'FFmpeg-{COMMIT}'
     for name in ('COPYING.LGPLv2.1', 'COPYING.LGPLv3', 'COPYING.GPLv2', 'COPYING.GPLv3', 'LICENSE.md'):
         shutil.copy2(source / name, bundle / 'licenses' / name)
+    verify_bundle(platform, media, bundle)
+
+
+def verify_bundle(platform, media, bundle, *, existing=False):
+    windows = platform == 'windows-x64'
+    exe = '.exe' if windows else ''
+    bundle = bundle.resolve(strict=True)
+    # A receipt is emitted BEFORE execution. This is GHA artifact provenance
+    # evidence, not approval of a product component pin.
+    inventory = []
+    total = 0
+    for path in sorted(bundle.rglob('*')):
+        if path.is_symlink(): raise ValueError('existing_package_symlink')
+        if path.is_file():
+            total += path.stat().st_size
+            if len(inventory) >= 256 or total > 512*1024*1024: raise ValueError('package_bound')
+            inventory.append(dict(filename=path.relative_to(bundle).as_posix(), bytes=path.stat().st_size, sha256=digest(path)))
+    if not inventory or len(inventory)>256 or sum(x['bytes'] for x in inventory)>512*1024*1024:
+        raise ValueError('package_bound')
+    ROOT.mkdir(parents=True, exist_ok=True)
+    (ROOT / 'pre-execution-inventory.json').write_text(json.dumps(dict(files=inventory, product_trust_approved=False), indent=2)+'\n')
     env = {k: os.environ[k] for k in ('SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR') if k in os.environ}
     env['PATH' if windows else 'LD_LIBRARY_PATH'] = str((bundle / ('bin' if windows else 'lib')).resolve())
     ffmpeg = (bundle / 'bin' / ('ffmpeg' + exe)).resolve()
     ffprobe = (bundle / 'bin' / ('ffprobe' + exe)).resolve()
     receipts = {}
     for option in ('-version', '-buildconf', '-L', '-protocols', '-demuxers', '-muxers', '-decoders', '-encoders'):
-        data = run([ffmpeg, '-hide_banner', option], env)
+        data = run([ffmpeg, '-hide_banner', option], env, stage='ffmpeg-'+option.lstrip('-'))
         (ROOT / ('verified' + option + '.txt')).write_bytes(data)
         receipts[option] = hashlib.sha256(data).hexdigest()
         if option == '-buildconf':
@@ -178,24 +238,40 @@ def package(platform, media):
     for name in ('video.webm', 'audio.webm'):
         args += ['-protocol_whitelist', 'file,pipe', '-f', 'matroska', '-i', (media / name).resolve()]
     args += ['-map', '0:v:0', '-map', '1:a:0', '-c', 'copy', '-f', 'webm', output.resolve()]
-    run(args, env, 90)
-    data = run([ffprobe, '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'matroska', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', output.resolve()], env)
-    streams = json.loads(data)['streams']
+    run(args, env, 90, stage="stream-copy")
+    data = run([ffprobe, '-v', 'error', '-protocol_whitelist', 'file,pipe', '-f', 'matroska', '-show_entries', 'stream=codec_name,codec_type', '-of', 'json', output.resolve()], env, stage='ffprobe-streams')
+    try: streams = json.loads(data)['streams']
+    except (ValueError, KeyError, TypeError):
+        failure_receipt('ffprobe-streams', data, returncode=0)
+        raise ValueError('smoke_streams_invalid') from None
     if sorted((s['codec_type'], s['codec_name']) for s in streams) != [('audio', 'opus'), ('video', 'vp9')]:
+        failure_receipt('ffprobe-streams', data, returncode=0)
         raise ValueError('smoke_codec_mismatch')
     # Protocol absent at compile time: refusal must be protocol-related, not a
     # successful connection or TLS bypass. Fixed unreachable address, no URL log.
-    denied = subprocess.run([str(ffmpeg), '-hide_banner', '-nostdin', '-i', 'http://127.0.0.1:9/refused', '-f', 'webm', '-'], env=env,
-                            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+    try:
+        denied = subprocess.run([str(ffmpeg), '-hide_banner', '-nostdin', '-i', 'http://127.0.0.1:9/refused', '-f', 'webm', '-'], env=env,
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=5)
+    except subprocess.TimeoutExpired as error:
+        failure_receipt('http-refusal', error.stdout, error.stderr, timeout=True)
+        raise ValueError('http_refusal_timeout') from None
+    except OSError:
+        failure_receipt('http-refusal', os_error=True)
+        raise ValueError('http_refusal_spawn_failed') from None
     if denied.returncode == 0 or b'Protocol not found' not in denied.stderr:
+        failure_receipt('http-refusal', denied.stdout, denied.stderr, returncode=denied.returncode)
         raise ValueError('http_not_compile_time_refused')
     # External dependencies remain visible; Windows report generated separately
     # by trusted MSVC dumpbin, Linux loader report uses controlled built files.
     if not windows:
-        report = subprocess.run(['/usr/bin/ldd', str(ffmpeg)], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
-        if report.returncode or b'not found' in report.stdout:
+        report = run(['/usr/bin/ldd', ffmpeg], env, 10, stage='runtime-dependencies')
+        if b'not found' in report:
+            failure_receipt('runtime-dependencies', report)
             raise ValueError('unresolved_runtime_library')
-        (ROOT / 'runtime-dependencies.txt').write_bytes(report.stdout + report.stderr)
+        (ROOT / 'runtime-dependencies.txt').write_bytes(report)
+    if existing:
+        (ROOT / 'smoke-summary.json').write_text(json.dumps(dict(native_smoke=True, streams=2, vp9=True, opus=True, http_refused=True, existing_artifact=True, product_trust_approved=False)) + '\n')
+        return
     files = []
     for path in sorted(bundle.rglob('*')):
         if path.is_file():
@@ -214,7 +290,8 @@ def package(platform, media):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=('fetch', 'package', 'print-configure', 'self-test'))
+    parser.add_argument('phase', choices=('fetch', 'package', 'print-configure', 'self-test', 'smoke-existing'))
+    parser.add_argument('--package-dir', type=Path)
     parser.add_argument('--source-sha256', default='')
     parser.add_argument('--platform', choices=('windows-x64', 'linux-x64'))
     parser.add_argument('--media', type=Path, default=Path('.dev-check/youtube-media-fixture'))
@@ -225,6 +302,9 @@ def main():
     if args.phase == 'fetch': fetch(args.source_sha256)
     elif args.phase == 'print-configure': print(' '.join(CONFIGURE))
     elif not args.platform: raise SystemExit('platform_required')
+    elif args.phase == 'smoke-existing':
+        if not args.package_dir: raise SystemExit('package_dir_required')
+        verify_bundle(args.platform, args.media, args.package_dir, existing=True)
     else: package(args.platform, args.media)
 
 if __name__ == '__main__':
