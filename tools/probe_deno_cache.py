@@ -191,14 +191,53 @@ def traced(command, env, cwd, trace, stdin, details=None):
     return child.returncode, stdout, len(stderr), raw
 
 
-def files_under(root):
-    if not root.is_dir(): return {}
+def files_under(root, owned=None, cache=None):
+    """Bounded fd-relative lstat inventory: never open or follow a symlink.
+    Target classification is lexical metadata, not target existence/resolution.
+    """
+    owned = owned or root
+    cache = cache or root
     found = {}
-    for n, path in enumerate(root.rglob('*')):
-        if n > 4096: raise ValueError('cache_file_bound')
-        if path.is_symlink(): raise ValueError('cache_symlink_not_followed')
-        if path.is_file(): found[str(path)] = path.stat().st_size
-    return found
+    links = dict(count=0, absolute_targets=0, relative_targets=0,
+                 inside_case_lexical=0, outside_case_lexical=0,
+                 inside_owned_lexical=0, outside_owned_lexical=0,
+                 in_requested_cache=0, numeric_targets=0,
+                 single_component_targets=0, readlink_failures=0)
+    visited = 0
+
+    def walk(directory, logical, depth):
+        nonlocal visited
+        if depth > 64: raise ValueError('cache_file_bound')
+        with os.scandir(directory) as entries:
+            for entry in entries:
+                visited += 1
+                if visited > 4096: raise ValueError('cache_file_bound')
+                path = logical / entry.name
+                info = os.stat(entry.name, dir_fd=directory, follow_symlinks=False)
+                if stat.S_ISLNK(info.st_mode):
+                    links['count'] += 1
+                    if contained(path, cache): links['in_requested_cache'] += 1
+                    try: target = os.readlink(entry.name, dir_fd=directory)
+                    except OSError:
+                        links['readlink_failures'] += 1
+                        continue
+                    absolute = os.path.isabs(target)
+                    links['absolute_targets' if absolute else 'relative_targets'] += 1
+                    if target.isdecimal(): links['numeric_targets'] += 1
+                    if '/' not in target: links['single_component_targets'] += 1
+                    lexical = Path(os.path.normpath(target if absolute else os.path.join(logical, target)))
+                    links['inside_case_lexical' if contained(lexical, root) else 'outside_case_lexical'] += 1
+                    links['inside_owned_lexical' if contained(lexical, owned) else 'outside_owned_lexical'] += 1
+                elif stat.S_ISDIR(info.st_mode):
+                    child = os.open(entry.name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+                    try: walk(child, path, depth + 1)
+                    finally: os.close(child)
+                elif stat.S_ISREG(info.st_mode):
+                    found[str(path)] = info.st_size
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try: walk(fd, root, 0)
+    finally: os.close(fd)
+    return found, links
 
 
 def environment(case):
@@ -249,15 +288,17 @@ def probe_case(base, name, deno):
     try:
         for attempt in range(2):
             diagnostic = dict(attempt=attempt + 1, completed_attempts=len(attempts))
-            before = run_step('snapshot_before', lambda: files_under(case), diagnostic)
+            before, before_links = run_step('snapshot_before', lambda: files_under(case, base, cache), diagnostic)
             trace = case / 'private.trace'
             code, output, stderr_bytes, raw = traced([deno, *FLAGS], env, case, trace, SCRIPT, diagnostic)
             receipt = run_step('trace_parse_case', lambda: scan_trace(raw, case, case, cache, before), diagnostic)
             owned_receipt = run_step('trace_parse_owned', lambda: scan_trace(raw, base, case, cache, before), diagnostic)
             run_step('trace_unlink', trace.unlink, diagnostic)
-            after = run_step('snapshot_after', lambda: files_under(case), diagnostic)
+            after, after_links = run_step('snapshot_after', lambda: files_under(case, base, cache), diagnostic)
             # Safe counts only. No filenames, cache contents, raw trace/errors.
             attempts.append(dict(exit_code=code, marker=output == MARKER, stderr_bytes=stderr_bytes,
+                                 symlinks_before=before_links, symlinks_after=after_links,
+                                 symlink_targets_classified_lexically_only=True,
                                  trace_bytes=diagnostic['trace_bytes'], trace_lines=diagnostic['trace_lines'],
                                  elapsed_ms=diagnostic['elapsed_ms'],
                                  cache_files=sum(contained(path, cache) for path in after),
@@ -283,6 +324,23 @@ def verify_component(directory, pins_path):
 
 
 def self_test():
+    with tempfile.TemporaryDirectory(prefix='nb-inventory-test-') as temporary:
+        base = Path(temporary)
+        case = base / 'case'; case.mkdir()
+        cache = case / 'cache'; cache.mkdir()
+        (cache / 'regular').write_bytes(b'static')
+        elsewhere = base / 'elsewhere'; elsewhere.mkdir()
+        (elsewhere / 'not_walked').write_bytes(b'outside_case')
+        (cache / 'inside').symlink_to(cache / 'regular')
+        (cache / 'outside').symlink_to('/outside/nonexistent-must-not-be-opened')
+        (cache / 'directory').symlink_to('../../elsewhere', target_is_directory=True)
+        (cache / 'numeric').symlink_to('12345')
+        files, links = files_under(case, base, cache)
+        assert files == {str(cache / 'regular'): 6}
+        assert links['count'] == 4 and links['in_requested_cache'] == 4
+        assert links['outside_owned_lexical'] == 1 and links['outside_case_lexical'] == 2
+        assert links['numeric_targets'] == 1 and links['readlink_failures'] == 0
+        assert str(cache) not in json.dumps(links)
     sensitive = 'PRIVATE https://secret.invalid/token /private/path'
     for exception, reason, errno in ((ValueError(sensitive), 'unclassified_value_error', None),
                                       (PermissionError(13, sensitive, sensitive), 'os_error', 13),
@@ -346,7 +404,13 @@ def main():
         # fallback cases can honestly fail or write elsewhere, which is evidence.
         positive = report['cases'][0]['attempts']
         report['positive_execution_passed'] = all(a['exit_code'] == 0 and a['marker'] for a in positive)
-        if not report['positive_execution_passed']: code = 1
+        observations = [attempt for case in report['cases'] for attempt in case['attempts']]
+        report['file_observation_passed'] = all(
+            attempt['outside_owned_successful_writes'] == 0
+            and attempt['unresolved_file_operations'] == 0
+            and attempt['symlinks_after']['readlink_failures'] == 0
+            for attempt in observations)
+        if not report['positive_execution_passed'] or not report['file_observation_passed']: code = 1
     except ProbeFailure as failure:
         report.update(observation_complete=False, probe_error=True, error_stage=stage,
                       failure=failure.public())
