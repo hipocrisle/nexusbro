@@ -1,0 +1,77 @@
+{
+  "run": 45377850365,
+  "application_source": "35ee6500c134d7bcec42bfca9b3f6127a8208a1b",
+  "conclusion": "failure",
+  "records": [
+    {
+      "native_recovery_diagnostics": {
+        "locked": true,
+        "heading": [
+          "NexusBro",
+          "\u0411\u0440\u0430\u0443\u0437\u0435\u0440 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d"
+        ],
+        "buttons": [
+          {
+            "label": "\u0420\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0431\u0440\u0430\u0443\u0437\u0435\u0440",
+            "disabled": true
+          },
+          {
+            "label": "\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 \u043a\u043e\u043f\u0438\u0438",
+            "disabled": false
+          }
+        ],
+        "alert": false,
+        "chooser": false,
+        "trace": [],
+        "ipc": [],
+        "card": [
+          430,
+          116.25,
+          420,
+          587.5
+        ],
+        "point_target": true,
+        "stage": "before-restore-click",
+        "archive_count": 2,
+        "archive_ids_valid": true
+      }
+    },
+    {
+      "native_recovery_diagnostics": {
+        "locked": true,
+        "heading": [
+          "NexusBro",
+          "\u0411\u0440\u0430\u0443\u0437\u0435\u0440 \u0437\u0430\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u043d"
+        ],
+        "buttons": [
+          {
+            "label": "\u0420\u0430\u0437\u0431\u043b\u043e\u043a\u0438\u0440\u043e\u0432\u0430\u0442\u044c \u0431\u0440\u0430\u0443\u0437\u0435\u0440",
+            "disabled": true
+          },
+          {
+            "label": "\u0412\u043e\u0441\u0441\u0442\u0430\u043d\u043e\u0432\u0438\u0442\u044c \u0438\u0437 \u043a\u043e\u043f\u0438\u0438",
+            "disabled": false
+          }
+        ],
+        "alert": false,
+        "chooser": false,
+        "trace": [],
+        "ipc": [],
+        "card": [
+          430,
+          116.25,
+          420,
+          587.5
+        ],
+        "point_target": true,
+        "stage": "chooser-missing",
+        "archive_count": 2,
+        "archive_ids_valid": true
+      }
+    },
+    {
+      "failed_native_vault_reset_and_restore": true,
+      "success": false
+    }
+  ]
+}

@@ -1,0 +1,117 @@
+{
+  "run": 45380238877,
+  "source": "35ee6500c134d7bcec42bfca9b3f6127a8208a1b",
+  "test_head": "8de4020529757fdabbb2cbf4d6a4292c0ff3c180",
+  "artifact_id": 14915120097,
+  "source_result": "windows-background/results.json",
+  "checks": {
+    "schema": 1,
+    "measurement_completed": true,
+    "optimized": false,
+    "requested": {
+      "supers": 2,
+      "tabs_per_super": 2,
+      "saved_tabs_per_super": 2,
+      "saved_tabs_total": 4,
+      "visited_tabs_total": 4
+    },
+    "background_throttle_acceptance": [
+      {
+        "phase": "warm_active",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_active",
+        "actual_reports": 5,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_active",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_active",
+        "actual_reports": 6,
+        "expected_visible": true,
+        "max_raf_hz": 64,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_minimized",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_minimized",
+        "actual_reports": 5,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_minimized",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_minimized",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 10
+      },
+      {
+        "phase": "warm_restored",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 11
+      },
+      {
+        "phase": "warm_restored",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 11
+      },
+      {
+        "phase": "warm_restored",
+        "actual_reports": 6,
+        "expected_visible": false,
+        "max_raf_hz": 0,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 11
+      },
+      {
+        "phase": "warm_restored",
+        "actual_reports": 6,
+        "expected_visible": true,
+        "max_raf_hz": 64,
+        "complete_trusted_trace": true,
+        "covered_full_seconds": 11
+      }
+    ]
+  }
+}

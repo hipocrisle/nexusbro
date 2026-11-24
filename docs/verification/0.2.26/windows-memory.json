@@ -1,0 +1,143 @@
+{
+  "run": 45380238877,
+  "source": "35ee6500c134d7bcec42bfca9b3f6127a8208a1b",
+  "test_head": "8de4020529757fdabbb2cbf4d6a4292c0ff3c180",
+  "artifact_id": 14913647702,
+  "source_result": "windows-memory/results.json",
+  "checks": {
+    "schema": 2,
+    "automatic_only": true,
+    "completed": true,
+    "normal_policy_minutes": 30,
+    "isolated_idle_seconds": 8,
+    "checks": [
+      {
+        "saved_tabs_lazy_without_page_requests": true
+      },
+      {
+        "default_automatic_on_normal_30_minutes_without_settings_mutation": true
+      },
+      {
+        "active_download_retained_without_manual_exception": true
+      },
+      {
+        "manual_memory_commands_absent_from_actual_tab_menus": true
+      },
+      {
+        "active_heap_retained_beyond_idle_interval": true,
+        "active_seconds": 10.0
+      },
+      {
+        "actual_automatic_two_phase_close": true,
+        "drop_private_bytes": 236777472,
+        "isolated_idle_seconds": 8,
+        "normal_policy_minutes": 30
+      },
+      {
+        "only_heap_automatically_closed_legacy_exception_ignored": true
+      },
+      {
+        "pinned_loading_devtools_draft_private_active_and_paused_download_retained": true
+      },
+      {
+        "actual_unsaved_draft_preserved_without_exception": true
+      },
+      {
+        "automatic_same_row_wake_cookie_storage_scroll_preserved": true
+      }
+    ],
+    "coverage": {
+      "beforeunload_refusal": "actual_automatic_refusal_and_retry",
+      "user_close_during_sleep": "not_executed",
+      "automatic_unload": "actual_native_two_phase_auto_close_private_commit_drop_and_wake",
+      "fake_capture": "not_executed_no_fake_capture_interface",
+      "media": "actual_html_playing_paused_webaudio_clocks_and_local_rtc_retained_across_native_minimize"
+    },
+    "media_clock_proofs": {
+      "before": {
+        "MemoryAudio": {
+          "page": "MemoryAudio",
+          "reason": "start",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 0,
+          "duration": 120,
+          "paused": false,
+          "ready_state": 4,
+          "received_seconds": 15.812999999999988
+        },
+        "MemoryAudioPaused": {
+          "page": "MemoryAudioPaused",
+          "reason": "pause",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 0.024949,
+          "duration": 120,
+          "paused": true,
+          "ready_state": 4,
+          "received_seconds": 16.797000000000025
+        },
+        "MemoryWebAudio": {
+          "page": "MemoryWebAudio",
+          "reason": "start",
+          "trusted": true,
+          "kind": "webaudio",
+          "current_time": 0.020317460317460317,
+          "context_state": "running",
+          "received_seconds": 17.735000000000014
+        },
+        "MemoryRTC": {
+          "page": "MemoryRTC",
+          "reason": "start",
+          "trusted": true,
+          "kind": "rtc",
+          "connection_state": "new",
+          "signaling_state": "stable",
+          "received_seconds": 18.656000000000063
+        }
+      },
+      "after": {
+        "MemoryAudio": {
+          "page": "MemoryAudio",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 54.498531,
+          "duration": 120,
+          "paused": false,
+          "ready_state": 4,
+          "received_seconds": 70.34400000000005
+        },
+        "MemoryAudioPaused": {
+          "page": "MemoryAudioPaused",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "html",
+          "current_time": 0.024949,
+          "duration": 120,
+          "paused": true,
+          "ready_state": 4,
+          "received_seconds": 71.03100000000006
+        },
+        "MemoryWebAudio": {
+          "page": "MemoryWebAudio",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "webaudio",
+          "current_time": 53.910929705215416,
+          "context_state": "running",
+          "received_seconds": 71.64099999999996
+        },
+        "MemoryRTC": {
+          "page": "MemoryRTC",
+          "reason": "snapshot",
+          "trusted": true,
+          "kind": "rtc",
+          "connection_state": "new",
+          "signaling_state": "stable",
+          "received_seconds": 72.25
+        }
+      }
+    }
+  }
+}

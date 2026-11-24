@@ -1,0 +1,33 @@
+{
+  "run": 45371512784,
+  "application_source": "35ee6500c134d7bcec42bfca9b3f6127a8208a1b",
+  "core_harness_passed": 68,
+  "core_harness_failed": 0,
+  "recovery_test_lines": [
+    "secure_vault::tests::recovery_failed_publish_keeps_active_present_and_archives_are_ciphertext ... ok",
+    "secure_vault::tests::recovery_missing_active_does_not_create_a_new_unlocked_vault ... ok",
+    "secure_vault::tests::recovery_archive_precondition_failure_never_replaces_active_or_keeps_keys ... ok",
+    "secure_vault::tests::recovery_rejects_archive_and_root_symlinks_and_keeps_permissions_private ... ok",
+    "secure_vault::tests::recovery_never_follows_active_or_ordinary_backup_symlinks ... ok",
+    "secure_vault::tests::repeated_resets_never_overwrite_archives_and_current_is_first ... ok",
+    "secure_vault::tests::recovery_invalid_password_corrupt_or_traversal_backup_preserves_current_locked ... ok",
+    "secure_vault::tests::reset_empty_then_restore_old_preserves_both_passwords_and_restart_lock ... ok"
+  ],
+  "harness_summaries": [
+    "ok. 43 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 7.15s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.46s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 29 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.02s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+    "ok. 68 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 17.26s",
+    "ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+  ],
+  "unique_recovery_tests_passed": 8
+}
