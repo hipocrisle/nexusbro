@@ -1078,10 +1078,10 @@ impl Rabota {
                         let descriptor=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate()).ok_or("Путь вкладки недоступен")?;
                         if k.routes.borrow().key_for_browser(browser.identifier()).as_deref()!=Some(descriptor.key.as_str()){return Err("Путь вкладки изменился");}
                         let directory=std::env::args().find_map(|a|a.strip_prefix("--nb-youtube-components=").map(std::path::PathBuf::from)).ok_or("Компоненты YouTube недоступны")?;
-                        let resume=crate::cef_youtube_resume::setup(browser,&descriptor.key,tab.privatnaya||*force_private)?;
+                        let resume=crate::cef_youtube_resume::setup(browser,&descriptor.key,tab.privatnaya||*force_private).ok();
                         let sender=tx.clone();
                         crate::youtube_light_jobs::spawn(browser.identifier(),url,tab.route_generation,
-                            move||{crate::youtube_light_resume_service::prepare(resume.0,resume.1).map_err(|_|"Не удалось прочитать позицию просмотра")?;crate::youtube_light_components::load(&directory)},video,descriptor,
+                            move||{if let Some((scope,root))=resume{let _=crate::youtube_light_resume_service::prepare(scope,root);}crate::youtube_light_components::load(&directory)},video,descriptor,
                             move|ready|sender.send(Sobytie::YoutubeReady(ready)).is_ok())?;
                         Ok(())
                     })();
@@ -1108,8 +1108,8 @@ impl Rabota {
                             if crate::youtube_light::VideoId::from_url(&actual).ok().map(|v|v.watch_url()).as_deref()==Some(ready.source_url.as_str()){
                                 let result=ready.result.as_ref().map_err(|e|*e).and_then(|data|{
                                     let key=k.routes.borrow().key_for_browser(browser.identifier()).ok_or("Путь вкладки недоступен")?;
-                                    let resume=crate::cef_youtube_resume::setup(browser,&key,tab.privatnaya||*force_private)?;
-                                    crate::cef_youtube::open_webm(browser,ready.operation,data,Some(resume))?;
+                                    let resume=crate::cef_youtube_resume::setup(browser,&key,tab.privatnaya||*force_private).ok();
+                                    crate::cef_youtube::open_webm(browser,ready.operation,data,resume)?;
                                     if let (Some(document),Some(duration),Some(route))=(crate::cef_youtube::current_document(browser.identifier()),data.metadata.duration_seconds(),k.routes.borrow().descriptor(&tab.route)){
                                         let sender=tx.clone();
                                         if let Err(error)=crate::youtube_light_aux::start(browser.identifier(),ready.operation,document.clone(),data.metadata.id().clone(),duration as f64,route,move|ready|sender.send(Sobytie::YoutubeAuxReady(ready)).is_ok()){crate::cef_youtube::apply_aux(browser,crate::youtube_light_aux::Ready{browser:browser.identifier(),operation:ready.operation,document,segments:None,dislikes:None,segment_error:Some(error),rating_error:Some(error)});}

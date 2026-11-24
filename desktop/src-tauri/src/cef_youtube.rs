@@ -233,17 +233,18 @@ pub fn open_webm(
             .ok_or("Плеер закрыт")?
             .logical_url = Some(data.metadata.id().watch_url());
     }
-    let position = if let Some((scope, root)) = resume {
+    let restored = if let Some((scope, root)) = resume {
         crate::cef_youtube_resume::attach(
             browser,
             url.clone(),
             scope,
             root,
             data.metadata.id().clone(),
-        )?
+        ).ok()
     } else {
-        0.0
+        None
     };
+    let position = restored.unwrap_or(0.0);
     let mut qualities: Vec<_> = data
         .formats
         .iter()
@@ -258,7 +259,7 @@ pub fn open_webm(
         .collect();
     qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
     let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
-    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"position":position,"source":data.metadata.id().watch_url()});
+    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"position":position,"resume_available":restored.is_some(),"source":data.metadata.id().watch_url()});
     let json = zeroize::Zeroizing::new(
         serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
     );

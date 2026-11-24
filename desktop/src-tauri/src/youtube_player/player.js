@@ -140,7 +140,7 @@
       audio.addEventListener('loadedmetadata', restore);
       video.muted = separate; video.src = config.video;
       if (separate) audio.src = config.audio;
-      button.disabled = false; setStatus('Готово к воспроизведению'); return true;
+      button.disabled = false; setStatus(config.resume_available === false ? 'Готово к воспроизведению · сохранение позиции недоступно' : 'Готово к воспроизведению'); return true;
     },
     setAux(data) {
       if (disposed || !configured || !data) return;
