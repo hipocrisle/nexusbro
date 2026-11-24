@@ -27,7 +27,32 @@ SUPER='features-a'
 CAPTION=b'WEBVTT\n\n00:00.000 --> 02:00.000\n[NEXUSBRO CAPTION FIXTURE]\n'
 
 
+SAFE_FIELDS={'configured','disposed','playing','separate','hidden','video_paused','audio_paused','position','audio_position','duration','skew','decoded','dropped','video_width','video_height','caption_selected','caption_cues','caption_active','caption_showing','fullscreen'}
+
+def safe_state(value):
+    return {k:v for k,v in value.items() if k in SAFE_FIELDS and (type(v)is bool or type(v)in(int,float) and math.isfinite(v))}
+
+
+def input_observation(device):
+    receipt={}
+    try:receipt['shell_has_focus']=device.client.js('document.hasFocus()') is True
+    except Exception:receipt['shell_focus_unavailable']=True
+    if sys.platform.startswith('linux'):
+        try:
+            env={**os.environ,'DISPLAY':device.display}
+            xid=subprocess.check_output(['xdotool','getwindowfocus'],env=env,text=True,stderr=subprocess.DEVNULL,timeout=2).strip()
+            pid=int(subprocess.check_output(['xdotool','getwindowpid',xid],env=env,text=True,stderr=subprocess.DEVNULL,timeout=2).strip())
+            import psutil
+            owner=psutil.Process(device.app.pid)
+            receipt['native_focus_role']='shell' if pid==owner.pid else 'owned_child' if pid in {p.pid for p in owner.children(recursive=True)} else 'other'
+        except Exception:receipt['native_focus_unavailable']=True
+    return receipt
+
+
 def keys(device,*sequence):
+    trace=getattr(device,'feature_keys',None)
+    if trace is None:trace=[];device.feature_keys=trace
+    if len(trace)<32:trace.append({'keys':[key if key in {'Tab','shift+Tab','space','Home','End','Return','enter','Escape','esc'} else 'other' for key in sequence[:12]],'before':input_observation(device)})
     if sys.platform=='win32':
         import pyautogui as gui
         for key in sequence:
@@ -55,7 +80,15 @@ def focus_steps(target):
     return ('Tab' if delta>0 else 'shift+Tab',abs(delta))
 
 
-def snapshot(client,tab):return observe(client,SUPER,tab)
+def snapshot(client,tab):
+    value=observe(client,SUPER,tab)
+    diagnostics=getattr(client,'feature_diagnostics',None)
+    if diagnostics is not None:
+        clean=safe_state(value);diagnostics['observations']=diagnostics.get('observations',0)+1;diagnostics['last_snapshot']=clean
+        transitions=diagnostics.setdefault('state_transitions',[])
+        signature={key:clean.get(key) for key in ('video_width','video_height','playing','video_paused','audio_paused','caption_selected','fullscreen')}
+        if len(transitions)<8 and (not transitions or transitions[-1]['signature']!=signature):transitions.append({'signature':signature,'state':clean})
+    return value
 
 
 def caption_pixels(client,device):
@@ -142,6 +175,7 @@ def run(args):
         call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_fixture','id':tab})
         initial=wait_for(lambda:(lambda s:s if s.get('configured') and s.get('video_width')==640 and s.get('video_height')==360 else None)(observe(client,SUPER,tab,admitting=True)),'Initial high geometry missing',35)
         require(not initial['playing'],'Feature fixture autoplayed');diagnostics={}
+        report['feature_diagnostics']=diagnostics;diagnostics['initial_snapshot']=safe_state(initial);client.feature_diagnostics=diagnostics
         report['stage']='quality-paused'
         # Two explicit native Play clicks establish real focus and restore pause
         # intent before changing quality; no playback starts due to the change.
@@ -205,6 +239,7 @@ def run(args):
             else:os.environ[name]=value
         try:shutil.rmtree(root)
         except OSError:cleanup=False
+        if device and getattr(device,'feature_keys',None):report['physical_keys']=device.feature_keys
         report['cleanup_completed']=cleanup
         if not cleanup:report['completed']=False;code=1
         (out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
@@ -212,6 +247,7 @@ def run(args):
 
 
 def self_test():
+    require(safe_state({'url':'secret','duration':float('nan'),'playing':True,'video_width':640})=={'playing':True,'video_width':640},'Diagnostic field filtering failed')
     require(focus_steps('quality')==('Tab',2) and focus_steps('fullscreen')==('Tab',4) and focus_steps('captions')==('shift+Tab',6),'Feature focus sequence mismatch')
     from PIL import Image
     black=Image.new('RGB',(100,100),'black');white=black.copy();white.putpixel((50,50),(255,255,255))
