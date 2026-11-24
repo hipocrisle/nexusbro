@@ -998,6 +998,12 @@ impl Rabota {
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
+                Sobytie::Komanda(Komanda::HibernatePrepare{request})=>{
+                    let token=crate::super_hibernation_protocol::Token{generation:request.scope.generation,attempt:request.scope.attempt,revision:request.revision};
+                    let frame=crate::super_hibernation_protocol::Frame::Refused{token,reason:"not_integrated".into()};
+                    println!("NB-HIBERNATE {}",serde_json::to_string(&frame)?);std::io::stdout().flush()?;continue;
+                }
+                Sobytie::Komanda(Komanda::HibernateCommit{..}|Komanda::HibernateAbort{..}|Komanda::HibernateFinalAck{..})=>{continue;}
                 Sobytie::Komanda(Komanda::OknoNovoe{label:new_label,parent,x,y,w,h,privatnaya,sessiya})=>{
                     if !label.is_empty()||extras.contains_key(&new_label){continue;}
                     if closed_labels.contains(&new_label){println!("NB-UI {}",serde_json::json!({"tip":"okno-closed","label":new_label}));std::io::stdout().flush()?;continue;}
