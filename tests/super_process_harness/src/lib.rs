@@ -379,3 +379,169 @@ mod native_linux_tests {
         std::fs::remove_dir_all(dir).unwrap();
     }
 }
+
+// Disposable Windows GitHub runner only. Re-exec the same fixture binary;
+// verify Job inheritance and actual descendant liveness after launcher exit.
+#[cfg(all(test, target_os = "windows"))]
+mod native_windows_tests {
+    use super::owner::*;
+    use std::{
+        io::{BufRead, BufReader, Read, Write},
+        os::windows::process::CommandExt,
+        path::PathBuf,
+        process::Stdio,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
+    use windows::Win32::System::Threading::CREATE_BREAKAWAY_FROM_JOB;
+    fn profile() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "nexusbro-owned-job-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&dir).unwrap();
+        dir
+    }
+    fn command() -> OwnedCommand {
+        let mut command = OwnedCommand::new_current_exe().unwrap();
+        command
+            .args([
+                "--exact",
+                "native_windows_tests::job_fixture",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("NB_OWNED_JOB_FIXTURE", "parent")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit());
+        command
+    }
+    fn launcher_exited(owner: &mut ProcessOwner) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            if owner.try_wait().unwrap().is_some() {
+                return;
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    fn exited(owner: &mut ProcessOwner) {
+        let deadline = Instant::now() + Duration::from_secs(15);
+        loop {
+            match owner.probe() {
+                ExitProbe::Exited => return,
+                ExitProbe::Unknown(reason) => panic!("job ownership unavailable: {reason:?}"),
+                ExitProbe::Alive { .. } => {}
+            }
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    }
+    fn leaf_started(owner: &mut ProcessOwner) {
+        let mut output = BufReader::new(owner.take_stdout().unwrap());
+        let mut line = String::new();
+        loop {
+            line.clear();
+            assert!(output.read_line(&mut line).unwrap() > 0);
+            if line.contains("LEAF_STARTED ") {
+                break;
+            }
+        }
+        assert!(line.contains("BREAKAWAY_DENIED"));
+    }
+    #[test]
+    fn job_fixture() {
+        let Ok(mode) = std::env::var("NB_OWNED_JOB_FIXTURE") else {
+            return;
+        };
+        if mode == "leaf" {
+            let mut byte = [0];
+            let _ = std::io::stdin().read(&mut byte).unwrap();
+            return;
+        }
+        assert_eq!(mode, "parent");
+        let exe = std::env::current_exe().unwrap();
+        let blocked = std::process::Command::new(&exe)
+            .args([
+                "--exact",
+                "native_windows_tests::job_fixture",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("NB_OWNED_JOB_FIXTURE", "leaf")
+            .creation_flags(CREATE_BREAKAWAY_FROM_JOB.0)
+            .spawn();
+        assert!(
+            blocked.is_err(),
+            "fresh owned Job incorrectly permitted breakaway"
+        );
+        let leaf = std::process::Command::new(exe)
+            .args([
+                "--exact",
+                "native_windows_tests::job_fixture",
+                "--nocapture",
+                "--test-threads=1",
+            ])
+            .env("NB_OWNED_JOB_FIXTURE", "leaf")
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .unwrap();
+        println!("LEAF_STARTED {} BREAKAWAY_DENIED", leaf.id());
+        std::io::stdout().flush().unwrap();
+        // Job ownership survives the original Child's real exit. Child Drop
+        // neither waits nor terminates the leaf; the parent owner must find it.
+        drop(leaf);
+        std::process::exit(0);
+    }
+    #[test]
+    fn suspended_spawn_job_tracks_descendant_after_root_exit_then_graceful_eof() {
+        let dir = profile();
+        let lease = ProfileLease::acquire(&dir).unwrap();
+        let mut owner = ProcessOwner::spawn_owned(command(), lease).unwrap();
+        assert_eq!(owner.hibernation_admission(), Ok(()));
+        let root = owner.identity().unwrap();
+        assert_eq!(owner.id(), root.pid);
+        let input = owner.take_stdin().unwrap();
+        leaf_started(&mut owner);
+        launcher_exited(&mut owner);
+        assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
+        assert!(ProfileLease::acquire(&dir).is_err());
+        owner = owner.complete().unwrap_err();
+        assert!(ProfileLease::acquire(&dir).is_err());
+        drop(input);
+        exited(&mut owner);
+        owner.complete().unwrap();
+        drop(ProfileLease::acquire(&dir).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+    #[test]
+    fn explicit_user_termination_keeps_lease_until_entire_job_exit() {
+        let dir = profile();
+        let lease = ProfileLease::acquire(&dir).unwrap();
+        let mut owner = ProcessOwner::spawn_owned(command(), lease).unwrap();
+        assert_eq!(owner.hibernation_admission(), Ok(()));
+        let input = owner.take_stdin().unwrap();
+        leaf_started(&mut owner);
+        launcher_exited(&mut owner);
+        assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
+        assert!(ProfileLease::acquire(&dir).is_err());
+        match owner.terminate_explicit() {
+            Ok(()) => {}
+            Err(mut retained) => {
+                assert!(ProfileLease::acquire(&dir).is_err());
+                exited(&mut retained);
+                retained.complete().unwrap();
+            }
+        }
+        drop(input);
+        drop(ProfileLease::acquire(&dir).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+}

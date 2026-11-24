@@ -9,13 +9,13 @@
 //!    escape; unknown kernel/architecture fails spawn. Ordinary adopt() remains
 //!    unproven. This is lifecycle containment, NOT a replacement for CEF's
 //!    security sandbox or protection against external privileged actors.
-//! 3. Windows normal Child adoption is post-spawn and cannot exclude assignment
-//!    races. For proof, native CreateProcessW(CREATE_SUSPENDED) must return Child
-//!    plus its ORIGINAL primary-thread OwnedHandle. unsafe adopt_suspended checks
-//!    its PID, assigns a fresh no-breakaway Job, then ResumeThread; count must be
-//!    exactly one. Never use NtResumeProcess or discover arbitrary thread IDs.
-//!    Existing std Command::spawn does NOT expose the primary-thread handle, so
-//!    cannot satisfy this API by merely adding CREATE_SUSPENDED.
+//! 3. Windows spawn_owned internally adds CREATE_SUSPENDED. With its process
+//!    handle pinned and unsignaled it enumerates EXACTLY one owned thread,
+//!    pins/verifies its owner+creation identity, assigns a fresh no-breakaway
+//!    Job, rechecks identities/liveness, then ResumeThread must return one.
+//!    Ordinary adopt remains unproven. No NtResumeProcess is used.
+//!    Linux spawn MUST run on a persistent launcher THREAD: PDEATHSIG follows
+//!    the creating thread's lifetime, not merely the application PID.
 //! 4. Send graceful stop via existing IPC. Poll probe, never use timeout/EOF,
 //!    window disappearance, Child::try_wait alone, or kill as exit evidence.
 //!    Only complete() after Exited releases the lease; failed complete returns
@@ -153,11 +153,11 @@ impl ProfileLease {
 /// Builder intentionally hides std::Command: an earlier user pre_exec could
 /// fork an escaping writer before our filter. Only this app's own executable
 /// can be spawned; CEF/test helper arguments remain the caller's responsibility.
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 pub struct OwnedCommand {
     command: std::process::Command,
 }
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "windows"))]
 impl OwnedCommand {
     pub fn new_current_exe() -> io::Result<Self> {
         Ok(Self {
@@ -220,13 +220,15 @@ impl std::fmt::Debug for ProcessOwner {
     }
 }
 impl ProcessOwner {
-    /// Sole safe origin of Linux containment proof. On spawn/pre_exec failure
-    /// std reaps its failed child before returning; the unadopted lease drops.
-    #[cfg(target_os = "linux")]
+    /// Sole safe builder origin of containment proof. Linux pre_exec failure
+    /// makes std reap its failed child before returning. Windows post-spawn
+    /// validation failures return an owner with Unknown admission, keeping the
+    /// suspended process and lease for explicit cleanup, never a replacement.
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
     pub fn spawn_owned(mut command: OwnedCommand, lease: ProfileLease) -> io::Result<Self> {
         platform::configure(&mut command.command)?;
-        let child = command.command.spawn()?;
-        let tracker = platform::Tracker::contained(&child);
+        let mut child = command.command.spawn()?;
+        let tracker = platform::Tracker::contained(&mut child);
         Ok(Self {
             owned: Some(Owned {
                 child,
@@ -237,6 +239,33 @@ impl ProcessOwner {
     }
     pub fn pid(&self) -> Option<u32> {
         self.owned.as_ref().map(|o| o.child.id())
+    }
+    pub fn id(&self) -> u32 {
+        self.owned
+            .as_ref()
+            .expect("owner already completed")
+            .child
+            .id()
+    }
+    /// Launcher-only status, NEVER tree-exit or permission to release routes.
+    pub fn try_wait(&mut self) -> io::Result<Option<std::process::ExitStatus>> {
+        let owned = self
+            .owned
+            .as_mut()
+            .ok_or_else(|| io::Error::other("owner completed"))?;
+        owned.tracker.try_wait(&mut owned.child)
+    }
+    /// USER explicit close/startup-failure only. Never invoke for hibernation or
+    /// because a timer expired. Err returns the full owner for a retained reaper;
+    /// it does NOT release network resources, lease, or fabricate an exit ACK.
+    pub fn terminate_explicit(mut self) -> Result<(), Self> {
+        let Some(owned) = self.owned.as_mut() else {
+            return Err(self);
+        };
+        if owned.tracker.terminate(&mut owned.child).is_err() {
+            return Err(self);
+        }
+        self.complete()
     }
     pub fn take_stdin(&mut self) -> Option<std::process::ChildStdin> {
         self.owned.as_mut()?.child.stdin.take()
@@ -478,10 +507,100 @@ mod platform {
                 root_exited: false,
             }
         }
-        pub fn contained(child: &Child) -> Self {
+        pub fn contained(child: &mut Child) -> Self {
             let mut tracker = Self::adopt(child);
             tracker.proven = true;
             tracker
+        }
+        pub fn try_wait(
+            &mut self,
+            child: &mut Child,
+        ) -> io::Result<Option<std::process::ExitStatus>> {
+            let status = child.try_wait()?;
+            if status.is_some() {
+                self.root_exited = true;
+            }
+            Ok(status)
+        }
+        pub fn terminate(&mut self, child: &mut Child) -> io::Result<()> {
+            if !self.proven {
+                return Err(io::Error::other("unproven ownership"));
+            }
+            // Never signal a recycled numeric process group after reaping its
+            // leader. Use durable pidfds for each freshly verified member.
+            let entries = std::fs::read_dir("/proc")?;
+            let mut signaled = 0usize;
+            for (scanned, entry) in entries.enumerate() {
+                if scanned >= MAX_PROCESSES {
+                    return Err(io::Error::other("process bound"));
+                }
+                let entry = entry?;
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|n| n.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                let path = entry.path().join("stat");
+                let raw = match std::fs::read_to_string(&path) {
+                    Ok(raw) => raw,
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e),
+                };
+                let stat = parse_proc_stat(&raw)
+                    .ok_or_else(|| io::Error::other("invalid process identity"))?;
+                if stat.group != self.group || matches!(stat.state, b'Z' | b'X' | b'x') {
+                    continue;
+                }
+                signaled += 1;
+                if signaled > MAX_OWNED {
+                    return Err(io::Error::other("owned process bound"));
+                }
+                use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
+                let raw_fd = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+                if raw_fd < 0 {
+                    let e = io::Error::last_os_error();
+                    if e.raw_os_error() == Some(libc::ESRCH) {
+                        continue;
+                    }
+                    return Err(e);
+                }
+                let fd = unsafe { OwnedFd::from_raw_fd(raw_fd as i32) };
+                let after = match std::fs::read_to_string(&path) {
+                    Ok(raw) => parse_proc_stat(&raw),
+                    Err(e) if e.kind() == io::ErrorKind::NotFound => continue,
+                    Err(e) => return Err(e),
+                };
+                if after.is_none_or(|s| s.identity != stat.identity || s.group != self.group) {
+                    return Err(io::Error::other("process identity changed"));
+                }
+                if self
+                    .known
+                    .get(&pid)
+                    .is_some_and(|birth| *birth != stat.identity.created)
+                {
+                    return Err(io::Error::other("process identity reused"));
+                }
+                let result = unsafe {
+                    libc::syscall(
+                        libc::SYS_pidfd_send_signal,
+                        fd.as_raw_fd(),
+                        libc::SIGKILL,
+                        std::ptr::null::<libc::siginfo_t>(),
+                        0,
+                    )
+                };
+                if result != 0 {
+                    let e = io::Error::last_os_error();
+                    if e.raw_os_error() != Some(libc::ESRCH) {
+                        return Err(e);
+                    }
+                }
+            }
+            // Nonblocking: reaper keeps calling probe; a timeout is never exit.
+            let _ = self.try_wait(child)?;
+            Ok(())
         }
         pub fn identity(&self) -> Option<ProcessIdentity> {
             self.root
@@ -604,9 +723,71 @@ mod platform {
     use super::*;
     use std::os::windows::io::{AsRawHandle, FromRawHandle, OwnedHandle};
     use windows::Win32::{
-        Foundation::{FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
-        System::{JobObjects::*, Threading::*},
+        Foundation::{ERROR_NO_MORE_FILES, FILETIME, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT},
+        System::{Diagnostics::ToolHelp::*, JobObjects::*, Threading::*},
     };
+    pub fn configure(command: &mut std::process::Command) -> io::Result<()> {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(CREATE_SUSPENDED.0);
+        Ok(())
+    }
+    fn thread_id(pid: u32) -> Option<u32> {
+        unsafe {
+            let raw = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0).ok()?;
+            let snapshot = OwnedHandle::from_raw_handle(raw.0);
+            let mut entry = THREADENTRY32 {
+                dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+                ..Default::default()
+            };
+            Thread32First(handle(&snapshot), &mut entry).ok()?;
+            let mut found = None;
+            let mut count = 0usize;
+            loop {
+                count += 1;
+                if count > 32768 {
+                    return None;
+                }
+                if entry.th32OwnerProcessID == pid {
+                    if found.is_some() {
+                        return None;
+                    }
+                    found = Some(entry.th32ThreadID);
+                }
+                entry.dwSize = std::mem::size_of::<THREADENTRY32>() as u32;
+                if let Err(error) = Thread32Next(handle(&snapshot), &mut entry) {
+                    if error.code() != windows::core::HRESULT::from_win32(ERROR_NO_MORE_FILES.0) {
+                        return None;
+                    }
+                    break;
+                }
+            }
+            found
+        }
+    }
+    fn thread_identity(thread: &OwnedHandle) -> Option<(u32, u64)> {
+        unsafe {
+            let pid = GetProcessIdOfThread(handle(thread));
+            if pid == 0 {
+                return None;
+            }
+            let mut created = FILETIME::default();
+            let mut exit = FILETIME::default();
+            let mut kernel = FILETIME::default();
+            let mut user = FILETIME::default();
+            GetThreadTimes(
+                handle(thread),
+                &mut created,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+            .ok()?;
+            Some((
+                pid,
+                ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64,
+            ))
+        }
+    }
     pub struct Tracker {
         root: Option<ProcessIdentity>,
         job: Option<OwnedHandle>,
@@ -656,6 +837,91 @@ mod platform {
         }
     }
     impl Tracker {
+        pub fn contained(child: &mut Child) -> Self {
+            let mut tracker = Self {
+                root: identity(child),
+                job: job(),
+                thread: None,
+                proven: false,
+                failure: Some(UnknownReason::IdentityUnavailable),
+            };
+            let Some(root) = tracker.root else {
+                return tracker;
+            };
+            if unsafe { GetProcessId(handle(child)) } != root.pid
+                || child.try_wait().ok() != Some(None)
+                || unsafe { WaitForSingleObject(handle(child), 0) } != WAIT_TIMEOUT
+            {
+                return tracker;
+            }
+            let Some(tid) = thread_id(root.pid) else {
+                return tracker;
+            };
+            let Ok(raw) = (unsafe {
+                OpenThread(
+                    THREAD_QUERY_LIMITED_INFORMATION | THREAD_SUSPEND_RESUME,
+                    false,
+                    tid,
+                )
+            }) else {
+                return tracker;
+            };
+            let thread = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+            let Some(birth) = thread_identity(&thread) else {
+                return tracker;
+            };
+            if birth.0 != root.pid || birth.1 < root.created || thread_id(root.pid) != Some(tid) {
+                return tracker;
+            }
+            tracker.thread = Some(thread);
+            if tracker.job.as_ref().is_none_or(|job| unsafe {
+                AssignProcessToJobObject(handle(job), handle(child)).is_err()
+            }) {
+                tracker.failure = Some(UnknownReason::AssignmentFailed);
+                return tracker;
+            }
+            if identity(child) != Some(root)
+                || unsafe { GetProcessId(handle(child)) } != root.pid
+                || child.try_wait().ok() != Some(None)
+                || unsafe { WaitForSingleObject(handle(child), 0) } != WAIT_TIMEOUT
+                || thread_id(root.pid) != Some(tid)
+                || thread_identity(tracker.thread.as_ref().unwrap()) != Some(birth)
+            {
+                return tracker;
+            }
+            let previous = unsafe { ResumeThread(handle(tracker.thread.as_ref().unwrap())) };
+            if previous != 1 {
+                tracker.failure = Some(UnknownReason::ResumeFailed);
+                return tracker;
+            }
+            tracker.proven = true;
+            tracker.failure = None;
+            tracker
+        }
+        pub fn try_wait(
+            &mut self,
+            child: &mut Child,
+        ) -> io::Result<Option<std::process::ExitStatus>> {
+            child.try_wait()
+        }
+        pub fn terminate(&mut self, child: &mut Child) -> io::Result<()> {
+            // USER/startup failure path only; retained Job covers descendants.
+            // Even if assignment failed, stop the exact held root handle; probe
+            // remains Unknown and retains the lease until containment is proven.
+            if let Some(job) = self.job.as_ref() {
+                let _ = unsafe { TerminateJobObject(handle(job), 1) };
+            }
+            match child.kill() {
+                Ok(()) => {}
+                Err(e) => {
+                    if child.try_wait()?.is_none() {
+                        return Err(e);
+                    }
+                }
+            }
+            let _ = child.try_wait()?;
+            Ok(())
+        }
         pub fn adopt(child: &Child) -> Self {
             let mut tracker = Self {
                 root: identity(child),
@@ -763,6 +1029,18 @@ mod platform {
     impl Tracker {
         pub fn adopt(_: &Child) -> Self {
             Self
+        }
+        pub fn try_wait(
+            &mut self,
+            child: &mut Child,
+        ) -> io::Result<Option<std::process::ExitStatus>> {
+            child.try_wait()
+        }
+        pub fn terminate(&mut self, _: &mut Child) -> io::Result<()> {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "process owner unsupported",
+            ))
         }
         pub fn identity(&self) -> Option<ProcessIdentity> {
             None
