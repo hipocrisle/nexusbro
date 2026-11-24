@@ -875,20 +875,33 @@ def run(args):
                     tracks={r['track'] for r in fixture.receipts if r['lane']==lane};direct=fixture.direct
                     range_count=sum(r['range'] for r in fixture.receipts if r['lane']==lane)
                 require(tracks=={'video','audio'} and direct==0,'Media bypassed actual selected route')
-                report['stage']='background-rewind-'+lane
-                # Re-establish real range focus after inspector observations.
-                # physical() checks actual native paint and its LAST operation
-                # is the trusted seek click. No inspector call precedes Home.
-                physical(client,device,'seek',report['player_diagnostics'])
-                if sys.platform=='win32':
-                    import pyautogui
-                    pyautogui.press('home')
-                else:
-                    subprocess.run(['xdotool','key','Home'],env={**os.environ,'DISPLAY':device.display},check=True,timeout=5)
-                wait_for(lambda:observe(client,identifier,tab,diagnostics=report['player_diagnostics'])['position']<2,'Physical rewind failed',10)
-                report['stage']='background-resume-'+lane
+                report['stage']='background-new-fixture-'+lane
+                browser_before=next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)
+                setup={'lane':lane,'explicit_new_fixture_admission':False,'same_native_browser':False,
+                       'initial_paused':False,'home_keyboard_tested':False,
+                       'baseline_physical_seek_delta':round(abs(seek['position']-still['position']),3)}
+                report['player_diagnostics'].setdefault('background_setup',[]).append(setup)
+                # Baseline pause/physical seek remains independently checked.
+                # A fresh actual document provides a full 120-second background
+                # budget without claiming Linux native range Home support.
+                if sys.platform.startswith('linux'):client.js('window.__playerFixtureResults=[];true')
+                call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
+                if sys.platform.startswith('linux'):linux_fixture_ack(client,identifier,tab,report['player_diagnostics'])
+                setup['explicit_new_fixture_admission']=True
+                fresh=wait_for(lambda:(lambda state:state if state.get('configured') and not state.get('disposed')
+                        and not state.get('playing') and state['position']<2 and state['audio_position']<2 else None)
+                        (observe(client,identifier,tab,admitting=True,diagnostics=report['player_diagnostics'])),
+                        'Fresh background fixture did not start paused at the beginning',30)
+                setup.update(initial_paused=True,initial_position=fresh['position'],initial_audio_position=fresh['audio_position'])
+                setup['same_native_browser']=next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)==browser_before
+                require(setup['same_native_browser'],'Fresh background fixture replaced native browser')
+                report['stage']='background-play-'+lane
                 physical(client,device,'play',report['player_diagnostics'])
-                wait_for(lambda:observe(client,identifier,tab,diagnostics=report['player_diagnostics']).get('playing'),'Background test requires actual playback',10)
+                played=wait_for(lambda:(lambda state:state if state.get('playing') and state['decoded']>=3
+                        and state['audio_position']>fresh['audio_position']+.5 and state['position']>fresh['position']+.5 else None)
+                        (observe(client,identifier,tab,diagnostics=report['player_diagnostics'])),
+                        'Background test requires actual playback',25)
+                setup.update(explicit_play_count=1,decoded=played['decoded'],audio_advance=played['audio_position']-fresh['audio_position'])
                 report['stage']='background-tab-'+lane
                 report['checks'].append(background_receipt(client,device,identifier,tab,
                     lambda:click_control(client,'.obychnaya[data-id="2"]',15),
@@ -951,6 +964,8 @@ def run(args):
                'Background playback browser changed':'background_browser_changed',
                'Background test requires actual playback':'background_not_playing',
                'Physical rewind failed':'rewind_failed',
+               'Fresh background fixture did not start paused at the beginning':'background_fresh_not_paused',
+               'Fresh background fixture replaced native browser':'background_fresh_browser_changed',
                'Privacy native ownership schema invalid':'privacy_ownership_schema',
                'Privacy native ownership incomplete':'privacy_ownership_incomplete',
                'Privacy native process identity invalid':'privacy_identity_invalid',
