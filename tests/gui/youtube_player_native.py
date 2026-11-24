@@ -178,11 +178,22 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
     cases.append(case);started=time.monotonic()
     fields={'configured','disposed','playing','separate','position','audio_position','duration','skew',
             'decoded','dropped','video_width','video_height'}
+    visibility_fields={'hidden','video_paused','audio_paused'}
     def snapshot_record(phase,state):
         require(len(case['snapshots'])<8,'Background diagnostic snapshot bound exceeded')
-        safe={key:value for key,value in state.items() if key in fields and
-              (type(value) is bool or type(value) in (int,float) and math.isfinite(value))}
-        case['snapshots'].append({'phase':phase,'elapsed_ms':round((time.monotonic()-started)*1000),'state':safe})
+        safe={key:value for key,value in state.items() if
+              (key in fields and (type(value) is bool or type(value) in (int,float) and math.isfinite(value)))
+              or (key in visibility_fields and type(value) is bool)}
+        extended=all(type(state.get(key)) is bool for key in visibility_fields)
+        frame={'phase':phase,'elapsed_ms':round((time.monotonic()-started)*1000),
+               'state':safe,'extended_state_available':extended}
+        if case['snapshots']:
+            previous_frame=case['snapshots'][-1]
+            frame.update(decoded_delta=state['decoded']-previous_frame['state']['decoded'],
+                         audio_delta=round(state['audio_position']-previous_frame['state']['audio_position'],6),
+                         wall_delta_ms=frame['elapsed_ms']-previous_frame['elapsed_ms'])
+        case['extended_state_available']=case.get('extended_state_available',True) and extended
+        case['snapshots'].append(frame)
     before=observe(client,identifier,tab,diagnostics=diagnostics)
     snapshot_record('before',before)
     row_before=next(r for r in rows(client,identifier)['vkladki'] if r['id']==tab)
@@ -208,6 +219,9 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
             snapshot_record('hidden',current)  # Retained even when this assertion fails.
             case['snapshots'][-1]['rows']=row_record()
             case['last_audio_delta']=round(current['audio_position']-previous,6)
+            case['hidden_decoded_delta']=current['decoded']-before['decoded']
+            case['hidden_audio_delta']=round(current['audio_position']-before['audio_position'],6)
+            case['observed_hidden_seconds']=round((case['snapshots'][-1]['elapsed_ms']-case['snapshots'][0]['elapsed_ms'])/1000,3)
             require(not current.get('disposed') and current['audio_position']>previous+.5,
                     'Background audio froze or paused')
             # Chromium may suspend hidden video decoding. No hidden video-growth assertion.
@@ -227,7 +241,8 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
     require(sum(a!=b for a,b in zip(paint_before,paint_after))>30,'Actual OS video paint did not change')
     row_after=next(r for r in rows(client,identifier)['vkladki'] if r['id']==tab)
     require(row_before['browser_id']==row_after['browser_id'],'Background playback browser changed')
-    return {'name':kind,'wall_seconds':12,'audio_samples':6,
+    return {'name':kind,'wall_seconds':case['observed_hidden_seconds'],'nominal_sleep_seconds':12,'audio_samples':6,
+            'hidden_decoded_delta':case['hidden_decoded_delta'],'extended_state_available':case['extended_state_available'],
             'audio_advance':round(samples[-1]-before['audio_position'],3),
             'return_decoded_advance':after['decoded']-first['decoded'],
             'return_skew':after['skew'],'return_paint_changed':True,
@@ -492,7 +507,10 @@ def observe(client, identifier, tab, *, admitting=False, diagnostics=None):
     state=value['data']['state']
     if diagnostics is not None:
         fields={'configured','disposed','playing','separate','position','audio_position','duration','skew','decoded','dropped','video_width','video_height'}
-        diagnostics['last_snapshot']={key:v for key,v in state.items() if key in fields and type(v) in (bool,int,float)}
+        visibility_fields={'hidden','video_paused','audio_paused'}
+        diagnostics['extended_state_available']=all(type(state.get(key)) is bool for key in visibility_fields)
+        diagnostics['last_snapshot']={key:v for key,v in state.items() if
+                key in fields and type(v) in (bool,int,float) or key in visibility_fields and type(v) is bool}
     return state
 
 
