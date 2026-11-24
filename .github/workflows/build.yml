@@ -111,6 +111,7 @@ jobs:
       impersonate_chrome: ${{ inputs.youtube_probe_chrome }}
   process-ownership:
     if: >-
+      !(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) &&
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     strategy:
@@ -144,6 +145,7 @@ jobs:
       source_run: ${{ inputs.youtube_muxer_reuse }}
   security:
     if: >-
+      !(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) &&
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-22.04
@@ -177,7 +179,7 @@ jobs:
           path: .dev-check/backend-package/
           retention-days: 14
   frontend:
-    if: github.event_name == 'workflow_dispatch' && inputs.frontend_only
+    if: github.event_name == 'workflow_dispatch' && inputs.frontend_only && !(inputs.youtube_muxer_only || inputs.youtube_sources_inventory)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
