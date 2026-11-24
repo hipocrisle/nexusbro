@@ -23,6 +23,8 @@ CONFIGURE = [
     '--enable-shared', '--disable-static', '--enable-ffmpeg', '--enable-ffprobe',
     '--disable-ffplay', '--enable-protocol=file,pipe',
     '--enable-demuxer=matroska', '--enable-muxer=webm', '--enable-parser=vp9,opus',
+    # WebM's VP9 stream-copy path auto-inserts this filter even without decoding.
+    '--enable-bsf=vp9_superframe',
 ]
 
 def digest(path):
@@ -86,7 +88,7 @@ def fetch(expected):
                 target.chmod(0o755 if member.mode & 0o111 else 0o644)
 
 
-def failure_receipt(stage, stdout=b'', stderr=b'', *, returncode=None, timeout=False, os_error=False):
+def failure_receipt(stage, stdout=b'', stderr=b'', *, returncode=None, timeout=False, os_error=False, errno=None):
     if not re.fullmatch('[a-z0-9_-]{1,48}', stage): raise ValueError('invalid_verification_stage')
     ROOT.mkdir(parents=True, exist_ok=True)
     # Commands have only fixed CI fixtures/local build inputs. Never store argv.
@@ -95,7 +97,7 @@ def failure_receipt(stage, stdout=b'', stderr=b'', *, returncode=None, timeout=F
     (ROOT / ('failure-' + stage + '-stdout.txt')).write_bytes(stdout[:limit])
     (ROOT / ('failure-' + stage + '-stderr.txt')).write_bytes(stderr[:limit])
     (ROOT / ('failure-' + stage + '.json')).write_text(json.dumps(dict(
-        stage=stage, returncode=returncode, timeout=timeout, os_error=os_error,
+        stage=stage, returncode=returncode, timeout=timeout, os_error=os_error, errno=errno,
         stdout_bytes=len(stdout), stderr_bytes=len(stderr),
         truncated=len(stdout)>limit or len(stderr)>limit)) + '\n')
 
@@ -107,8 +109,8 @@ def run(args, env, timeout=30, *, stage):
     except subprocess.TimeoutExpired as error:
         failure_receipt(stage, error.stdout, error.stderr, timeout=True)
         raise ValueError('native_verification_timeout') from None
-    except OSError:
-        failure_receipt(stage, os_error=True)
+    except OSError as error:
+        failure_receipt(stage, os_error=True, errno=error.errno)
         raise ValueError('native_verification_spawn_failed') from None
     if len(result.stdout) + len(result.stderr) > 4 * 1024 * 1024 or result.returncode:
         failure_receipt(stage, result.stdout, result.stderr, returncode=result.returncode)
@@ -133,6 +135,7 @@ def self_test():
         except ValueError: pass
         else: raise AssertionError('wrong_license_accepted')
     assert '--enable-protocol=file,pipe' in shlex.split("--enable-protocol='file,pipe'")
+    assert '--enable-bsf=vp9_superframe' in CONFIGURE
     # Exercise the actual runner without executing a native binary on DE-1.
     import tempfile
     from unittest.mock import patch
@@ -152,6 +155,13 @@ def self_test():
             else: raise AssertionError('native_timeout_accepted')
         assert json.loads((ROOT / 'failure-ffprobe-streams.json').read_text())['timeout']
         assert 'argv' not in receipt
+        with patch.object(subprocess, 'run', side_effect=PermissionError(13, 'private-path-not-published')):
+            try: run(['fixed-fixture'], {}, stage='ffmpeg-version')
+            except ValueError as error: assert str(error) == 'native_verification_spawn_failed'
+            else: raise AssertionError('spawn_failure_accepted')
+        denied = (ROOT / 'failure-ffmpeg-version.json').read_text()
+        assert json.loads(denied)['errno'] == 13 and 'private-path' not in denied
+
 
 
 
@@ -210,6 +220,14 @@ def verify_bundle(platform, media, bundle, *, existing=False):
     env['PATH' if windows else 'LD_LIBRARY_PATH'] = str((bundle / ('bin' if windows else 'lib')).resolve())
     ffmpeg = (bundle / 'bin' / ('ffmpeg' + exe)).resolve()
     ffprobe = (bundle / 'bin' / ('ffprobe' + exe)).resolve()
+    if existing and not windows:
+        # GitHub artifact ZIP transport does not preserve Unix executable mode.
+        # Only these two trusted inventoried fixed binaries may regain u+x.
+        for executable in (ffmpeg, ffprobe):
+            if not executable.is_file() or executable.parent != bundle / 'bin':
+                raise ValueError('existing_executable_invalid')
+            executable.chmod(executable.stat().st_mode | 0o100)
+
     receipts = {}
     for option in ('-version', '-buildconf', '-L', '-protocols', '-demuxers', '-muxers', '-decoders', '-encoders'):
         data = run([ffmpeg, '-hide_banner', option], env, stage='ffmpeg-'+option.lstrip('-'))
@@ -255,8 +273,8 @@ def verify_bundle(platform, media, bundle, *, existing=False):
     except subprocess.TimeoutExpired as error:
         failure_receipt('http-refusal', error.stdout, error.stderr, timeout=True)
         raise ValueError('http_refusal_timeout') from None
-    except OSError:
-        failure_receipt('http-refusal', os_error=True)
+    except OSError as error:
+        failure_receipt('http-refusal', os_error=True, errno=error.errno)
         raise ValueError('http_refusal_spawn_failed') from None
     if denied.returncode == 0 or b'Protocol not found' not in denied.stderr:
         failure_receipt('http-refusal', denied.stdout, denied.stderr, returncode=denied.returncode)
