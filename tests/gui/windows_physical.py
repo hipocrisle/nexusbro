@@ -1064,6 +1064,7 @@ try:
     recovery_password='native-recovery-password-'+secrets.token_hex(12)
     recovery_title='VaultRecoveryCredentialFixture'
     recovery_sensitive=[browser_master,recovery_master,recovery_login,recovery_password]
+    recovery_stage='save-original-credential'
     try:
         ui('Меню NexusBro',['Button']).click_input()
         ui('Пароли, аккаунт и синхронизация',['MenuItem','Button']).click_input()
@@ -1120,6 +1121,7 @@ try:
                 time.sleep(.1)
             raise AssertionError('Invalid recovery password was not rejected on screen')
 
+        recovery_stage='initial-lock-before-reset-cancel'
         recovery_lock();before_cancel=recovery_files()
         recovery_control('Забыли мастер-пароль?',['Button']).click_input()
         recovery_fill('Новый мастер-пароль',recovery_master)
@@ -1127,6 +1129,7 @@ try:
         recovery_fill('Подтверждение сброса','НЕ СБРАСЫВАТЬ',unicode=True)
         reset_buttons=[x for x in uia_descendants(win) if x.element_info.name=='Сбросить хранилище' and x.element_info.control_type=='Button']
         assert reset_buttons and not reset_buttons[0].is_enabled(),'Reset enabled without exact confirmation'
+        recovery_stage='cancel-reset-back-to-lock'
         recovery_control('Назад',['Button']).click_input()
         recovery_control('Мастер-пароль для разблокировки браузера',['Edit'])
         assert recovery_files()==before_cancel,'Cancelled reset changed protected files'
@@ -1149,6 +1152,7 @@ try:
         results.append({'native_vault_reset_confirmation_cancel_exact_cipher_archive_empty_vault_no_account':True})
 
         # A real new process must demand the new master; old master cannot open it.
+        recovery_stage='close-reset-app'
         prior_children=psutil.Process(app.pid).children(recursive=True)
         deadline=time.monotonic()+25
         while app.poll() is None and time.monotonic()<deadline:
@@ -1166,6 +1170,7 @@ try:
                 if '--nb-dvizhok' in args or any(arg.startswith('--type=') for arg in args):writers.append(process.pid)
             except psutil.NoSuchProcess:pass
         assert not writers,'Old native profile writer survived the normal reset restart'
+        recovery_stage='restart-reset-app-locked'
         recovery_requests_before_restart=len(storage_reports)
         app=subprocess.Popen([str(pathlib.Path(a.exe).resolve())],env={**env,'NEXUSBRO_PROBA':'0'})
         deadline=time.monotonic()+30
@@ -1179,32 +1184,40 @@ try:
         time.sleep(.6)
         assert len(storage_reports)==recovery_requests_before_restart,'Reset startup loaded sites before the new master password'
         before_wrong=recovery_files()
+        recovery_stage='reject-old-master-after-reset'
         recovery_fill('Мастер-пароль для разблокировки браузера',browser_master)
         recovery_control('Разблокировать браузер',['Button']).click_input();recovery_wait_error()
         assert recovery_files()==before_wrong,'Wrong old master modified the new vault'
+        recovery_stage='unlock-new-master-after-reset'
         recovery_fill('Мастер-пароль для разблокировки браузера',recovery_master)
         recovery_control('Разблокировать браузер',['Button']).click_input()
         ui('Адрес страницы',['Edit','ComboBox'])
         results.append({'native_vault_reset_restart_requires_new_master_rejects_old_master':True})
 
+        recovery_stage='relock-after-reset-restart'
         recovery_lock();current_ciphertext=active_vault.read_bytes();before_restore=recovery_files()
+        recovery_stage='open-backup-before-wrong-master'
         recovery_control('Восстановить из копии',['Button']).click_input();recovery_choose_original()
+        recovery_stage='reject-wrong-copy-master'
         recovery_fill('Мастер-пароль выбранной копии',recovery_master)
         recovery_control('Восстановить хранилище',['Button']).click_input();recovery_wait_error()
         time.sleep(2.2)  # Require the authoritative lock-status poll to agree.
         recovery_control('Мастер-пароль выбранной копии',['Edit'])
         assert recovery_files()==before_restore,'Wrong restore password changed protected files'
+        recovery_stage='cancel-copy-restore-back-to-lock'
         recovery_control('Назад',['Button']).click_input()
         recovery_control('Мастер-пароль для разблокировки браузера',['Edit'])
         assert recovery_files()==before_restore,'Cancelled restore changed protected files'
         results.append({'native_wrong_vault_restore_and_cancel_stay_locked_with_exact_files':True})
 
+        recovery_stage='restore-original-copy'
         recovery_control('Восстановить из копии',['Button']).click_input();recovery_choose_original()
         recovery_fill('Мастер-пароль выбранной копии',browser_master)
         recovery_control('Восстановить хранилище',['Button']).click_input()
         ui('Адрес страницы',['Edit','ComboBox'])
         assert any(path.read_bytes()==current_ciphertext for path in security_root.glob('browser-vault.v1.recovery-*')),'Restoring old archive did not preserve the new vault ciphertext'
         ui('Меню NexusBro',['Button']).click_input();ui('Пароли, аккаунт и синхронизация',['MenuItem','Button']).click_input()
+        recovery_stage='verify-restored-secret'
         ui('Показать пароль: '+recovery_title,['Button']).click_input()
         recovered_value=None
         try:
@@ -1225,9 +1238,17 @@ try:
             assert all(secret.encode() not in raw and secret.encode() not in payload for secret in recovery_sensitive),'Recovery files contain a plaintext fixture credential'
         results.append({'native_vault_restore_old_master_returns_saved_secret_and_archives_replaced_new_cipher':True})
     except Exception as recovery_error:
+        import traceback
+        # Preserve the originating helper and call site without persisting frame
+        # locals, source expressions, input values or the unredacted UIA dump.
+        frames=[{'file':pathlib.Path(frame.filename).name,'line':frame.lineno,'function':frame.name}
+                for frame in traceback.extract_tb(recovery_error.__traceback__)
+                if pathlib.Path(frame.filename).name=='windows_physical.py']
+        results.append({'native_vault_recovery_failure':{'stage':recovery_stage,
+                        'exception':type(recovery_error).__name__,'caller_frames':frames}})
         message=str(recovery_error)
         for secret in recovery_sensitive:message=message.replace(secret,'[synthetic credential redacted]')
-        raise AssertionError(message) from None
+        raise AssertionError('Vault recovery stage '+recovery_stage+': '+message).with_traceback(recovery_error.__traceback__) from None
     results.append({'success': True})
 finally:
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
