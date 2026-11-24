@@ -265,7 +265,8 @@ def foreground(device):
 class Sampler:
     def __init__(self, root_pid, destination, memory_cap):
         self.root = psutil.Process(root_pid)
-        self.identity = (self.root.pid, self.root.create_time())
+        self.root_clock = 'windows_filetime' if sys.platform=='win32' else 'linux_ticks'
+        self.root_birth = kernel_birth(self.root.pid,self.root_clock)
         self.destination, self.cap = destination, memory_cap
         self.previous = {}
         self.samples = []
@@ -280,7 +281,7 @@ class Sampler:
         self.thread = threading.Thread(target=self.run, daemon=True)
 
     def sample(self):
-        require((self.root.pid, self.root.create_time()) == self.identity and self.root.is_running(), 'Soak app root exited')
+        require(kernel_birth(self.root.pid,self.root_clock)==self.root_birth and self.root.is_running(), 'Soak app root exited')
         totals = collections.Counter()
         parent = None
         with self.guard:
