@@ -139,7 +139,7 @@ jobs:
           & 7z x -y $installers[0].FullName '-o.dev-check/reuse-installed' *> .dev-check/reuse-private/extraction.txt
           if ($LASTEXITCODE -ne 0) { throw 'installer_extract_failed' }
           $env:REUSE_INSTALLER = $installers[0].FullName
-          python -c "import hashlib,json,os,pathlib; p=pathlib.Path('.dev-check/youtube-native-reuse/provenance.json'); d=json.loads(p.read_text()); root=pathlib.Path('.dev-check/reuse-installed'); paths={'installer_sha256':pathlib.Path(os.environ['REUSE_INSTALLER']),'exe_sha256':root/'nexusbro.exe','components_manifest_sha256':root/'binaries/youtube-light/components.json'}; d.update({k:hashlib.file_digest(v.open('rb'),'sha256').hexdigest() for k,v in paths.items()}); d['same_installed_app_for_both_fixtures']=True; p.write_text(json.dumps(d,indent=2)+'\n')"
+          python -c "import hashlib,json,os,pathlib; p=pathlib.Path('.dev-check/youtube-native-reuse/provenance.json'); d=json.loads(p.read_text()); root=pathlib.Path('.dev-check/reuse-installed'); paths={'installer_sha256':pathlib.Path(os.environ['REUSE_INSTALLER']),'exe_sha256':root/'nexusbro.exe'}; d.update({k:hashlib.file_digest(v.open('rb'),'sha256').hexdigest() for k,v in paths.items()}); manifest=root/'binaries/youtube-light/components.json'; present=manifest.is_file(); d['components_manifest_present']=present; d['components_manifest_sha256']=hashlib.file_digest(manifest.open('rb'),'sha256').hexdigest() if present else None; d['download_prerequisite_present']=present; d['same_installed_app_for_both_fixtures']=True; pathlib.Path(os.environ['GITHUB_OUTPUT']).open('a').write('components_present='+str(present).lower()+'\n'); p.write_text(json.dumps(d,indent=2)+'\n')"
           if ($LASTEXITCODE -ne 0) { throw 'installed_identity_failed' }
       - name: Install existing Windows physical GUI fixture dependencies
         id: dependencies
@@ -153,7 +153,7 @@ jobs:
           exit $LASTEXITCODE
       - name: Latest controlled download fixture on same installer DIAGNOSTIC
         id: download
-        if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
+        if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success' && steps.installed.outputs.components_present == 'true'
         timeout-minutes: 12
         shell: pwsh
         run: |
