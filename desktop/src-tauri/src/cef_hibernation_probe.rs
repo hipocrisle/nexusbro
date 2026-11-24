@@ -113,6 +113,11 @@ fn close(browser: Browser, state: Arc<State>) -> anyhow::Result<()> {
     drop(browser);
     Ok(())
 }
+fn stage(name: &'static str) -> anyhow::Result<()> {
+    println!("NB-PROBE {}", serde_json::json!({"stage":name}));
+    std::io::stdout().flush()?;
+    Ok(())
+}
 /// Called after CEF initialization, before ordinary app browser creation.
 /// Success returns only after all browser callbacks, cookie flush and ref drops.
 pub fn run(
@@ -124,6 +129,7 @@ pub fn run(
             && std::env::var_os("NEXUSBRO_TEST_DATA").is_some(),
         "Probe requires disposable test runner"
     );
+    stage("input")?;
     let mut input = Zeroizing::new(Vec::new());
     let count = std::io::stdin()
         .lock()
@@ -150,6 +156,7 @@ pub fn run(
         EphemeralKey::from_base64(&plan.key).map_err(|_| anyhow::anyhow!("Probe key refused"))?;
     let route = bootstrap.inherit.clone();
     let mut registry = crate::cef_route_context::Registry::new(root, bootstrap, false)?;
+    stage("context")?;
     let mut context = None;
     let mut context_error = false;
     wait(|| match registry.prepare(&route, false) {
@@ -165,26 +172,33 @@ pub fn run(
     anyhow::ensure!(!context_error, "Probe context refused");
     let mut context = context.unwrap();
     // This blank carrier is the only browser before authenticated readback.
+    stage("anchor")?;
     let (anchor, anchor_state) = browser(&mut context, "about:blank")?;
     if let Some(sealed) = &plan.sealed {
+        stage("open")?;
         let clear = super_cookie_escrow::open(&plan.scope, &key, sealed)
             .map_err(|_| anyhow::anyhow!("Probe envelope refused"))?;
+        stage("parse")?;
         let expected = CookieSnapshot::from_cdp_result(&clear)
             .map_err(|_| anyhow::anyhow!("Probe snapshot refused"))?;
+        stage("restore")?;
         let _ = reply(
             Pending::restore(&anchor, &expected)
                 .map_err(|_| anyhow::anyhow!("Probe restore refused"))?,
         )?;
+        stage("readback")?;
         let actual =
             reply(Pending::get(&anchor).map_err(|_| anyhow::anyhow!("Probe readback refused"))?)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
+        stage("verify")?;
         expected
             .verify_readback_at(&actual, now)
             .map_err(|_| anyhow::anyhow!("Probe readback differs"))?;
         println!("NB-PROBE {{\"readback_before_navigation\":true}}");
         std::io::stdout().flush()?;
+        stage("admission")?;
         let mut admission = Vec::new();
         std::io::stdin()
             .lock()
@@ -192,16 +206,22 @@ pub fn run(
             .read_until(b'\n', &mut admission)?;
         anyhow::ensure!(admission == b"ADMIT\n", "Probe admission refused");
     }
+    stage("target")?;
     let (target, target_state) = browser(&mut context, &plan.url)?;
+    stage("target_close")?;
     close(target, target_state)?;
     // Origin page is gone before final capture; carrier has no origin script.
+    stage("cookie_capture")?;
     let clear =
         reply(Pending::get(&anchor).map_err(|_| anyhow::anyhow!("Probe snapshot unavailable"))?)?;
     let snapshot = CookieSnapshot::from_cdp_result(&clear)
         .map_err(|_| anyhow::anyhow!("Probe cookie schema unsupported"))?;
+    stage("seal")?;
     let sealed = super_cookie_escrow::seal(&plan.scope, &key, &snapshot.canonical_bytes())
         .map_err(|_| anyhow::anyhow!("Probe sealing refused"))?;
+    stage("anchor_close")?;
     close(anchor, anchor_state)?;
+    stage("flush")?;
     let done = Arc::new(AtomicBool::new(false));
     let manager = context
         .cookie_manager(None)
@@ -214,6 +234,7 @@ pub fn run(
     drop(manager);
     drop(context);
     drop(registry);
+    stage("complete")?;
     // No clear cookie or key is logged; encrypted frame stays on parent pipe.
     println!(
         "NB-PROBE {}",
