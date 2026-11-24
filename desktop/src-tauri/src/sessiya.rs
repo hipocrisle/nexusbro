@@ -61,6 +61,8 @@ pub enum Komanda {
     YoutubeLight { id:u64 },
     #[serde(rename="youtube_snapshot")]
     YoutubeSnapshot { id:u64 },
+    YoutubeReferenceSnapshot { id:u64, video_id:String },
+    YoutubeDecodeSnapshot { id:u64, video_id:String },
     #[serde(rename="youtube_fixture")]
     YoutubeFixture { id:u64 },
     YoutubeResumeFixture { id:u64 },

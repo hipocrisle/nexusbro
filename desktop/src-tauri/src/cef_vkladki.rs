@@ -1112,6 +1112,30 @@ impl Rabota {
                     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":false,"error":result.err()})));
                     continue;
                 }
+                Sobytie::Komanda(Komanda::YoutubeReferenceSnapshot{id,video_id})=>{
+                    let result=(||->Result<(),&'static str>{
+                        if *browser_locked||*closing||id!=s.aktivnaya{return Err("benchmark_unavailable");}
+                        let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("benchmark_tab_busy")?;
+                        if tab.privatnaya||*force_private{return Err("benchmark_private_not_supported");}
+                        let browser=brauzery.get(&id).ok_or("benchmark_browser_missing")?;
+                        let expected=crate::youtube_light::VideoId::parse(&video_id).map_err(|_|"benchmark_video_invalid")?;
+                        crate::cef_youtube_benchmark::request_reference(browser,id,&expected,tx.clone())
+                    })();
+                    if let Err(code)=result{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-reference-state","id":id,"error":"Нативное наблюдение недоступно","code":code})));}
+                    continue;
+                }
+                Sobytie::Komanda(Komanda::YoutubeDecodeSnapshot{id,video_id})=>{
+                    let result=(||->Result<(),&'static str>{
+                        if *browser_locked||*closing||id!=s.aktivnaya{return Err("benchmark_unavailable");}
+                        let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("benchmark_tab_busy")?;
+                        if tab.privatnaya||*force_private{return Err("benchmark_private_not_supported");}
+                        let browser=brauzery.get(&id).ok_or("benchmark_browser_missing")?;
+                        let expected=crate::youtube_light::VideoId::parse(&video_id).map_err(|_|"benchmark_video_invalid")?;
+                        crate::cef_youtube_benchmark::request_decode(browser,id,&expected,tx.clone())
+                    })();
+                    if let Err(code)=result{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-decode-state","id":id,"error":"Нативное наблюдение недоступно","code":code})));}
+                    continue;
+                }
                 Sobytie::Komanda(Komanda::YoutubeSnapshot{id})=>{
                     let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(|b|crate::cef_youtube::request_probe(b,id,tx.clone()));
                     if let Err(code)=result{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-state","id":id,"error":"Состояние плеера недоступно","code":code})));}

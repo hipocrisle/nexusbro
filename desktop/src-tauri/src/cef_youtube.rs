@@ -289,6 +289,7 @@ pub fn open_webm(
 }
 
 pub fn on_navigation(browser: i32, target: &str) {
+    crate::cef_youtube_benchmark::cancel(browser);
     crate::cef_youtube_resume_fixture::cancel(browser);
     retire_stop_probe(browser);
     if let Ok(mut hints)=reload_hints().lock(){hints.navigated(browser,target);}
@@ -351,6 +352,7 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
 }
 pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>) {
     let identity=browser.identifier();
+    crate::cef_youtube_benchmark::cancel(identity);
     crate::cef_youtube_resume_fixture::cancel(identity);
     let binding=documents().0.lock().ok().and_then(|all|all.get(&identity).map(|g|(g.document.clone(),g.document_frame.clone())));
     // Repeated lock notifications must keep the first in-flight observation.
@@ -392,7 +394,7 @@ fn reload_hints()->&'static std::sync::Mutex<crate::youtube_light_reload::Reload
     HINTS.get_or_init(Default::default)
 }
 /// Clear on native browser close. This does not grant any document authority.
-pub fn forget_reload(browser:i32){crate::cef_youtube_resume_fixture::cancel(browser);retire_stop_probe(browser);if let Ok(mut hints)=reload_hints().lock(){hints.forget(browser);}}
+pub fn forget_reload(browser:i32){crate::cef_youtube_benchmark::cancel(browser);crate::cef_youtube_resume_fixture::cancel(browser);retire_stop_probe(browser);if let Ok(mut hints)=reload_hints().lock(){hints.forget(browser);}}
 /// ONLY for canonical reload/extractor URL normalization, never admission.
 pub fn reload_url(browser:i32,document:&str)->Option<String>{
     logical_url(browser,document).or_else(||reload_hints().lock().ok()?.video(browser,document).map(|video|video.watch_url()))
@@ -429,6 +431,7 @@ pub fn request_probe(
     })
 }
 pub fn poll_probes() {
+    crate::cef_youtube_benchmark::poll();
     poll_stop_probes();
     PROBES.with(|probes|{
         probes.borrow_mut().retain_mut(|(tab,browser,sender,probe)|{
@@ -443,6 +446,7 @@ pub fn poll_probes() {
     });
 }
 pub fn clear_probes() {
+    crate::cef_youtube_benchmark::clear();
     STOP_EPOCH.with(|e|e.set(e.get().wrapping_add(1)));
     STOP_PROBES.with(|p|p.borrow_mut().clear());
     PROBES.with(|p| p.borrow_mut().clear());
