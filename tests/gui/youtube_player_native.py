@@ -859,8 +859,10 @@ def run(args):
                     range_count=sum(r['range'] for r in fixture.receipts if r['lane']==lane)
                 require(tracks=={'video','audio'} and direct==0,'Media bypassed actual selected route')
                 report['stage']='background-rewind-'+lane
-                # The previous real seek leaves the native range focused. Home is
-                # a trusted keyboard action, never a scripted media mutation.
+                # Re-establish real range focus after inspector observations.
+                # physical() checks actual native paint and its LAST operation
+                # is the trusted seek click. No inspector call precedes Home.
+                physical(client,device,'seek',report['player_diagnostics'])
                 if sys.platform=='win32':
                     import pyautogui
                     pyautogui.press('home')
