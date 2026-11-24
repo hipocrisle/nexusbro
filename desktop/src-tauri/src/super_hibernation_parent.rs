@@ -22,6 +22,7 @@ pub(crate) struct Node {
     pub machine: Machine,
     last_active: Instant,
     revision: u64,
+    operation_revision: Option<u64>,
     end_generation: u64,
     pub deadline: Option<Instant>,
     pub snapshot: Option<Snapshot>,
@@ -44,6 +45,7 @@ impl Default for Node {
             machine: Machine::new_at_generation(seed.saturating_sub(1)),
             last_active: Instant::now(),
             revision: 1,
+            operation_revision: None,
             end_generation: seed
                 .saturating_add(GENERATION_RANGE - 1)
                 .min((1_u64 << 53) - 1),
@@ -192,7 +194,7 @@ impl Node {
                     if !channel_send(
                         channel,
                         sessiya::Komanda::HibernateCommit {
-                            token: token(stamp, self.revision),
+                            token: token(stamp, self.operation_revision.unwrap_or(self.revision)),
                         },
                     ) {
                         self.reason = Some("commit_channel_failed");
@@ -236,6 +238,7 @@ impl Node {
         self.snapshot = None;
         self.key = None;
         self.scope = None;
+        self.operation_revision = None;
         self.final_received = false;
         self.restored_received = false;
     }
@@ -292,7 +295,7 @@ fn snapshot_valid(node: &Node, snapshot: &Snapshot, session: Option<&sessiya::Se
     };
     if &snapshot.scope != scope
         || stamp(&snapshot.token) != node.machine.stamp()
-        || snapshot.token.revision != node.revision
+        || Some(snapshot.token.revision) != node.operation_revision
         || snapshot.scope.context_key.len() != 64
     {
         return false;
@@ -585,6 +588,7 @@ pub fn tick(app: &tauri::AppHandle) {
                             key: WireKey::new(key.wire_base64().to_string()),
                         };
                         v.hibernate.scope = Some(scope);
+                        v.hibernate.operation_revision = Some(revision);
                         v.hibernate.key = Some(key);
                         v.hibernate.final_received = false;
                         v.hibernate.reason = Some("preparing");
