@@ -9,7 +9,7 @@ use serde::Deserialize;
 use std::{
     io::{BufRead, Read, Write},
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicI32, Ordering},
         Arc,
     },
     time::{Duration, Instant},
@@ -33,6 +33,7 @@ struct State {
     loaded: AtomicBool,
     closed: AtomicBool,
     failed: AtomicBool,
+    load_error_code: AtomicI32,
     target: String,
 }
 wrap_load_handler! {
@@ -43,8 +44,14 @@ wrap_load_handler! {
       if self.state.target=="about:blank" || (200..300).contains(&status){self.state.loaded.store(true,Ordering::Release);}else{self.state.failed.store(true,Ordering::Release);}
     }
   }
-  fn on_load_error(&self,_browser:Option<&mut Browser>,frame:Option<&mut Frame>,_code:Errorcode,_text:Option<&CefString>,failed_url:Option<&CefString>){
-    if frame.is_some_and(|f|f.is_main()!=0) && failed_url.is_some_and(|url|url.to_string()==self.state.target){self.state.failed.store(true,Ordering::Release);}
+  fn on_load_error(&self,_browser:Option<&mut Browser>,frame:Option<&mut Frame>,code:Errorcode,_text:Option<&CefString>,failed_url:Option<&CefString>){
+    if frame.is_some_and(|f|f.is_main()!=0) && failed_url.is_some_and(|url|url.to_string()==self.state.target){
+      let native:cef::sys::cef_errorcode_t=code.into();let numeric=native as i32;
+      // First matching main-frame failure only. Never export URL/error text or
+      // overwrite the cause with a later cancellation during teardown.
+      if (-10000..=-1).contains(&numeric){let _=self.state.load_error_code.compare_exchange(0,numeric,Ordering::AcqRel,Ordering::Acquire);}
+      self.state.failed.store(true,Ordering::Release);
+    }
   }
  }
 }
@@ -89,6 +96,7 @@ fn browser(context: &mut RequestContext, url: &str) -> anyhow::Result<(Browser, 
         loaded: AtomicBool::new(false),
         closed: AtomicBool::new(false),
         failed: AtomicBool::new(false),
+        load_error_code: AtomicI32::new(0),
         target: url.to_owned(),
     });
     let info = WindowInfo {
@@ -113,10 +121,14 @@ fn browser(context: &mut RequestContext, url: &str) -> anyhow::Result<(Browser, 
     )
     .ok_or_else(|| anyhow::anyhow!("Probe browser refused"))?;
     wait(|| state.loaded.load(Ordering::Acquire) || state.failed.load(Ordering::Acquire))?;
-    anyhow::ensure!(
-        !state.failed.load(Ordering::Acquire),
-        "Probe page load refused"
-    );
+    if state.failed.load(Ordering::Acquire) {
+        let code = state.load_error_code.load(Ordering::Acquire);
+        if (-10000..=-1).contains(&code) {
+            println!("NB-PROBE {}", serde_json::json!({"load_error_code":code}));
+            std::io::stdout().flush()?;
+        }
+        anyhow::bail!("Probe page load refused");
+    }
     Ok((browser, state))
 }
 fn close(browser: Browser, state: Arc<State>) -> anyhow::Result<()> {

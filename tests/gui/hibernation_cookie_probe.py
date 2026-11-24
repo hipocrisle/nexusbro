@@ -252,6 +252,12 @@ class NativeRunner:
                     require(self.last_probe['stage_count']<=128,'native_progress_count_exceeded')
                     self.last_probe['last_stage']=value['stage']
                     continue
+                if set(value)=={'load_error_code'}:
+                    native_code=value['load_error_code']
+                    require(type(native_code) is int and -10000<=native_code<=-1,'native_load_error_code_invalid')
+                    require('load_error_code' not in self.last_probe,'duplicate_native_load_error')
+                    self.last_probe['load_error_code']=native_code
+                    continue
                 if set(value)=={'diagnostic'}:
                     require('cookie_diagnostic' not in self.last_probe,'duplicate_native_diagnostic')
                     self.last_probe['cookie_diagnostic']=safe_diagnostic(value['diagnostic'])
