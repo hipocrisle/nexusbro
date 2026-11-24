@@ -114,7 +114,7 @@ class Fixture:
                     with owner.lock:
                         owner.hits[(s, t)] += 1
                     if (s, t) == (0, 0):
-                        body = b'''<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#185541}button{position:fixed;left:0;top:0;width:130px;height:70px;background:rgb(123,31,162);border:0;color:white}</style><button id="start">Start media</button><script>
+                        body = b'''<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#185541}button{position:fixed;left:0;top:0;width:130px;height:70px;background:rgb(123,31,162);border:0;color:white}button span{position:absolute;left:5px;bottom:3px;font:12px sans-serif}</style><button id="start"><span>Start media</span></button><script>
 let a=null,trusted=false,played=0,last=0;function report(){if(!a)return;let n=a.currentTime;if(!a.paused){let d=n-last;if(d<0)d+=a.duration;if(d>=0&&d<4)played+=d;}last=n;fetch('/media-proof?'+new URLSearchParams({position:n,duration:Number.isFinite(a.duration)?a.duration:0,played,paused:a.paused,trusted}),{cache:'no-store'}).catch(()=>{});}
 start.onclick=async e=>{if(!e.isTrusted||a)return;trusted=true;a=new Audio('/audio.wav');a.loop=true;a.volume=.01;await a.play();setInterval(report,1000);report();};</script>'''
                     else:
@@ -262,6 +262,7 @@ def drift(samples):
 
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Soak runs only on disposable GitHub runners')
+    require(not os.environ.get('NEXUSBRO_TEST_MEMORY_IDLE_SECONDS'), 'Accelerated idle environment is forbidden in resource soak')
     require(re.fullmatch('[0-9a-f]{40}', args.source) is not None, 'Expected immutable source SHA required')
     require(re.fullmatch('[0-9a-f]{40}', args.test_source) is not None, 'Test source SHA required')
     if args.baseline:
@@ -311,27 +312,53 @@ def run(args):
         require(policy.get('memory_saver', True) is True and policy.get('memory_saver_minutes', 30) == 30, 'Normal automatic30min policy differs')
         report['normal_idle_policy_minutes'] = 30
         stage = 'native-ui-warmup'
+        initial_available = psutil.virtual_memory().available
+        memory_cap = min(args.max_memory_mb * 1024**2, int(initial_available * .75))
+        def warmup_load_guard():
+            require(device.app.poll() is None, 'Owned app exited during warmup')
+            processes = [psutil.Process(device.app.pid)]
+            processes += processes[0].children(recursive=True)
+            rss = 0
+            for process in processes:
+                try:
+                    rss += process.memory_info().rss
+                except psutil.NoSuchProcess:
+                    pass
+            require(len(processes) <= 128 and rss <= memory_cap, 'Warmup load guard exceeded')
         require(not fixture.hits, 'Cold saved fixtures caused unsolicited navigation')
         if not args.baseline:
             lifecycle(call(client, 'super_lifecycle_snapshot'))
         for index in range(8):
+            warmup_load_guard()
             foreground(device); switch_super(client, 'soak-' + str(index))
             for tab in range(3):
+                warmup_load_guard()
                 foreground(device)
                 click_control(client, '.obychnaya[data-id="' + str(tab + 1) + '"]', 30)
                 wait_for(lambda: fixture.hits[(index, tab)] > 0, 'Native physical tab never reached fixture', 30)
-                wait_for(lambda: all(not r.get('zagruzka') for r in rows(client, 'soak-' + str(index))['vkladki'] if r['id'] == tab + 1), 'Native page load did not settle', 30)
+                def selected_loaded():
+                    session = rows(client, 'soak-' + str(index))
+                    target = [r for r in session['vkladki'] if r['id'] == tab + 1]
+                    return (session['aktivnaya'] == tab + 1 and len(target) == 1
+                            and target[0]['adres'] == base + '/page/' + str(index) + '/' + str(tab)
+                            and not target[0].get('otlozhena') and not target[0].get('zagruzka'))
+                wait_for(selected_loaded, 'Actual selected native page did not settle', 30)
                 if (index, tab) == (0, 0):
                     device.client.mouse(*painted_interaction_point(client))
                     wait_for(lambda: fixture.media and fixture.media[-1]['trusted'] and not fixture.media[-1]['paused'], 'Trusted native media did not start', 20)
         foreground(device); switch_super(client, 'soak-1')
         expected = {(s, t) for s in range(8) for t in range(3)}
         require(set(fixture.hits) == expected, 'Visited/deferred fixture set differs from 24/976')
+        initial_sessions = [rows(client, 'soak-' + str(i)) for i in range(8)]
+        require(sum(len(r['vkladki']) for r in initial_sessions) == 1000 and
+                sum(not t.get('otlozhena') for r in initial_sessions for t in r['vkladki']) == 24,
+                'Native rows disagree with the 24-live/976-deferred warmup')
+        warmup_load_guard()
         report['checks'].append('native_ui_24_visited_1000_saved_976_deferred_with_real_media')
         # Setup is excluded. Full acceptance measures two actual hours below.
         measured = time.monotonic(); duration = args.seconds if args.diagnostic_pilot else 7200
         report['started_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        memory_cap = min(args.max_memory_mb * 1024**2, int(psutil.virtual_memory().available * .75))
+        report['load_guard'] = {'max_processes': 128, 'max_owned_rss_bytes': memory_cap}
         parent_pid = foreground(device)
         sampler = Sampler(parent_pid, out / 'samples.jsonl', memory_cap); sampler.thread.start()
         sleepy = set(); cycles = 0; previous = {}; last_generation = {}; event_count = 0
