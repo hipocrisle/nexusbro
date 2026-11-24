@@ -35,6 +35,8 @@ mod youtube_light_aux;
 mod cef_youtube_resume;
 mod cef_youtube;
 mod cef_youtube_captions;
+mod cef_youtube_download;
+mod youtube_download_parent;
 mod cef_youtube_probe;
 mod tab_route_parent;
 mod route_network;
@@ -632,6 +634,7 @@ async fn podgotovit_dvizhok(
             if data["tip"]=="browser-lock"{browser_lock::request_lock(h_ui.clone());return;}
             if tab_route_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if passwords::receive(&h_ui,&id_ui,&data){return;}
+            if youtube_download_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
             let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");

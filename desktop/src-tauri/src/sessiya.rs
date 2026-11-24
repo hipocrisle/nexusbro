@@ -63,6 +63,7 @@ pub enum Komanda {
     YoutubeSnapshot { id:u64 },
     #[serde(rename="youtube_fixture")]
     YoutubeFixture { id:u64 },
+    YoutubeDownloadTarget {id:u64,request:String,path:Option<String>},
     HibernatePrepare { request:crate::super_hibernation_protocol::Prepare },
     HibernateCommit { token:crate::super_hibernation_protocol::Token },
     HibernateAbort { token:crate::super_hibernation_protocol::Token },

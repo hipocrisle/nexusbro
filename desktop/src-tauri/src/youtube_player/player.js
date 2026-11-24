@@ -12,6 +12,14 @@
   const clock = document.getElementById('clock');
   const quality = document.getElementById('quality');
   const qualities = new Map();
+  const downloadVideo = document.getElementById('download-video');
+  const downloadAudio = document.getElementById('download-audio');
+  const downloadCancel = document.getElementById('download-cancel');
+  const downloadStatus = document.getElementById('download-status');
+  downloadVideo.addEventListener('click', () => { if (configured && !disposed) console.debug('__NEXUSBRO_LIGHT_DOWNLOAD__:video:' + quality.value); });
+  downloadAudio.addEventListener('click', () => { if (configured && !disposed) console.debug('__NEXUSBRO_LIGHT_DOWNLOAD__:audio'); });
+  downloadCancel.addEventListener('click', () => { if (configured && !disposed) console.debug('__NEXUSBRO_LIGHT_DOWNLOAD__:cancel'); });
+
   const sponsor = document.getElementById('sponsor');
   const captions = document.getElementById('captions');
   const captionStatus = document.getElementById('caption-status');
@@ -160,7 +168,24 @@
       audio.addEventListener('loadedmetadata', restore);
       video.muted = separate; video.src = config.video;
       if (separate) audio.src = config.audio;
+      downloadVideo.disabled = false; downloadAudio.disabled = !separate;
       button.disabled = false; setStatus(config.resume_available === false ? 'Готово к воспроизведению · сохранение позиции недоступно' : 'Готово к воспроизведению'); return true;
+    },
+    setDownload(data) {
+      if (disposed || !configured || !data) return;
+      const busy = Boolean(data.choosing || data.progress);
+      downloadVideo.disabled = busy; downloadAudio.disabled = busy || !separate; downloadCancel.hidden = !busy;
+      if (data.choosing) downloadStatus.textContent = 'Выберите файл…';
+      else if (data.error) { downloadStatus.textContent = String(data.error).slice(0,160); }
+      else if (data.cancelled) downloadStatus.textContent = 'Загрузка отменена';
+      else if (data.done) downloadStatus.textContent = 'Файл сохранён';
+      else if (data.progress) {
+        const p = data.progress;
+        const names = {downloading:'Загрузка',muxing:'Объединение',verifying:'Проверка',publishing:'Сохранение'};
+        const total = Number.isFinite(p.total_bytes) && p.total_bytes > 0 ? p.total_bytes : 0;
+        const bytes = Number.isFinite(p.bytes) && p.bytes >= 0 ? p.bytes : 0;
+        downloadStatus.textContent = (names[p.phase] || 'Загрузка') + (total ? ' · ' + Math.min(100, Math.floor(bytes / total * 100)) + '%' : ' · ' + Math.floor(bytes / 1048576) + ' МБ');
+      }
     },
     setCaptions(data) {
       if (disposed || !configured || !data) return;

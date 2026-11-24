@@ -298,6 +298,7 @@ pub fn on_navigation(browser: i32, target: &str) {
         crate::youtube_light_aux::cancel(browser);
         crate::cef_youtube_resume::closed(browser);
         crate::cef_youtube_captions::closed(browser);
+        crate::cef_youtube_download::cancel(browser);
     }
 }
 pub fn on_loaded(browser: &Browser, frame: &Frame) {
@@ -342,6 +343,7 @@ pub fn stop(browser: &Browser) {
     crate::youtube_light_aux::cancel(browser.identifier());
     crate::cef_youtube_resume::closed(browser.identifier());
     crate::cef_youtube_captions::closed(browser.identifier());
+    crate::cef_youtube_download::cancel(browser.identifier());
     let active = documents()
         .0
         .lock()
@@ -477,7 +479,8 @@ pub fn apply_aux(browser: &Browser, ready: crate::youtube_light_aux::Ready) {
 /// Native-only retained extractor result. No signed URL crosses parent IPC.
 pub fn media(browser:&Browser)->Option<(u64,String,Arc<crate::youtube_light_extract::ExtractedVideo>)> {
     let actual=browser.main_frame().map(|f|CefString::from(&f.url()).to_string())?;
+    let identity=browser.identifier();
     let grants=documents().0.lock().ok()?;
-    let grant=grants.get(&browser.identifier()).filter(|g|g.document==actual)?;
+    let grant=grants.get(&identity).filter(|g|g.document==actual)?;
     Some((grant.generation,grant.document.clone(),grant.media.clone()?))
 }
