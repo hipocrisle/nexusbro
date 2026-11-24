@@ -178,6 +178,62 @@ def minimize_actual(device, minimized):
     return True
 
 
+RESTORE_OBSERVER_JS = r"""(expected=>{
+ const internal=window.__TAURI_INTERNALS__,original=internal?.invoke;
+ if(typeof original!=="function"||window.__nbRestoreObservation)return false;
+ const bounded=x=>Math.min(32,x+1),event={};
+ for(const type of ["pointerdown","pointerup","click"])event[type]={total:0,trusted:0,owner_match:0,trusted_owner_match:0};
+ const ipc={pereklyuchit:{called:0,expected:0,resolved:0,rejected:0,ok_true:0,ok_false:0,ok_unknown:0,string_error:0,object_error:0,other_error:0},fokus_obolochke:{called:0,expected:0,resolved:0,rejected:0,ok_true:0,ok_false:0,ok_unknown:0,string_error:0,object_error:0,other_error:0}};
+ let attached_failed=0,synchronous_error=0;
+ const listener=e=>{const v=event[e.type],owner=e.target?.closest?.('.vkladka[data-super-id]');const match=owner?.dataset.superId===expected;v.total=bounded(v.total);if(e.isTrusted)v.trusted=bounded(v.trusted);if(match)v.owner_match=bounded(v.owner_match);if(match&&e.isTrusted)v.trusted_owner_match=bounded(v.trusted_owner_match);};
+ const error=(v,e)=>{v.rejected=bounded(v.rejected);const k=typeof e==="string"?"string_error":e!==null&&typeof e==="object"?"object_error":"other_error";v[k]=bounded(v[k]);};
+ function wrapped(){
+  const name=arguments[0],v=name==="pereklyuchit"||name==="fokus_obolochke"?ipc[name]:null;
+  if(v){v.called=bounded(v.called);if(name==="fokus_obolochke"||arguments[1]?.id===expected)v.expected=bounded(v.expected);}
+  let promise;try{promise=Reflect.apply(original,this,arguments);}catch(e){if(v){synchronous_error=bounded(synchronous_error);error(v,e);}throw e;}
+  if(v){try{Promise.prototype.then.call(promise,value=>{v.resolved=bounded(v.resolved);const k=value?.ok===true?"ok_true":value?.ok===false?"ok_false":"ok_unknown";v[k]=bounded(v[k]);},e=>{error(v,e);});}catch(_){attached_failed=bounded(attached_failed);}}
+  return promise;
+ }
+ for(const type of Object.keys(event))document.addEventListener(type,listener,true);
+ internal.invoke=wrapped;
+ window.__nbRestoreObservation={finish:()=>{internal.invoke=original;for(const type of Object.keys(event))document.removeEventListener(type,listener,true);delete window.__nbRestoreObservation;return {events:event,ipc,attached_failed,synchronous_error,invoke_restored:internal.invoke===original,listeners_removed:true};}};
+ return internal.invoke===wrapped;
+})"""
+
+
+def restore_observer_self_test():
+    script="""const assert=require('node:assert/strict');(async()=>{
+    const handlers=new Map(),owner='player-b',receiver={};let result=Promise.resolve({ok:true}),seen;
+    function original(){seen={receiver:this,args:[...arguments]};return result;}
+    global.window={__TAURI_INTERNALS__:{invoke:original}};
+    global.document={addEventListener:(k,f)=>handlers.set(k,f),removeEventListener:(k,f)=>{assert.equal(handlers.get(k),f);handlers.delete(k);}};
+    const install="""+RESTORE_OBSERVER_JS+""";
+    assert.equal(install(owner),true);const wrapped=window.__TAURI_INTERNALS__.invoke,args={id:owner};
+    const actual=wrapped.call(receiver,'pereklyuchit',args);assert.equal(actual,result);assert.equal(seen.receiver,receiver);assert.equal(seen.args[1],args);
+    handlers.get('click')({type:'click',isTrusted:true,target:{closest:()=>({dataset:{superId:owner}})}});
+    await actual;result=Promise.reject('PRIVATE https://secret.invalid/token');const rejected=wrapped.call(receiver,'fokus_obolochke');assert.equal(rejected,result);await rejected.catch(()=>{});
+    const value=window.__nbRestoreObservation.finish();assert.equal(window.__TAURI_INTERNALS__.invoke,original);assert.equal(handlers.size,0);assert.equal(window.__nbRestoreObservation,undefined);
+    assert.equal(value.events.click.trusted_owner_match,1);assert.equal(value.ipc.pereklyuchit.resolved,1);assert.equal(value.ipc.pereklyuchit.ok_true,1);assert.equal(value.ipc.fokus_obolochke.rejected,1);
+    assert.equal(JSON.stringify(value).includes('PRIVATE'),false);console.log(JSON.stringify({self_test:true,native_execution:false}));
+    })().catch(()=>{process.stderr.write('restore_observer_self_test_failed\\n');process.exitCode=1;});"""
+    result=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=10)
+    require(result.returncode==0,'Restore observer promise/cleanup self-test failed')
+    return {'self_test':True,'native_execution':False}
+
+
+def restore_observer_begin(client,identifier,case):
+    try:case['restore_event_observer_installed']=client.js(RESTORE_OBSERVER_JS+'('+json.dumps(identifier)+')') is True
+    except Exception:case['restore_event_observer_installed']=False
+
+
+def restore_observer_finish(client,case):
+    try:
+        value=client.js('window.__nbRestoreObservation?.finish()??null')
+        if isinstance(value,dict):case['restore_input_observation']=value
+        else:case['restore_event_observer_incomplete']=True
+    except Exception:case['restore_event_observer_incomplete']=True
+
+
 def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostics):
     import math
     cases=diagnostics.setdefault('background_cases',[])
@@ -236,6 +292,8 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
             samples.append(current['audio_position']);previous=current['audio_position']
     finally:
         case['restore_callback_entered']=True
+        observe_restore=kind.startswith('background-super-')
+        if observe_restore:restore_observer_begin(client,identifier,case)
         try:
             restore();case['restore_complete']=True
         except Exception:
@@ -251,6 +309,8 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
             except Exception:
                 case['restore_diagnostic_incomplete']=True
             raise
+        finally:
+            if observe_restore:restore_observer_finish(client,case)
         case['rows_restored']=row_record()
         restored=observe(client,identifier,tab,diagnostics=diagnostics)
         snapshot_record('after_restore',restored)
@@ -1170,6 +1230,7 @@ def run(args):
 
 
 if __name__=='__main__':
+    if sys.argv[1:]==['--self-test-restore-observer']:print(json.dumps(restore_observer_self_test()));raise SystemExit(0)
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ('exe','cef','out','video-webm','audio-webm'):parser.add_argument('--'+name,required=True)
     sys.exit(run(parser.parse_args()))
