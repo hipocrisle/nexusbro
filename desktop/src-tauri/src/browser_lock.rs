@@ -159,7 +159,7 @@ fn windows_shortcut_diagnostic(code: &str, flags: Option<u16>) {
     static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
         || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
-        || COUNT.fetch_add(1, Ordering::Relaxed) >= 16
+        || COUNT.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < 256).then_some(n + 1)).is_err()
     {
         return;
     }

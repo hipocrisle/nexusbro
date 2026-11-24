@@ -718,6 +718,15 @@ def observe(client, identifier, tab, *, admitting=False, diagnostics=None):
     return state
 
 
+def focus_trace_receipt(client):
+    stages={'system','navigation','unknown_source','got','take_forward','take_reverse'}
+    roles={'browser_window','browser_descendant','browser_parent','parent_descendant','other','none','unknown','unsupported'}
+    values=client.js('window.__cefFocusTrace??[]') or []
+    return [{'stage':e['data']['stage'],'role':e['data']['role']} for e in values[-64:]
+            if isinstance(e,dict) and isinstance(e.get('data'),dict)
+            and e['data'].get('stage') in stages and e['data'].get('role') in roles]
+
+
 def physical(client, device, kind, diagnostics):
     foreground(device);painted(client)
     # Actual CEF controls are laid out by shipped CSS: main16px padding,
@@ -1087,7 +1096,7 @@ def run(args):
                 wm=OwnedWindowManager(device,root/'wm');device.player_wm=wm
             foreground(device)
             require(call(client,'security_vault',action='create',password=master).get('unlocked') is True,'Synthetic fixture vault not unlocked')
-            client.js('window.__playerObserved=[];window.__playerListenerReady=false;window.__playerHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerHandler}).then(()=>window.__playerListenerReady=true);true')
+            client.js('window.__playerObserved=[];window.__cefFocusTrace=[];window.__playerListenerReady=false;window.__playerHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload);if(e.payload?.data?.tip==="cef-focus-trace"){window.__cefFocusTrace.push(e.payload);if(window.__cefFocusTrace.length>128)window.__cefFocusTrace.shift()}});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerHandler}).then(()=>window.__playerListenerReady=true);true')
             js_wait(client,'window.__playerListenerReady','Actual native event listener missing')
             client.js('window.__playerStopped=[];window.__playerStopListenerReady=false;window.__playerStopHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-stop-state")window.__playerStopped.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerStopHandler}).then(()=>window.__playerStopListenerReady=true);true')
             js_wait(client,'window.__playerStopListenerReady','Native stop listener missing')
@@ -1276,6 +1285,9 @@ def run(args):
                'windows_chain_operation_failed':'windows_chain_operation_failed'}
         report['failure_code']=codes.get(str(error),'unclassified')
     finally:
+        if device and getattr(device,'client',None):
+            try:report['cef_focus_receipts']=focus_trace_receipt(device.client)
+            except Exception:report['cef_focus_receipt_unavailable']=True
         if device and getattr(device,'player_owner_diagnostics',None):report['native_owner']=device.player_owner_diagnostics
         if trust and trust.windows:report['windows_chain_preflight']=trust.windows.receipts
         cleanup_ok=True

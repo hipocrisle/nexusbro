@@ -20,7 +20,7 @@ import time
 from security_native import Device, call, js_wait, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
 from youtube_player_native import (HOST, Fixture, Trust, certificates, observe, physical,
-                                  foreground, OwnedWindowManager, native_owner)
+                                  foreground, OwnedWindowManager, native_owner, focus_trace_receipt)
 from hibernation_cookie_probe import tls_proxy_preflight
 
 SUPER='features-a'
@@ -213,7 +213,7 @@ def run(args):
         client=device.start()
         if sys.platform!='win32':wm=OwnedWindowManager(device,root/'wm');device.player_wm=wm
         foreground(device)
-        client.js('window.__playerObserved=[];window.__decodeObserved=[];window.__featureReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload);if(e.payload?.data?.tip==="youtube-decode-state")window.__decodeObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__featureReady=true);true')
+        client.js('window.__playerObserved=[];window.__decodeObserved=[];window.__cefFocusTrace=[];window.__featureReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload);if(e.payload?.data?.tip==="youtube-decode-state")window.__decodeObserved.push(e.payload);if(e.payload?.data?.tip==="cef-focus-trace"){window.__cefFocusTrace.push(e.payload);if(window.__cefFocusTrace.length>128)window.__cefFocusTrace.shift()}});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__featureReady=true);true')
         js_wait(client,'window.__featureReady','Native feature listener missing');switch_super(client,SUPER)
         # Restored lazy about:blank needs the shipped physical Open action.
         if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',20)
@@ -297,6 +297,8 @@ def run(args):
             trace=trace.tb_next
     finally:
         if device and getattr(device,'client',None):
+            try:report['cef_focus_receipts']=focus_trace_receipt(device.client)
+            except Exception:report['cef_focus_receipt_unavailable']=True
             try:report['shell_key_receipt']=device.client.js('window.__featureShellKeys??null')
             except Exception:report['shell_key_receipt_unavailable']=True
         cleanup=True
