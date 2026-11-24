@@ -1050,6 +1050,11 @@ impl Rabota {
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
+                Sobytie::Komanda(Komanda::YoutubeFixture{id})=>{
+                    let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(crate::cef_youtube::open_fixture);
+                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":false,"error":result.err()})));
+                    continue;
+                }
                 Sobytie::Komanda(Komanda::YoutubeSnapshot{id})=>{
                     let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(|b|crate::cef_youtube::request_probe(b,id,tx.clone()));
                     if result.is_err(){let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-state","id":id,"error":"Состояние плеера недоступно"})));}
@@ -1060,6 +1065,7 @@ impl Rabota {
                         let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("Вкладка занята")?;
                         let browser=brauzery.get(&id).ok_or("Сначала откройте вкладку")?;
                         let url=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).ok_or("Документ недоступен")?;
+                        let url=crate::cef_youtube::logical_url(browser.identifier(),&url).unwrap_or(url);
                         if url!=tab.adres{return Err("Дождитесь завершения перехода");}
                         let video=crate::youtube_light::VideoId::from_url(&url).map_err(|_|"Нужна ссылка на одно видео YouTube")?;
                         let descriptor=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate()).ok_or("Путь вкладки недоступен")?;
@@ -1086,6 +1092,7 @@ impl Rabota {
                     if let Some(tab)=target.filter(|_|current&&!*browser_locked&&!*closing){
                         if let Some(browser)=brauzery.get(&tab.id){
                             let actual=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
+                            let actual=crate::cef_youtube::logical_url(browser.identifier(),&actual).unwrap_or(actual);
                             if crate::youtube_light::VideoId::from_url(&actual).ok().map(|v|v.watch_url()).as_deref()==Some(ready.source_url.as_str()){
                                 let result=ready.result.as_ref().map_err(|e|*e).and_then(|data|crate::cef_youtube::open_webm(browser,ready.operation,data));
                                 let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":tab.id,"start":false,"error":result.err()})));
@@ -1691,11 +1698,15 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::Obnovit { id }) => {
                     if let Some(b) = brauzery.get(&id) {
+                        let current=b.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
+                        if crate::cef_youtube::logical_url(b.identifier(),&current).is_some(){let _=tx.send(Sobytie::Komanda(Komanda::YoutubeLight{id}));continue;}
                         b.reload();
                     }
                 }
                 Sobytie::Komanda(Komanda::ObnovitBezKesha { id }) => {
                     if let Some(b) = brauzery.get(&id) {
+                        let current=b.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
+                        if crate::cef_youtube::logical_url(b.identifier(),&current).is_some(){let _=tx.send(Sobytie::Komanda(Komanda::YoutubeLight{id}));continue;}
                         b.reload_ignore_cache();
                     }
                 }

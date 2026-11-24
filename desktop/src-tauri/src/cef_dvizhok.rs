@@ -88,6 +88,13 @@ wrap_app! {
                 ] {
                     ks.append_switch(Some(&CefString::from(flag)));
                 }
+                // Isolated CI media fixture: a failed route must never reach a
+                // real Google host. The runner owns a 443 direct-attempt witness.
+                if std::env::var("GITHUB_ACTIONS").as_deref()==Ok("true")
+                    &&std::env::var_os("NEXUSBRO_TEST_DATA").is_some()
+                    &&std::env::var("NEXUSBRO_TEST_YOUTUBE_DNS_GUARD").as_deref()==Ok("1") {
+                    ks.append_switch_with_value(Some(&CefString::from("host-resolver-rules")),Some(&CefString::from("MAP fixture.googlevideo.com 127.0.0.1")));
+                }
                 // Route transports are HTTP CONNECT/SOCKS TCP; prohibit direct
                 // UDP paths that would otherwise bypass a per-context proxy.
                 ks.append_switch(Some(&CefString::from("disable-quic")));

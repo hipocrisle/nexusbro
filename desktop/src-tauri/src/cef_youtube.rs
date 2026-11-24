@@ -352,3 +352,23 @@ pub fn poll_probes() {
 pub fn clear_probes() {
     PROBES.with(|p| p.borrow_mut().clear());
 }
+
+/// Protocol/media fixture only. Does not replace real anonymous extraction.
+/// Fixed GoogleVideo host is mapped to an owned HTTPS server by the CI proxy.
+pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+    {
+        return Err("Диагностика доступна только в CI");
+    }
+    let id = crate::youtube_light::VideoId::parse("BaW_jenozKc")
+        .map_err(|_| "Диагностика недоступна")?;
+    let json = serde_json::json!({"id":id.as_str(),"title":"NexusBro controlled media fixture","uploader":"NexusBro CI","duration":120,"is_live":false,"formats":[
+        {"format_id":"fixture-video","ext":"webm","vcodec":"vp9","acodec":"none","width":320,"height":180,"fps":12,"protocol":"https","url":"https://fixture.googlevideo.com/videoplayback?track=video"},
+        {"format_id":"fixture-audio","ext":"webm","vcodec":"none","acodec":"opus","protocol":"https","url":"https://fixture.googlevideo.com/videoplayback?track=audio"}
+    ]});
+    let bytes = serde_json::to_vec(&json).map_err(|_| "Диагностика недоступна")?;
+    let parsed = crate::youtube_light_extract::parse(&bytes, &id)
+        .map_err(|_| "Диагностические дорожки отклонены")?;
+    open_webm(browser, 1, &parsed)
+}
