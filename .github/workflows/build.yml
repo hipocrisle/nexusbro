@@ -28,6 +28,10 @@ on:
         description: Measure Windows CPU and memory using packages from this run (no build or publication)
         required: false
         default: ""
+      resource_soak:
+        description: Optional JSON resource experiment specification (never publication)
+        required: false
+        default: ""
       performance_visibility:
         description: Probe actual page visibility and animation callbacks (different workload)
         type: boolean
@@ -90,6 +94,8 @@ jobs:
           cargo test --manifest-path tests/sync_history_harness/Cargo.toml
           cargo test --manifest-path tests/browser_tasks_harness/Cargo.toml
           cargo test --manifest-path tests/tab_route_contracts/Cargo.toml
+          cargo test --manifest-path tests/super_lifecycle_harness/Cargo.toml
+          cargo test --manifest-path tests/super_cookie_harness/Cargo.toml
           cargo test --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml --example live_acceptance
@@ -618,9 +624,23 @@ jobs:
             desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm.sig
 
 
+  resource-soak:
+    if: github.event_name == 'workflow_dispatch' && inputs.performance_build != '' && inputs.resource_soak != ''
+    uses: ./.github/workflows/resource-soak.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      build_run: ${{ inputs.performance_build }}
+      source: ${{ fromJSON(inputs.resource_soak).source }}
+      baseline: ${{ fromJSON(inputs.resource_soak).baseline }}
+      diagnostic_pilot: ${{ fromJSON(inputs.resource_soak).diagnostic_pilot }}
+      pilot_seconds: ${{ fromJSON(inputs.resource_soak).pilot_seconds }}
+      platform: ${{ fromJSON(inputs.resource_soak).platform }}
+
   performance:
     name: Windows many-tab performance measurement
-    if: github.event_name == 'workflow_dispatch' && inputs.performance_build != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.performance_build != '' && inputs.resource_soak == ''
     runs-on: windows-latest
     timeout-minutes: 15
     permissions:
