@@ -8,6 +8,7 @@
 mod cef_events;
 mod popup_menu;
 mod browser_lock;
+mod browser_lock_intent;
 mod import_brauzera;
 mod razdelitel;
 mod fon_konteynera;

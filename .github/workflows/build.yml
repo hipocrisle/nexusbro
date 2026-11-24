@@ -121,6 +121,7 @@ jobs:
           cargo test --manifest-path tests/session_recovery_harness/Cargo.toml
           cargo test --manifest-path tests/sync_history_harness/Cargo.toml
           cargo test --manifest-path tests/browser_tasks_harness/Cargo.toml
+          cargo test --manifest-path tests/browser_lock_intent_harness/Cargo.toml
           cargo test --manifest-path tests/youtube_light_harness/Cargo.toml
           cargo test --manifest-path tests/tab_route_contracts/Cargo.toml
           cargo test --manifest-path tests/super_lifecycle_harness/Cargo.toml
