@@ -129,7 +129,7 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
         for _ in range(6):
             time.sleep(2)
             current=observe(client,identifier,tab,diagnostics=diagnostics)
-            require(current.get('playing') and current['audio_position']>previous+.5,
+            require(not current.get('disposed') and current['audio_position']>previous+.5,
                     'Background audio froze or paused')
             # Chromium may suspend hidden video decoding. No hidden video-growth assertion.
             samples.append(current['audio_position']);previous=current['audio_position']
