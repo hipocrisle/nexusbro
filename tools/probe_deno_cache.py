@@ -34,6 +34,41 @@ ANNOTATED = re.compile(r'\d+<([^>]+)>')
 CALL = re.compile(r'^(?:\[pid\s+\d+\]\s+|\d+\s+)?([A-Za-z0-9_]+)\((.*)\)\s+=\s+(.+)$')
 
 
+SAFE_REASONS = {
+    'strace_missing', 'native_output_bound', 'trace_bound', 'cache_file_bound',
+    'cache_symlink_not_followed', 'positive_scanner_canary_failed',
+    'case_permission_precondition_failed', 'pinned_component_verification_failed',
+}
+SAFE_DETAILS = {'exit_code', 'marker', 'stdout_bytes', 'stderr_bytes', 'trace_bytes',
+                'trace_lines', 'elapsed_ms', 'attempt', 'completed_attempts'}
+
+
+class ProbeFailure(Exception):
+    def __init__(self, step, reason, details=None, errno=None):
+        super().__init__(reason)
+        self.step, self.reason = step, reason
+        self.details = dict(details or {})
+        self.errno = errno if type(errno) is int and 0 <= errno <= 4096 else None
+
+    def public(self):
+        return dict(step=self.step, reason=self.reason, errno=self.errno,
+                    **{key: value for key, value in self.details.items()
+                       if key in SAFE_DETAILS and type(value) in (int, bool)})
+
+
+def run_step(step, action, details=None):
+    try: return action()
+    except (ProbeFailure, subprocess.TimeoutExpired): raise
+    except (ValueError, KeyError, OSError, subprocess.SubprocessError) as error:
+        # Only exact in-source literals are reflected. str(error) is used solely
+        # for whitelist membership and is never logged, retained or serialized.
+        reason = str(error) if type(error) is ValueError and str(error) in SAFE_REASONS else (
+            'os_error' if isinstance(error, OSError) else
+            'process_setup_error' if isinstance(error, subprocess.SubprocessError) else
+            'missing_metadata' if isinstance(error, KeyError) else 'unclassified_value_error')
+        raise ProbeFailure(step, reason, details, getattr(error, 'errno', None)) from None
+
+
 def digest(path):
     h = hashlib.sha256()
     with path.open('rb') as f:
@@ -124,23 +159,36 @@ def child_limits():
     os.umask(0o077)
 
 
-def traced(command, env, cwd, trace, stdin):
+def traced(command, env, cwd, trace, stdin, details=None):
+    details = details if details is not None else {}
+    started = time.monotonic()
     strace = shutil.which('strace')
-    if not strace: raise ValueError('strace_missing')
+    if not strace: raise ProbeFailure('spawn', 'strace_missing', details)
     args = [strace, '-f', '-qq', '-yy', '-s', '256', '-e',
             'trace=%file,write,writev,pwrite64,pwritev,pwritev2,ftruncate,mmap', '-o', str(trace), *map(str, command)]
-    child = subprocess.Popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE,
+    child = run_step('spawn', lambda: subprocess.Popen(args, env=env, cwd=cwd, stdin=subprocess.PIPE,
                              stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                             start_new_session=True, preexec_fn=child_limits)
+                             start_new_session=True, preexec_fn=child_limits), details)
     try:
-        stdout, stderr = child.communicate(stdin, timeout=25)
+        stdout, stderr = run_step('wait', lambda: child.communicate(stdin, timeout=25), details)
     except subprocess.TimeoutExpired:
-        os.killpg(child.pid, signal.SIGKILL)
-        child.communicate(timeout=5)
-        raise ValueError('native_probe_timeout')
-    if len(stdout) > 8192 or len(stderr) > 16384: raise ValueError('native_output_bound')
-    if trace.stat().st_size > TRACE_LIMIT: raise ValueError('trace_bound')
-    return child.returncode, stdout, len(stderr), trace.read_text(errors='replace')
+        try: os.killpg(child.pid, signal.SIGKILL)
+        except ProcessLookupError: pass
+        try: run_step('reap_after_timeout', lambda: child.communicate(timeout=5), details)
+        except subprocess.TimeoutExpired:
+            raise ProbeFailure('reap_after_timeout', 'reap_timeout', details) from None
+        details.update(exit_code=child.returncode, elapsed_ms=int((time.monotonic() - started) * 1000))
+        raise ProbeFailure('wait', 'wall_timeout', details) from None
+    details.update(exit_code=child.returncode, marker=stdout == MARKER,
+                   stdout_bytes=len(stdout), stderr_bytes=len(stderr),
+                   elapsed_ms=int((time.monotonic() - started) * 1000))
+    if len(stdout) > 8192 or len(stderr) > 16384: raise ProbeFailure('output', 'native_output_bound', details)
+    size = run_step('trace_stat', lambda: trace.stat().st_size, details)
+    details['trace_bytes'] = size
+    if size > TRACE_LIMIT: raise ProbeFailure('trace_stat', 'trace_bound', details)
+    raw = run_step('trace_read', lambda: trace.read_text(errors='replace'), details)
+    details['trace_lines'] = raw.count('\n')
+    return child.returncode, stdout, len(stderr), raw
 
 
 def files_under(root):
@@ -199,16 +247,19 @@ def probe_case(base, name, deno):
     if not permissions_confirmed: raise ValueError('case_permission_precondition_failed')
     attempts = []
     try:
-        for _ in range(2):
-            before = files_under(case)
+        for attempt in range(2):
+            diagnostic = dict(attempt=attempt + 1, completed_attempts=len(attempts))
+            before = run_step('snapshot_before', lambda: files_under(case), diagnostic)
             trace = case / 'private.trace'
-            code, output, stderr_bytes, raw = traced([deno, *FLAGS], env, case, trace, SCRIPT)
-            receipt = scan_trace(raw, case, case, cache, before)
-            owned_receipt = scan_trace(raw, base, case, cache, before)
-            trace.unlink()
-            after = files_under(case)
+            code, output, stderr_bytes, raw = traced([deno, *FLAGS], env, case, trace, SCRIPT, diagnostic)
+            receipt = run_step('trace_parse_case', lambda: scan_trace(raw, case, case, cache, before), diagnostic)
+            owned_receipt = run_step('trace_parse_owned', lambda: scan_trace(raw, base, case, cache, before), diagnostic)
+            run_step('trace_unlink', trace.unlink, diagnostic)
+            after = run_step('snapshot_after', lambda: files_under(case), diagnostic)
             # Safe counts only. No filenames, cache contents, raw trace/errors.
             attempts.append(dict(exit_code=code, marker=output == MARKER, stderr_bytes=stderr_bytes,
+                                 trace_bytes=diagnostic['trace_bytes'], trace_lines=diagnostic['trace_lines'],
+                                 elapsed_ms=diagnostic['elapsed_ms'],
                                  cache_files=sum(contained(path, cache) for path in after),
                                  total_case_files=len(after), total_case_bytes=sum(after.values()),
                                  reused_case_files=len(before.keys() & after.keys()),
@@ -232,6 +283,18 @@ def verify_component(directory, pins_path):
 
 
 def self_test():
+    sensitive = 'PRIVATE https://secret.invalid/token /private/path'
+    for exception, reason, errno in ((ValueError(sensitive), 'unclassified_value_error', None),
+                                      (PermissionError(13, sensitive, sensitive), 'os_error', 13),
+                                      (ValueError('cache_symlink_not_followed'), 'cache_symlink_not_followed', None)):
+        def fail(): raise exception
+        try: run_step('snapshot_after', fail, {'exit_code': 0, 'marker': True, 'trace_bytes': 123, 'raw': sensitive})
+        except ProbeFailure as failure:
+            public = failure.public()
+            assert public['reason'] == reason and public['errno'] == errno
+            assert public['exit_code'] == 0 and public['marker'] is True
+            assert sensitive not in json.dumps(public) and 'raw' not in public
+        else: raise AssertionError('diagnostic_failure_not_wrapped')
     allowed = Path('/owned/case'); cache = allowed / 'cache'
     lines = '\n'.join([
         '10 openat(AT_FDCWD, "/owned/case/cache/db", O_RDWR|O_CREAT, 0600) = 3</owned/case/cache/db>',
@@ -269,21 +332,25 @@ def main():
     code = 0
     stage = 'component_verification'
     try:
-        deno = verify_component(args.components, args.pins)
+        deno = run_step('component_verification', lambda: verify_component(args.components, args.pins))
         with tempfile.TemporaryDirectory(prefix='nb-deno-cache-') as temporary:
             base = Path(temporary); base.chmod(0o700)
             stage = 'scanner_canary'
-            report['scanner_canary'] = canary(base)
+            report['scanner_canary'] = run_step('scanner_canary', lambda: canary(base))
             report['cases'] = []
             for name in ('writable', 'readonly', 'regular_file'):
                 stage = name
-                report['cases'].append(probe_case(base, name, deno))
+                report['cases'].append(run_step('case_setup_or_cleanup', lambda: probe_case(base, name, deno)))
         report['observation_complete'] = True
         # Only positive-control execution is mandatory for this diagnostic;
         # fallback cases can honestly fail or write elsewhere, which is evidence.
         positive = report['cases'][0]['attempts']
         report['positive_execution_passed'] = all(a['exit_code'] == 0 and a['marker'] for a in positive)
         if not report['positive_execution_passed']: code = 1
+    except ProbeFailure as failure:
+        report.update(observation_complete=False, probe_error=True, error_stage=stage,
+                      failure=failure.public())
+        code = 2
     except (ValueError, KeyError, OSError, subprocess.SubprocessError):
         report.update(observation_complete=False, probe_error=True, error_stage=stage)
         code = 2
