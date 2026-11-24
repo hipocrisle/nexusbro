@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      youtube_consumer_package:
+        description: Prepare sealed opt-in consumer probe without media request
+        type: boolean
+        default: false
       youtube_sources_inventory:
         description: Collect pinned source/notices evidence without desktop publication
         type: boolean
@@ -103,6 +107,9 @@ on:
         default: false
 
 jobs:
+  youtube-consumer-package:
+    if: inputs.youtube_consumer_package
+    uses: ./.github/workflows/youtube-consumer-package.yml
   youtube-components-probe:
     if: inputs.youtube_probe_only
     uses: ./.github/workflows/youtube-probe.yml

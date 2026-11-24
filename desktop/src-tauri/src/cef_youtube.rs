@@ -544,9 +544,10 @@ fn poll_stop_probes(){
     let epoch=STOP_EPOCH.with(|e|e.get());
     let mut pending=STOP_PROBES.with(|p|std::mem::take(&mut *p.borrow_mut()));
     pending.retain_mut(|v|{
+        if STOP_EPOCH.with(|e|e.get())!=epoch{return false;}
         let elapsed=v.started.elapsed();
         let sender=v.sender.clone();let tab=v.tab;
-        let emit=|complete:bool,state:Option<serde_json::Value>,code:&str|{let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-stop-state","id":tab,"complete":complete,"state":state,"code":code})));};
+        let emit=|complete:bool,state:Option<serde_json::Value>,code:&str|{if STOP_EPOCH.with(|e|e.get())!=epoch{return;}let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-stop-state","id":tab,"complete":complete,"state":state,"code":code})));};
         if elapsed>=std::time::Duration::from_secs(5){emit(false,None,"stop_observation_timeout");return false;}
         if let Some(probe)=v.probe.as_mut(){
             let Some(result)=probe.poll() else{return true;};
@@ -556,6 +557,7 @@ fn poll_stop_probes(){
                 Err(code)=>{emit(false,None,code);return false;}
             }
         }
+        if STOP_EPOCH.with(|e|e.get())!=epoch{return false;}
         let delays=[0,250,1000,2000];
         if v.attempt<delays.len()&&elapsed.as_millis()>=delays[v.attempt]{
             match crate::cef_youtube_stop_probe::Probe::start(&v.browser,&v.token){Ok(probe)=>{v.probe=Some(probe);v.attempt+=1;},Err(code)=>{emit(false,None,code);return false;}}
