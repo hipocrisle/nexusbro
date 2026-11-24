@@ -57,6 +57,10 @@ pub enum Komanda {
     OknoKomanda { label:String, komanda:Box<Komanda> },
     OknoZakryt { label:String },
     ObnovitInterfeys,
+    HibernatePrepare { request:crate::super_hibernation_protocol::Prepare },
+    HibernateCommit { token:crate::super_hibernation_protocol::Token },
+    HibernateAbort { token:crate::super_hibernation_protocol::Token },
+    HibernateFinalAck { token:crate::super_hibernation_protocol::Token },
     GlavnoeSkryto,
     GlavnoePokazat,
     RouteApply {

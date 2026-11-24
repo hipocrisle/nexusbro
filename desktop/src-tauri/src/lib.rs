@@ -26,6 +26,7 @@ mod cef_vkladki;
 mod cef_route_context;
 mod cdp;
 mod super_lifecycle;
+mod super_hibernation_protocol;
 mod super_cookie_escrow;
 mod cef_cookie_transfer;
 mod cef_hibernation_probe;

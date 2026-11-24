@@ -348,6 +348,13 @@ impl Registry {
             self.entries.values().map(|e| e.context.clone()).collect(),
         ))
     }
+    /// Conservative first scope: exactly one initialized, ordinary native context.
+    pub fn hibernation_context(&self) -> Option<(String, RequestContext)> {
+        if self.private || self.entries.len()!=1 {return None;}
+        let ((key,private),entry)=self.entries.iter().next()?;
+        if *private || entry.state.load(Ordering::Acquire)!=1 {return None;}
+        Some((key.clone(),entry.context.clone()))
+    }
     pub fn has_private(&self) -> bool {
         self.entries.keys().any(|(_, p)| *p)
     }
