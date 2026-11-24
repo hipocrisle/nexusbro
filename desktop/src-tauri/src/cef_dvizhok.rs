@@ -44,6 +44,13 @@ wrap_app! {
     struct DvizhokApp;
 
     impl App {
+        fn on_register_custom_schemes(&self, registrar: Option<&mut SchemeRegistrar>) {
+            if let Some(registrar) = registrar {
+                if !crate::cef_youtube::register_scheme(registrar) {
+                    eprintln!("youtube-light: internal scheme registration failed");
+                }
+            }
+        }
         fn render_process_handler(&self) -> Option<RenderProcessHandler> {
             Some(crate::cef_memory_renderer::handler())
         }

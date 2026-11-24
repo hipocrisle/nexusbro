@@ -349,6 +349,8 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib super_hibernation_parent::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_http::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
 
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'
