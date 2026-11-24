@@ -192,6 +192,7 @@ pub fn receive(
 }
 /// Call after selection, navigation, window attachment, or engine lifecycle changes.
 pub fn reconcile(app: &tauri::AppHandle) {
+    if registry().lock().is_ok_and(|r|r.windows.is_empty()){return;}
     let app_ui = app.clone();
     let _ = app.run_on_main_thread(move || {
         let entries: Vec<_> = registry()

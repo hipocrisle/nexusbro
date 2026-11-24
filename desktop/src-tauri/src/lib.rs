@@ -36,6 +36,8 @@ mod cef_youtube_resume;
 mod cef_youtube;
 mod cef_youtube_captions;
 mod cef_youtube_download;
+mod cef_youtube_fullscreen;
+mod youtube_fullscreen_parent;
 mod youtube_download_parent;
 mod cef_youtube_probe;
 mod tab_route_parent;
@@ -452,17 +454,17 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
     let (nastrojki, zapusk_id) = {
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(id) else { return net("такой супер-вкладки нет") };
-        if vk.hibernate.wake(vk.kanal.as_ref()) { drop(v); pereklyuchit_vnutri(s,id); return da(); }
+        if vk.hibernate.wake(vk.kanal.as_ref()) { drop(v); pereklyuchit_vnutri(app,s,id); return da(); }
         if vk.zapusk_idet || vk.proc.is_some() {
             drop(v);
-            pereklyuchit_vnutri(s, id);
+            pereklyuchit_vnutri(app,s, id);
             return da();
         }
         vk.zapusk_id=match vk.hibernate.begin_start(){Ok(generation)=>generation,Err(_)=>return net("Предыдущий движок ещё завершает работу")};
         vk.zapusk_idet = true;
         (vk.nastrojki.clone(), vk.zapusk_id)
     };
-    pereklyuchit_vnutri(s, id);
+    pereklyuchit_vnutri(app,s, id);
     let otvet = podgotovit_dvizhok(app, s, id, nastrojki, zapusk_id).await;
     if !otvet.ok {
         let mut v = s.vkladki.lock().unwrap();
@@ -626,6 +628,7 @@ async fn podgotovit_dvizhok(
             if let Err(e) = sessiya.sohranit(&brauzer::papka_profilya(&id_sessii)) {
                 zapisat_v_zhurnal(format!("{id_sessii}: сессия не записана: {e}"));
             }
+            youtube_fullscreen_parent::reconcile(&h_sessii);
             let _ = h_sessii.emit_to("main","obychnye-izmenilis", serde_json::json!({"id":id_sessii,"sessiya":sessiya}));
         }, move || { let _ = h_adresa.emit_to("main","adres-vvesti", &id_adresa); }, move |data| {
             // Поздние сообщения завершённого движка не должны менять новый сеанс.
@@ -635,8 +638,9 @@ async fn podgotovit_dvizhok(
             if tab_route_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if passwords::receive(&h_ui,&id_ui,&data){return;}
             if youtube_download_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
+            if youtube_fullscreen_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
-            {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){return;}}
+            {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){youtube_fullscreen_parent::reconcile(&h_ui);return;}}
             let target=data["label"].as_str().filter(|s|!s.is_empty()).unwrap_or("main");
             if data["tip"]=="novoe-okno"{let app=h_ui.clone();let id=id_ui.clone();let private=data["privatnaya"]==true;okna_app::zapros_okna(app,Some(id),private);return;}
             if data["tip"]=="adres-vvesti"{let _=h_ui.emit_to(target,"adres-vvesti",&id_ui);return;}
@@ -645,6 +649,7 @@ async fn podgotovit_dvizhok(
                 if let Some(counter)=counter{let host=data["host"].as_str().unwrap_or("");if data["tip"]=="blocked"{counter.blok(host,data["rule"].as_str().unwrap_or("Правило ресурса"),"CEF");}else if let Some(rules)=data["rules"].as_object(){for (rule,count) in rules{if let Some(n)=count.as_u64(){counter.kosmetika(host,rule,n.min(10000));}}}}
                 return;
             }
+            if matches!(data["tip"].as_str(),Some("okno-session"|"okno-closed"|"okno-ready")){youtube_fullscreen_parent::reconcile(&h_ui);}
             if data["tip"]=="download"{zagruzki::obnovit(&id_ui,&data);return;}
             if data["tip"]=="private-ended"{zagruzki::ochistit_privatnye(&id_ui);let s:State<Sostoyanie>=h_ui.state();if let Some(p)=s.vkladki.lock().unwrap().get(&id_ui).and_then(|v|v.nash_proxy.as_ref().map(|p|p.schet.clone())){p.ochistit();}return;}
             if data["tip"]=="perevod-otmena" {
@@ -706,7 +711,7 @@ async fn pereklyuchit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: Stat
     if !zapushchena {
         return Ok(zapustit_vnutri(&app, &s, &id).await);
     }
-    pereklyuchit_vnutri(&s, &id);
+    pereklyuchit_vnutri(&app,&s, &id);
     // ⛔ SetFocus в чужое окно с главного потока на Windows может повиснуть
     // вместе с потоком движка (12.11.2026, «виснет в рандомные моменты»).
     // Фокус движку отдаст клик мышью — штатно.
@@ -771,12 +776,14 @@ fn primenit_vidimost(s: &State<Sostoyanie>) {
     obnovit_oblast_obolochki(s, if vyrez { m } else { None });
 }
 
-fn pereklyuchit_vnutri(s: &State<Sostoyanie>, id: &str) {
+fn pereklyuchit_vnutri(app:&tauri::AppHandle,s: &State<Sostoyanie>, id: &str) {
     let _okna = s.izmenenie_okon.lock().unwrap();
     if !s.vkladki.lock().unwrap().contains_key(id) { return }
     *s.aktivnaya.lock().unwrap() = Some(id.to_string());
     primenit_vidimost(s);
     sohranit_aktivnuyu(id);
+    drop(_okna);
+    youtube_fullscreen_parent::reconcile(app);
 }
 
 fn release_route_resources(s: &Sostoyanie, id: &str, engine: u64) {
@@ -1249,6 +1256,7 @@ fn nash_descriptor(w: &tauri::WebviewWindow) -> Option<u64> {
 /// очереди само за нами не следует (ловили 10.11.2026: «свернул и
 /// больше не развернёшь»).
 fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
+    youtube_fullscreen_parent::reconcile(app);
     let s: tauri::State<Sostoyanie> = app.state();
     if let Ok(_okna) = s.izmenenie_okon.try_lock() {
         primenit_vidimost(&s);
@@ -1404,6 +1412,7 @@ pub fn run() {
                         return;
                     }
                     super_hibernation_parent::tick(&h);
+                    youtube_fullscreen_parent::reconcile(&h);
                     let s: State<Sostoyanie> = h.state();
                     let mertvye: Vec<_> = {
                         let Ok(mut v) = s.vkladki.try_lock() else { continue };
@@ -1423,6 +1432,7 @@ pub fn run() {
                         }).collect()
                     };
                     for (id, proc, proxy, tunnel, vpn_umer, active, engine) in mertvye {
+                        youtube_fullscreen_parent::release_super(&h,&id,engine);
                         ostanovit_resursy(proc, proxy, tunnel);
                         release_route_resources(&s, &id, engine);
                         if let Some(v)=s.vkladki.lock().unwrap().get_mut(&id).filter(|v|v.zapusk_id==engine){v.hibernate=Default::default();}

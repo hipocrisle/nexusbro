@@ -374,6 +374,7 @@ fn outermost_x11_handles(handles: Vec<u32>) -> Vec<u32> {
         .collect()
 }
 fn hide_all(app: &tauri::AppHandle) {
+    crate::youtube_fullscreen_parent::release_all(app);
     let state = app.state::<Sostoyanie>();
     let _windows = state.izmenenie_okon.lock().unwrap();
     state.dvizhki_skryty.store(true, Ordering::SeqCst);

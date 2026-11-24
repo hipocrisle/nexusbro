@@ -39,6 +39,9 @@ type Vidno = Nastrojki & { zapushchena: boolean; sohranena: boolean };
 type Otvet = { ok: boolean; soobshchenie: string };
 
 export default function App() {
+  const [youtubeFullscreen,setYoutubeFullscreen]=useState(false);
+  useEffect(()=>{const off=listen<{active:boolean}>("youtube-fullscreen-changed",event=>setYoutubeFullscreen(event.payload.active===true));return()=>{void off.then(f=>f());};},[]);
+
   useEffect(()=>{if(new URLSearchParams(location.search).has("okno"))void invoke("okno_gotovo").catch(e=>setOshibka(String(e)));},[]);
   const [versiya, setVersiya] = useState("");
   const [dragSuper, setDragSuper] = useState<string | null>(null);
@@ -424,7 +427,7 @@ export default function App() {
     <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
   </button></div>;}
   return (
-    <div className={"okno" + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
+    <div className={"okno" + (youtubeFullscreen ? " youtube-fullscreen" : "") + (nastrojki.panel_svernuta ? " panel-svernuta" : "") + (tyanem ? " tyanem-panel" : "")} style={{ "--reika-w": (nastrojki.panel_svernuta ? 52 : nastrojki.panel_shirina) + "px" } as CSSProperties} onMouseDownCapture={(e) => { if(e.button!==0||editableTarget(e.target))return;void invoke("fokus_obolochke").catch(() => {}); }} onContextMenu={(e) => {if(!editableTarget(e.target))e.preventDefault();}}>
       {/* Рейка супер-вкладок слева — как список серверов в NexusSSH:
           горизонтальная полоса съедала высоту широкоформатников. */}
       <div className="reika">

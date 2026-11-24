@@ -62,9 +62,13 @@ pub fn cancel(browser: i32) {
     }
 }
 pub fn cancel_user(browser: i32) {
-    if let Ok(all) = jobs().lock() {
-        if let Some(entry) = all.get(&browser) {
-            let _ = entry.cancel.send(true);
+    if let Ok(mut all) = jobs().lock() {
+        if let Some(entry) = all.get_mut(&browser) {
+            if entry.started {
+                let _ = entry.cancel.send(true);
+            } else {
+                entry.result = Some(Err(DownloadError::Cancelled));
+            }
         }
     }
 }

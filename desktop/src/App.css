@@ -465,3 +465,5 @@ button.zashchita-knopka { display:flex; align-items:center; gap:6px; border:1px 
 
 .password-offer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 14px;background:var(--fon2);border-bottom:1px solid var(--kraj)}
 .password-offer>span{flex:1;min-width:180px;overflow-wrap:anywhere}.password-offer button{border:1px solid var(--kraj);border-radius:7px;background:var(--fon);color:var(--tekst);padding:6px 10px;cursor:pointer}.password-offer button:first-of-type{border-color:var(--akcent)}
+
+.okno.youtube-fullscreen{--reika-w:0px!important}.okno.youtube-fullscreen>.reika{display:none}.okno.youtube-fullscreen>.kolonka>:not(.pole){display:none}
