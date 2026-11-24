@@ -392,6 +392,42 @@ fn snapshot_valid(node: &Node, snapshot: &Snapshot, session: Option<&sessiya::Se
         })
     })
 }
+fn refusal_reason(value: &str) -> &'static str {
+    match value {
+        "engine_busy" => "engine_busy",
+        "eligibility_or_scope" => "eligibility_or_scope",
+        "carrier_unavailable" => "carrier_unavailable",
+        "worker_state_unknown" => "worker_state_unknown",
+        "probe_unavailable" => "probe_unavailable",
+        "parent_state_changed" => "parent_state_changed",
+        "commit_eligibility_changed" => "commit_eligibility_changed",
+        "context_quiesce_refused" => "context_quiesce_refused",
+        "aborted" => "aborted",
+        "document_changed" => "document_changed",
+        "renderer_or_native_protected" => "renderer_or_native_protected",
+        "beforeunload_veto" => "beforeunload_veto",
+        "unexpected_close" => "unexpected_close",
+        "native_deadline" => "native_deadline",
+        "eligibility_changed" => "eligibility_changed",
+        "service_worker_present_or_unknown" => "service_worker_present_or_unknown",
+        "freeze_failed" => "freeze_failed",
+        "frozen_probe_failed" => "frozen_probe_failed",
+        "cookie_capture_unavailable" => "cookie_capture_unavailable",
+        "cookie_schema_or_capture_failed" => "cookie_schema_or_capture_failed",
+        "native_history" => "native_history",
+        "native_loading" => "native_loading",
+        "native_private" => "native_private",
+        "native_pinned" => "native_pinned",
+        "native_frames" => "native_frames",
+        "native_post" => "native_post",
+        "native_devtools" => "native_devtools",
+        "native_download" => "native_download",
+        "native_capture" => "native_capture",
+        "native_edited" => "native_edited",
+        "native_document_unknown" => "native_document_unknown",
+        _ => "protected_or_unsupported",
+    }
+}
 fn bytes(snapshot: &Snapshot) -> usize {
     snapshot.sealed.ciphertext.len()
         + snapshot.sealed.nonce.len()
@@ -481,7 +517,7 @@ pub fn receive(app: &tauri::AppHandle, id: &str, generation: u64, frame: Frame) 
                 sessiya::Komanda::HibernateFinalAck { token: ack },
             );
         }
-        Frame::Refused { token, reason: _ } => {
+        Frame::Refused { token, reason } => {
             let effects = v.hibernate.machine.apply(Event::Refused {
                 stamp: stamp(&token),
                 eligibility_revision: token.revision,
@@ -491,7 +527,13 @@ pub fn receive(app: &tauri::AppHandle, id: &str, generation: u64, frame: Frame) 
                 v.hibernate.clear_escrow();
                 v.hibernate.deadline = None;
                 v.hibernate.last_active = Instant::now();
-                v.hibernate.reason = Some("protected_or_unsupported");
+                v.hibernate.reason = Some(refusal_reason(&reason));
+                crate::zapisat_v_zhurnal(format!(
+                    "{id}: Super sleep refused generation={} attempt={} reason={}",
+                    token.generation,
+                    token.attempt,
+                    refusal_reason(&reason)
+                ));
             }
         }
         Frame::AbortAck { token } => {
