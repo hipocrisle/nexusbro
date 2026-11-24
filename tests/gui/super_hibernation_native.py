@@ -224,6 +224,35 @@ def run(args):
         download=root/'downloads';download.mkdir(parents=True)
         os.environ['NEXUSBRO_TEST_SUPER_IDLE_SECONDS']='5';os.environ['NEXUSBRO_TEST_DOWNLOAD_DIR']=str(download)
         client=device.start()
+        allowed_reasons={'cold','starting','profile_busy','start_failed','explicit_stop','control_channel_closed','control_delivery_failed',
+            'prepare_timeout','stop_timeout','unexpected_exit','refused','session_write_failed','final_ack_channel_failed','restore_refused',
+            'preparing','prepare_channel_failed','idle','exit_recheck_unknown','protected_or_unsupported','commit_channel_failed',
+            'engine_busy','eligibility_or_scope','carrier_unavailable','worker_state_unknown','probe_unavailable','parent_state_changed',
+            'commit_eligibility_changed','context_quiesce_refused','aborted','document_changed','renderer_or_native_protected','beforeunload_veto',
+            'unexpected_close','native_deadline','eligibility_changed','service_worker_present_or_unknown','freeze_failed','frozen_probe_failed',
+            'cookie_capture_unavailable','cookie_schema_or_capture_failed','native_history','native_loading','native_private','native_pinned',
+            'native_frames','native_post','native_devtools','native_download','native_capture','native_edited','native_document_unknown'}
+        trace=collections.deque(maxlen=64);last_states={}
+        def safe_row(identifier,row):
+            return {'owner':identifier,'phase':row['phase'],'generation':row['generation'],'attempt':row['attempt'],
+                    'reason':row.get('reason') if row.get('reason') in allowed_reasons else None if row.get('reason') is None else 'unknown',
+                    'profile_reserved':row['profile_reserved'],'lease_confirmed':row['lease_confirmed'],'pid_present':row['pid'] is not None,
+                    'owned_count':len(row.get('owned',[])),'owned_complete':row.get('owned_complete') is True,
+                    'tab_count':row['tab_count'],'live_count':row['live_count']}
+        def observed():
+            state=snapshot(client)
+            for identifier,row in state.items():
+                if identifier not in {item[0] for item in specs}:continue
+                safe=safe_row(identifier,row)
+                if last_states.get(identifier)!=safe:trace.append(safe);last_states[identifier]=safe
+            return state
+        def assert_fresh_history(identifier):
+            def loaded():
+                session=rows(client,identifier)
+                return next((r for r in session['vkladki'] if r['id']==session['aktivnaya'] and r.get('browser_id',0)>0
+                             and not r.get('otlozhena') and not r.get('zagruzka')),None)
+            row=wait_for(loaded,'Expected actual loaded native page before guard assertion',25)
+            require(not row.get('nazad') and not row.get('vpered'),'Fixture created navigation history that would mask the intended guard')
         policy=call(client,'nastrojki_poluchit');require(policy.get('memory_saver',True) is True and policy.get('memory_saver_minutes',30)==30,'Normal30min policy changed')
         def activate(identifier):
             foreground(device);switch_super(client,identifier)
@@ -232,22 +261,23 @@ def run(args):
             selector='.pusto button'
             if client.js('!![...document.querySelectorAll(".pusto button")].find(e=>e.textContent.trim()==="Загрузить вкладку")'):
                 click_control(client,selector,20)
-            wait_for(lambda:snapshot(client).get(identifier,{}).get('phase')=='Running','Native engine did not reach Running',40)
+            wait_for(lambda:observed().get(identifier,{}).get('phase')=='Running','Native engine did not reach Running',40)
         def latest_proof(case):return [r for r in fixture.records(case) if r.get('proof')]
         def running(identifier):
-            r=snapshot(client)[identifier]
+            r=observed()[identifier]
             require(r['phase']=='Running' and r['pid'] is not None and r['profile_reserved'] and r['lease_confirmed'],'Native Running lease missing')
             return r
         def refuse(identifier,seconds=9):
+            assert_fresh_history(identifier)
             before=running(identifier);owners=identities(before['pid']);activate('hb-b')
             until=time.monotonic()+seconds
             while time.monotonic()<until:
-                row=snapshot(client)[identifier]
+                row=observed()[identifier]
                 require(row['phase']!='Sleeping' and row['generation']==before['generation'] and row['pid']==before['pid'] and row['profile_reserved'] and row['lease_confirmed'],'Protected Super lost native lease')
                 time.sleep(.1)
             require(not gone(owners),'Protected engine exited')
         stage='selected-native-super-protection'
-        activate('hb-a');navigate(device,fixture.url('roundtrip'))
+        activate('hb-a');assert_fresh_history('hb-a')
         wait_for(lambda:any(r.get('auth')=='A' and r.get('storage') for r in latest_proof('roundtrip')),'Initial server cookie/storage proof absent',30)
         before=running('hb-a');time.sleep(7);require(running('hb-a')['pid']==before['pid'],'Selected main Super slept')
         report['checks'].append('selected_main_native_super_remains_running_beyond_test_idle')
@@ -257,16 +287,24 @@ def run(args):
         report['checks'].append('physical_native_wheel_without_page_click_sets_real_scroll')
         stage='whole-engine-exit-cookie-storage-scroll-roundtrip'
         for cycle in range(3):
+            report['roundtrip_cycle']=cycle+1
+            stage='roundtrip-before-sleep'
+            assert_fresh_history('hb-a')
             before=running('hb-a');owners=identities(before['pid'])
             activate('hb-b')
-            asleep=wait_for(lambda:(lambda r:r if r['phase']=='Sleeping' else None)(snapshot(client)['hb-a']),'Ordinary hidden Super never slept',50)
+            stage='roundtrip-await-Sleeping'
+            asleep=wait_for(lambda:(lambda r:r if r['phase']=='Sleeping' else None)(observed()['hb-a']),'Ordinary hidden Super never slept',50)
             require(asleep['pid'] is None and not asleep['profile_reserved'] and not asleep['lease_confirmed'],'Sleeping retains native lease')
+            stage='roundtrip-old-native-tree-exit'
             wait_for(lambda:gone(owners),'Old native engine tree survived Sleeping',8)
             receipts_before=len(latest_proof('roundtrip'))
+            stage='roundtrip-native-wake'
             activate('hb-a');after=running('hb-a')
             require(after['generation']>before['generation'] and (after['pid'],psutil.Process(after['pid']).create_time()) not in owners,'Wake did not create exactly new native generation')
+            stage='roundtrip-server-cookie-storage-proof'
             proofs=wait_for(lambda:latest_proof('roundtrip')[receipts_before:] or None,'Restored page never reached real origin',30)
             require(all(p['lane']=='A' and p['auth']=='A' and p['storage'] for p in proofs),'Whole-engine wake lost session HttpOnly auth/storage or route')
+            stage='roundtrip-native-scroll-proof'
             wait_for(lambda:any(abs(p['scroll']-scroll)<=64 for p in latest_proof('roundtrip')[receipts_before:]),'Whole-engine wake lost physical scroll',20)
         report['checks'].append('three_actual_whole_engine_exit_new_generation_session_httponly_secure_persistent_headers_storage_scroll_roundtrips')
         stage='rapid-wake-before-shutdown-exit'
@@ -275,7 +313,7 @@ def run(args):
         activate('hb-b')
         transition=None;until=time.monotonic()+20
         while time.monotonic()<until:
-            state=snapshot(client)['hb-a']
+            state=observed()['hb-a']
             if state['phase'] in ('Preparing','Stopping'):transition=state;break
             require(state['phase']!='Sleeping','Preparing/stopping interval finished before observation')
             time.sleep(.02)
@@ -294,7 +332,7 @@ def run(args):
         for case in ('audio','paused','draft','worker','download','unspecified'):
             identifier='hb-'+case
             stage='native-refusal-'+case
-            activate(identifier);navigate(device,fixture.url(case))
+            activate(identifier);assert_fresh_history(identifier)
             wait_for(lambda:latest_proof(case),'Protected native page not loaded',30)
             if case in ('audio','paused','download'):
                 foreground(device);client.mouse(*painted_interaction_point(client))
@@ -306,14 +344,20 @@ def run(args):
                     import pyautogui;pyautogui.write('synthetic-unsaved-draft')
                 else:subprocess.run(['xdotool','type','--clearmodifiers','--','synthetic-unsaved-draft'],env={**os.environ,'DISPLAY':device.display},check=True)
             if case=='worker':wait_for(lambda:any(r['resource_ready'] for r in latest_proof(case)),'Actual service worker never became ready',25)
+            if case=='audio':
+                clock_before=latest_proof(case)[-1]['clock'];media_count=len(latest_proof(case))
             refuse(identifier)
+            if case=='audio':
+                later=latest_proof(case)[media_count:]
+                require(len(later)>=2 and any(abs(r['clock']-clock_before)>.25 for r in later),
+                        'Inactive protected audio clock did not advance during actual native refusal interval')
             report['checks'].append(case+'_actual_native_super_retains_profile_and_process_past_idle')
             # Close this saved fixture normally through its native UI after the
             # refusal assertion, so one case cannot protect a later case via a
             # surviving worker, download or beforeunload registration.
             old_owners=identities(running(identifier)['pid'])
             foreground(device);click_control(client,'.vkladka[data-super-id="'+identifier+'"] .krest',20)
-            wait_for(lambda:identifier not in snapshot(client),'Normal fixture close did not remove profile owner',20)
+            wait_for(lambda:identifier not in observed(),'Normal fixture close did not remove profile owner',20)
             wait_for(lambda:gone(old_owners),'Normally closed fixture engine did not exit',15)
         stage='pinned-native-refusal'
         activate('hb-pinned');refuse('hb-pinned');report['checks'].append('pinned_ordinary_page_protects_whole_super')
@@ -326,7 +370,7 @@ def run(args):
         wait_for(lambda:any(r.get('window')!='main' for r in call(client,'tab_search_snapshot')),'Extra window did not register ordinary views',20)
         refuse('hb-a');report['checks'].append('real_extra_window_reference_protects_super_even_when_main_switches')
         stage='unavailable-configured-route-no-direct-fallback'
-        activate('hb-b');navigate(device,fixture.url('keeper'))
+        activate('hb-b');assert_fresh_history('hb-b')
         wait_for(lambda:any(r.get('auth')=='B' and r.get('storage') for r in latest_proof('keeper')),'B profile auth/storage proof absent',30)
         before_hits=len(fixture.records('keeper'));fixture.routes.stop_proxy('B')
         navigate(device,fixture.url('keeper')+'&network=unavailable')
@@ -335,6 +379,7 @@ def run(args):
         require(all(r.get('lane')!='Direct' for r in fixture.receipts),'A native origin request bypassed configured route')
         report['checks'].append('real_unavailable_configured_B_proxy_never_falls_back_to_Direct_or_other_profile')
         report['coverage']={'cookie_storage_scroll':'three_whole_native_process_replacements','rapid_wake_phase':transition['phase'],'private_media_draft_worker_download_unsupported_multicontext_extra_window':'native_refusal','atomic_overlap':'parent_lease_and_OS_exit_identity_checks_not_exhaustive_scheduler_trace'}
+        report['lifecycle_trace']=list(trace)
         report['completed']=True;report['product_hibernation_accepted']=True;code=0
     except Exception as error:
         report.update(failure_stage=stage,failure_class=type(error).__name__)
@@ -343,6 +388,8 @@ def run(args):
                 state=snapshot(device.client)
                 report['failure_lifecycle_counts']=dict(collections.Counter(r['phase'] for r in state.values()))
                 report['failure_live_profile_count']=sum(r['pid'] is not None for r in state.values())
+                report['failure_engines']=[safe_row(i,r) for i,r in state.items() if i in {x[0] for x in specs}]
+                report['lifecycle_trace']=list(trace)
             except Exception as diagnostic_error:report['diagnostic_failure_class']=type(diagnostic_error).__name__
     finally:
         for name,value in [('NEXUSBRO_TEST_SUPER_IDLE_SECONDS',previous_idle),('NEXUSBRO_TEST_DOWNLOAD_DIR',previous_download)]:
