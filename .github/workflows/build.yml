@@ -24,10 +24,10 @@ on:
         description: Reviewed immutable minimal muxer run to verify without rebuilding
         type: string
         default: ""
-      youtube_probe_chrome:
-        description: Single explicit CI-only Chrome fingerprint experiment (no production default change)
-        type: boolean
-        default: false
+      youtube_native_reuse:
+        description: JSON run/source for diagnostic native YouTube tests using an existing Windows package (never acceptance)
+        type: string
+        default: ""
       youtube_muxer_only:
         description: Verify minimal source-built local muxer prototype without desktop publication
         type: boolean
@@ -111,6 +111,15 @@ on:
         default: false
 
 jobs:
+  youtube-native-reuse:
+    if: github.event_name == 'workflow_dispatch' && inputs.youtube_native_reuse != ''
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/youtube-native-reuse.yml
+    with:
+      run: ${{ fromJSON(inputs.youtube_native_reuse).run }}
+      source: ${{ fromJSON(inputs.youtube_native_reuse).source }}
   youtube-deno-cache-probe:
     if: inputs.youtube_deno_cache_probe
     uses: ./.github/workflows/deno-cache-probe.yml
@@ -122,7 +131,7 @@ jobs:
     uses: ./.github/workflows/youtube-probe.yml
     with:
       diagnostic_public_key: ${{ inputs.youtube_probe_diagnostic_key }}
-      impersonate_chrome: ${{ inputs.youtube_probe_chrome }}
+      impersonate_chrome: false
   process-ownership:
     if: >-
       !(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) &&
