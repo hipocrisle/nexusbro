@@ -1489,6 +1489,65 @@ def run(args):
             require(call(ca, 'browser_lock_status')['locked'], 'Recovery UI was visible without a native lock')
             call(ca, 'security_passwords', action='list', error=True)
 
+        def recovery_diagnostics(stage, point=None, screenshot=False):
+            # Fixed labels, counters and structural metadata only; no inputs,
+            # archive identifiers, raw native errors or page text are retained.
+            state = ca.js("""(()=>{const d=window.__recoveryDiagnostics||{};
+              const card=document.querySelector('.browser-lock-card');
+              const allowed=['NexusBro','Браузер заблокирован','Восстановление из копии','Сброс хранилища'];
+              const buttons=['Восстановить из копии','Назад','Обновить список копий','Разблокировать браузер','Восстановить хранилище'];
+              return {locked:!!document.querySelector('.browser-lock-screen'),
+                heading:[...document.querySelectorAll('.browser-lock-card h1,.browser-lock-card h2')].map(e=>allowed.includes(e.textContent.trim())?e.textContent.trim():'other'),
+                buttons:[...document.querySelectorAll('.browser-lock-card button')].filter(e=>buttons.includes(e.textContent.trim())).map(e=>({label:e.textContent.trim(),disabled:e.disabled})),
+                alert:!!document.querySelector('.browser-lock-error[role=alert]'),
+                chooser:!!document.querySelector('[aria-label="Копия хранилища"]'),
+                trace:d.events||[],ipc:d.ipc||[],card:card?(()=>{const r=card.getBoundingClientRect();return [r.x,r.y,r.width,r.height]})():null};})()""")
+            if point:
+                state['point_target'] = ca.js('(()=>{const e=document.elementFromPoint(' + str(point[0]) + ',' + str(point[1]) + ');return !!e&&e.closest("button")?.textContent.trim()==="Восстановить из копии"})()')
+            archives = list(security_root.glob('browser-vault.v1.recovery-*'))
+            state.update(stage=stage, archive_count=len(archives),
+                         archive_ids_valid=all(re.fullmatch(r'browser-vault\.v1\.recovery-[0-9]{20}-[0-9a-f]{32}', p.name) is not None for p in archives))
+            checks.append({'native_recovery_diagnostics': state})
+            if screenshot and state['locked']:
+                from PIL import ImageGrab, Image
+                actual = ImageGrab.grab(xdisplay=a.display)
+                # Preserve only a tiny public restore-button click target. All
+                # other pixels (including inputs and any CEF overlay) are masked.
+                masked = Image.new('RGB', actual.size, '#242424')
+                if point:
+                    label = ca.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+                    origin = ca.command('plugin:window|inner_position', label=label)
+                    scale = ca.js('devicePixelRatio||1')
+                    x, y = round(origin['x'] + point[0]*scale), round(origin['y'] + point[1]*scale)
+                    box = (max(0,x-12),max(0,y-12),min(actual.width,x+12),min(actual.height,y+12))
+                    masked.paste(actual.crop(box), box[:2])
+                masked.save(root / 'native-recovery-chooser-masked.png')
+
+        def recovery_open_restore():
+            ca.js("""(()=>{if(window.__recoveryDiagnostics)return true;
+              const d=window.__recoveryDiagnostics={events:[],ipc:[]};
+              for(const type of ['pointerdown','pointerup','click'])document.addEventListener(type,e=>{
+                if(e.target.closest?.('button')?.textContent.trim()==='Восстановить из копии')
+                  d.events.push({type,trusted:e.isTrusted});},true);
+              const native=window.__TAURI_INTERNALS__.invoke;
+              window.__TAURI_INTERNALS__.invoke=function(command,...args){
+                if(command!=='browser_vault_backups')return native.call(this,command,...args);
+                const row={command,started:true};d.ipc.push(row);
+                return native.call(this,command,...args).then(value=>{row.rows=Array.isArray(value)?value.length:null;return value;},error=>{
+                  row.error_class=error instanceof Error?'Error':typeof error;throw error;});};
+              return true;})()""")
+            point = recovery_prepare('[...document.querySelectorAll(".browser-lock-screen button")].find(e=>e.textContent.trim()==="Восстановить из копии")')
+            recovery_diagnostics('before-restore-click', point)
+            ca.mouse(*point)
+            try:
+                js_wait(ca, '!!document.querySelector(' + json.dumps('[aria-label="Копия хранилища"]') + ')', 'Native recovery chooser missing')
+            except Exception:
+                try:
+                    recovery_diagnostics('chooser-missing', point, screenshot=True)
+                except Exception as diagnostic_error:
+                    checks.append({'native_recovery_diagnostic_error_class': type(diagnostic_error).__name__})
+                raise
+
         def choose_original_archive():
             rows = call(ca, 'browser_vault_backups')
             matches = [i for i, row in enumerate(rows)
@@ -1556,8 +1615,7 @@ def run(args):
         wait_recovery_lock()
         current_ciphertext = (security_root / 'browser-vault.v1').read_bytes()
         before_wrong_restore = protected_snapshot()
-        recovery_button('Восстановить из копии')
-        js_wait(ca, '!!document.querySelector(' + json.dumps('[aria-label="Копия хранилища"]') + ')', 'Native recovery chooser missing')
+        recovery_open_restore()
         choose_original_archive()
         recovery_fill('[aria-label="Мастер-пароль выбранной копии"]', recovery_master)
         recovery_button('Восстановить хранилище')
@@ -1569,7 +1627,7 @@ def run(args):
         require(protected_snapshot() == before_wrong_restore, 'Cancelling restore changed protected files')
         checkpoint('native_wrong_restore_and_cancel_remain_locked_with_exact_files')
 
-        recovery_button('Восстановить из копии')
+        recovery_open_restore()
         choose_original_archive()
         recovery_fill('[aria-label="Мастер-пароль выбранной копии"]', master_a)
         recovery_button('Восстановить хранилище')
