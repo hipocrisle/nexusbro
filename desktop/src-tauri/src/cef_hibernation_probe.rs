@@ -185,6 +185,12 @@ pub fn run(
             .map_err(|_| anyhow::anyhow!("Probe readback differs"))?;
         println!("NB-PROBE {{\"readback_before_navigation\":true}}");
         std::io::stdout().flush()?;
+        let mut admission = Vec::new();
+        std::io::stdin()
+            .lock()
+            .take(7)
+            .read_until(b'\n', &mut admission)?;
+        anyhow::ensure!(admission == b"ADMIT\n", "Probe admission refused");
     }
     let (target, target_state) = browser(&mut context, &plan.url)?;
     close(target, target_state)?;
