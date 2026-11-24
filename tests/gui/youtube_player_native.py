@@ -213,14 +213,24 @@ def observe(client, identifier, tab, *, admitting=False, diagnostics=None):
     expression='window.__playerObserved.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'
     value=wait_for(lambda:client.js(expression),'Native player observation missing',10)
     if diagnostics is not None:diagnostics['native_probe_unavailable']='state' not in value.get('data',{})
-    if diagnostics is not None and sys.platform.startswith('linux'):
+    if diagnostics is not None:
         code = value.get('data', {}).get('code')
         allowed = {'probe_wrong_thread', 'browser_invalid', 'frame_absent',
                    'document_not_admitted', 'message_capacity', 'observer_unavailable',
                    'dispatch_failed', 'timeout', 'document_changed', 'cdp_method_failed',
-                   'cdp_result_absent', 'snapshot_value_unavailable', 'cdp_agent_detached'}
+                   'cdp_result_absent', 'snapshot_value_unavailable', 'cdp_agent_detached',
+                   'snapshot_undefined', 'snapshot_exception', 'snapshot_result_absent',
+                   'snapshot_not_object', 'snapshot_value_absent', 'snapshot_schema_mismatch',
+                   'snapshot_field_invalid', 'snapshot_invalid_json', 'snapshot_oversized'}
         if code is not None:
             diagnostics['native_probe_code'] = code if isinstance(code, str) and code in allowed else 'unknown_probe_code'
+        counters = value.get('data', {}).get('resources')
+        fields = {'html', 'js', 'css', 'frame_refused'}
+        if counters is not None:
+            valid = (isinstance(counters, dict) and set(counters) == fields
+                     and all(type(counters[k]) is int and 0 <= counters[k] <= 0xffffffff for k in fields))
+            diagnostics['resources_valid'] = valid
+            if valid: diagnostics['resources'] = {k: counters[k] for k in sorted(fields)}
 
     if admitting and isinstance(value.get('data',{}).get('error'),str) and 'state' not in value['data']:
         return {}  # only pre-admission: old document may still be navigating
