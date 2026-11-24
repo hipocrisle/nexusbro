@@ -225,7 +225,9 @@ pub fn open_webm(
         .iter()
         .filter(|f|crate::youtube_light_download::supports_video(f)&&f.height.is_some_and(|h|h<=1080))
         .max_by_key(|f| f.height);
-    let audio = data.formats.iter().find(|f| {
+    // The pinned yt-dlp emits formats in increasing preference order, as the
+    // download selector also expects. Keep playback on its best supported Opus.
+    let audio = data.formats.iter().rev().find(|f| {
         crate::youtube_light_download::supports_audio(f)
     });
     let (Some(video), Some(audio)) = (video, audio) else {
