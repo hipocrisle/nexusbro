@@ -82,7 +82,7 @@ class Fixture:
         audio = io.BytesIO()
         with wave.open(audio, 'wb') as wav:
             wav.setnchannels(1); wav.setsampwidth(2); wav.setframerate(8000)
-            wav.writeframes(b''.join(struct.pack('<h', int(8 * math.sin(i / 30))) for i in range(16000)))
+            wav.writeframes(b''.join(struct.pack('<h', int(3000 * math.sin(i / 30))) for i in range(16000)))
         sound = audio.getvalue()
         owner = self
 
@@ -116,7 +116,7 @@ class Fixture:
                     if (s, t) == (0, 0):
                         body = b'''<!doctype html><meta charset="utf-8"><style>body{margin:0;background:#185541}button{position:fixed;left:0;top:0;width:130px;height:70px;background:rgb(123,31,162);border:0;color:white}button span{position:absolute;left:5px;bottom:3px;font:12px sans-serif}</style><button id="start"><span>Start media</span></button><script>
 let a=null,trusted=false,played=0,last=0;function report(){if(!a)return;let n=a.currentTime;if(!a.paused){let d=n-last;if(d<0)d+=a.duration;if(d>=0&&d<4)played+=d;}last=n;fetch('/media-proof?'+new URLSearchParams({position:n,duration:Number.isFinite(a.duration)?a.duration:0,played,paused:a.paused,trusted}),{cache:'no-store'}).catch(()=>{});}
-start.onclick=async e=>{if(!e.isTrusted||a)return;trusted=true;a=new Audio('/audio.wav');a.loop=true;a.volume=.01;await a.play();setInterval(report,1000);report();};</script>'''
+start.onclick=async e=>{if(!e.isTrusted||a)return;trusted=true;a=new Audio('/audio.wav');a.loop=true;a.volume=.1;await a.play();setInterval(report,1000);report();};</script>'''
                     else:
                         body = b'<!doctype html><meta charset="utf-8"><style>body{height:5000px;background:#185541;color:white}</style><h1>Quiet resource fixture</h1>'
                     content_type = 'text/html'
@@ -329,12 +329,17 @@ def run(args):
         if not args.baseline:
             lifecycle(call(client, 'super_lifecycle_snapshot'))
         for index in range(8):
+            report['warmup_super_index'] = index
+            stage = 'warmup-super-foreground-and-selection'
             warmup_load_guard()
             foreground(device); switch_super(client, 'soak-' + str(index))
             for tab in range(3):
+                report['warmup_tab_index'] = tab
+                stage = 'warmup-tab-foreground-and-click'
                 warmup_load_guard()
                 foreground(device)
                 click_control(client, '.obychnaya[data-id="' + str(tab + 1) + '"]', 30)
+                stage = 'warmup-tab-origin-request'
                 wait_for(lambda: fixture.hits[(index, tab)] > 0, 'Native physical tab never reached fixture', 30)
                 def selected_loaded():
                     session = rows(client, 'soak-' + str(index))
@@ -342,10 +347,14 @@ def run(args):
                     return (session['aktivnaya'] == tab + 1 and len(target) == 1
                             and target[0]['adres'] == base + '/page/' + str(index) + '/' + str(tab)
                             and not target[0].get('otlozhena') and not target[0].get('zagruzka'))
+                stage = 'warmup-tab-native-loaded-row'
                 wait_for(selected_loaded, 'Actual selected native page did not settle', 30)
                 if (index, tab) == (0, 0):
+                    stage = 'warmup-media-painted-physical-click'
                     device.client.mouse(*painted_interaction_point(client))
+                    stage = 'warmup-media-trusted-playing-receipt'
                     wait_for(lambda: fixture.media and fixture.media[-1]['trusted'] and not fixture.media[-1]['paused'], 'Trusted native media did not start', 20)
+        stage = 'warmup-final-current-selection'
         foreground(device); switch_super(client, 'soak-1')
         expected = {(s, t) for s in range(8) for t in range(3)}
         require(set(fixture.hits) == expected, 'Visited/deferred fixture set differs from 24/976')
@@ -372,9 +381,12 @@ def run(args):
             stage = 'continuous-media-and-deferred-network'
             with fixture.lock:
                 media = list(fixture.media); visited = set(fixture.hits)
+            stage = 'deferred-network-set'
             require(visited == expected, 'A deferred page unexpectedly performed network I/O')
+            stage = 'continuous-media-fresh-trusted-playing'
             require(media and now - media[-1]['at'] < 20 and media[-1]['trusted'] and not media[-1]['paused'], 'Continuous media receipt stopped')
             recent = [r for r in media if now - r['at'] < 15]
+            stage = 'continuous-media-clock-advancement'
             require(len(recent) < 3 or recent[-1]['played'] - recent[0]['played'] >= .25, 'Media clock stopped advancing')
             if now >= next_poll:
                 stage = 'readonly-lifecycle-sampling'
@@ -449,6 +461,46 @@ def run(args):
         # include local paths or secrets; publish only fixed failure class.
         report['failure_class'] = type(error).__name__
         report['failure_stage'] = stage
+        if fixture:
+            with fixture.lock:
+                recent_media = list(fixture.media)
+                hit_keys = set(fixture.hits)
+            now = time.monotonic()
+            report['fixture_failure_diagnostics'] = {
+                'visited_count': len(hit_keys),
+                'unexpected_page_count': sum(t >= 3 for _, t in hit_keys),
+                'media_receipts_retained': len(recent_media),
+                'last_media_age_seconds': round(now - recent_media[-1]['at'], 3) if recent_media else None,
+                'last_media_samples': [{k: row[k] for k in ('position', 'duration', 'played', 'paused', 'trusted')}
+                                       for row in recent_media[-3:]],
+                'recent_clock_delta': recent_media[-1]['played'] - recent_media[-2]['played'] if len(recent_media) > 1 else None}
+        if device and device.client:
+            try:
+                report['native_failure_diagnostics'] = device.client.js('''(()=>{
+                  const owner=document.querySelector('.vkladka.aktivna')?.dataset.superId;
+                  const selected=document.querySelector('.obychnaya[aria-selected=true]');
+                  const r=document.querySelector('.pole')?.getBoundingClientRect();
+                  return {main:window.__TAURI_INTERNALS__?.metadata?.currentWindow?.label==='main',
+                    focused:document.hasFocus(),owner_is_expected:owner==='soak-'+''' + str(report.get('warmup_super_index', -1)) + ''',
+                    selected_expected_id:selected?.dataset.id===''' + json.dumps(str(report.get('warmup_tab_index', -1) + 1)) + ''',
+                    selected_count:document.querySelectorAll('.obychnaya[aria-selected=true]').length,
+                    active_tag:document.activeElement?.tagName??null,
+                    viewport:r?[r.x,r.y,r.width,r.height]:null};})()''')
+                # A single RGB sample of the public test button, never an OS
+                # screenshot or arbitrary page/terminal text.
+                from PIL import ImageGrab
+                c = device.client
+                point = c.js('(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r?[r.x+50,r.y+30]:null})()')
+                if point:
+                    label = c.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+                    origin = c.command('plugin:window|inner_position', label=label)
+                    scale = c.js('devicePixelRatio||1')
+                    with ImageGrab.grab(**({'xdisplay':device.display} if sys.platform!='win32' else {})) as shot:
+                        pixel = (round(origin['x']+point[0]*scale), round(origin['y']+point[1]*scale))
+                        if 0<=pixel[0]<shot.width and 0<=pixel[1]<shot.height:
+                            report['native_failure_diagnostics']['public_fixture_rgb'] = list(shot.getpixel(pixel)[:3])
+            except Exception as diagnostic_error:
+                report['native_diagnostic_failure_class'] = type(diagnostic_error).__name__
     finally:
         for name, cleanup in [('sampler', sampler.finish if sampler else None),
                               ('device', device.close if device else None),
