@@ -145,6 +145,8 @@ pub struct ExtractedVideo {
     /// Entries deliberately omitted: manifests, DRM, storyboards/other protocol
     /// or unsupported containers. Never presented as playable quality choices.
     pub rejected_formats: usize,
+    pub captions: Vec<Arc<crate::youtube_light_captions::CaptionTrack>>,
+    pub rejected_captions: usize,
 }
 impl fmt::Debug for ExtractedVideo {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -255,6 +257,10 @@ struct RawVideo {
     #[serde(default)]
     http_headers: RawHeaders,
     formats: RawFormats,
+    #[serde(default)]
+    subtitles: crate::youtube_light_captions::Sources,
+    #[serde(default)]
+    automatic_captions: crate::youtube_light_captions::Sources,
 }
 fn headers(raw: RawHeaders, expected: &VideoId) -> Result<AllowedHeaders, ExtractError> {
     let mut values = BTreeMap::new();
@@ -401,10 +407,14 @@ pub fn parse(bytes: &[u8], expected: &VideoId) -> Result<ExtractedVideo, Extract
     if formats.is_empty() {
         return Err(ExtractError::NoSupportedFormats);
     }
+    let (captions, rejected_captions) =
+        crate::youtube_light_captions::tracks(expected, raw.subtitles, raw.automatic_captions);
     Ok(ExtractedVideo {
         metadata,
         formats,
         rejected_formats: rejected,
+        captions,
+        rejected_captions,
     })
 }
 
@@ -585,5 +595,19 @@ mod tests {
             assert!(!text.contains("googlevideo"));
             assert!(!text.contains("fixture"));
         }
+    }
+    #[test]
+    fn unsupported_caption_links_do_not_weaken_or_fail_video_formats() {
+        let mut data = video();
+        data["subtitles"] = json!({"en":[{"ext":"vtt","url":format!("https://www.youtube.com/api/timedtext?v={}&fmt=vtt",id().as_str()),"name":"English"}],"ru":[{"ext":"vtt","url":"http://localhost/private"}]});
+        data["automatic_captions"] = json!({"en":[{"ext":"vtt","url":format!("https://www.youtube.com/api/timedtext?v={}&fmt=vtt",id().as_str())}]});
+        let parsed = run(data.clone()).unwrap();
+        assert_eq!(parsed.formats.len(), 1);
+        assert_eq!(parsed.captions.len(), 2);
+        assert!(parsed.rejected_captions > 0);
+        assert!(!parsed.captions[0].metadata().automatic);
+        assert!(parsed.captions[1].metadata().automatic);
+        data["formats"][0]["url"] = json!("https://evil.test/video");
+        assert_eq!(run(data).unwrap_err(), ExtractError::UnsafeUrl);
     }
 }
