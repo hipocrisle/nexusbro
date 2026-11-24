@@ -268,6 +268,7 @@ pub fn zapustit_cep(
         .stdout(stdout)
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
+    if let Some(resources)=crate::brauzer::papka_resursov(){cmd.arg(format!("--nb-youtube-components={}",resources.join("binaries/youtube-light").display()));}
     use sha2::{Digest,Sha256};
     cmd.arg(format!("--nb-profile-key={:x}",Sha256::digest(id.as_bytes())));
     cmd.arg(format!("--nb-engine-generation={generation}"));

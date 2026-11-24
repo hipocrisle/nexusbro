@@ -13,6 +13,8 @@ use std::sync::OnceLock;
 /// Куда сборка кладёт свой движок (Windows). Задаётся при запуске.
 static PAPKA_RESURSOV: OnceLock<PathBuf> = OnceLock::new();
 
+pub fn papka_resursov() -> Option<PathBuf> { PAPKA_RESURSOV.get().cloned() }
+
 pub fn zadat_papku_resursov(p: PathBuf) {
     let _ = PAPKA_RESURSOV.set(p);
 }
