@@ -32,11 +32,20 @@ impl Drop for Plan {
 struct State {
     loaded: AtomicBool,
     closed: AtomicBool,
+    failed: AtomicBool,
+    target: String,
 }
 wrap_load_handler! {
  struct ProbeLoad { state:Arc<State> }
  impl LoadHandler {
-  fn on_loading_state_change(&self,_browser:Option<&mut Browser>,is_loading:i32,_back:i32,_forward:i32){if is_loading==0{self.state.loaded.store(true,Ordering::Release);}}
+  fn on_load_end(&self,_browser:Option<&mut Browser>,frame:Option<&mut Frame>,status:i32){
+    if frame.is_some_and(|f|f.is_main()!=0 && CefString::from(&f.url()).to_string()==self.state.target){
+      if self.state.target=="about:blank" || (200..300).contains(&status){self.state.loaded.store(true,Ordering::Release);}else{self.state.failed.store(true,Ordering::Release);}
+    }
+  }
+  fn on_load_error(&self,_browser:Option<&mut Browser>,frame:Option<&mut Frame>,_code:Errorcode,_text:Option<&CefString>,failed_url:Option<&CefString>){
+    if frame.is_some_and(|f|f.is_main()!=0) && failed_url.is_some_and(|url|url.to_string()==self.state.target){self.state.failed.store(true,Ordering::Release);}
+  }
  }
 }
 wrap_life_span_handler! {
@@ -79,6 +88,8 @@ fn browser(context: &mut RequestContext, url: &str) -> anyhow::Result<(Browser, 
     let state = Arc::new(State {
         loaded: AtomicBool::new(false),
         closed: AtomicBool::new(false),
+        failed: AtomicBool::new(false),
+        target: url.to_owned(),
     });
     let info = WindowInfo {
         runtime_style: RuntimeStyle::ALLOY,
@@ -101,7 +112,11 @@ fn browser(context: &mut RequestContext, url: &str) -> anyhow::Result<(Browser, 
         Some(context),
     )
     .ok_or_else(|| anyhow::anyhow!("Probe browser refused"))?;
-    wait(|| state.loaded.load(Ordering::Acquire))?;
+    wait(|| state.loaded.load(Ordering::Acquire) || state.failed.load(Ordering::Acquire))?;
+    anyhow::ensure!(
+        !state.failed.load(Ordering::Acquire),
+        "Probe page load refused"
+    );
     Ok((browser, state))
 }
 fn close(browser: Browser, state: Arc<State>) -> anyhow::Result<()> {
