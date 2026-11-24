@@ -1,6 +1,7 @@
 //! The native parent owns file selection. The renderer never supplies a save
 //! path, an executable, or a network URL. Child requests are generation-pinned.
 use tauri::Manager;
+use crate::youtube_download_diagnostics::{self as trace, Stage, Reason};
 use tauri_plugin_dialog::DialogExt;
 pub fn receive(
     app: &tauri::AppHandle,
@@ -11,7 +12,9 @@ pub fn receive(
     if data["tip"] != "youtube-save" {
         return false;
     }
+    if let Some(tab)=data["id"].as_u64(){trace::parent(app,super_id,tab,Stage::ParentReceived,Reason::None);}
     if crate::browser_lock::locked_global() {
+        if let Some(tab)=data["id"].as_u64(){trace::parent(app,super_id,tab,Stage::ParentReceived,Reason::LockedOrClosing);}
         return true;
     }
     let (Some(tab), Some(browser), Some(generation), Some(request), Some(filename)) = (
@@ -21,6 +24,7 @@ pub fn receive(
         data["request"].as_str(),
         data["filename"].as_str(),
     ) else {
+        if let Some(tab)=data["id"].as_u64(){trace::parent(app,super_id,tab,Stage::ParentReceived,Reason::InvalidRequest);}
         return true;
     };
     if request.len() != 32
@@ -32,6 +36,7 @@ pub fn receive(
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
     {
+        trace::parent(app,super_id,tab,Stage::ParentReceived,Reason::InvalidRequest);
         return true;
     }
     let label = data["label"]
@@ -74,11 +79,14 @@ pub fn receive(
         })
     };
     if !current || !admitted {
+        trace::parent(app,super_id,tab,Stage::ParentReceived,if !current{Reason::CurrentEngineMismatch}else{Reason::SelectedSessionMismatch});
         return true;
     }
     let Some(owner) = app.get_webview_window(&label) else {
+        trace::parent(app,super_id,tab,Stage::ParentReceived,Reason::OwnerMissing);
         return true;
     };
+    trace::parent(app,super_id,tab,Stage::ParentAdmitted,Reason::None);
     let app = app.clone();
     let super_id = super_id.to_owned();
     let request = request.to_owned();
@@ -88,7 +96,9 @@ pub fn receive(
         .add_filter("WebM", &["webm"])
         .set_file_name(filename)
         .set_parent(&owner);
+    trace::parent(&app,&super_id,tab,Stage::DialogDispatch,Reason::None);
     dialog.save_file(move |picked| {
+        trace::parent(&app,&super_id,tab,Stage::DialogReturned,if picked.is_some(){Reason::Picked}else{Reason::Cancelled});
         let path = picked
             .and_then(|p| p.into_path().ok())
             .filter(|p| p.is_absolute())
@@ -100,6 +110,7 @@ pub fn receive(
                 .filter(|v| v.zapusk_id == engine && v.proc.is_some())
                 .and_then(|v| v.kanal.clone())
         };
+        if channel.is_none(){trace::parent(&app,&super_id,tab,Stage::DialogReturned,Reason::ChannelMissing);}
         if let Some(channel) = channel {
             let matches = |session: &crate::sessiya::Sessiya| {
                 session.vkladki.iter().any(|t| {
@@ -143,7 +154,8 @@ pub fn receive(
                     komanda: Box::new(command),
                 }
             };
-            let _ = channel.try_send(command);
+            let sent=channel.try_send(command);
+            trace::parent(&app,&super_id,tab,Stage::DialogReturned,if sent.is_ok(){Reason::ChannelSent}else{Reason::ChannelMissing});
         }
     });
     true

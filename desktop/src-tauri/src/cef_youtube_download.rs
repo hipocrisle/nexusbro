@@ -14,6 +14,7 @@ use std::{
     time::{Duration, Instant},
 };
 use tokio::sync::watch;
+use crate::youtube_download_diagnostics::{self as trace, Stage, Reason};
 const MAX_JOBS: usize = 2;
 struct Entry {
     request: String,
@@ -84,7 +85,9 @@ pub fn request(
     format: String,
     sender: &Sender<crate::cef_vkladki::Sobytie>,
 ) {
+    trace::child(sender,tab,Stage::RequestReceived,Reason::None);
     let Some((operation, document, data)) = crate::cef_youtube::media(browser) else {
+        trace::child(sender,tab,Stage::RequestReceived,Reason::MediaNotAdmitted);
         return;
     };
     let allowed = if audio {
@@ -95,6 +98,7 @@ pub fn request(
             .any(|f| f.format_id == format && download::supports_video(f))
     };
     if !allowed || !route.validate() {
+        trace::child(sender,tab,Stage::RequestReceived,if !allowed{Reason::FormatUnsupported}else{Reason::RouteMissing});
         display(
             browser,
             serde_json::json!({"error":"Формат или путь загрузки недоступен"}),
@@ -103,6 +107,7 @@ pub fn request(
     }
     let mut nonce = [0u8; 16];
     if OsRng.try_fill_bytes(&mut nonce).is_err() {
+        trace::child(sender,tab,Stage::RequestReceived,Reason::RandomUnavailable);
         return;
     }
     let request = nonce.iter().map(|b| format!("{b:02x}")).collect::<String>();
@@ -115,6 +120,7 @@ pub fn request(
     let (cancel, _) = watch::channel(false);
     let admitted = {
         let Ok(mut all) = jobs().lock() else {
+            trace::child(sender,tab,Stage::RequestReceived,Reason::StateUnavailable);
             return;
         };
         if all.len() >= MAX_JOBS || all.contains_key(&identity) {
@@ -144,14 +150,16 @@ pub fn request(
         }
     };
     if !admitted {
+        trace::child(sender,tab,Stage::RequestReceived,Reason::JobLimit);
         display(
             browser,
             serde_json::json!({"error":"Загрузка уже выполняется или достигнут лимит двух задач"}),
         );
         return;
     }
+    trace::child(sender,tab,Stage::RequestAdmitted,Reason::None);
     display(browser, serde_json::json!({"choosing":true}));
-    if sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-save","id":tab,"browser_id":browser.identifier(),"route_generation":route_generation,"request":request,"filename":filename}))).is_err(){self::cancel(identity);}
+    if sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-save","id":tab,"browser_id":browser.identifier(),"route_generation":route_generation,"request":request,"filename":filename}))).is_err(){trace::child(sender,tab,Stage::RequestAdmitted,Reason::ChannelMissing);self::cancel(identity);}else{trace::child(sender,tab,Stage::RequestAdmitted,Reason::ChannelSent);}
 }
 pub fn target(browser: &Browser, route_generation: u64, request: &str, path: Option<String>) {
     let identity = browser.identifier();
