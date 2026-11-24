@@ -74,11 +74,7 @@ impl PlayerDocuments {
         }
     }
     pub fn document_matches(&self, browser: i32, generation: u64, document: &str) -> bool {
-        self.0
-            .lock()
-            .ok()
-            .and_then(|g| g.get(&browser).cloned())
-            .is_some_and(|g| g.generation == generation && g.document == document)
+        self.0.lock().is_ok_and(|grants|grants.get(&browser).is_some_and(|grant|grant.generation==generation&&grant.document==document))
     }
     fn resource(
         &self,
