@@ -200,6 +200,7 @@ def run(args):
         wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,SUPER,tab,admitting=True)),'Native player not configured',30)
         output=root/'downloads';output.mkdir();diagnostics={}
         report['stage']='save-dialog-cancel';clear_states(client);dialog=start_chooser(client,device,diagnostics);choose(device,dialog)
+        terminal(client,tab,'cancelled',20)
         require(not list(output.iterdir()),'Save cancel created output')
         report['checks'].append({'name':'physical-save-cancel','no_output':True})
         report['stage']='download-success';clear_states(client);dialog=start_chooser(client,device,diagnostics);target=output/'complete.webm';choose(device,dialog,target)
