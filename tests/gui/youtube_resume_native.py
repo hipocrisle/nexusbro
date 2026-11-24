@@ -232,6 +232,13 @@ def run(args):
         close_for_privacy(client, device, report)
         report['final_owned_exit'] = report.pop('owned_exit')
         media = fixture.receipts
+        report['stage'] = 'controlled-route-proof'
+        report['controlled_route_observed'] = {
+            lane: {track: sum(row.get('lane') == lane and row.get('track') == track for row in media)
+                   for track in ('video', 'audio')}
+            for lane in ('A', 'B', 'Direct')}
+        report['controlled_route_observed']['other_tracks'] = sum(row.get('track') not in ('video', 'audio') for row in media)
+        report['controlled_route_observed']['other_lanes'] = sum(row.get('lane') not in ('A', 'B', 'Direct') for row in media)
         require(media and all(row['lane'] != 'Direct' for row in media), 'Unproxied controlled media request')
         require({row['track'] for row in media if row['lane'] == 'A'} == {'video', 'audio'}, 'Route A media proof missing')
         report['controlled_route_receipts'] = dict(direct=0, a=sum(row['lane'] == 'A' for row in media), b=sum(row['lane'] == 'B' for row in media))
