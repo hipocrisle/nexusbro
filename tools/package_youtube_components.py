@@ -12,6 +12,7 @@ import pathlib
 import platform
 import re
 import shutil
+import shlex
 import stat
 import tarfile
 import posixpath
@@ -348,7 +349,95 @@ def verify_ffmpeg(output, pin, native_platform, staging):
     return dict(shared=True, enable_version3=True, enable_gpl=False, enable_nonfree=False,
                 actual_license='LGPL-3.0-or-later', dependency_closure='bundled_bin_dll_or_lib_so_native_startup_verified_os_dependencies_not_certified')
 
+def validate_muxer_package(directory, pin, native_platform):
+    directory = pathlib.Path(directory)
+    if directory.is_symlink(): raise Blocked('muxer_symlink')
+    manifest = directory / 'components.json'
+    if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size > 131072:
+        raise Blocked('muxer_manifest')
+    try: record = json.loads(manifest.read_text())['ffmpeg']
+    except (ValueError, KeyError, TypeError): raise Blocked('muxer_manifest') from None
+    if (record.get('platform') != native_platform or record.get('source_commit') != pin['source_commit']
+            or record.get('source_sha256') != pin['source_sha256']
+            or record.get('source_url') != pin['source_archive_url']
+            or record.get('configure') != pin['configure'] or record.get('license') != 'LGPL-2.1-or-later'
+            or record.get('native_smoke') is not True or record.get('network_protocol_refused') is not True):
+        raise Blocked('muxer_source_or_evidence')
+    files = record.get('files')
+    if not isinstance(files, list) or len(files) != len(pin['files']): raise Blocked('muxer_files')
+    seen, total = set(), 0
+    for item in files:
+        if not isinstance(item, dict): raise Blocked('muxer_files')
+        name, size, digest = item.get('filename'), item.get('bytes'), item.get('sha256')
+        if (name not in pin['files'] or name in seen or not isinstance(digest, str)
+                or not re.fullmatch('[0-9a-f]{64}', digest) or type(size) is not int or not 0 < size <= MAX_EXE):
+            raise Blocked('muxer_files')
+        path = directory
+        for part in pathlib.PurePosixPath(name).parts:
+            path = path / part
+            if path.is_symlink(): raise Blocked('muxer_symlink')
+        total += size
+        if total > MAX_FFMPEG_EXPANDED or not path.is_file() or path.stat().st_size != size or sha256(path) != digest:
+            raise Blocked('muxer_file_hash')
+        seen.add(name)
+    actual = set()
+    for index, path in enumerate((directory / 'ffmpeg').rglob('*')):
+        if index >= 64: raise Blocked('muxer_file_closure')
+        if path.is_symlink(): raise Blocked('muxer_symlink')
+        if path.is_file(): actual.add(path.relative_to(directory).as_posix())
+        elif not path.is_dir(): raise Blocked('muxer_special_file')
+    executable = 'ffmpeg/bin/ffmpeg' + ('.exe' if native_platform == 'windows-x64' else '')
+    probe = 'ffmpeg/bin/ffprobe' + ('.exe' if native_platform == 'windows-x64' else '')
+    if actual != seen or seen != set(pin['files']) or record.get('filename') != executable or record.get('ffprobe_filename') != probe:
+        raise Blocked('muxer_file_closure')
+    if record.get('sha256') != next(item['sha256'] for item in files if item['filename'] == executable):
+        raise Blocked('muxer_executable_hash')
+    verification = record.get('verification')
+    if not isinstance(verification, dict) or not re.fullmatch('[0-9a-f]{64}', str(verification.get('-version', ''))):
+        raise Blocked('muxer_version_evidence')
+    return record
+
+
+def package_minimal_muxer(directory, pin, native_platform, bundle, staging):
+    record = validate_muxer_package(directory, pin, native_platform)  # BEFORE copy/EXEC
+    output = bundle / 'ffmpeg'
+    output.mkdir()
+    for item in record['files']:
+        relative = pathlib.PurePosixPath(item['filename']).relative_to('ffmpeg')
+        target = output.joinpath(*relative.parts); target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(pathlib.Path(directory) / item['filename'], target)
+        if sha256(target) != item['sha256']: raise Blocked('muxer_copy_hash')
+    exe = output / 'bin' / ('ffmpeg.exe' if native_platform == 'windows-x64' else 'ffmpeg')
+    probe = output / 'bin' / ('ffprobe.exe' if native_platform == 'windows-x64' else 'ffprobe')
+    if native_platform == 'linux-x64':
+        for path in (exe, probe): path.chmod(0o700)
+    env = {'PATH': str(output/'bin')} if native_platform == 'windows-x64' else {'LD_LIBRARY_PATH': str(output/'lib')}
+    results = {}
+    for label, binary, option in [('version',exe,'-version'),('probe-version',probe,'-version'),('buildconf',exe,'-buildconf'),('license',exe,'-L')]:
+        data = offline_command(binary, [option], staging, 1024*1024, env, merge_stderr=True)
+        if not data: raise Blocked('muxer_native_verification')
+        results[label] = data
+    if hashlib.sha256(results['version']).hexdigest() != record['verification']['-version']:
+        raise Blocked('muxer_version_evidence')
+    match = re.match(rb'ffmpeg version ([A-Za-z0-9._+-]{1,80})(?:\s|$)', results['version'])
+    if not match or not results['probe-version'].startswith(b'ffprobe version '+match[1]+b' '): raise Blocked('muxer_version')
+    options = [word for word in shlex.split(results['buildconf'].decode('utf-8','strict')) if word.startswith('--')]
+    if any(flag not in options for flag in pin['configure']) or any(flag not in pin['configure'] and not flag.startswith('--prefix=') and flag not in ('--toolchain=msvc','--ld=link.exe') for flag in options):
+        raise Blocked('muxer_native_configuration')
+    text = b' '.join(results['license'].split())
+    if b'GNU Lesser General Public License' not in text or b'version 2.1 of the License' not in text:
+        raise Blocked('muxer_native_license')
+    for label, data in results.items(): (output/('verified-'+label+'.txt')).write_bytes(data)
+    files = [dict(filename='ffmpeg/'+path.relative_to(output).as_posix(),sha256=sha256(path),bytes=path.stat().st_size) for path in sorted(output.rglob('*')) if path.is_file()]
+    return dict(version=match[1].decode('ascii'),filename=record['filename'],ffprobe_filename=record['ffprobe_filename'],sha256=sha256(exe),files=files,
+                source_url=pin['source_url'],source_archive_url=pin['source_archive_url'],source_archive_sha256=pin['source_sha256'],source_commit=pin['source_commit'],
+                recipe_url=pin['recipe_url'],recipe_provenance=pin['recipe_provenance'],license='LGPL-2.1-or-later',verification=dict(source_built=True,native_metadata=True,upstream_native_smoke=True,network_protocol_refused=True),
+                redistribution_review='preserve_exact_source_recipe_and_license_closure_release_review_pending')
+
+
 def package(args):
+    if bool(args.extractor_only) == bool(args.muxer_package):
+        raise Blocked('muxer_package_required_or_extractor_only')
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise Blocked('github_actions_required')
     native = 'windows-x64' if os.name == 'nt' else 'linux-x64' if platform.system() == 'Linux' else None
@@ -382,36 +471,7 @@ def package(args):
             records[name] = dict(version=pin['version'], filename=pin['filename'], sha256=sha256(destination),
                                  asset_sha256=pin['sha256'], upstream_url=pin['url'], source_url=pin['source_url'])
         if not args.extractor_only:
-            ffmpeg_pin = selected['ffmpeg']
-            ffmpeg_asset = staging / 'ffmpeg.asset'
-            fetch_verified(ffmpeg_pin['url'], ffmpeg_pin['sha256'], ffmpeg_asset, MAX_ASSET)
-            # Daily upstream assets expire. Preserve the verified archive separately
-            # from installer resources for the existing private GHA artifact upload.
-            archive_directory = root / '.dev-check' / 'youtube-component-upstream'
-            archive_directory.mkdir(parents=True, exist_ok=True)
-            archive_name = ffmpeg_pin['sha256'][:16] + '-' + pathlib.PurePosixPath(urllib.parse.urlsplit(ffmpeg_pin['url']).path).name
-            preserved = archive_directory / archive_name
-            temporary_archive = archive_directory / ('.copy-' + uuid.uuid4().hex)
-            try:
-                shutil.copyfile(ffmpeg_asset, temporary_archive)
-                if sha256(temporary_archive) != ffmpeg_pin['sha256']:
-                    raise Blocked('ffmpeg_preserved_sha256')
-                os.replace(temporary_archive, preserved)
-            finally:
-                temporary_archive.unlink(missing_ok=True)
-            ffmpeg_directory = bundle / 'ffmpeg'
-            ffmpeg_files = extract_ffmpeg(ffmpeg_asset, ffmpeg_pin, ffmpeg_directory, args.platform)
-            ffmpeg_verified = verify_ffmpeg(ffmpeg_directory, ffmpeg_pin, args.platform, staging)
-            for path in sorted(ffmpeg_directory.glob('verified-*.txt')):
-                ffmpeg_files.append(dict(filename='ffmpeg/' + path.name, sha256=sha256(path), bytes=path.stat().st_size, materialized_from=None))
-            records['ffmpeg'] = dict(version=ffmpeg_pin['version'], filename='ffmpeg/bin/' + ('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg'),
-                sha256=sha256(ffmpeg_directory/'bin'/('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg')),
-                ffprobe_filename='ffmpeg/bin/' + ('ffprobe.exe' if args.platform == 'windows-x64' else 'ffprobe'),
-                asset_sha256=ffmpeg_pin['sha256'], upstream_url=ffmpeg_pin['url'], source_url=ffmpeg_pin['source_url'],
-                source_archive_url=ffmpeg_pin['source_archive_url'], recipe_url=ffmpeg_pin['recipe_url'],
-                ci_archive_artifact=preserved.relative_to(root).as_posix(),
-                files=ffmpeg_files, verification=ffmpeg_verified, upstream_retention=ffmpeg_pin['upstream_retention'],
-                redistribution_review='pending_external_library_notices_and_matching_source_archive_preservation')
+            records['ffmpeg'] = package_minimal_muxer(args.muxer_package, selected['ffmpeg'], args.platform, bundle, staging)
         license_records = []
         for pin in pins['licenses'] + pins.get('source_inventory', []):
             destination = licenses / pin['filename']
@@ -511,6 +571,34 @@ def ffmpeg_self_tests(root):
         assert str(error) == 'ffmpeg_sha256'
 
 
+def minimal_muxer_self_tests(root):
+    pins=json.loads((pathlib.Path(__file__).resolve().parents[1]/'docs/YOUTUBE-COMPONENTS.json').read_text())
+    for platform_name in ('linux-x64','windows-x64'):
+        pin=pins['platforms'][platform_name]['ffmpeg']; directory=root/platform_name; directory.mkdir()
+        files=[]
+        for name in pin['files']:
+            path=directory/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'tiny fixture')
+            files.append(dict(filename=name,bytes=path.stat().st_size,sha256=sha256(path)))
+        record=dict(platform=platform_name,source_commit=pin['source_commit'],source_sha256=pin['source_sha256'],source_url=pin['source_archive_url'],configure=pin['configure'],license=pin['license'],native_smoke=True,network_protocol_refused=True,files=files,filename='ffmpeg/bin/ffmpeg'+('.exe' if platform_name=='windows-x64' else ''),ffprobe_filename='ffmpeg/bin/ffprobe'+('.exe' if platform_name=='windows-x64' else ''),verification={'-version':'0'*64})
+        record['sha256']=next(item['sha256'] for item in files if item['filename']==record['filename'])
+        manifest=directory/'components.json'
+        def write(value):manifest.write_text(json.dumps({'ffmpeg':value}))
+        def refused(value):
+            write(value)
+            try:validate_muxer_package(directory,pin,platform_name)
+            except Blocked:return
+            raise AssertionError('invalid minimal muxer accepted')
+        write(record);assert validate_muxer_package(directory,pin,platform_name)['native_smoke']
+        for field,value in [('source_sha256','0'*64),('native_smoke',False),('network_protocol_refused',False),('configure',pin['configure'][:-1])]:
+            changed=dict(record);changed[field]=value;refused(changed)
+        changed=json.loads(json.dumps(record));changed['files'][0]['filename']='../escape';refused(changed)
+        changed=json.loads(json.dumps(record));changed['files'][0]['sha256']='0'*64;refused(changed)
+        path=directory/files[0]['filename'];old=path.read_bytes();path.write_bytes(b'tampered');refused(record);path.write_bytes(old)
+        path.unlink();refused(record);path.write_bytes(old)
+        extra=directory/'ffmpeg'/'unlisted';extra.write_bytes(b'extra');refused(record);extra.unlink()
+        write(record);assert validate_muxer_package(directory,pin,platform_name)['files']==files
+
+
 def self_test():
     # Tiny offline fixtures only. No urllib, binaries or environment mutation.
     with tempfile.TemporaryDirectory() as directory:
@@ -575,6 +663,7 @@ def self_test():
             os.replace = original_replace
         assert (old / 'proof').read_text() == 'new'
         ffmpeg_self_tests(root)
+        minimal_muxer_self_tests(root)
     print(json.dumps({'self_test': True, 'network': False, 'executed_components': False}))
 
 
@@ -582,6 +671,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--platform', choices=('windows-x64', 'linux-x64'))
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--muxer-package', type=pathlib.Path, help='Trusted same-run minimal muxer artifact package directory; required for desktop')
     parser.add_argument('--extractor-only', action='store_true', help='Isolated extractor probe only; desktop bundles always include the muxer')
     args = parser.parse_args()
     try:

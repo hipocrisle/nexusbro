@@ -66,7 +66,7 @@ def fetch(expected):
     # bootstrap, never a trusted product source pin.
     receipt = dict(source_commit=COMMIT, source_url=URL, source_sha256=actual,
                    source_pin_verified=bool(expected), bootstrap_only=not bool(expected),
-                   configure=CONFIGURE)
+                   configure=CONFIGURE, build_metadata_files=[dict(filename='VERSION', text='git-'+COMMIT[:12]+'\n')])
     (ROOT / 'source-receipt.json').write_text(json.dumps(receipt, indent=2) + '\n')
     source = ROOT / 'source'
     source.mkdir()
@@ -86,6 +86,12 @@ def fetch(expected):
                 with tar.extractfile(member) as incoming, target.open('xb') as out:
                     shutil.copyfileobj(incoming, out, 1024 * 1024)
                 target.chmod(0o755 if member.mode & 0o111 else 0o644)
+    # Exact upstream ffbuild/version.sh reads VERSION in preference to its git
+    # discovery. Prevent it from picking the enclosing NexusBro checkout HEAD.
+    # This recipe-only metadata override does not alter the verified tarball.
+    version_file = source / ('FFmpeg-' + COMMIT) / 'VERSION'
+    version_file.write_text('git-' + COMMIT[:12] + '\n', encoding='ascii')
+
 
 
 def failure_receipt(stage, stdout=b'', stderr=b'', *, returncode=None, timeout=False, os_error=False, errno=None):

@@ -45,56 +45,48 @@ The script's --self-test uses only tiny local ZIPs and directory replacement.
 Workflow invocation, build.rs embedding, runtime verification and installer
 resource inclusion remain root's integration responsibilities.
 
-## FFmpeg local high-quality mux component
+## Source-built minimal FFmpeg muxer
 
-The manifest now pins dated FFmpeg-Builds release
-`autobuild-2026-11-24-12-41`, not floating latest. Both native x64 shared builds
-identify as `n8.1.3-41-ga8029b6528`; matching FFmpeg source revision is
-`a8029b6528fecbcb5d99b331cfc76e6467b9bc77`, recipe revision
-`b9ebe81995b58cd4e3177a6c0ad5dc2392f7f7fd`.
+Desktop packaging now requires `--muxer-package <trusted-same-run-artifact/package>`.
+There is no fallback to the former BtbN binary downloads. Extractor-only probes
+remain separate and do not acquire a muxer. The caller must first authenticate
+same-repository immutable GitHub artifact provenance; runtime JSON alone is not
+a binary trust root.
 
-The recipe's lgpl defaults enable **version3**, so these are LGPLv3 builds,
-not an assumed LGPL2.1 bundle. Packaging copies the archive LICENSE.txt plus
-pinned exact-source COPYING.LGPLv3, COPYING.GPLv3 and LICENSE.md. The recipe
-excludes x264/x265 for lgpl; actual verified executable -buildconf is also
-required to enable shared/version3 and exclude enable-gpl, enable-nonfree,
-libx264/libx265/libfdk-aac. Its -L must report Lesser GPL version3. Version,
-buildconf and license receipts are retained and hashed; ffprobe must also start
-with exactly the pinned version.
+Reviewed FFmpeg source: `a8029b6528fecbcb5d99b331cfc76e6467b9bc77`;
+original codeload archive SHA256:
+`ce3fa044e0dd97ac7a2e7af710056daa850464ec11bdf804a8033c5eae1ec706`.
+The source-built shared recipe disables autodetection, everything and networking,
+enables only file/pipe protocols, Matroska input, WebM output, VP9/Opus parsers
+and the required `vp9_superframe` bitstream filter. It enables no external codec
+libraries, GPL, nonfree or version3. Actual `-L` must identify LGPL2.1-or-later.
+Other COPYING files shipped from upstream describe alternative configurations,
+not extra permissions or the selected build license.
 
-Output `ffmpeg/bin` contains only ffmpeg/ffprobe and the Windows DLL closure;
-Linux `ffmpeg/lib` contains the archive's shared SO closure. Each included file
-has its own SHA256 in components.ffmpeg.files. The SHA-verified archive is parsed
-without extractall: at most4096 entries,512MiB declared/materialized contents,
-256 selected files,256MiB/file. Archive escapes, duplicate paths, ZIP symlinks,
-hardlinks and special files are rejected. Linux library symlinks are resolved
-only through the closed in-archive lib graph, with bounded depth/cycle checks,
-and materialized as regular byte-identical files. No actual symlinks are
-installed. Binary metadata checks run only after archive verification on native
-isolated GitHub runners, with a restricted environment and private bundled
-library search path. No external media URLs or application credentials are used.
+Before copying or executing anything, the packager checks the independent source
+pin, platform, exact recipe flags, native stream-copy/protocol-refusal evidence,
+and the closed 14-file hash inventory. It rejects missing, extra, tampered and
+symlinked files. Only then do native offline ffmpeg/ffprobe version, buildconf
+and license checks run with private bundled library search paths. SourceRecord
+contains all installed hashes including verification receipts and ffprobe.
 
-**Limits:** native startup verifies this bundled DLL/SO set works with the CI
-OS; it does not certify the minimum supported OS or complete all transitive
-library/source redistribution obligations. components.ffmpeg records a pending
-external-library notice/matching-source preservation review. Keep the exact
-source archive/build recipe, FFmpeg notices and additional dependency notices
-with the distributed component; do not claim that every dependency is LGPLv3.
-The script does not silently invent a license clearance.
+The verified Windows recipe has seven internal FFmpeg DLLs; its actual dumpbin
+inventory lists only these and Windows KERNEL32, bcrypt, PSAPI and SHELL32.
+Linux packages seven regular SONAME files. CI startup is not a claim about all
+supported OS versions or redistribution clearance.
 
-Upstream retains daily assets only14days. Preserve the verified input archives,
-generated candidate component directory, source manifest and matching sources
-in existing private CI artifacts before expiration. This script deliberately
-creates **no** public release, tag, updater publication or deployment. The root
-workflow must upload `.dev-check/youtube-component-upstream/` as a private GHA
-artifact: the script preserves the verified input archive there and records
-its relative path in components.ffmpeg.ci_archive_artifact. This directory is
-outside installer resources; temporary packaging staging is removed.
+Version metadata: exact upstream `ffbuild/version.sh` gives a source `VERSION`
+file precedence over enclosing Git discovery. After verifying/extracting the
+unchanged original archive, the recipe writes `VERSION=git-a8029b6528fe`.
+This deterministic recipe-only metadata override is recorded in source-receipt;
+it is not an invented upstream semantic release. The packager uses the actual
+native version receipt hash and matching ffprobe token. Previous experimental
+builds exposed the enclosing NexusBro Git hash; that is not an FFmpeg version.
 
-This component is intended for **local files only** after native downloads of
-both selected high-quality streams through the actual route. Root invocation
-must repeat `-protocol_whitelist file,pipe` before each input, use fixed demuxer
-and mapping, `-nostdin`, stream-copy and bounded progress/errors. Shared builds
-are network-capable in general; packaging metadata checks do not demonstrate
-that future application invocations are restricted. No360p fallback or quality
-claim is implied by component packaging.
+Release workflow must preserve and distribute the exact original source archive,
+the actual corresponding build recipe (including VERSION override), config/log
+and dependency inventories and all five FFmpeg license files. Native Linux and
+Windows evidence from run45459592456 proves stream-copy VP9+Opus and compiled-out
+HTTP for that candidate. It does not clear Deno/yt-dlp transitive notices or
+publish a release. Root owns final matching-source/notice artifact preservation.
+No user media URLs or credentials are used by packaging verification.
