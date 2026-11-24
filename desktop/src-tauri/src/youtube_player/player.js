@@ -40,7 +40,7 @@
   const tick = ready => console.debug(ready ? '__NEXUSBRO_LIGHT_READY__' : '__NEXUSBRO_LIGHT_TICK__');
   const media = () => separate ? [video, audio] : [video];
   function pause() { ++epoch; intended = false; syncing = false; clearInterval(timer); timer = null; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; updateView(); tick(false); }
-  function error() { pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
+  function error() { if (disposed) return; pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
   function align() {
     if (!separate || syncing || !Number.isFinite(video.currentTime)) return;
     if (Math.abs(audio.currentTime - video.currentTime) > 0.12) video.currentTime = audio.currentTime;
@@ -62,7 +62,7 @@
   function sourcesClear() {
     for (const m of [video, audio]) { m.pause(); m.removeAttribute('src'); m.load(); }
   }
-  function dispose() { captionsClear(); disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); }
+  function dispose() { captionsClear(); disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); button.disabled = true; quality.disabled = true; captions.disabled = true; downloadVideo.disabled = true; downloadAudio.disabled = true; downloadCancel.hidden = true; setStatus('Плеер остановлен. Обновите вкладку, чтобы продолжить просмотр.'); }
   button.addEventListener('click', () => intended ? pause() : void play());
   seek.addEventListener('input', () => {
     if (!duration || !configured) return;

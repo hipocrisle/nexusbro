@@ -69,3 +69,6 @@ pub mod youtube_light_components;
 pub mod youtube_light_download;
 #[path = "../../../desktop/src-tauri/src/youtube_light_mux.rs"]
 pub mod youtube_light_mux;
+
+#[path = "../../../desktop/src-tauri/src/youtube_light_reload.rs"]
+pub mod youtube_light_reload;

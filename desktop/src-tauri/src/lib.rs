@@ -30,6 +30,7 @@ mod youtube_light_download;
 mod youtube_light_mux;
 mod youtube_light_jobs;
 mod youtube_light_resume;
+mod youtube_light_reload;
 mod youtube_light_resume_service;
 mod youtube_light_aux;
 mod cef_youtube_resume;
