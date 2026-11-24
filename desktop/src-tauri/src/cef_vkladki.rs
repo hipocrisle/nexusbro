@@ -209,12 +209,26 @@ wrap_jsdialog_handler! {
 }
 
 wrap_focus_handler! {
-    struct FokusStranicy;
+    struct FokusStranicy { id:u64, tx:Sender<Sobytie> }
     impl FocusHandler {
-        fn on_set_focus(&self, _browser: Option<&mut Browser>, source: FocusSource) -> i32 {
+        fn on_set_focus(&self, browser: Option<&mut Browser>, source: FocusSource) -> i32 {
+            use crate::cef_focus_diagnostics::{trace, Stage};
+            let stage = if source == FocusSource::NAVIGATION { Stage::Navigation }
+                else if source == FocusSource::SYSTEM { Stage::System }
+                else { Stage::UnknownSource };
+            trace(self.id, browser.as_deref(), &self.tx, stage);
             // Загрузка страницы не должна отбирать клавиатуру у адресной строки.
             // Физический клик по странице (SYSTEM) CEF обрабатывает сам.
             i32::from(source == FocusSource::NAVIGATION)
+        }
+        fn on_got_focus(&self, browser: Option<&mut Browser>) {
+            crate::cef_focus_diagnostics::trace(self.id, browser.as_deref(), &self.tx,
+                crate::cef_focus_diagnostics::Stage::Got);
+        }
+        fn on_take_focus(&self, browser: Option<&mut Browser>, next:i32) {
+            use crate::cef_focus_diagnostics::{trace, Stage};
+            trace(self.id, browser.as_deref(), &self.tx,
+                if next != 0 { Stage::TakeForward } else { Stage::TakeReverse });
         }
     }
 }
@@ -296,7 +310,7 @@ wrap_client! {
         fn find_handler(&self) -> Option<FindHandler> { Some(crate::poisk::handler(self.id, self.tx.clone())) }
         fn keyboard_handler(&self) -> Option<KeyboardHandler> { Some(crate::cef_interfeys::klaviatura(self.id, self.tx.clone())) }
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> { Some(crate::cef_interfeys::menyu(self.id, self.tx.clone(), self.privatnaya)) }
-        fn focus_handler(&self) -> Option<FocusHandler> { Some(FokusStranicy::new()) }
+        fn focus_handler(&self) -> Option<FocusHandler> { Some(FokusStranicy::new(self.id, self.tx.clone())) }
         fn request_handler(&self) -> Option<RequestHandler> { Some(SboyStranicy::new(self.id, self.privatnaya, self.tx.clone(),self.bootstrap.clone())) }
         fn display_handler(&self) -> Option<DisplayHandler> { Some(VidStranicy::new(self.id, self.tx.clone(), self.privatnaya,self.bootstrap.clone())) }
         fn load_handler(&self) -> Option<LoadHandler> { Some(ZagruzkaStranicy::new(self.id, self.tx.clone(), self.privatnaya,self.bootstrap.clone())) }
