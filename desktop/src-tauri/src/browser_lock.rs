@@ -154,6 +154,48 @@ thread_local! {
     static WINDOWS_SHORTCUTS:std::cell::RefCell<std::collections::HashMap<String,(webview2_com::Microsoft::Web::WebView2::Win32::ICoreWebView2Controller,i64)>>=Default::default();
 }
 #[cfg(target_os = "windows")]
+fn windows_shortcut_diagnostic(code: &str, flags: Option<u16>) {
+    // CI receipts only: no other keys, text, window labels or API error strings.
+    static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+        || COUNT.fetch_add(1, Ordering::Relaxed) >= 16
+    {
+        return;
+    }
+    crate::zapisat_v_zhurnal(match flags {
+        Some(flags) => format!("NEXUSBRO_BROWSER_LOCK callback_diag={code} flags={flags}"),
+        None => format!("NEXUSBRO_BROWSER_LOCK callback_diag={code}"),
+    });
+}
+#[cfg(target_os = "windows")]
+fn windows_shortcut_l_diagnostic(system: bool, was_down: bool) {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+    {
+        return;
+    }
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, GetKeyState, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT,
+    };
+    // Bits 0..3: queued Ctrl/Shift/Alt/Win; 4..7: asynchronous equivalents;
+    // bit 8: WasKeyDown; bit 9: SystemKeyDown. These are predicates only.
+    let mut flags = 0u16;
+    unsafe {
+        for (bit, key) in [VK_CONTROL, VK_SHIFT, VK_MENU].into_iter().enumerate() {
+            flags |= u16::from(GetKeyState(i32::from(key.0)) < 0) << bit;
+            flags |= u16::from(GetAsyncKeyState(i32::from(key.0)) < 0) << (bit + 4);
+        }
+        flags |= u16::from(GetKeyState(i32::from(VK_LWIN.0)) < 0
+            || GetKeyState(i32::from(VK_RWIN.0)) < 0) << 3;
+        flags |= u16::from(GetAsyncKeyState(i32::from(VK_LWIN.0)) < 0
+            || GetAsyncKeyState(i32::from(VK_RWIN.0)) < 0) << 7;
+    }
+    flags |= u16::from(was_down) << 8;
+    flags |= u16::from(system) << 9;
+    windows_shortcut_diagnostic("physical_l", Some(flags));
+}
+#[cfg(target_os = "windows")]
 pub fn install_shortcut(window: &tauri::WebviewWindow) {
     let app = window.app_handle().clone();
     let label = window.label().to_owned();
@@ -181,7 +223,10 @@ pub fn install_shortcut(window: &tauri::WebviewWindow) {
                 let Some(args) = args else { return Ok(()) };
                 unsafe {
                     let mut kind = COREWEBVIEW2_KEY_EVENT_KIND::default();
-                    args.KeyEventKind(&mut kind)?;
+                    args.KeyEventKind(&mut kind).map_err(|error| {
+                        windows_shortcut_diagnostic("kind_failed", None);
+                        error
+                    })?;
                     if kind != COREWEBVIEW2_KEY_EVENT_KIND_KEY_DOWN
                         && kind != COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN
                     {
@@ -189,8 +234,20 @@ pub fn install_shortcut(window: &tauri::WebviewWindow) {
                     }
                     let mut key = 0u32;
                     let mut physical = COREWEBVIEW2_PHYSICAL_KEY_STATUS::default();
-                    args.VirtualKey(&mut key)?;
-                    args.PhysicalKeyStatus(&mut physical)?;
+                    args.VirtualKey(&mut key).map_err(|error| {
+                        windows_shortcut_diagnostic("virtual_key_failed", None);
+                        error
+                    })?;
+                    args.PhysicalKeyStatus(&mut physical).map_err(|error| {
+                        windows_shortcut_diagnostic("physical_status_failed", None);
+                        error
+                    })?;
+                    if physical.ScanCode == 0x26 || key == 0x4c {
+                        windows_shortcut_l_diagnostic(
+                            kind == COREWEBVIEW2_KEY_EVENT_KIND_SYSTEM_KEY_DOWN,
+                            physical.WasKeyDown.as_bool(),
+                        );
+                    }
                     let down = |code: u16| GetKeyState(i32::from(code)) < 0;
                     if (physical.ScanCode != 0x26 && key != 0x4c)
                         || !down(VK_CONTROL.0)
@@ -203,7 +260,10 @@ pub fn install_shortcut(window: &tauri::WebviewWindow) {
                     }
                     // WebView2 reserves Ctrl+Shift+L for Paste and Go. Mark it
                     // handled before doing anything that could call back into UI.
-                    args.SetHandled(true)?;
+                    args.SetHandled(true).map_err(|error| {
+                        windows_shortcut_diagnostic("set_handled_failed", None);
+                        error
+                    })?;
                     crate::zapisat_v_zhurnal("NEXUSBRO_BROWSER_LOCK shortcut=webview2-key".into());
                     if !physical.WasKeyDown.as_bool() {
                         request_lock(target.clone());
