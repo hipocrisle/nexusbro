@@ -25,7 +25,7 @@ pub(crate) enum Sobytie {
     RouteRefused(u64,i32),
     MemoryMessage(u64,i32,serde_json::Value),
     MemoryFrozen(u64,i32,String,bool),
-    MemoryLoaded(u64,i32),
+    MemoryLoaded(u64,i32,String),
     MainLoadFailed(u64,i32,String,u64,String,i32),
     NavigationFailed(u64,i32,String,u64,i32),
     Ikonka(u64, String, String),
@@ -75,7 +75,7 @@ wrap_load_handler! {
         fn on_load_end(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
             if (200..600).contains(&_http_status_code)&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::memory_guard::load_succeeded(b.identifier());}}
             if self.bootstrap.waiting_for_target(){return;}
-            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier()));}}
+            if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier(),frame.as_ref().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default()));}}
             if !crate::borba_s_reklamoy::vklyuchena() { return; }
             if let Some(f) = frame {
                 if f.is_main() != 0 {
@@ -1315,12 +1315,21 @@ impl Rabota {
                         let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"navigation-error","id":id,"code":code,"route":tab.route,"route_generation":tab.route_generation})));
                     }
                 }
-                Sobytie::MemoryLoaded(id,identity)=>{
+                Sobytie::MemoryLoaded(id,identity,loaded_url)=>{
                     if let Some(browser)=brauzery.get(&id).filter(|b|b.identifier()==identity){
-                        if let Some((x,y))=memory_scroll.remove(&id){if let Some(frame)=browser.main_frame(){
-                            let js=format!("requestAnimationFrame(()=>scrollTo({x},{y}))");
-                            frame.execute_java_script(Some(&CefString::from(js.as_str())),None,0);
-                        }}
+                        if let Some(frame)=browser.main_frame(){
+                            let current=CefString::from(&frame.url()).to_string();
+                            // A queued bootstrap/old-document load must never consume
+                            // the new document's pending scroll restoration.
+                            if current!=loaded_url||!s.vkladki.iter().any(|v|v.id==id&&v.adres==current){continue;}
+                            if let Some((x,y))=memory_scroll.remove(&id){
+                                // Restore immediately even if hidden rAF is suspended,
+                                // then repeat at the next paint for final layout.
+                                let js=format!("scrollTo({x},{y});requestAnimationFrame(()=>scrollTo({x},{y}))");
+                                frame.execute_java_script(Some(&CefString::from(js.as_str())),None,0);
+                                if std::env::var("GITHUB_ACTIONS").as_deref()==Ok("true")&&std::env::var_os("NEXUSBRO_TEST_DATA").is_some(){eprintln!("NEXUSBRO_SCROLL_RESTORE tab={id} browser={identity} x={x} y={y}");}
+                            }
+                        }
                     }
                 }
                 Sobytie::MemoryMessage(id,identity,data)=>{
