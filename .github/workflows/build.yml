@@ -489,6 +489,9 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_probe::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube_reference_probe::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube_decode_probe::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube_benchmark::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_stop_probe::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_privacy::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_resume::tests -- --test-threads=1

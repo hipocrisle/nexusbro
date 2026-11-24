@@ -203,7 +203,7 @@ def run(args):
         client=device.start()
         if sys.platform!='win32':wm=OwnedWindowManager(device,root/'wm');device.player_wm=wm
         foreground(device)
-        client.js('window.__playerObserved=[];window.__featureReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__featureReady=true);true')
+        client.js('window.__playerObserved=[];window.__decodeObserved=[];window.__featureReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload);if(e.payload?.data?.tip==="youtube-decode-state")window.__decodeObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__featureReady=true);true')
         js_wait(client,'window.__featureReady','Native feature listener missing');switch_super(client,SUPER)
         # Restored lazy about:blank needs the shipped physical Open action.
         if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',20)
@@ -215,8 +215,26 @@ def run(args):
         report['stage']='quality-paused'
         # Two explicit native Play clicks establish real focus and restore pause
         # intent before changing quality; no playback starts due to the change.
-        physical(client,device,'play',diagnostics);physical(client,device,'play',diagnostics)
+        physical(client,device,'play',diagnostics)
+        wait_for(lambda:(lambda s:s['playing'] and s['decoded']>=3)(snapshot(client,tab)),'Initial native decode missing',20)
+        physical(client,device,'play',diagnostics)
         before_quality=paused(client,device,tab,diagnostics)
+        report['stage']='native-decode-observation'
+        call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_decode_snapshot','id':tab,'video_id':'BaW_jenozKc'})
+        decode_ok=False
+        try:
+            event=wait_for(lambda:client.js('window.__decodeObserved.find(e=>e.super_id==='+json.dumps(SUPER)+'&&e.data?.id==='+str(tab)+')'),'Native decode observation receipt missing',10)
+            data=event.get('data',{});state=data.get('state')
+            if isinstance(state,dict):
+                decode_ok=(state.get('codec')=='vp9' and state.get('video_pipelines')==1
+                           and type(state.get('platform_decoder'))is bool and state.get('hardware_activity_proven') is False)
+                report['native_decoder']={key:state[key] for key in ('codec','decoder','platform_decoder','decode_mode','hardware_activity_proven','video_pipelines') if key in state}
+            else:
+                code=data.get('code')
+                report['native_decoder']={'observed':False,'code':code if isinstance(code,str) and 0<len(code)<=96 and code.isascii() and all(c.isalnum() or c=='_' for c in code) else 'unavailable'}
+        except Exception:
+            report['native_decoder']={'observed':False,'code':'native_receipt_unavailable'}
+        report['stage']='quality-paused'
         quality_control(client,device,tab,0,diagnostics)
         low=wait_for(lambda:(lambda s:s if s.get('quality_count')==2 and s.get('quality_index')==0 and s['video_width']==320 and s['video_height']==180 and not s['playing'] else None)(snapshot(client,tab)),'Paused low quality geometry missing',25)
         time.sleep(.8);still=snapshot(client,tab)
@@ -257,6 +275,8 @@ def run(args):
         with fixture.lock:
             media=[r for r in fixture.receipts if r.get('kind')=='media' and r.get('track')=='video']
             require({r.get('quality') for r in media}>={'low','high'} and all(r['lane']=='A' for r in media) and fixture.direct==0,'Feature native route bypass')
+        report['stage']='native-decoder-final-check'
+        require(decode_ok,'Native bounded decoder observation unavailable')
         report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__;trace=error.__traceback__

@@ -462,8 +462,9 @@ class Fixture:
                             if not line or total>8192:return
                             if line==b'\r\n':break
                         upstream=socket.create_connection(('127.0.0.1',origin.server_port),5)
+                        peer_port=upstream.getsockname()[1]
                         with owner.lock:
-                            owner.peers[upstream.getsockname()[1]]=self.server.lane
+                            owner.peers[peer_port]=self.server.lane
                             owner.connects.append(self.server.lane);owner.sockets.update((upstream,self.connection))
                         try:
                             self.wfile.write(b'HTTP/1.1 200 Connection Established\r\n\r\n');self.wfile.flush()
@@ -474,7 +475,7 @@ class Fixture:
                                     if not data:return
                                     (upstream if source is self.connection else self.connection).sendall(data)
                         finally:
-                            with owner.lock:owner.peers.pop(upstream.getsockname()[1],None);owner.sockets.discard(upstream);owner.sockets.discard(self.connection)
+                            with owner.lock:owner.peers.pop(peer_port,None);owner.sockets.discard(upstream);owner.sockets.discard(self.connection)
                             upstream.close()
                     except OSError:pass
             server=Server(('127.0.0.1',0),Proxy);server.lane=lane;self.proxies[lane]=server.server_address[1];self.start(server)
@@ -503,6 +504,17 @@ class Fixture:
                 except OSError:pass
         for server in self.servers:server.shutdown();server.server_close()
         for thread in self.threads:thread.join(timeout=3)
+    def fail_proxies(self):
+        """Fail the approved routes while retaining the direct-attempt witness."""
+        ports=set(self.proxies.values())
+        for server in self.servers:
+            if server.server_address[1] in ports:
+                server.shutdown();server.server_close()
+        with self.lock:
+            sockets=list(self.sockets)
+        for sock in sockets:
+            try:sock.shutdown(socket.SHUT_RDWR)
+            except OSError:pass
 
 
 def linux_fixture_ack(client, identifier, tab, diagnostics):

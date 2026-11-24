@@ -72,12 +72,27 @@ def backtabs(*,busy=False,audio=False):
     return active.index('play')-active.index(target)
 
 
+def focus_download(client,device,tab,target,diagnostics):
+    navigation=diagnostics.setdefault('control_navigation',[])
+    require(len(navigation)<16,'Native download focus diagnostic bound exceeded')
+    receipt={'target':target,'observed_controls':[],'reached':False};navigation.append(receipt)
+    for step in range(17):
+        state=observe(client,SUPER,tab);active=state.get('active_control')
+        require(type(active)is int and 0<=active<=11,'Native download focus feedback unavailable')
+        receipt['observed_controls'].append(active)
+        if active==target:receipt['reached']=True;return
+        require(step<16,'Native download control focus bound exceeded')
+        keys(device,'shift+Tab')
+
+
 def start_chooser(client,device,diagnostics,*,audio=False):
     before=dialogs(device)
     # Painted native Play establishes genuine CEF focus; derive the complete
     # shipped native tab order, including footer links, before physical input.
     physical(client,device,'play',diagnostics)
-    keys(device,*(['shift+Tab']*backtabs(audio=audio)), 'space')
+    backtabs(audio=audio)  # Keep the shipped control-order contract checked.
+    focus_download(client,device,rows(client,SUPER)['aktivnaya'],8 if audio else 7,diagnostics)
+    keys(device,'space')
     appeared=wait_for(lambda:dialogs(device)-before,'Native SaveAs did not appear',15)
     require(len(appeared)==1,'Native SaveAs ambiguous')
     return next(iter(appeared))
@@ -121,7 +136,13 @@ def choose(device,dialog,path=None,*,replace=False):
             subprocess.run(['xdotool','windowfocus','--sync',str(confirmation)],
                            env={**os.environ,'DISPLAY':device.display},check=True,
                            stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
-        keys(device,'enter' if sys.platform=='win32' else 'Return')
+        if sys.platform=='win32':
+            buttons=[b for b in Desktop(backend='uia').window(handle=confirmation).descendants(control_type='Button') if b.window_text().replace('&','') in ('Yes','Replace')]
+            require(len(buttons)==1,'Native replacement accept button ambiguous')
+            buttons[0].click_input()
+        else:
+            # GTK's actual overwrite dialog exposes the _Replace mnemonic.
+            keys(device,'alt+r')
     wait_for(lambda:dialog not in dialogs(device),'Native SaveAs did not close',15)
 
 
@@ -217,7 +238,7 @@ def run(args):
         session=wait_for(lambda:rows(client,SUPER) if any(t.get('browser_id',0)>0 and not t.get('zagruzka') for t in rows(client,SUPER)['vkladki']) else None,'Native browser missing',40);tab=session['aktivnaya']
         call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_fixture','id':tab})
         wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,SUPER,tab,admitting=True)),'Native player not configured',30)
-        output=root/'downloads';output.mkdir();diagnostics={}
+        output=root/'downloads';output.mkdir();diagnostics={};report['player_diagnostics']=diagnostics
         report['stage']='save-dialog-cancel';clear_states(client);dialog=start_chooser(client,device,diagnostics);choose(device,dialog)
         terminal(client,tab,'cancelled',20)
         require(not list(output.iterdir()),'Save cancel created output')
@@ -240,7 +261,8 @@ def run(args):
             policy=fixture.stall_policy('A','video');policy['gate'].clear()
             dialog=start_chooser(client,device,diagnostics);cancelled=output/('cancel-'+str(attempt)+'.webm');choose(device,dialog,cancelled)
             wait_for(lambda:any(isinstance(s.get('progress'),dict) for s in states(client,tab)),'Native cancellation progress missing',15)
-            physical(client,device,'play',diagnostics);keys(device,*(['shift+Tab']*backtabs(busy=True)),'space')
+            physical(client,device,'play',diagnostics);backtabs(busy=True)
+            focus_download(client,device,tab,9,diagnostics);keys(device,'space')
             terminal(client,tab,'cancelled',20);fixture.retire_stall('A','video',policy)
             require(not cancelled.exists() and clean_output(output),'Cancellation left files')
             report['checks'].append({'name':'physical-cancel-'+str(attempt),'bounded_terminal':True,'no_output':True})
@@ -249,10 +271,11 @@ def run(args):
         require(refused.get('error')=='Файл назначения уже существует','Overwrite refusal not specific')
         require(immutable.read_bytes()==before and clean_output(output),'Existing target changed')
         report['checks'].append({'name':'no-overwrite','unchanged':True})
-        report['stage']='route-error';fixture.close();clear_states(client)
+        report['stage']='route-error';direct_before=fixture.direct;fixture.fail_proxies();clear_states(client)
         failed=output/'failed.webm';dialog=start_chooser(client,device,diagnostics);choose(device,dialog,failed);terminal(client,tab,'error',60)
         require(not failed.exists() and clean_output(output),'Failed download left files')
-        report['checks'].append({'name':'bounded-route-error','no_output':True})
+        require(fixture.direct==direct_before==0,'Native download attempted a direct route fallback')
+        report['checks'].append({'name':'bounded-route-error','no_output':True,'direct_connections':fixture.direct})
         owned=[psutil.Process(pid) for pid in owned_pids(device)]
         device.stop_app()
         wait_for(lambda:all(not process.is_running() for process in owned),'Owned processes remain',15)
