@@ -178,8 +178,14 @@ fn configure_process(c: &mut Command, components: &Components) -> Result<(), Ext
         }
     }
     // An explicit runtime path is mandatory; PATH is not inherited or searched.
+    // Pinned Deno 2.9.8 falls back to its in-memory analysis cache when this
+    // explicit destination cannot be a directory. Reuse the already verified
+    // regular runtime file: no scratch/cache directory or HOME fallback is
+    // needed. CI 45473063942 proved execution on both OSes; Linux traced zero
+    // successful file writes for this policy. This is not a filesystem sandbox.
     c.env("DENO_NO_UPDATE_CHECK", "1")
-        .env("DENO_NO_PROMPT", "1");
+        .env("DENO_NO_PROMPT", "1")
+        .env("DENO_DIR", &components.js_runtime);
     c.current_dir(
         components
             .extractor
@@ -866,6 +872,7 @@ mod tests {
             allow_non_proxied_udp: false,
         };
         let command = command(&components, &video, &route, false).unwrap();
+        assert!(command.as_std().get_envs().any(|(key,value)|key=="DENO_DIR"&&value==Some(components.js_runtime.as_os_str())));
         let args = command
             .as_std()
             .get_args()
