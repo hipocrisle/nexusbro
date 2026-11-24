@@ -26,7 +26,8 @@ import urllib.parse
 
 from security_native import Device, call, js_wait, painted, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
-from resource_soak import foreground as bare_foreground
+from resource_soak import foreground as bare_foreground, kernel_birth
+from youtube_privacy_scan import scan_profile
 from hibernation_cookie_probe import WindowsFixtureTrust, tls_proxy_preflight
 
 HOST = 'fixture.googlevideo.com'
@@ -44,7 +45,7 @@ class OwnedWindowManager:
                     'XDG_CACHE_HOME': str(root / 'cache')}
         root.mkdir(parents=True)
         config = root / 'rc.xml'
-        config.write_text('<openbox_config xmlns="http://openbox.org/3.4/rc"><focus><focusNew>yes</focusNew></focus></openbox_config>')
+        config.write_text('<openbox_config xmlns="http://openbox.org/3.4/rc"><focus><focusNew>yes</focusNew></focus><keyboard><keybind key="A-F4"><action name="Close"/></keybind></keyboard></openbox_config>')
         self.process = subprocess.Popen(['openbox', '--config-file', str(config)], env=self.env,
                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                                        start_new_session=True)
@@ -209,10 +210,11 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 class Fixture:
-    def __init__(self, cert, key, video, audio):
+    def __init__(self, cert, key, video, audio, media_sentinel, positive_sentinel):
         self.lock = threading.Lock(); self.peers = {}; self.receipts = []; self.connects = []; self.direct = 0
         self.servers = []; self.sockets = set(); self.threads = []
         self.stalls = {}; self.closing = threading.Event()
+        self.media_sentinel=media_sentinel;self.positive_sentinel=positive_sentinel;self.canary_receipts=[]
         self.payload = {'video': video.read_bytes(), 'audio': audio.read_bytes()}
         require(all(0 < len(v) <= 32*1024*1024 for v in self.payload.values()), 'Media fixture size invalid')
         owner = self
@@ -220,6 +222,16 @@ class Fixture:
             def log_message(self,*_): pass
             def do_GET(self):
                 path = urllib.parse.urlsplit(self.path); track = urllib.parse.parse_qs(path.query).get('track',[''])[0]
+                if path.path=='/cache-canary' and not path.query:
+                    # BODY-only high entropy marker: it is never in history/URL.
+                    body=('<!doctype html><title>Cache canary</title><style>html,body{margin:0;background:rgb(28,112,80)}</style><main>'+owner.positive_sentinel+'</main>').encode()
+                    with owner.lock:owner.canary_receipts.append(owner.peers.get(self.client_address[1],'Direct'))
+                    self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8')
+                    self.send_header('Cache-Control','private, max-age=3600')
+                    self.send_header('Content-Length',str(len(body)));self.end_headers()
+                    try:self.wfile.write(body);self.wfile.flush()
+                    except (OSError,ssl.SSLError):pass
+                    return
                 if path.path != '/videoplayback' or track not in owner.payload:
                     self.send_error(404); return
                 body = owner.payload[track]; start = 0; end = len(body)-1; ranged = False
@@ -233,10 +245,12 @@ class Fixture:
                 with owner.lock:
                     lane=owner.peers.get(self.client_address[1],'Direct')
                     policy=owner.stalls.get((lane,track))
-                    owner.receipts.append({'lane':owner.peers.get(self.client_address[1],'Direct'),'track':track,'range':ranged,'bytes':end-start+1})
+                    owner.receipts.append({'lane':owner.peers.get(self.client_address[1],'Direct'),'track':track,'range':ranged,'bytes':end-start+1,'privacy_marked':urllib.parse.parse_qs(path.query).get('nb_privacy')==[owner.media_sentinel]})
                 self.send_response(206 if ranged else 200)
                 self.send_header('Content-Type','video/webm' if track=='video' else 'audio/webm')
-                self.send_header('Accept-Ranges','bytes'); self.send_header('Cache-Control','no-store')
+                self.send_header('Accept-Ranges','bytes')
+                marked=urllib.parse.parse_qs(path.query).get('nb_privacy')==[owner.media_sentinel]
+                self.send_header('Cache-Control','private, max-age=3600' if marked else 'no-store')
                 self.send_header('Content-Length',str(end-start+1))
                 if ranged:self.send_header('Content-Range',f'bytes {start}-{end}/{len(body)}')
                 self.end_headers()
@@ -582,18 +596,132 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
             'explicit_play_decoded':resumed['decoded'],'direct_connections':0,'production_reload_tested':False}
 
 
+class ExitWitness:
+    """Bounded native-owned identities + OS births, not a universal escape proof."""
+    def __init__(self,device,client):
+        import psutil
+        self.psutil=psutil;self.clock='windows_filetime' if sys.platform=='win32' else 'linux_ticks'
+        require(device.app.poll() is None,'Privacy parent already exited')
+        self.identities={device.app.pid:kernel_birth(device.app.pid,self.clock)};self.roots={device.app.pid};self.lock=threading.Lock()
+        self.done=threading.Event();self.error=False
+        native=call(client,'super_lifecycle_snapshot')
+        require(native.get('schema')==1 and isinstance(native.get('engines'),list),'Privacy native ownership schema invalid')
+        members=[]
+        for row in native['engines']:
+            require(row.get('owned_complete') is True and isinstance(row.get('owned'),list),'Privacy native ownership incomplete')
+            if row.get('pid'):self.roots.add(row['pid'])
+            for member in row['owned']:
+                require(isinstance(member,dict) and type(member.get('pid')) is int and member['pid']>0
+                        and member.get('clock')==self.clock and isinstance(member.get('birth'),str)
+                        and member['birth'].isdigit(),'Privacy native process identity invalid')
+                members.append(member)
+        require(members,'Privacy native process members missing')
+        for member in members:
+            try:actual=kernel_birth(member['pid'],self.clock)
+            except psutil.NoSuchProcess:continue
+            require(actual==member['birth'],'Privacy native process identity changed')
+            self.identities[member['pid']]=member['birth']
+        self.native_members=len(members)
+        self.sample()
+        self.thread=threading.Thread(target=self.run,daemon=True);self.thread.start()
+    def sample(self):
+        for pid in self.roots:
+            try:
+                expected=self.identities.get(pid)
+                if expected is not None and kernel_birth(pid,self.clock)!=expected:continue
+                root=self.psutil.Process(pid)
+                for process in [root]+root.children(recursive=True):
+                    try:
+                        birth=kernel_birth(process.pid,self.clock)
+                        with self.lock:
+                            old=self.identities.get(process.pid)
+                            if old is not None and old!=birth:raise RuntimeError('identity_reused')
+                            self.identities[process.pid]=birth
+                    except self.psutil.NoSuchProcess:pass
+            except self.psutil.NoSuchProcess:pass
+    def run(self):
+        while not self.done.is_set():
+            try:self.sample()
+            except Exception:self.error=True;return
+            self.done.wait(.02)
+    def all_gone(self):
+        require(not self.error,'Privacy process observation incomplete')
+        with self.lock:rows=list(self.identities.items())
+        for pid,birth in rows:
+            try:
+                process=self.psutil.Process(pid)
+                if not process.is_running() or process.status()==self.psutil.STATUS_ZOMBIE:continue
+                if kernel_birth(pid,self.clock)==birth:return False
+            except self.psutil.NoSuchProcess:pass
+        return True
+    def close(self):
+        self.done.set();self.thread.join(timeout=3)
+        require(not self.thread.is_alive() and not self.error,'Privacy process observation incomplete')
+
+
+def privacy_canary(client,device,fixture,lane,identifier,report):
+    report['stage']='privacy-cache-canary-'+lane
+    foreground(device)
+    click_control(client,'.obychnaya[data-id="2"]',15)
+    canary='https://'+HOST+'/cache-canary'
+    call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'pereyti','id':2,'adres':canary})
+    def loaded():
+        with fixture.lock:seen=lane in fixture.canary_receipts
+        native=next(row for row in rows(client,identifier)['vkladki'] if row['id']==2)
+        return seen and native.get('browser_id',0)>0 and not native.get('zagruzka') and native.get('adres')==canary
+    wait_for(loaded,'Cacheable control did not actually load through selected route',25)
+    painted(client)
+    def actual_canary_paint():
+        pixels=video_paint(client,device)
+        return sum(tuple(pixels[i:i+3])==(28,112,80) for i in range(0,len(pixels),3))>=500
+    wait_for(actual_canary_paint,'Cacheable control did not actually paint',15)
+    time.sleep(1)
+    with fixture.lock:
+        require(fixture.direct==0,'Media bypassed actual selected route')
+        require(any(row['lane']==lane and row.get('privacy_marked') for row in fixture.receipts),
+                'Native media privacy sentinel was not requested')
+    return {'name':'cacheable-body-control-'+lane,'actual_routed_response':True,'native_loaded':True,'actual_os_paint':True,
+            'media_sentinel_requested':True,'marker_in_control_url':False,'direct_connections':0}
+
+
+def close_for_privacy(client,device,report):
+    report['stage']='privacy-normal-owned-exit'
+    witness=ExitWitness(device,client)
+    try:
+        foreground(device)
+        if sys.platform=='win32':native_owner(device).close()
+        else:
+            subprocess.run(['xdotool','key','--clearmodifiers','alt+F4'],env={**os.environ,'DISPLAY':device.display},check=True,timeout=5)
+        exit_code=device.app.wait(timeout=30)
+        require(exit_code==0,'Privacy parent did not exit normally')
+        wait_for(witness.all_gone,'Privacy owned native processes did not exit',30)
+        witness.close()
+        require(witness.all_gone(),'Privacy owned native processes did not exit')
+        report['owned_exit']={'parent_normal_exit':True,'native_members_observed':witness.native_members,
+                              'os_identities_observed':len(witness.identities),'all_known_native_executions_exited':True,
+                              'native_members_complete':True,'tracker_seconds':.02,
+                              'scope':'bounded_owned_fixture_not_universal_noescape_proof','harness_kill_used_for_acceptance':False}
+        # Prevent generic emergency cleanup from signalling an already reaped
+        # PID/PGID that could later be reused while the disk scan runs.
+        device.app=None
+    finally:
+        witness.close()
+
+
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS')=='true','Disposable GHA runner required')
     out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=False)
     report={'schema':1,'completed':False,'extractor_acceptance':False,'checks':[],'stage':'setup','player_diagnostics':{}}
     code=1;device=fixture=trust=wm=None;private_root=None
     old=os.environ.get('NEXUSBRO_TEST_YOUTUBE_DNS_GUARD')
+    old_sentinel=os.environ.get('NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL')
     try:
         private_root=pathlib.Path(tempfile.mkdtemp(prefix='nb-player-'))
         if private_root:
             root=private_root;thumb=certificates(root/'tls')
             trust=Trust(root,root/'tls'/'ca.crt',thumb);trust.install()
-            fixture=Fixture(root/'tls'/'server.crt',root/'tls'/'server.key',pathlib.Path(args.video_webm),pathlib.Path(args.audio_webm))
+            media_sentinel=secrets.token_hex(24);positive_sentinel=secrets.token_hex(24)
+            fixture=Fixture(root/'tls'/'server.crt',root/'tls'/'server.key',pathlib.Path(args.video_webm),pathlib.Path(args.audio_webm),media_sentinel,positive_sentinel)
             report['tls_handshake_preflight']=tls_proxy_preflight(fixture.proxies['A'],HOST,443,root/'tls'/'ca.crt',root/'tls'/'server.crt')
             exe,cef=pathlib.Path(args.exe).resolve(),pathlib.Path(args.cef).resolve()
             device=WindowsDevice(root/'device',exe,cef) if sys.platform=='win32' else Device('player',root/'device',exe,cef)
@@ -605,6 +733,7 @@ def run(args):
             for filename in ('vkladki.json','sohranennye.json'):(device.data/filename).write_text(json.dumps(definitions))
             (device.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False}))
             os.environ['NEXUSBRO_TEST_YOUTUBE_DNS_GUARD']='1'
+            os.environ['NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL']=media_sentinel
             master='nb-player-'+secrets.token_hex(16)
             client=device.start()
             if sys.platform.startswith('linux'):
@@ -676,6 +805,21 @@ def run(args):
                 for stalled_track in ('video','audio'):
                     report['checks'].append(stall_receipt(client,device,fixture,lane,identifier,tab,stalled_track,report))
                 report['checks'].append(lock_receipt(client,device,fixture,lane,identifier,tab,master,report))
+                report['checks'].append(privacy_canary(client,device,fixture,lane,identifier,report))
+            close_for_privacy(client,device,report)
+            report['stage']='privacy-disk-scan'
+            profile_root=device.data/'profili'
+            require(profile_root.is_dir() and all((profile_root/('player-'+lane.lower())).is_dir() for lane in ('A','B')),
+                    'Privacy actual CEF profile missing')
+            scans=[{'lane':lane,**scan_profile(root,profile_root/('player-'+lane.lower()),media_sentinel,positive_sentinel,
+                    max_files=4096,max_bytes=256*1024*1024,max_seconds=15)} for lane in ('A','B')]
+            report['disk_privacy']={'schema':1,'complete':all(row['complete'] for row in scans),
+                    'accepted':all(row['accepted'] for row in scans),'profiles':scans,
+                    'media_files':sum(row['media_files'] for row in scans),
+                    'positive_cache_files':sum(row['positive_cache_files'] for row in scans),
+                    'files':sum(row['files'] for row in scans),'bytes':sum(row['bytes'] for row in scans)}
+            require(report['disk_privacy']['complete'] and report['disk_privacy']['accepted'],
+                    'Actual cache privacy scan not accepted')
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
@@ -699,6 +843,20 @@ def run(args):
                'Background playback browser changed':'background_browser_changed',
                'Background test requires actual playback':'background_not_playing',
                'Physical rewind failed':'rewind_failed',
+               'Privacy native ownership schema invalid':'privacy_ownership_schema',
+               'Privacy native ownership incomplete':'privacy_ownership_incomplete',
+               'Privacy native process identity invalid':'privacy_identity_invalid',
+               'Privacy native process members missing':'privacy_members_missing',
+               'Privacy native process identity changed':'privacy_identity_changed',
+               'Privacy process observation incomplete':'privacy_observation_incomplete',
+               'Cacheable control did not actually load through selected route':'privacy_canary_not_loaded',
+               'Cacheable control did not actually paint':'privacy_canary_not_painted',
+               'Native media privacy sentinel was not requested':'privacy_sentinel_not_requested',
+               'Privacy parent already exited':'privacy_parent_already_exited',
+               'Privacy parent did not exit normally':'privacy_parent_exit_failed',
+               'Privacy owned native processes did not exit':'privacy_owned_exit_failed',
+               'Privacy actual CEF profile missing':'privacy_profile_missing',
+               'Actual cache privacy scan not accepted':'privacy_scan_not_accepted',
                'Synthetic fixture vault not unlocked':'fixture_vault_failed',
                'Native stop listener missing':'stop_listener_missing',
                'Lock fixture did not start actual media':'lock_start_failed',
@@ -739,6 +897,8 @@ def run(args):
         if private_root:shutil.rmtree(private_root,ignore_errors=True)
         if old is None:os.environ.pop('NEXUSBRO_TEST_YOUTUBE_DNS_GUARD',None)
         else:os.environ['NEXUSBRO_TEST_YOUTUBE_DNS_GUARD']=old
+        if old_sentinel is None:os.environ.pop('NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL',None)
+        else:os.environ['NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL']=old_sentinel
         (out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     return code
 
