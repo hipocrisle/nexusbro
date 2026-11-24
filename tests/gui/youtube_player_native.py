@@ -229,7 +229,21 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
             samples.append(current['audio_position']);previous=current['audio_position']
     finally:
         case['restore_callback_entered']=True
-        restore();case['restore_complete']=True
+        try:
+            restore();case['restore_complete']=True
+        except Exception:
+            try:
+                # Read-only shell identity/geometry; no retry or focus mutation.
+                selector='.vkladka[data-super-id="'+identifier+'"]'
+                case['restore_dom']=client.js('''(()=>{const e=document.querySelector('''+json.dumps(selector)+'''),r=e?.getBoundingClientRect(),x=r?r.x+r.width/2:0,y=r?r.y+r.height/2:0,h=r?document.elementFromPoint(x,y):null;return {active_super_match:!!e?.classList.contains('aktivna'),selected_tab_count:document.querySelectorAll('.obychnaya[aria-selected=true]').length,super_count:document.querySelectorAll('.vkladka[data-super-id]').length,target_count:document.querySelectorAll('''+json.dumps(selector)+''').length,document_focused:document.hasFocus(),target_visible:!!r&&r.width>0&&r.height>0,hit_target:!!e&&!!h&&(e===h||e.contains(h))}})()''')
+                case['restore_rows']=row_record()
+                if sys.platform!='win32' and getattr(device,'player_wm',None):
+                    intended=native_owner(device)
+                    focused=subprocess.check_output(['xdotool','getwindowfocus'],env=device.player_wm.env,timeout=3,text=True).strip()
+                    case['restore_native_focus_matches']=focused==str(intended)
+            except Exception:
+                case['restore_diagnostic_incomplete']=True
+            raise
         case['rows_restored']=row_record()
         restored=observe(client,identifier,tab,diagnostics=diagnostics)
         snapshot_record('after_restore',restored)
@@ -331,6 +345,9 @@ class Fixture:
         owner = self
         class Origin(http.server.BaseHTTPRequestHandler):
             def log_message(self,*_): pass
+            def setup(self):
+                super().setup()
+                self.connection_lane=getattr(self.connection,'fixture_lane','Direct')
             def do_GET(self):
                 path = urllib.parse.urlsplit(self.path); params=urllib.parse.parse_qs(path.query,keep_blank_values=True)
                 track = params.get('track',[''])[0]
@@ -340,7 +357,7 @@ class Fixture:
                             or params!={'v':['BaW_jenozKc'],'fmt':['vtt'],'lang':['de']}):
                         self.send_error(404);return
                     with owner.lock:
-                        owner.receipts.append({'kind':'caption','lane':owner.peers.get(self.client_address[1],'Direct'),'host':'youtube'})
+                        owner.receipts.append({'kind':'caption','lane':self.connection_lane,'host':'youtube'})
                     self.send_response(200);self.send_header('Content-Type','text/vtt; charset=utf-8')
                     self.send_header('Cache-Control','no-store');self.send_header('Access-Control-Allow-Origin','*')
                     self.send_header('Content-Length',str(len(owner.caption_body)));self.end_headers()
@@ -351,7 +368,7 @@ class Fixture:
                 if path.path=='/cache-canary' and not path.query:
                     # BODY-only high entropy marker: it is never in history/URL.
                     body=('<!doctype html><title>Cache canary</title><style>html,body{margin:0;background:rgb(28,112,80)}</style><main>'+owner.positive_sentinel+'</main>').encode()
-                    with owner.lock:owner.canary_receipts.append(owner.peers.get(self.client_address[1],'Direct'))
+                    with owner.lock:owner.canary_receipts.append(self.connection_lane)
                     self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8')
                     self.send_header('Cache-Control','private, max-age=3600')
                     self.send_header('Content-Length',str(len(body)));self.end_headers()
@@ -374,7 +391,7 @@ class Fixture:
                     start = int(match[1]); end = min(int(match[2]) if match[2] else end,end); ranged=True
                     if start > end: self.send_error(416); return
                 with owner.lock:
-                    lane=owner.peers.get(self.client_address[1],'Direct')
+                    lane=self.connection_lane
                     policy=owner.stalls.get((lane,track))
                     receipt={'kind':'media','host':'googlevideo','lane':lane,'track':track,'range':ranged,
                              'bytes':end-start+1,'privacy_marked':params.get('nb_privacy')==[owner.media_sentinel]}
@@ -416,6 +433,12 @@ class Fixture:
                 except (OSError,ssl.SSLError):pass
         origin = http.server.ThreadingHTTPServer(('127.0.0.1',0),Origin); origin.daemon_threads=True
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert,key)
+        def bind_tls_lane(connection, _server_name, _context):
+            # CONNECT registers its upstream before admitting client TLS. Capture
+            # identity during handshake, before later EOF can remove that map.
+            with owner.lock:
+                connection.fixture_lane=owner.peers.get(connection.getpeername()[1],'Direct')
+        tls.sni_callback=bind_tls_lane
         origin.socket=tls.wrap_socket(origin.socket,server_side=True); self.origin_port=origin.server_port; self.start(origin)
         self.proxies={}
         for lane in ('A','B'):
