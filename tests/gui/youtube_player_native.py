@@ -152,6 +152,13 @@ def foreground(device):
     painted(device.client)
 
 
+def switch_super_foreground(client,device,identifier):
+    # The sidebar belongs to the native shell owner, not a previously focused
+    # CEF child. Establish ownership before the one ordinary physical click.
+    foreground(device)
+    switch_super(client,identifier)
+
+
 def minimize_actual(device, minimized):
     owner=native_owner(device)
     if sys.platform=='win32':
@@ -887,7 +894,10 @@ def close_for_privacy(client,device,report):
         foreground(device)
         if sys.platform=='win32':native_owner(device).close()
         else:
-            subprocess.run(['xdotool','key','--clearmodifiers','alt+F4'],env={**os.environ,'DISPLAY':device.display},check=True,timeout=5)
+            # Ask the owned WM for normal window close, like its titlebar X.
+            # A focused CEF child may intercept Alt+F4; never kill/destroy it.
+            subprocess.run(['wmctrl','-ic',hex(int(native_owner(device)))],
+                           env=device.player_wm.env,check=True,timeout=5)
         exit_code=device.app.wait(timeout=30)
         require(exit_code==0,'Privacy parent did not exit normally')
         wait_for(witness.all_gone,'Privacy owned native processes did not exit',30)
@@ -1008,7 +1018,7 @@ def run(args):
                 other='player-b' if lane=='A' else 'player-a'
                 report['stage']='background-super-'+lane
                 report['checks'].append(background_receipt(client,device,identifier,tab,
-                    lambda:switch_super(client,other),lambda:switch_super(client,identifier),
+                    lambda:switch_super_foreground(client,device,other),lambda:switch_super_foreground(client,device,identifier),
                     'background-super-'+lane,report['player_diagnostics']))
                 report['stage']='actual-minimize-'+lane
                 report['checks'].append(background_receipt(client,device,identifier,tab,
