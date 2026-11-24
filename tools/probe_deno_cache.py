@@ -158,7 +158,9 @@ def environment(case):
               'DENO_NO_PROMPT': '1', 'DO_NOT_TRACK': '1', 'PYTHONDONTWRITEBYTECODE': '1'}
     for key, name in [('HOME', 'home'), ('XDG_CACHE_HOME', 'xdg-cache'),
                       ('XDG_CONFIG_HOME', 'xdg-config'), ('XDG_DATA_HOME', 'xdg-data'),
-                      ('XDG_STATE_HOME', 'xdg-state'), ('TMPDIR', 'tmp'), ('TMP', 'tmp'), ('TEMP', 'tmp')]:
+                      ('XDG_STATE_HOME', 'xdg-state'), ('XDG_RUNTIME_DIR', 'xdg-runtime'),
+                      ('XDG_DATA_DIRS', 'xdg-data-dirs'), ('XDG_CONFIG_DIRS', 'xdg-config-dirs'),
+                      ('TMPDIR', 'tmp'), ('TMP', 'tmp'), ('TEMP', 'tmp')]:
         path = case / name; path.mkdir(mode=0o700, exist_ok=True); result[key] = str(path)
     return result
 
