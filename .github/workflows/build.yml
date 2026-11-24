@@ -8,6 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      youtube_sources_inventory:
+        description: Collect pinned source/notices evidence without desktop publication
+        type: boolean
+        default: false
+      youtube_muxer_reuse:
+        description: Reviewed immutable minimal muxer run to verify without rebuilding
+        type: string
+        default: ""
       youtube_probe_chrome:
         description: Single explicit CI-only Chrome fingerprint experiment (no production default change)
         type: boolean
@@ -117,14 +125,23 @@ jobs:
       - name: Prove profile exclusion and actual owned descendant exit
         run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
   youtube-sources:
-    if: inputs.youtube_muxer_only
+    if: inputs.youtube_sources_inventory
     uses: ./.github/workflows/youtube-sources.yml
   youtube-minimal-muxer:
-    if: inputs.youtube_muxer_only
+    if: inputs.youtube_muxer_only && inputs.youtube_muxer_reuse == ''
     needs: [youtube-media-fixture]
     uses: ./.github/workflows/youtube-muxer.yml
     with:
       source_sha256: ce3fa044e0dd97ac7a2e7af710056daa850464ec11bdf804a8033c5eae1ec706
+  youtube-muxer-reuse:
+    if: inputs.youtube_muxer_only && inputs.youtube_muxer_reuse != ''
+    needs: [youtube-media-fixture]
+    permissions:
+      contents: read
+      actions: read
+    uses: ./.github/workflows/youtube-muxer-reuse.yml
+    with:
+      source_run: ${{ inputs.youtube_muxer_reuse }}
   security:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&

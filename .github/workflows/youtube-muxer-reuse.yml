@@ -1,0 +1,84 @@
+name: Verify existing immutable minimal muxer artifacts
+on:
+  workflow_call:
+    inputs:
+      source_run:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: windows-latest
+            platform: windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Admit only the reviewed repository run and exact source revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN: ${{ inputs.source_run }}
+          REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,os,urllib.request
+          allowed={'45457627182':'b8cc093ddc48e0e4926660ba09ca60eb36dd2af0'}
+          run=os.environ['SOURCE_RUN'];repo=os.environ['REPOSITORY']
+          if repo!='hipocrisle/nexusbro' or run not in allowed: raise SystemExit('Unreviewed artifact provenance')
+          request=urllib.request.Request(f'https://api.github.com/repos/{repo}/actions/runs/{run}',headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(request,timeout=20) as response:data=json.load(response)
+          if data['head_sha']!=allowed[run] or data['event']!='workflow_dispatch' or data['status']!='completed':raise SystemExit('Artifact source revision mismatch')
+          print('Reviewed immutable CI source revision verified')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: youtube-minimal-muxer-${{ matrix.platform }}
+          run-id: ${{ inputs.source_run }}
+          github-token: ${{ github.token }}
+          path: .dev-check/muxer-reuse
+      - uses: actions/download-artifact@v4
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture
+      - name: Verify original source archive receipt and locate the closed binary package
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json, pathlib
+          root=pathlib.Path('.dev-check/muxer-reuse')
+          receipts=list(root.rglob('source-receipt.json'))
+          if len(receipts)!=1:raise SystemExit('Source receipt count invalid')
+          receipt=json.loads(receipts[0].read_text())
+          if receipt.get('source_commit')!='a8029b6528fecbcb5d99b331cfc76e6467b9bc77' or receipt.get('source_sha256')!='ce3fa044e0dd97ac7a2e7af710056daa850464ec11bdf804a8033c5eae1ec706' or receipt.get('source_pin_verified') is not True:raise SystemExit('Unverified source receipt')
+          bundles=[p for p in root.rglob('ffmpeg') if p.is_dir() and p.parent.name=='package']
+          if len(bundles)!=1:raise SystemExit('Binary package count invalid')
+          out=pathlib.Path('.dev-check/muxer-build');out.mkdir(parents=True,exist_ok=True)
+          (out/'reuse-path.txt').write_text(str(bundles[0].resolve()))
+          (out/'reuse-source-receipt.json').write_text(json.dumps(receipt))
+          PY
+      - name: Execute identical native local mux and protocol-refusal gates without rebuilding
+        shell: bash
+        run: |
+          bundle=$(cat .dev-check/muxer-build/reuse-path.txt)
+          python tools/build_youtube_muxer.py smoke-existing --platform '${{ matrix.platform }}' --package-dir "$bundle"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-muxer-reuse-${{ matrix.platform }}
+          path: |
+            .dev-check/muxer-build/*.json
+            .dev-check/muxer-build/*.txt
+          retention-days: 14
+          if-no-files-found: warn
