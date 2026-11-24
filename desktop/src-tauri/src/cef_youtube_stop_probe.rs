@@ -5,7 +5,10 @@ use serde_json::{json, Value};
 use std::{
     marker::PhantomData,
     rc::Rc as ThreadBound,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc, Mutex,
+    },
     time::{Duration, Instant},
 };
 use zeroize::{Zeroize, Zeroizing};
@@ -102,16 +105,16 @@ fn document_matches(browser: &Browser, identity: i32, frame_id: &str, document: 
         && CefString::from(&frame.url()).to_string() == document
 }
 wrap_dev_tools_message_observer! {
- struct Observer{identity:i32,frame_id:String,document:String,message:i32,state:Arc<Mutex<Completion>>}
+ struct Observer{live:Arc<AtomicBool>,identity:i32,frame_id:String,document:String,message:i32,state:Arc<Mutex<Completion>>}
  impl DevToolsMessageObserver{
   fn on_dev_tools_method_result(&self,browser:Option<&mut Browser>,message_id:i32,success:i32,result:Option<&[u8]>){
-   if message_id!=self.message{return;}
+   if message_id!=self.message||!self.live.load(Ordering::Acquire){return;}
    let Ok(mut state)=self.state.lock()else{return;};if state.done{return;}
    state.done=true;
    state.reply=Some(if success==0{Err("cdp_method_failed")}else if !browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v))});
   }
   fn on_dev_tools_agent_detached(&self,browser:Option<&mut Browser>){
-   if browser.is_some_and(|b|b.identifier()!=self.identity){return;}
+   if !self.live.load(Ordering::Acquire)||browser.is_some_and(|b|b.identifier()!=self.identity){return;}
    if let Ok(mut state)=self.state.lock(){if !state.done{state.done=true;state.reply=Some(Err("cdp_agent_detached"));}}
   }
  }
@@ -123,6 +126,7 @@ pub struct FixtureStopToken {
     frame_id: String,
     document: String,
     _operation: u64,
+    live: Arc<AtomicBool>,
     minted: Instant,
     _ui: PhantomData<ThreadBound<()>>,
 }
@@ -142,20 +146,27 @@ pub fn mint(browser: &Browser) -> Result<FixtureStopToken, &'static str> {
     if !document_matches(browser, identity, &frame_id, &document) {
         return Err("stop_document_changed");
     }
-    let operation = crate::cef_youtube::fixture_stop_identity(identity, &document)
+    let operation = crate::cef_youtube::fixture_stop_identity(identity, &frame_id, &document)
         .ok_or("stop_fixture_not_admitted")?;
     Ok(FixtureStopToken {
         identity,
         frame_id,
         document,
         _operation: operation,
+        live: Arc::new(AtomicBool::new(true)),
         minted: Instant::now(),
         _ui: PhantomData,
     })
 }
+impl Drop for FixtureStopToken {
+    fn drop(&mut self) {
+        self.live.store(false, Ordering::Release);
+    }
+}
 /// Keep and poll on the creating CEF UI thread. Drop before CEF shutdown.
 pub struct Probe {
     registration: Option<Registration>,
+    live: Arc<AtomicBool>,
     browser: Browser,
     identity: i32,
     frame_id: String,
@@ -170,7 +181,7 @@ impl Probe {
         if currently_on(ThreadId::UI) == 0 {
             return Err("stop_wrong_thread");
         }
-        if token.minted.elapsed() >= TIMEOUT {
+        if !token.live.load(Ordering::Acquire) || token.minted.elapsed() >= TIMEOUT {
             return Err("stop_token_expired");
         }
         if !document_matches(browser, token.identity, &token.frame_id, &token.document) {
@@ -188,6 +199,7 @@ impl Probe {
             .host()
             .and_then(|host| {
                 host.add_dev_tools_message_observer(Some(&mut Observer::new(
+                    token.live.clone(),
                     identity,
                     frame_id.clone(),
                     document.clone(),
@@ -198,6 +210,7 @@ impl Probe {
             .ok_or("probe_observer_unavailable")?;
         let pending = Self {
             registration: Some(registration),
+            live: token.live.clone(),
             browser: browser.clone(),
             identity,
             frame_id,
@@ -223,6 +236,9 @@ impl Probe {
         }
         if currently_on(ThreadId::UI) == 0 {
             return self.fail("probe_wrong_thread");
+        }
+        if !self.live.load(Ordering::Acquire) {
+            return self.fail("stop_token_retired");
         }
         if self.started.elapsed() >= TIMEOUT {
             return self.fail("probe_timeout");
