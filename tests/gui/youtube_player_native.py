@@ -69,6 +69,7 @@ class Trust:
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
     def install(self):
         if sys.platform == 'win32':
+            self.installed = True  # cleanup even if import postcondition fails
             self.powershell("param($Certificate,$Thumb)\nImport-Certificate -FilePath $Certificate -CertStoreLocation 'Cert:\\LocalMachine\\Root' -ErrorAction Stop | Out-Null\nif (!(Test-Path ('Cert:\\LocalMachine\\Root\\'+$Thumb))) {throw 'missing'}\n")
         else:
             home = self.root / 'home'; database = home / '.pki' / 'nssdb'; database.mkdir(parents=True)
@@ -254,9 +255,13 @@ def run(args):
     except Exception as error:
         report['failure_class']=type(error).__name__
     finally:
-        if device:device.close()
-        if fixture:fixture.close()
-        if trust:trust.close()
+        cleanup_ok=True
+        for owned in (device,fixture,trust):
+            if owned:
+                try:owned.close()
+                except Exception:cleanup_ok=False
+        report['cleanup_completed']=cleanup_ok
+        if not cleanup_ok:report['completed']=False;code=1
         if private_root:shutil.rmtree(private_root,ignore_errors=True)
         if old is None:os.environ.pop('NEXUSBRO_TEST_YOUTUBE_DNS_GUARD',None)
         else:os.environ['NEXUSBRO_TEST_YOUTUBE_DNS_GUARD']=old
