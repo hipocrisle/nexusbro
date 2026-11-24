@@ -310,6 +310,11 @@ fn validate(cookie: &Value) -> Result<()> {
     {
         return refusal();
     }
+    // CDP cannot preserve creation time. Recreating unspecified SameSite would
+    // renew Chromium's Lax+POST grace period and weaken CSRF protection.
+    if session && !m.contains_key("sameSite") {
+        return refusal();
+    }
     enumeration(m, "sameSite", &["Strict", "Lax", "None"], true)?;
     enumeration(m, "priority", &["Low", "Medium", "High"], false)?;
     enumeration(m, "sourceScheme", &["Unset", "NonSecure", "Secure"], false)?;
@@ -480,6 +485,35 @@ impl CookieSnapshot {
             return refusal();
         }
         Ok(bytes)
+    }
+    /// Expiry-aware full comparison at an explicit caller-provided Unix time.
+    /// Only originally persistent cookies with expires <= now may disappear.
+    /// Session cookies and every surviving cookie remain exact; extra cookies,
+    /// including stale expired cookies in readback, are refused.
+    pub fn verify_readback_at(&self, bytes: &[u8], now_unix_seconds: u64) -> Result<()> {
+        // All integer seconds must be represented exactly in CDP's f64 clock.
+        if now_unix_seconds > 9_007_199_254_740_991 {
+            return refusal();
+        }
+        let actual = canonical(bytes)?;
+        let mut expected = Clear(serde_json::from_slice(&self.canonical).map_err(|_| ERROR)?);
+        let cookies = expected.0["cookies"].as_array_mut().ok_or(ERROR)?;
+        // Wipe removed values before dropping their allocation.
+        cookies.retain_mut(|cookie| {
+            let expired = cookie["session"] == false
+                && cookie["expires"]
+                    .as_f64()
+                    .is_some_and(|expiry| expiry <= now_unix_seconds as f64);
+            if expired {
+                wipe(cookie);
+            }
+            !expired
+        });
+        let wanted = Zeroizing::new(serde_json::to_vec(&expected.0).map_err(|_| ERROR)?);
+        if *wanted != *actual {
+            return refusal();
+        }
+        Ok(())
     }
     pub fn verify_readback(&self, bytes: &[u8]) -> Result<()> {
         if *self.canonical != *canonical(bytes)? {
@@ -675,5 +709,69 @@ mod tests {
         let mut c = cookie();
         c["value"] = Value::String("x".repeat(65537));
         assert!(CookieSnapshot::from_cdp_result(&jar(c)).is_err());
+    }
+    #[test]
+    fn unspecified_samesite_session_refused_without_changing_persistent_policy() {
+        let mut c = cookie();
+        c.as_object_mut().unwrap().remove("sameSite");
+        assert!(CookieSnapshot::from_cdp_result(&jar(c.clone())).is_err());
+        c["session"] = json!(false);
+        c["expires"] = json!(1000.5);
+        let snapshot = CookieSnapshot::from_cdp_result(&jar(c)).unwrap();
+        assert_eq!(&*snapshot.session_params().unwrap(), b"[]");
+        for policy in ["Strict", "Lax", "None"] {
+            let mut c = cookie();
+            c["sameSite"] = json!(policy);
+            let snapshot = CookieSnapshot::from_cdp_result(&jar(c)).unwrap();
+            let params: Value =
+                serde_json::from_slice(&snapshot.session_params().unwrap()).unwrap();
+            assert_eq!(params[0]["sameSite"], policy);
+        }
+    }
+    #[test]
+    fn expiry_aware_readback_only_allows_proven_natural_expiration() {
+        let session = cookie();
+        let mut persistent = cookie();
+        persistent["name"] = json!("persistent");
+        persistent["session"] = json!(false);
+        persistent["expires"] = json!(1000.5);
+        let original =
+            serde_json::to_vec(&json!({"cookies":[session.clone(),persistent.clone()]})).unwrap();
+        let snapshot = CookieSnapshot::from_cdp_result(&original).unwrap();
+        snapshot.verify_readback_at(&original, 1000).unwrap();
+        assert!(snapshot
+            .verify_readback_at(&jar(session.clone()), 1000)
+            .is_err());
+        snapshot
+            .verify_readback_at(&jar(session.clone()), 1001)
+            .unwrap();
+        assert!(snapshot
+            .verify_readback_at(br#"{"cookies":[]}"#, 1001)
+            .is_err());
+        assert!(snapshot.verify_readback_at(&original, 1001).is_err());
+        let mut changed = session.clone();
+        changed["sourcePort"] = json!(8443);
+        assert!(snapshot.verify_readback_at(&jar(changed), 1001).is_err());
+        assert!(snapshot.verify_readback_at(&jar(persistent), 1001).is_err());
+        assert!(snapshot
+            .verify_readback_at(&jar(session), u64::MAX)
+            .is_err());
+    }
+    #[test]
+    fn expiration_boundary_is_inclusive_and_never_applies_to_session_cookies() {
+        let mut c = cookie();
+        c["session"] = json!(false);
+        c["expires"] = json!(1234);
+        let snapshot = CookieSnapshot::from_cdp_result(&jar(c)).unwrap();
+        assert!(snapshot
+            .verify_readback_at(br#"{"cookies":[]}"#, 1233)
+            .is_err());
+        snapshot
+            .verify_readback_at(br#"{"cookies":[]}"#, 1234)
+            .unwrap();
+        let session = CookieSnapshot::from_cdp_result(&jar(cookie())).unwrap();
+        assert!(session
+            .verify_readback_at(br#"{"cookies":[]}"#, 9000000000)
+            .is_err());
     }
 }
