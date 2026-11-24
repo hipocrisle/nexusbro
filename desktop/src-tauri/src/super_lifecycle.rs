@@ -196,6 +196,13 @@ impl Machine {
             terminal: false,
         }
     }
+    /// Adapter allocates a disjoint monotonic generation range for each new
+    /// entity, including reopening a deleted Super. No live state is rebased.
+    pub fn new_at_generation(seed: u64) -> Self {
+        let mut machine = Self::new();
+        machine.stamp.generation = seed;
+        machine
+    }
     pub fn phase(&self) -> Phase {
         self.phase
     }
