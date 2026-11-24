@@ -261,7 +261,7 @@ def run(args):
         for filename in ('vkladki.json','sohranennye.json'):(device.data/filename).write_text(json.dumps([item]))
         (device.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False}))
         client=device.start();foreground(device)
-        client.js('window.__playerObserved=[];window.__downloadObserved=[];window.__downloadReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{const t=e.payload?.data?.tip;if(t==="youtube-state")window.__playerObserved.push(e.payload);if(t==="youtube-download-state")window.__downloadObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__downloadReady=true);true')
+        client.js('window.__playerObserved=[];window.__downloadObserved=[];window.__downloadTrace=[];window.__downloadReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{const t=e.payload?.data?.tip;if(t==="youtube-state")window.__playerObserved.push(e.payload);if(t==="youtube-download-state")window.__downloadObserved.push(e.payload);if(t==="youtube-download-trace"&&window.__downloadTrace.length<64)window.__downloadTrace.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__downloadReady=true);true')
         js_wait(client,'window.__downloadReady','Native event listener missing')
         switch_super(client,SUPER)
         # A saved about:blank tab is deferred until the visible Open action.
@@ -326,6 +326,10 @@ def run(args):
         }.get(str(error),'unclassified')
         if device is not None and 'client' in locals() and 'tab' in locals():
             try:
+                trace=client.js('window.__downloadTrace??[]') or []
+                stages={'marker_observed','marker_admitted','request_received','request_admitted','parent_received','parent_admitted','dialog_dispatch','dialog_returned','target_received','worker_started'}
+                reasons={'none','media_not_admitted','not_selected','locked_or_closing','route_missing','format_unsupported','job_limit','invalid_request','current_engine_mismatch','selected_session_mismatch','owner_missing','cancelled','picked','channel_missing','channel_sent','random_unavailable','state_unavailable','worker_spawn_failed'}
+                report['download_pipeline']=[{'stage':event['data']['stage'],'reason':event['data']['reason']} for event in trace[-32:] if isinstance(event,dict) and event.get('super_id')==SUPER and isinstance(event.get('data'),dict) and event['data'].get('id')==tab and event['data'].get('stage') in stages and event['data'].get('reason') in reasons]
                 recent=states(client,tab)[-8:]
                 report['native_download_receipts']=[{name:state.get(name) is True for name in ('cancelled','done','choosing')}|{'has_error':bool(state.get('error')),'has_progress':isinstance(state.get('progress'),dict)} for state in recent]
                 if sys.platform=='win32':
