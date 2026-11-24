@@ -168,8 +168,7 @@ pub fn target(browser: &Browser, route_generation: u64, request: &str, path: Opt
         return;
     };
     let Some(path) = path else {
-        cancel(identity);
-        display(browser, serde_json::json!({"cancelled":true}));
+        cancel_user(identity);
         return;
     };
     if path.len() > 4096 {

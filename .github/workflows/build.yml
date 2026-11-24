@@ -264,7 +264,7 @@ jobs:
         include: ${{ fromJSON(inputs.linux_build_only && '[{"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","artifact":"nexusbro-linux"}]' || '[{"os":"windows-latest","target":"x86_64-pc-windows-msvc","artifact":"nexusbro-windows"},{"os":"ubuntu-24.04","target":"x86_64-unknown-linux-gnu","artifact":"nexusbro-linux"}]') }}
 
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 80
     permissions:
       contents: write
     env:
@@ -530,7 +530,7 @@ jobs:
           sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
       - name: Real native controlled dual-WebM playback and per-context routing
         id: native-youtube-player
-        timeout-minutes: 7
+        timeout-minutes: 13
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -541,6 +541,28 @@ jobs:
             CEF=desktop/src-tauri/cef
           fi
           python tests/gui/youtube_player_native.py --exe "$BIN" --cef "$CEF" --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Real native video save, route, cancellation and no-overwrite acceptance
+        timeout-minutes: 12
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            BIN=.dev-check/installed/nexusbro.exe
+            CEF=.dev-check/installed
+            COMPONENTS=.dev-check/installed/binaries/youtube-light
+          else
+            BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
+            CEF=desktop/src-tauri/cef
+            COMPONENTS=desktop/src-tauri/binaries/youtube-light
+          fi
+          python tests/gui/youtube_download_native.py --exe "$BIN" --cef "$CEF" --components "$COMPONENTS" --out .dev-check/youtube-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-native-download-${{ matrix.os }}
+          path: .dev-check/youtube-download/result.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Restore disposable Linux direct-witness permission
         if: always() && matrix.os == 'ubuntu-24.04' && env.YOUTUBE_OLD_UNPRIVILEGED_PORT_START != ''
         shell: bash
