@@ -110,9 +110,10 @@ wrap_dev_tools_message_observer! {
  impl DevToolsMessageObserver{
   fn on_dev_tools_method_result(&self,browser:Option<&mut Browser>,message_id:i32,success:i32,result:Option<&[u8]>){
    if message_id!=self.message||!self.live.load(Ordering::Acquire){return;}
-   let Ok(mut state)=self.state.lock()else{return;};if state.done{return;}
+   let matches=browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document));
+   let Ok(mut state)=self.state.lock()else{return;};if state.done||!self.live.load(Ordering::Acquire){return;}
    state.done=true;
-   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v))});
+   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !matches{Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v))});
   }
   fn on_dev_tools_agent_detached(&self,browser:Option<&mut Browser>){
    if !self.live.load(Ordering::Acquire)||browser.is_some_and(|b|b.identifier()!=self.identity){return;}
