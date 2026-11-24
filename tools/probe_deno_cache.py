@@ -88,58 +88,132 @@ def decoded_string(token):
     except (ValueError, SyntaxError): return None
 
 
+READ_CALLS = {'access', 'faccessat', 'faccessat2', 'stat', 'lstat', 'fstat', 'newfstatat',
+              'statx', 'statfs', 'fstatfs', 'readlink', 'readlinkat', 'getcwd', 'execve', 'execveat'}
+OPEN_CALLS = {'open', 'openat', 'openat2', 'creat'}
+FD_WRITE_CALLS = FD_WRITE_CALLS | {'fchmod', 'fchown'}
+WRITE_CALLS = WRITE_CALLS | {'fchmodat2'}
+SAFE_SYSCALLS = READ_CALLS | OPEN_CALLS | WRITE_CALLS | FD_WRITE_CALLS | {'mmap', 'chdir', 'fchdir'}
+PREFIX = re.compile(r'^(?:\[pid\s+(\d+)\]\s+|(\d+)\s+)?(.*)$')
+RESUMED = re.compile(r'^<\.\.\. ([A-Za-z0-9_]+) resumed>(.*)$')
+
+
+def syscall_args(text):
+    result, start, depth, quoted, escaped = [], 0, 0, False, False
+    for i, char in enumerate(text):
+        if quoted:
+            if escaped: escaped = False
+            elif char == '\\': escaped = True
+            elif char == '"': quoted = False
+        elif char == '"': quoted = True
+        elif char in '([{': depth += 1
+        elif char in ')]}': depth -= 1
+        elif char == ',' and depth == 0:
+            result.append(text[start:i].strip()); start = i + 1
+    if quoted or depth != 0: raise ValueError('incomplete_syscall_args')
+    result.append(text[start:].strip())
+    return result
+
+
 def scan_trace(data, allowed, cwd, cache_root, existed=()):
-    """Conservative file syscall receipt. Unknown forms are counted, never clean."""
+    """Parse pathname operands, not arbitrary quoted data; unknown writes fail closed."""
     stats = dict(write_attempts=0, successful_writes=0, denied_writes=0,
                  outside_write_attempts=0, outside_successful_writes=0,
                  cache_write_attempts=0, cache_read_syscalls=0, cache_read_hits=0,
-                 unresolved_file_operations=0, enotdir_events=0, eacces_events=0)
+                 unresolved_file_operations=0, unresolved_read_operations=0,
+                 unresolved_mutating_operations=0, unresolved_state_operations=0,
+                 unresolved_syscalls={}, reassembled_operations=0, enotdir_events=0, eacces_events=0)
     known = {str(p) for p in existed}
-    for line in data.splitlines():
-        if 'ENOTDIR' in line: stats['enotdir_events'] += 1
-        if 'EACCES' in line: stats['eacces_events'] += 1
+    pending = {}
+    current_cwd = str(cwd)
+    cwd_known = True
+
+    def unresolved(call, category=None):
+        stats['unresolved_file_operations'] += 1
+        bucket = call if call in SAFE_SYSCALLS else 'other'
+        counts = stats['unresolved_syscalls']; counts[bucket] = counts.get(bucket, 0) + 1
+        if category is None:
+            category = 'read' if call in READ_CALLS else 'state' if call in ('chdir', 'fchdir') else 'mutating'
+        stats['unresolved_' + category + '_operations'] += 1
+
+    def fd_path(token):
+        match = re.search(r'<([^>]+)>', token)
+        if not match: return None
+        raw = match[1].removesuffix(' (deleted)')
+        if raw.startswith(('pipe:', 'socket:', 'anon_inode:', '/memfd:', '/anon_inode:')): return ''
+        return os.path.normpath(raw) if raw.startswith('/') else None
+
+    def pathname(token, directory=None):
+        raw = decoded_string(token)
+        if raw is None: return None
+        if raw.startswith('/'): return os.path.normpath(raw)
+        base = current_cwd if cwd_known else None
+        if directory is not None:
+            if directory.startswith('AT_FDCWD'):
+                annotated = fd_path(directory)
+                if annotated: base = annotated
+            else: base = fd_path(directory)
+        return os.path.normpath(os.path.join(base, raw)) if base else None
+
+    def complete(line):
+        nonlocal current_cwd, cwd_known
         match = CALL.match(line)
         if not match:
-            # strace -f may split one syscall into unfinished/resumed records.
-            # Keep these visible rather than silently assigning a relative path.
-            if '<unfinished ...>' in line or 'resumed>' in line:
-                stats['unresolved_file_operations'] += 1
-            continue
+            call = re.match(r'^([A-Za-z0-9_]+)\(', line)
+            if call: unresolved(call[1])
+            return
         call, arguments, result = match.groups()
+        if call in READ_CALLS: return
         success = not result.startswith('-1')
-        raw_paths = []
-        if call.startswith('open') or call in WRITE_CALLS or call == 'chdir':
-            raw_paths = [decoded_string(m.group()) for m in QUOTED.finditer(arguments)]
-            if call.startswith('open'):
-                raw_paths = raw_paths[:1]
-                if success: raw_paths += ANNOTATED.findall(result)
-        elif call in FD_WRITE_CALLS:
-            raw_paths = ANNOTATED.findall(arguments[:arguments.find(',') if ',' in arguments else len(arguments)])
-        elif call == 'mmap' and 'PROT_WRITE' in arguments and 'MAP_SHARED' in arguments:
-            raw_paths = ANNOTATED.findall(arguments)
-        else:
-            continue
+        try: args = syscall_args(arguments)
+        except ValueError: unresolved(call); return
+        if call in ('chdir', 'fchdir'):
+            if success:
+                path = pathname(args[0]) if call == 'chdir' else fd_path(args[0])
+                if path: current_cwd, cwd_known = path, True
+                else: cwd_known = False; unresolved(call)
+            return
+        writing = True
+        cache_read = False
         paths = []
-        for raw in raw_paths:
-            if raw is None:
-                stats['unresolved_file_operations'] += 1; continue
-            if raw.startswith(('pipe:', 'socket:', 'anon_inode:', '/memfd:', '/anon_inode:')): continue
-            raw = raw.removesuffix(' (deleted)')
-            if not raw.startswith('/'):
-                # Resolve AT_FDCWD against launch cwd; an annotated directory fd
-                # supplies its own base. Deno's static script never calls chdir.
-                annotations = ANNOTATED.findall(arguments.split(',', 1)[0])
-                base = annotations[0] if annotations and annotations[0].startswith('/') else str(cwd)
-                raw = os.path.normpath(os.path.join(base, raw))
-            paths.append(Path(os.path.normpath(raw)))
-        if call == 'chdir':
-            if success: stats['unresolved_file_operations'] += 1
-            continue
-        writing = call in WRITE_CALLS or call in FD_WRITE_CALLS or call == 'mmap' or (
-            call.startswith('open') and any(flag in arguments for flag in ('O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_TRUNC')))
-        if not paths and writing and not any(kind in arguments for kind in ('pipe:', 'socket:', 'anon_inode:', '/memfd:', '/anon_inode:')):
-            stats['unresolved_file_operations'] += 1
-        for path in set(paths):
+        try:
+            if call in OPEN_CALLS:
+                at = call in ('openat', 'openat2')
+                path = pathname(args[1] if at else args[0], args[0] if at else None)
+                flags = args[2] if at else args[1]
+                writing = call == 'creat' or any(flag in flags for flag in ('O_WRONLY', 'O_RDWR', 'O_CREAT', 'O_TRUNC', 'O_TMPFILE'))
+                cache_read = call != 'creat' and 'O_WRONLY' not in flags
+                paths = [path]
+                if success:
+                    resolved = fd_path(result)
+                    if resolved is not None: paths.append(resolved)
+            elif call == 'symlink':
+                # target text is DATA. Only the new link pathname is mutated.
+                paths = [pathname(args[1])]
+            elif call == 'symlinkat':
+                paths = [pathname(args[2], args[1])]
+            elif call in ('renameat', 'renameat2', 'linkat'):
+                paths = [pathname(args[1], args[0]), pathname(args[3], args[2])]
+            elif call in ('rename', 'link'):
+                paths = [pathname(args[0]), pathname(args[1])]
+            elif call in ('mkdirat', 'unlinkat', 'fchmodat', 'fchmodat2', 'fchownat', 'utimensat', 'mknodat'):
+                paths = [pathname(args[1], args[0])]
+            elif call in WRITE_CALLS:
+                paths = [pathname(args[0])]
+            elif call in FD_WRITE_CALLS:
+                paths = [fd_path(args[0])]
+            elif call == 'mmap':
+                if 'PROT_WRITE' not in args[2] or 'MAP_SHARED' not in args[3]: return
+                if 'MAP_ANONYMOUS' in args[3] and args[4] == '-1': return
+                paths = [fd_path(args[4])]
+            else:
+                unresolved(call); return
+        except IndexError:
+            unresolved(call); return
+        if any(path is None for path in paths):
+            unresolved(call, 'mutating' if writing else 'read')
+        for raw in {path for path in paths if path}:
+            path = Path(raw)
             if writing:
                 stats['write_attempts'] += 1
                 stats['successful_writes' if success else 'denied_writes'] += 1
@@ -147,9 +221,35 @@ def scan_trace(data, allowed, cwd, cache_root, existed=()):
                     stats['outside_write_attempts'] += 1
                     if success: stats['outside_successful_writes'] += 1
                 if contained(path, cache_root): stats['cache_write_attempts'] += 1
-            if call.startswith('open') and 'O_WRONLY' not in arguments and success and contained(path, cache_root):
+            if cache_read and success and contained(path, cache_root):
                 stats['cache_read_syscalls'] += 1
                 if str(path) in known: stats['cache_read_hits'] += 1
+
+    for line in data.splitlines():
+        if 'ENOTDIR' in line: stats['enotdir_events'] += 1
+        if 'EACCES' in line: stats['eacces_events'] += 1
+        prefix = PREFIX.match(line)
+        if not prefix: continue
+        pid, body = prefix[1] or prefix[2] or 'main', prefix[3]
+        resumed = RESUMED.match(body)
+        if resumed:
+            previous = pending.pop(pid, None)
+            if previous and previous[0] == resumed[1]:
+                stats['reassembled_operations'] += 1
+                complete(previous[1] + resumed[2])
+            else:
+                if previous: unresolved(previous[0])
+                unresolved(resumed[1])
+            continue
+        if '<unfinished ...>' in body:
+            call = re.match(r'^([A-Za-z0-9_]+)\(', body)
+            if call:
+                previous = pending.pop(pid, None)
+                if previous: unresolved(previous[0])
+                pending[pid] = (call[1], body.split('<unfinished ...>', 1)[0])
+            continue
+        complete(body)
+    for call, _ in pending.values(): unresolved(call)
     return stats
 
 
@@ -324,6 +424,28 @@ def verify_component(directory, pins_path):
 
 
 def self_test():
+    allowed = Path('/owned/case'); cache = allowed / 'cache'
+    operands = '\n'.join([
+        '11 symlink("/outside/source-data", "/owned/case/cache/link") = 0',
+        '11 symlinkat("/outside/source-data", 5</owned/case/cache>, "link2") = 0',
+        '11 symlink("/owned/case/data", "/outside/link") = 0',
+        '11 renameat(5</owned/case/cache>, "old", 6</outside>, "new") = 0',
+        '11 newfstatat(AT_FDCWD, "/outside/read-only",  <unfinished ...>',
+        '12 openat(AT_FDCWD, "/owned/case/cache/db", O_RDWR|O_CREAT, 0600 <unfinished ...>',
+        '11 <... newfstatat resumed>{st_mode=S_IFREG|0600}, 0) = 0',
+        '12 <... openat resumed>) = 3</owned/case/cache/db>',
+        '13 readlink("/outside/read-only",  <unfinished ...>',
+        '14 unlink("/outside/mutation" <unfinished ...>',
+    ])
+    parsed = scan_trace(operands, allowed, allowed, cache)
+    assert parsed['outside_successful_writes'] == 2  # actual linkpath and rename destination
+    assert parsed['cache_write_attempts'] == 4
+    assert parsed['reassembled_operations'] == 2
+    assert parsed['unresolved_read_operations'] == 1 and parsed['unresolved_mutating_operations'] == 1
+    assert parsed['unresolved_syscalls'] == {'readlink': 1, 'unlink': 1}
+    assert '/outside' not in json.dumps(parsed)
+    read_only = scan_trace('15 newfstatat(AT_FDCWD, "file", <unfinished ...>', allowed, allowed, cache)
+    assert read_only['unresolved_mutating_operations'] == 0 and read_only['unresolved_read_operations'] == 1
     with tempfile.TemporaryDirectory(prefix='nb-inventory-test-') as temporary:
         base = Path(temporary)
         case = base / 'case'; case.mkdir()
@@ -407,7 +529,7 @@ def main():
         observations = [attempt for case in report['cases'] for attempt in case['attempts']]
         report['file_observation_passed'] = all(
             attempt['outside_owned_successful_writes'] == 0
-            and attempt['unresolved_file_operations'] == 0
+            and attempt['unresolved_mutating_operations'] == 0 and attempt['unresolved_state_operations'] == 0
             and attempt['symlinks_after']['readlink_failures'] == 0
             for attempt in observations)
         if not report['positive_execution_passed'] or not report['file_observation_passed']: code = 1
