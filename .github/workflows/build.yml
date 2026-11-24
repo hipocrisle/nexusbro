@@ -811,6 +811,18 @@ jobs:
             python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Diagnose native cookie prerequisite against exact Windows installer
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          python tests/gui/hibernation_cookie_probe.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/cookie-prerequisite-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cookie-prerequisite-windows-diagnostic-not-product-acceptance
+          path: .dev-check/cookie-prerequisite-windows/results.json
+          retention-days: 14
       - name: Native Windows per-tab routes and trusted HTTPS
         if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
         timeout-minutes: 10
