@@ -284,6 +284,9 @@ pub fn zapustit_cep(
 /// Retain ownership while polling actual exit; no timer permits a replacement.
 pub fn ostanovit_owned_process(mut owner:crate::super_process_owner::ProcessOwner){
     loop {
+        if owner.probe()==crate::super_process_owner::ExitProbe::Exited {
+            match owner.complete(){Ok(())=>return,Err(retained)=>owner=retained}
+        }
         match owner.terminate_explicit(){
             Ok(())=>return,
             Err(retained)=>owner=retained,
