@@ -62,3 +62,10 @@ pub mod youtube_light_aux;
 
 #[path = "../../../desktop/src-tauri/src/youtube_light_captions.rs"]
 pub mod youtube_light_captions;
+
+#[path = "../../../desktop/src-tauri/src/youtube_light_components.rs"]
+pub mod youtube_light_components;
+#[path = "../../../desktop/src-tauri/src/youtube_light_download.rs"]
+pub mod youtube_light_download;
+#[path = "../../../desktop/src-tauri/src/youtube_light_mux.rs"]
+pub mod youtube_light_mux;

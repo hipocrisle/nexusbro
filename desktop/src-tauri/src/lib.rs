@@ -26,6 +26,8 @@ mod youtube_light_sidecar;
 mod youtube_light_extract;
 mod youtube_light_captions;
 mod youtube_light_components;
+mod youtube_light_download;
+mod youtube_light_mux;
 mod youtube_light_jobs;
 mod youtube_light_resume;
 mod youtube_light_resume_service;
