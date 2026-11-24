@@ -1,0 +1,248 @@
+name: Real public YouTube paired software measurement — no release acceptance
+on:
+  workflow_call:
+    inputs:
+      run:
+        type: string
+        required: true
+      source:
+        type: string
+        required: true
+      config:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  paired:
+    runs-on: ${{ fromJSON(inputs.config).platform == 'windows' && 'windows-latest' || 'ubuntu-24.04' }}
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Strict direct-only configuration and immutable producer admission
+        id: producer
+        shell: bash
+        env:
+          EXPERIMENT_CONFIG: ${{ inputs.config }}
+          PRODUCER_RUN: ${{ inputs.run }}
+          PRODUCER_SOURCE: ${{ inputs.source }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import datetime,hashlib,json,math,os,pathlib,re,stat,subprocess,time,urllib.error,urllib.parse,urllib.request,zipfile
+          def require(value,reason):
+              if not value:raise SystemExit(reason)
+          def unique(pairs):
+              value={}
+              for key,item in pairs:
+                  require(key not in value,'duplicate_configuration_key');value[key]=item
+              return value
+          def main():
+              require(os.environ.get('GITHUB_ACTIONS')=='true','gha_only')
+              raw=os.environ['EXPERIMENT_CONFIG'];require(len(raw.encode())<=2048,'configuration_bound')
+              config=json.loads(raw,object_pairs_hook=unique)
+              require(isinstance(config,dict) and set(config)=={'platform','video_id','duration','fps','width','height'},'configuration_keys')
+              require(config['platform'] in ('windows','linux'),'configuration_platform')
+              require(isinstance(config['video_id'],str) and re.fullmatch('[A-Za-z0-9_-]{11}',config['video_id']),'configuration_video')
+              for key,minimum,maximum in [('duration',180,604800),('fps',1,120)]:
+                  value=config[key];require(type(value) in (int,float) and math.isfinite(value) and minimum<=value<=maximum,'configuration_numeric')
+              for key in ('width','height'):require(type(config[key]) is int and 1<=config[key]<=16384,'configuration_geometry')
+              require((os.name=='nt')==(config['platform']=='windows'),'runner_platform')
+              run,source,repo=os.environ['PRODUCER_RUN'],os.environ['PRODUCER_SOURCE'],os.environ['GITHUB_REPOSITORY']
+              require(repo=='hipocrisle/nexusbro','own_repository_only')
+              require(re.fullmatch('[1-9][0-9]{0,19}',run) and re.fullmatch('[0-9a-f]{40}',source),'producer_identity_format')
+              class NoRedirect(urllib.request.HTTPRedirectHandler):
+                  def redirect_request(self,*args,**kwargs):return None
+              direct=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+              authenticated=urllib.request.build_opener(urllib.request.ProxyHandler({}),NoRedirect())
+              def request(path):return urllib.request.Request('https://api.github.com/repos/'+repo+'/'+path,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+              def api(path):
+                  with authenticated.open(request(path),timeout=20) as response:data=response.read(4*1024*1024+1)
+                  require(len(data)<=4*1024*1024,'api_bound');return json.loads(data)
+              metadata=api('actions/runs/'+run)
+              require(metadata.get('repository',{}).get('full_name')==repo and metadata.get('head_repository',{}).get('full_name')==repo,'producer_repository')
+              require(metadata.get('event')=='workflow_dispatch' and metadata.get('path')=='.github/workflows/build.yml' and metadata.get('head_sha')==source and metadata.get('status')=='completed','producer_workflow_source_status')
+              def pages(kind):
+                  result=[]
+                  for page in range(1,5):
+                      batch=api('actions/runs/'+run+'/'+kind+'?per_page=100&page='+str(page)+('&filter=latest' if kind=='jobs' else ''))[kind];result.extend(batch)
+                      if len(batch)<100:return result
+                  raise SystemExit('producer_listing_bound')
+              windows=config['platform']=='windows'
+              jobname='build (windows-latest, x86_64-pc-windows-msvc, nexusbro-windows)' if windows else 'build (ubuntu-24.04, x86_64-unknown-linux-gnu, nexusbro-linux)'
+              jobs=[j for j in pages('jobs') if j.get('name')==jobname];require(len(jobs)==1,'compile_job_identity')
+              steps=[s for s in jobs[0].get('steps',[]) if s.get('name')=='Собрать']
+              require(len(steps)==1 and steps[0].get('status')=='completed' and steps[0].get('conclusion')=='success','actual_compile_not_success')
+              artifactname='nexusbro-windows' if windows else 'nexusbro-linux'
+              artifacts=[a for a in pages('artifacts') if a.get('name')==artifactname and a.get('expired') is False];require(len(artifacts)==1,'installer_artifact_unique')
+              artifact=artifacts[0];digest=artifact.get('digest','')
+              require(type(artifact.get('id')) is int and artifact['id']>0 and re.fullmatch('sha256:[0-9a-f]{64}',digest),'artifact_identity_digest')
+              require(artifact.get('workflow_run',{}).get('head_sha')==source and artifact.get('workflow_run',{}).get('id')==int(run),'artifact_source_run')
+              def stamp(value):return datetime.datetime.fromisoformat(value.replace('Z','+00:00'))
+              require(stamp(artifact['created_at'])>=stamp(steps[0]['completed_at']),'artifact_predates_compile')
+              root=pathlib.Path('.dev-check/paired-control');private=root/'private';private.mkdir(parents=True,exist_ok=False)
+              fixture=subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip()
+              # Explicit auth is confined to the exact GitHub origin; it is never
+              # forwarded to the signed blob URL, persisted, or printed.
+              try:response=authenticated.open(request('actions/artifacts/'+str(artifact['id'])+'/zip'),timeout=20)
+              except urllib.error.HTTPError as error:
+                  require(error.code==302,'artifact_redirect_status');signed=error.headers['Location'];error.close()
+              else:response.close();raise SystemExit('artifact_redirect_required')
+              host=urllib.parse.urlsplit(signed)
+              require(host.scheme=='https' and host.hostname and (host.hostname.endswith('.blob.core.windows.net') or host.hostname.endswith('.actions.githubusercontent.com')),'artifact_blob_origin')
+              archive=private/'package.zip';actual=hashlib.sha256();total=0;began=time.monotonic()
+              with direct.open(signed,timeout=30) as incoming,archive.open('xb') as output:
+                  require(incoming.geturl()==signed,'unexpected_blob_redirect')
+                  while chunk:=incoming.read(1024*1024):
+                      total+=len(chunk);require(total<=2*1024*1024*1024 and time.monotonic()-began<=300,'artifact_download_bound');actual.update(chunk);output.write(chunk)
+              require('sha256:'+actual.hexdigest()==digest,'artifact_sha256_mismatch')
+              destination=private/'package';destination.mkdir()
+              with zipfile.ZipFile(archive) as z:
+                  infos=z.infolist();require(0<len(infos)<=4096 and sum(i.file_size for i in infos)<=4*1024*1024*1024,'artifact_zip_bound');seen=set()
+                  for info in infos:
+                      name=pathlib.PurePosixPath(info.filename);require(not name.is_absolute() and name.parts and not any(p in ('..','.') for p in name.parts) and '\\' not in info.filename and ':' not in info.filename and not any(ord(c)<32 for c in info.filename) and not stat.S_ISLNK(info.external_attr>>16) and not info.flag_bits&1 and info.filename.casefold() not in seen,'artifact_zip_path');seen.add(info.filename.casefold())
+                      target=destination.joinpath(*name.parts)
+                      if info.is_dir():target.mkdir(parents=True,exist_ok=True);continue
+                      target.parent.mkdir(parents=True,exist_ok=True)
+                      with z.open(info) as incoming,target.open('xb') as output:
+                          count=0
+                          while chunk:=incoming.read(1024*1024):count+=len(chunk);require(count<=info.file_size,'artifact_zip_size');output.write(chunk)
+                          require(count==info.file_size,'artifact_zip_size')
+              (root/'config.json').write_text(json.dumps(config),encoding='utf-8')
+              (private/'route.json').write_text('{"mode":"direct"}\n',encoding='utf-8')
+              provenance=dict(release_acceptance_passed=False,producer_repository=repo,producer_run=int(run),producer_source=source,producer_status=metadata['status'],producer_conclusion=metadata.get('conclusion'),producer_workflow=metadata['path'],producer_event=metadata['event'],compile_job_id=jobs[0]['id'],compile_step_conclusion='success',compile_finished_at=steps[0]['completed_at'],fixture_head=fixture,artifact_id=artifact['id'],artifact_name=artifactname,artifact_created_at=artifact['created_at'],artifact_sha256=actual.hexdigest(),artifact_original_zip_hash_verified_before_parse=True,route_mode='direct',platform=config['platform'])
+              (root/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\n',encoding='utf-8')
+          try:main()
+          except Exception:raise SystemExit('paired_provenance_gate_failed') from None
+          PY
+      - name: Require identical tracked desktop sources before any native launch
+        id: desktop
+        shell: bash
+        env:
+          PRODUCER_SOURCE: ${{ inputs.source }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64,json,os,pathlib,subprocess
+          root=pathlib.Path('.dev-check/paired-control');env=dict(os.environ)
+          env.update(GIT_CONFIG_COUNT='1',GIT_CONFIG_KEY_0='http.https://github.com/.extraheader',GIT_CONFIG_VALUE_0='AUTHORIZATION: basic '+base64.b64encode(('x-access-token:'+os.environ['GH_TOKEN']).encode()).decode())
+          with (root/'private/git-fetch.txt').open('wb') as log:subprocess.run(['git','fetch','--no-tags','--depth=1','origin',os.environ['PRODUCER_SOURCE']],env=env,stdout=log,stderr=subprocess.STDOUT,check=True,timeout=90)
+          with (root/'private/desktop.diff').open('wb') as difference:subprocess.run(['git','diff','--exit-code',os.environ['PRODUCER_SOURCE'],'HEAD','--','desktop'],stdout=difference,check=True,timeout=30)
+          if (root/'private/desktop.diff').stat().st_size:raise SystemExit('tracked_desktop_diff_nonempty')
+          path=root/'provenance.json';value=json.loads(path.read_text(encoding='utf-8'));value['tracked_desktop_diff_empty']=True;path.write_text(json.dumps(value,indent=2)+'\n',encoding='utf-8')
+          PY
+      - name: Prepare native Linux runtime only
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update > .dev-check/paired-control/private/apt.txt 2>&1
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 libssl3t64 libxcb1 xvfb xdotool xclip x11-utils openbox wmctrl dbus-x11 >> .dev-check/paired-control/private/apt.txt 2>&1
+          python -m pip install Pillow psutil websocket-client cryptography > .dev-check/paired-control/private/pip.txt 2>&1
+      - name: Prepare native Windows physical UI dependencies only
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          python -m pip install Pillow psutil websocket-client cryptography pyautogui pywinauto > .dev-check/paired-control/private/pip.txt 2>&1
+      - name: Install exact DEB or extract exact NSIS and record installed identities
+        id: installed
+        shell: bash
+        run: |
+          python - <<'PY'
+          import hashlib,json,os,pathlib,subprocess
+          def main():
+              root=pathlib.Path('.dev-check/paired-control');private=root/'private';config=json.loads((root/'config.json').read_text(encoding='utf-8'));windows=config['platform']=='windows'
+              packages=list((private/'package').rglob('*.exe' if windows else '*.deb'))
+              if len(packages)!=1:raise SystemExit('installer_count')
+              installer=packages[0].resolve();installed=(private/'installed').resolve()
+              with (private/'install.txt').open('wb') as log:
+                  if windows:
+                      subprocess.run(['7z','x','-y',str(installer),'-o'+str(installed)],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=180)
+                      exe,cef=installed/'nexusbro.exe',installed
+                  else:
+                      subprocess.run(['sudo','apt-get','install','-y',str(installer)],stdout=log,stderr=subprocess.STDOUT,check=True,timeout=240)
+                      exe,cef=pathlib.Path('/usr/bin/nexusbro'),pathlib.Path('/usr/lib/NexusBro')
+              manifest=cef/'binaries/youtube-light/components.json'
+              for path in (installer,exe,manifest,cef/('libcef.dll' if windows else 'libcef.so')):
+                  if path.is_symlink() or not path.is_file() or path.stat().st_size==0:raise SystemExit('installed_resource_missing')
+              def digest(path):
+                  with path.open('rb') as stream:return hashlib.file_digest(stream,'sha256').hexdigest()
+              provenance=json.loads((root/'provenance.json').read_text(encoding='utf-8'));provenance.update(installer_sha256=digest(installer),installed_exe_sha256=digest(exe),installed_manifest_sha256=digest(manifest),installed_cef_sha256=digest(cef/('libcef.dll' if windows else 'libcef.so')),development_cef_override_used=False)
+              (root/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\n',encoding='utf-8')
+              (private/'installed.json').write_text(json.dumps({'exe':str(exe),'cef':str(cef),'manifest':str(manifest)}),encoding='utf-8')
+          try:main()
+          except Exception:raise SystemExit('paired_installer_preparation_failed') from None
+          PY
+      - name: Real public video ABBA experiment — blocked stays blocked
+        id: measurement
+        timeout-minutes: 40
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,os,pathlib,subprocess,sys
+          root=pathlib.Path('.dev-check/paired-control');private=root/'private';config=json.loads((root/'config.json').read_text(encoding='utf-8'));installed=json.loads((private/'installed.json').read_text(encoding='utf-8'))
+          env=dict(os.environ)
+          for key in tuple(env):
+              if key in ('GH_TOKEN','GITHUB_TOKEN','CEF_PATH','LD_LIBRARY_PATH','NEXUSBRO_TEST_YOUTUBE_FEATURES','NEXUSBRO_TEST_YOUTUBE_DNS_GUARD') or key.startswith(('NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA','NEXUSBRO_TEST_YOUTUBE_CAPTIONS_CA','NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL','NEXUSBRO_TEST_TRANSLATE_')):env.pop(key,None)
+          env['NEXUSBRO_TEST_COLD_CEF']='1';env['PYTHONUTF8']='1'
+          argv=[sys.executable,'tests/gui/youtube_paired_native.py','--exe',installed['exe'],'--cef',installed['cef'],'--components-manifest',installed['manifest'],'--route-config',str(private/'route.json'),'--video-id',config['video_id'],'--expected-duration',str(config['duration']),'--expected-fps',str(config['fps']),'--width',str(config['width']),'--height',str(config['height']),'--out',str(private/'measurement')]
+          status=None;code='process_exit'
+          try:
+              with (private/'measurement-console.txt').open('wb') as stream:status=subprocess.run(argv,env=env,stdout=stream,stderr=subprocess.STDOUT,timeout=2280).returncode
+          except subprocess.TimeoutExpired:code='experiment_timeout'
+          (root/'execution.json').write_text(json.dumps({'returncode':status,'status':code,'release_acceptance_passed':False})+'\n',encoding='utf-8')
+          raise SystemExit(status if status is not None else 1)
+          PY
+      - name: Publish only bounded public measurement and provenance receipts
+        if: always()
+        shell: bash
+        env:
+          PRODUCER_GATE_OUTCOME: ${{ steps.producer.outcome }}
+          DESKTOP_GATE_OUTCOME: ${{ steps.desktop.outcome }}
+          INSTALL_OUTCOME: ${{ steps.installed.outcome }}
+          MEASUREMENT_OUTCOME: ${{ steps.measurement.outcome }}
+        run: |
+          python - <<'PY'
+          import json,math,os,pathlib,re
+          root=pathlib.Path('.dev-check/paired-control');public=root/'public';public.mkdir(parents=True,exist_ok=True)
+          def load(path):
+              if not path.is_file() or path.stat().st_size>2*1024*1024:return {}
+              try:
+                  value=json.loads(path.read_text(encoding='utf-8'));return value if isinstance(value,dict) else {}
+              except Exception:return {}
+          def numeric(value):return type(value) in (int,float) and math.isfinite(value)
+          def token(value):return value if isinstance(value,str) and re.fullmatch('[A-Za-z0-9_-]{1,96}',value) else 'unclassified'
+          raw=load(root/'private/measurement/result.json');result={'schema':1,'release_acceptance_passed':False,'measurement_completed':raw.get('completed') is True,'comparison_valid':raw.get('comparison_valid') is True,'measurement_acceptance_passed':raw.get('acceptance_passed') is True,'physical_audio_capture_proven':False,'arms':[]}
+          for key in ('improvement_observed','drop_regression_observed','audio_policy_proven'):result[key]=raw.get(key) is True
+          for key in ('cpu_ratio','private_ratio'):
+              if numeric(raw.get(key)):result[key]=raw[key]
+          if 'blocked_reason' in raw:result['blocked_reason']=token(raw['blocked_reason'])
+          summary=raw.get('summary',{});result['summary']={mode:{key:value for key,value in summary.get(mode,{}).items() if key in ('cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio','observed_fps') and numeric(value)} for mode in ('light','normal')} if isinstance(summary,dict) else {}
+          for arm in (raw.get('arms') if isinstance(raw.get('arms'),list) else [])[:4]:
+              if not isinstance(arm,dict):continue
+              clean={'mode':arm.get('mode') if arm.get('mode') in ('light','normal') else 'unknown','stage':token(arm.get('stage')),'cleanup_completed':arm.get('cleanup_completed') is True,'audio_policy_proven':arm.get('audio_policy_proven') is True}
+              for key in ('index','startup_wall_seconds','route_generation'):
+                  if numeric(arm.get(key)):clean[key]=arm[key]
+              if 'blocked_reason' in arm:clean['blocked_reason']=token(arm['blocked_reason'])
+              clean['metrics']={key:value for key,value in arm.get('metrics',{}).items() if key in {'cpu_core_percent','peak_private_bytes','peak_rss_bytes','peak_processes','observed_fps','dropped_ratio','measurement_seconds','media_seconds','measurement_start_position','measurement_end_position'} and numeric(value)}
+              decode=arm.get('decode',{});clean['decode']={key:token(value) for key,value in decode.items() if key in ('codec','decoder','decode_mode')};clean['decode']['platform_decoder']=decode.get('platform_decoder') if type(decode.get('platform_decoder')) is bool else None;clean['decode']['hardware_activity_proven']=False
+              clean['parent_normal_exit']=arm.get('owned_exit',{}).get('parent_normal_exit') is True;result['arms'].append(clean)
+          provenance=load(root/'provenance.json');provenance['release_acceptance_passed']=False;provenance['execution']=load(root/'execution.json');provenance['gate_outcomes']={key:os.environ.get(key,'unknown') for key in ('PRODUCER_GATE_OUTCOME','DESKTOP_GATE_OUTCOME','INSTALL_OUTCOME','MEASUREMENT_OUTCOME')}
+          (public/'result.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8');(public/'provenance.json').write_text(json.dumps(provenance,indent=2)+'\n',encoding='utf-8')
+          if any(path.stat().st_size>65536 for path in public.glob('*.json')):raise SystemExit('public_receipt_bound')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-paired-${{ runner.os }}-${{ inputs.run }}
+          path: .dev-check/paired-control/public/*.json
+          if-no-files-found: error
+          retention-days: 14
