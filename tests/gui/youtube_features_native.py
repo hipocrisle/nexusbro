@@ -27,7 +27,7 @@ SUPER='features-a'
 CAPTION=b'WEBVTT\n\n00:00.000 --> 02:00.000\n[NEXUSBRO CAPTION FIXTURE]\n'
 
 
-SAFE_FIELDS={'configured','disposed','playing','separate','hidden','video_paused','audio_paused','position','audio_position','duration','skew','decoded','dropped','video_width','video_height','caption_selected','caption_cues','caption_active','caption_showing','fullscreen'}
+SAFE_FIELDS={'configured','disposed','playing','separate','hidden','video_paused','audio_paused','position','audio_position','duration','skew','decoded','dropped','video_width','video_height','caption_selected','caption_cues','caption_active','caption_showing','fullscreen','active_control','quality_index','quality_count'}
 
 def safe_state(value):
     return {k:v for k,v in value.items() if k in SAFE_FIELDS and (type(v)is bool or type(v)in(int,float) and math.isfinite(v))}
@@ -52,7 +52,7 @@ def input_observation(device):
 def keys(device,*sequence):
     trace=getattr(device,'feature_keys',None)
     if trace is None:trace=[];device.feature_keys=trace
-    if len(trace)<32:trace.append({'keys':[key if key in {'Tab','shift+Tab','space','Home','End','Return','enter','Escape','esc'} else 'other' for key in sequence[:12]],'before':input_observation(device)})
+    if len(trace)<32:trace.append({'keys':[key if key in {'Tab','shift+Tab','space','Home','End','Return','enter','Escape','esc','Up','Down'} else 'other' for key in sequence[:12]],'before':input_observation(device)})
     if sys.platform=='win32':
         import pyautogui as gui
         for key in sequence:
@@ -78,6 +78,42 @@ def focus_steps(target):
     require(parser.order==expected,'Shipped feature focus order changed')
     delta=parser.order.index(target)-parser.order.index('play')
     return ('Tab' if delta>0 else 'shift+Tab',abs(delta))
+
+
+CONTROL_IDS={'play':1,'seek':2,'quality':3,'volume':4,'fullscreen':5,'captions':6,
+             'download-video':7,'download-audio':8,'cancel':9,'sponsor':10,'ordinary':11}
+
+
+def focus_control(client,device,tab,target,diagnostics):
+    require(target in CONTROL_IDS,'Unknown native focus target')
+    direction=focus_steps(target)[0]
+    target_id=CONTROL_IDS[target]
+    navigation=diagnostics.setdefault('control_navigation',[])
+    require(len(navigation)<8,'Native focus diagnostic bound exceeded')
+    receipt={'target':target_id,'backwards':direction=='shift+Tab','tabs':0,'observed_controls':[],'reached':False}
+    navigation.append(receipt)
+    for attempt in range(17):
+        state=snapshot(client,tab);active=state.get('active_control')
+        require(type(active)is int and 0<=active<=11,'Native focus feedback missing or invalid')
+        receipt['observed_controls'].append(active)
+        if active==target_id:
+            receipt['reached']=True
+            return state
+        require(attempt<16,'Native physical focus target not reached within bound')
+        keys(device,direction);receipt['tabs']+=1
+    raise AssertionError('Native focus bound unreachable')
+
+
+def quality_control(client,device,tab,index,diagnostics):
+    state=focus_control(client,device,tab,'quality',diagnostics)
+    require(type(state.get('quality_count'))is int and state['quality_count']==2 and type(state.get('quality_index'))is int
+            and 0<=state['quality_index']<2 and index in (0,1),'Native two-option quality feedback invalid')
+    changed_at=time.monotonic()
+    if state['quality_index']!=index:
+        # A closed focused native select changes exactly one option with arrows.
+        # No ambiguous popup Space/Home/End/Return sequence.
+        keys(device,'Up' if index<state['quality_index'] else 'Down')
+    return changed_at
 
 
 def snapshot(client,tab):
@@ -181,26 +217,27 @@ def run(args):
         # intent before changing quality; no playback starts due to the change.
         physical(client,device,'play',diagnostics);physical(client,device,'play',diagnostics)
         before_quality=paused(client,device,tab,diagnostics)
-        key,count=focus_steps('quality');keys(device,*([key]*count));keys(device,'space','Home','Return' if sys.platform!='win32' else 'enter')
-        low=wait_for(lambda:(lambda s:s if s['video_width']==320 and s['video_height']==180 and not s['playing'] else None)(snapshot(client,tab)),'Paused low quality geometry missing',25)
+        quality_control(client,device,tab,0,diagnostics)
+        low=wait_for(lambda:(lambda s:s if s.get('quality_count')==2 and s.get('quality_index')==0 and s['video_width']==320 and s['video_height']==180 and not s['playing'] else None)(snapshot(client,tab)),'Paused low quality geometry missing',25)
         time.sleep(.8);still=snapshot(client,tab)
         require(not still['playing'] and abs(still['audio_position']-before_quality['audio_position'])<.2,'Paused quality resumed without Play')
         report['checks'].append({'name':'quality-no-autoplay','width':320,'height':180})
         report['stage']='quality-playing';physical(client,device,'play',diagnostics)
         playing=wait_for(lambda:(lambda s:s if s['playing'] and s['audio_position']>1 and s['decoded']>=3 else None)(snapshot(client,tab)),'Feature playback missing',25)
-        key,count=focus_steps('quality');keys(device,*([key]*count));started=time.monotonic();keys(device,'space','End','Return' if sys.platform!='win32' else 'enter')
-        changed=wait_for(lambda:(lambda s:s if s['playing'] and s['video_width']==640 and s['video_height']==360 and s['decoded']>=3 else None)(snapshot(client,tab)),'Playing quality change failed',25)
+        started=quality_control(client,device,tab,1,diagnostics)
+        changed=wait_for(lambda:(lambda s:s if s.get('quality_count')==2 and s.get('quality_index')==1 and s['playing'] and s['video_width']==640 and s['video_height']==360 and s['decoded']>=3 else None)(snapshot(client,tab)),'Playing quality change failed',25)
         require(playing['audio_position']-.3<=changed['audio_position']<=playing['audio_position']+(time.monotonic()-started)+4 and changed['skew']<.6,'Quality audio continuity failed')
         report['checks'].append({'name':'quality-playing-continuity','width':640,'height':360,'skew':round(changed['skew'],3)})
         report['stage']='captions';stable=paused(client,device,tab,diagnostics);before=caption_pixels(client,device)
-        # paused() left actual Play focused. Move focus without playing even a
-        # single frame, so caption differences cannot be animated-video pixels.
-        key,count=focus_steps('captions');keys(device,*([key]*count));keys(device,'space','End','Return' if sys.platform!='win32' else 'enter')
+        # Native feedback establishes actual focus without playing a frame.
+        caption_focus=focus_control(client,device,tab,'captions',diagnostics)
+        require(caption_focus.get('caption_selected')==-1,'Initial caption select was not off')
+        keys(device,'Down')
         caption=wait_for(lambda:(lambda s:s if s['caption_selected']==0 and s['caption_showing'] and s['caption_cues']>0 and s['caption_active']>0 and not s['playing'] else None)(snapshot(client,tab)),'Actual native caption track missing',25)
         require(abs(caption['audio_position']-stable['audio_position'])<.2,'Caption paint media frame changed')
         fraction=wait_for(lambda:(lambda value:value if value is not None and .0001<value<.3 else None)(changed_fraction(before,caption_pixels(client,device))),'Caption pixels not physically painted',10)
         # Disable using the still-focused actual native select; no CEF JS action.
-        keys(device,'space','Home','Return' if sys.platform!='win32' else 'enter')
+        focus_control(client,device,tab,'captions',diagnostics);keys(device,'Up')
         wait_for(lambda:(lambda s:s if s['caption_selected']==-1 and not s['caption_showing'] and s['caption_active']==0 else None)(snapshot(client,tab)),'Caption disable failed',10)
         wait_for(lambda:(lambda value:value is not None and value<=.0001)(changed_fraction(before,caption_pixels(client,device))),'Caption pixels did not clear',10)
         with fixture.lock:
@@ -208,10 +245,8 @@ def run(args):
             require(captions and all(r['lane']=='A' and r.get('host')=='youtube' for r in captions),'Caption actual route witness missing')
         report['checks'].append({'name':'captions-native-fetch-and-paint','active_cues':caption['caption_active'],'changed_fraction':round(fraction,6),'route_requests':len(captions)})
         report['stage']='fullscreen';require(native_fullscreen(client,device)==(False,False),'Owner initially fullscreen');original_geometry=native_geometry(device)
-        # Caption selector remains focused after disabling. Move six real Tab
-        # stops to Play, then four to Fullscreen, keeping the same paused frame.
-        key,count=focus_steps('captions');keys(device,*(['Tab']*count))
-        key,count=focus_steps('fullscreen');keys(device,*([key]*count),'space')
+        # Feedback identifies the actual button; Space is the intended click.
+        focus_control(client,device,tab,'fullscreen',diagnostics);keys(device,'space')
         wait_for(lambda:native_fullscreen(client,device)==(True,True) and snapshot(client,tab)['fullscreen'] and client.js('document.querySelector(".okno")?.classList.contains("youtube-fullscreen")'),'Actual OS fullscreen missing',15)
         keys(device,'Escape' if sys.platform!='win32' else 'esc')
         wait_for(lambda:native_fullscreen(client,device)==(False,False) and not snapshot(client,tab)['fullscreen'],'Fullscreen Escape restore failed',15)
@@ -247,6 +282,27 @@ def run(args):
 
 
 def self_test():
+    original_snapshot,original_keys=globals()['snapshot'],globals()['keys']
+    pressed=[]
+    try:
+        feedback=iter([{'active_control':1},{'active_control':2},{'active_control':3}])
+        globals()['snapshot']=lambda *_:next(feedback)
+        globals()['keys']=lambda _device,*sequence:pressed.extend(sequence)
+        diagnostics={};focus_control(None,None,1,'quality',diagnostics)
+        require(pressed==['Tab','Tab'] and diagnostics['control_navigation'][0]['reached'],'Native focus feedback navigation failed')
+        pressed.clear();globals()['snapshot']=lambda *_:{'active_control':0}
+        bounded={}
+        try:focus_control(None,None,1,'quality',bounded)
+        except Exception:pass
+        else:raise AssertionError('Missing physical focus was accepted')
+        require(len(pressed)==16 and bounded['control_navigation'][0]['tabs']==16,'Physical focus iteration bound failed')
+        pressed.clear();globals()['snapshot']=lambda *_:{'active_control':3,'quality_count':2,'quality_index':1}
+        quality_control(None,None,1,0,{})
+        require(pressed==['Up'],'Closed low quality selection did not use exact arrow')
+        pressed.clear();globals()['snapshot']=lambda *_:{'active_control':3,'quality_count':2,'quality_index':0}
+        quality_control(None,None,1,1,{})
+        require(pressed==['Down'],'Closed high quality selection did not use exact arrow')
+    finally:globals()['snapshot'],globals()['keys']=original_snapshot,original_keys
     require(safe_state({'url':'secret','duration':float('nan'),'playing':True,'video_width':640})=={'playing':True,'video_width':640},'Diagnostic field filtering failed')
     require(focus_steps('quality')==('Tab',2) and focus_steps('fullscreen')==('Tab',4) and focus_steps('captions')==('shift+Tab',6),'Feature focus sequence mismatch')
     from PIL import Image
