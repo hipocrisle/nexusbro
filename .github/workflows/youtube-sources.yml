@@ -1,0 +1,27 @@
+name: YouTube pinned source and notices inventory
+on:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  sources:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Offline adversarial archive and path checks
+        run: python tools/collect_youtube_sources.py --self-test
+      - name: Collect pinned source archives, actual notices and explicit gaps
+        run: python tools/collect_youtube_sources.py
+      - name: Preserve review evidence (never a clearance assertion)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-source-inventory
+          path: .dev-check/youtube-source-inventory/
+          retention-days: 14
+          if-no-files-found: error
