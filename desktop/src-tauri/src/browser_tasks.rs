@@ -40,7 +40,7 @@ pub async fn browser_tasks_snapshot(
         let mut failures = 0;
         for tab in tabs.values_mut() {
             let mut native_ok = false;
-            if tab.zapusk_idet && tab.proc.is_none() {
+            if (tab.zapusk_idet || tab.hibernate.machine.profile_reserved()) && tab.proc.is_none() {
                 failures += 1;
             }
             if let Some(owner) = tab.proc.as_mut() {
