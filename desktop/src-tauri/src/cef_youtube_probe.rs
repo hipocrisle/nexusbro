@@ -74,6 +74,9 @@ fn decode(bytes: &[u8]) -> Reply {
         "hidden",
         "video_paused",
         "audio_paused",
+        "active_control",
+        "quality_index",
+        "quality_count",
         "caption_selected",
         "caption_cues",
         "caption_active",
@@ -90,6 +93,12 @@ fn decode(bytes: &[u8]) -> Reply {
             Value::Bool(source.get(field).and_then(Value::as_bool).ok_or(FAILED)?),
         );
     }
+    let focus=source.get("active_control").and_then(Value::as_u64).filter(|n|*n<=11).ok_or(FAILED)?;
+    let quality=source.get("quality_index").and_then(Value::as_i64).filter(|n|(-1..=1023).contains(n)).ok_or(FAILED)?;
+    let count=source.get("quality_count").and_then(Value::as_u64).filter(|n|*n<=1024).ok_or(FAILED)?;
+    clean.insert("active_control".into(),json!(focus));
+    clean.insert("quality_index".into(),json!(quality));
+    clean.insert("quality_count".into(),json!(count));
     let selected=source.get("caption_selected").and_then(Value::as_i64).filter(|n|(-1..=255).contains(n)).ok_or(FAILED)?;
     clean.insert("caption_selected".into(),json!(selected));
     for field in ["caption_cues","caption_active"]{
@@ -173,6 +182,9 @@ fn diagnose(bytes: &[u8]) -> &'static str {
         "hidden",
         "video_paused",
         "audio_paused",
+        "active_control",
+        "quality_index",
+        "quality_count",
         "caption_selected",
         "caption_cues",
         "caption_active",
@@ -328,7 +340,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn data() -> Value {
-        json!({"configured":true,"disposed":false,"caption_selected":-1,"caption_cues":0,"caption_active":0,"caption_showing":false,"fullscreen":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
+        json!({"configured":true,"disposed":false,"active_control":1,"quality_index":0,"quality_count":2,"caption_selected":-1,"caption_cues":0,"caption_active":0,"caption_showing":false,"fullscreen":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
     }
     fn envelope(value: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":value}})).unwrap()
@@ -337,7 +349,7 @@ mod tests {
     fn reconstructs_only_bounded_native_player_fields() {
         let bytes = envelope(data());
         let value = decode(&bytes).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 20);
+        assert_eq!(value.as_object().unwrap().len(), 23);
         assert_eq!(value["decoded"], 66);
         assert_eq!(value["playing"], true);
         let mut result: Value = serde_json::from_slice(&bytes).unwrap();
@@ -353,6 +365,9 @@ mod tests {
     fn malformed_exception_extra_fields_and_forged_numbers_refuse() {
         for (field, value) in [
             ("playing", json!(1)),
+            ("active_control", json!(12)),
+            ("quality_index", json!(1024)),
+            ("quality_count", json!(1025)),
             ("configured", json!("true")),
             ("position", json!(-1)),
             ("duration", json!(604801)),

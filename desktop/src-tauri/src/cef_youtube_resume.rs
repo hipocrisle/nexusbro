@@ -212,7 +212,8 @@ fn stats(value: &serde_json::Value) -> Option<Stats> {
     if value["configured"] != true || value["disposed"] != false {
         return None;
     }
-    let position = value["position"].as_f64()?;
+    // The independent video clock is diagnostic; resume follows audible media.
+    let position = value[if value["separate"] == true { "audio_position" } else { "position" }].as_f64()?;
     let duration = value["duration"].as_f64()?;
     let playing = value["playing"].as_bool()?;
     if !position.is_finite()
@@ -417,6 +418,15 @@ mod tests {
             bad[key] = value;
             assert!(stats(&bad).is_none());
         }
+    }
+    #[test]
+    fn split_tracks_resume_uses_audio_without_hiding_the_independent_video_clock() {
+        let mut value = serde_json::json!({"configured":true,"disposed":false,"playing":false,"separate":true,"position":10.5,"audio_position":11.25,"duration":100});
+        assert_eq!(stats(&value).unwrap().position, 11.25);
+        value["audio_position"] = serde_json::Value::Null;
+        assert!(stats(&value).is_none());
+        value["separate"] = serde_json::json!(false);
+        assert_eq!(stats(&value).unwrap().position, 10.5);
     }
     #[test]
     fn queued_record_retry_is_bounded_and_never_schedules_a_paused_probe() {
