@@ -158,11 +158,39 @@ def foreground(device):
     else:
         env = {**os.environ, 'DISPLAY': device.display}
         native = subprocess.check_output(['xdotool', 'search', '--onlyvisible', '--name', '^' + re.escape(title) + '$'], env=env, text=True).splitlines()
-        require(len(native) == 1, 'Soak native shell is ambiguous')
-        pid = int(subprocess.check_output(['xdotool', 'getwindowpid', native[0]], env=env, text=True))
-        require(pid in owned, 'Soak shell outside owned process tree')
-        owner_pid = pid
-        subprocess.run(['xdotool', 'windowraise', native[0], 'windowfocus', native[0]], env=env, check=True, timeout=5)
+        # xdotool search is recursive: the embedded CEF about:blank window
+        # can have the same title as GTK. Only the root-level owned shell is
+        # the intended native owner on this window-manager-free Xvfb desktop.
+        import ctypes
+        x11 = ctypes.CDLL('libX11.so.6')
+        x11.XOpenDisplay.argtypes = [ctypes.c_char_p]; x11.XOpenDisplay.restype = ctypes.c_void_p
+        x11.XQueryTree.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.POINTER(ctypes.c_ulong)), ctypes.POINTER(ctypes.c_uint)]
+        x11.XQueryTree.restype = ctypes.c_int
+        x11.XFree.argtypes = [ctypes.c_void_p]
+        x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+        display = x11.XOpenDisplay(device.display.encode())
+        require(bool(display), 'Soak native display unavailable')
+        candidates = []
+        owned_count = 0
+        try:
+            for xid in native:
+                result = subprocess.run(['xdotool', 'getwindowpid', xid], env=env, capture_output=True, text=True, timeout=5)
+                if result.returncode or not result.stdout.strip().isdigit(): continue
+                pid = int(result.stdout.strip())
+                if pid not in owned: continue
+                owned_count += 1
+                root, parent, count = ctypes.c_ulong(), ctypes.c_ulong(), ctypes.c_uint()
+                children = ctypes.POINTER(ctypes.c_ulong)()
+                ok = x11.XQueryTree(display, int(xid), ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(count))
+                if children: x11.XFree(children)
+                if ok and parent.value == root.value: candidates.append((xid, pid))
+            device.soak_foreground_diagnostics = {'exact_title_visible_count': len(native),
+                'owned_exact_title_count': owned_count, 'owned_root_level_count': len(candidates)}
+            require(len(candidates) == 1, 'Soak native shell is ambiguous')
+            xid, owner_pid = candidates[0]
+            subprocess.run(['xdotool', 'windowraise', xid, 'windowfocus', xid], env=env, check=True, timeout=5)
+        finally:
+            x11.XCloseDisplay(display)
     painted(client)
     return owner_pid
 
@@ -332,12 +360,15 @@ def run(args):
             report['warmup_super_index'] = index
             stage = 'warmup-super-foreground-and-selection'
             warmup_load_guard()
-            foreground(device); switch_super(client, 'soak-' + str(index))
+            foreground(device)
+            stage = 'warmup-super-native-ui-selection'
+            switch_super(client, 'soak-' + str(index))
             for tab in range(3):
                 report['warmup_tab_index'] = tab
                 stage = 'warmup-tab-foreground-and-click'
                 warmup_load_guard()
                 foreground(device)
+                stage = 'warmup-tab-hit-test-and-physical-click'
                 click_control(client, '.obychnaya[data-id="' + str(tab + 1) + '"]', 30)
                 stage = 'warmup-tab-origin-request'
                 wait_for(lambda: fixture.hits[(index, tab)] > 0, 'Native physical tab never reached fixture', 30)
@@ -363,6 +394,7 @@ def run(args):
                 sum(not t.get('otlozhena') for r in initial_sessions for t in r['vkladki']) == 24,
                 'Native rows disagree with the 24-live/976-deferred warmup')
         warmup_load_guard()
+        report['native_foreground_candidates'] = getattr(device, 'soak_foreground_diagnostics', {})
         report['checks'].append('native_ui_24_visited_1000_saved_976_deferred_with_real_media')
         # Setup is excluded. Full acceptance measures two actual hours below.
         measured = time.monotonic(); duration = args.seconds if args.diagnostic_pilot else 7200
@@ -461,6 +493,13 @@ def run(args):
         # include local paths or secrets; publish only fixed failure class.
         report['failure_class'] = type(error).__name__
         report['failure_stage'] = stage
+        known_failures = {'Soak native shell is ambiguous': 'native_owner_ambiguous',
+                          'Soak native display unavailable': 'native_display_unavailable',
+                          'Warmup load guard exceeded': 'warmup_load_guard',
+                          'Owned app exited during warmup': 'warmup_app_exited'}
+        report['failure_code'] = known_failures.get(str(error), 'unclassified')
+        if device and hasattr(device, 'soak_foreground_diagnostics'):
+            report['native_foreground_candidates'] = device.soak_foreground_diagnostics
         if fixture:
             with fixture.lock:
                 recent_media = list(fixture.media)
