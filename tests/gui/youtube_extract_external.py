@@ -168,13 +168,22 @@ def safe_summary(raw):
     require(0<len(raw)<=LIMIT,'probe_summary_size')
     lines=raw.decode('utf-8').splitlines();require(len(lines)==1,'probe_summary_lines')
     value=json.loads(lines[0]);require(isinstance(value,dict),'probe_summary_shape')
-    require(set(value)<= {'stage','ok','reason','formats','vp9','opus','rejected_formats'},'probe_summary_unknown_fields')
+    require(set(value)<= {'stage','ok','reason','formats','vp9','opus','rejected_formats','diagnostic'},'probe_summary_unknown_fields')
     require(value.get('stage') in ('components','extractor','parser','parsed') and type(value.get('ok')) is bool,'probe_summary_state')
     result={'stage':value['stage'],'ok':value['ok']}
     if 'reason' in value:
         reasons={'InvalidComponents','InvalidRoute','Cancelled','SpawnFailed','OutputLimit','ReadFailed','WaitFailed','ProcessFailed','TimedOut','ReapFailed','EmptyOutput',
+                 'UnsupportedInvocation','HttpForbidden','RateLimited','TlsFailure','ChallengeRequired','VideoUnavailable','HttpBadRequest','HttpNotFound','HttpServerError','NetworkFailure','RuntimeFailure','ChallengeSolverUnavailable','FormatUnavailable','FfmpegUnavailable','ExtractionFailure',
                  'oversized','invalid_json','wrong_video','unsupported_video','invalid_metadata','invalid_format','unsafe_url','unsafe_headers','no_supported_formats'}
         result['reason']=value['reason'] if isinstance(value['reason'],str) and value['reason'] in reasons else 'unclassified_native_reason'
+    if 'diagnostic' in value:
+        diagnostic=value['diagnostic']
+        flags={'usage','http_400','http_403','http_404','http_429','http_5xx','tls','network','runtime','solver','format_unavailable','ffmpeg_missing','extractor','error_prefix','warning_prefix'}
+        require(isinstance(diagnostic,dict) and set(diagnostic)==flags|{'exit_code','stderr_bytes'},'probe_summary_shape')
+        require(all(type(diagnostic[k]) is bool for k in flags),'probe_summary_shape')
+        require(type(diagnostic['stderr_bytes']) is int and 0<=diagnostic['stderr_bytes']<=65536,'probe_summary_counter')
+        require(diagnostic['exit_code'] is None or (type(diagnostic['exit_code']) is int and -(1<<31)<=diagnostic['exit_code']<(1<<31)),'probe_summary_counter')
+        result['diagnostic']={k:diagnostic[k] for k in sorted(flags|{'exit_code','stderr_bytes'})}
     for key in ('formats','vp9','opus','rejected_formats'):
         if key in value:
             require(type(value[key]) is int and 0<=value[key]<=256,'probe_summary_counter')

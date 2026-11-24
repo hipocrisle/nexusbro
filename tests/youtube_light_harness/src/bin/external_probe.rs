@@ -44,7 +44,7 @@ async fn main() {
         allow_non_proxied_udp: false,
     };
     let (_tx, rx) = tokio::sync::watch::channel(false);
-    match youtube_light_sidecar::extract(&components, &video, &route, rx).await {
+    match youtube_light_sidecar::extract_diagnosed(&components, &video, &route, rx).await {
         Ok(bytes) => match youtube_light_extract::parse(&bytes, &video) {
             Ok(data) => {
                 let vp9 = data
@@ -82,7 +82,7 @@ async fn main() {
         Err(error) => {
             println!(
                 "{}",
-                serde_json::json!({"stage":"extractor","ok":false,"reason":format!("{error:?}")})
+                serde_json::json!({"stage":"extractor","ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
             );
             std::process::exit(3);
         }

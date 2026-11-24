@@ -196,6 +196,16 @@ fn sidecar_error(error: sidecar::ExtractError) -> &'static str {
             "YouTube потребовал дополнительную проверку. Используйте обычный режим."
         }
         VideoUnavailable => "Видео недоступно для анонимного просмотра",
+        HttpBadRequest => "Источник отклонил параметры запроса видео",
+        HttpNotFound => "Видео не найдено",
+        HttpServerError => "Видеосервис временно недоступен",
+        NetworkFailure => "Соединение с видеосервисом прервано",
+        RuntimeFailure | ChallengeSolverUnavailable => {
+            "Не удалось обработать проверку видеосервиса"
+        }
+        FormatUnavailable => "Подходящий формат видео недоступен",
+        FfmpegUnavailable => "Компонент обработки видео недоступен",
+        ExtractionFailure => "Не удалось извлечь публичные данные видео",
         ProcessFailed | EmptyOutput => "Видео недоступно для анонимного извлечения",
         SpawnFailed | ReadFailed | WaitFailed => "Не удалось получить публичные данные видео",
     }
