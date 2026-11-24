@@ -1033,7 +1033,7 @@ def close_for_privacy(client,device,report):
         else:
             # Ask the owned WM for normal window close, like its titlebar X.
             # A focused CEF child may intercept Alt+F4; never kill/destroy it.
-            subprocess.run(['wmctrl','-ic',hex(int(native_owner(device)))],
+            subprocess.run(['wmctrl','-ic',str(native_owner(device))],
                            env=device.player_wm.env,check=True,timeout=5)
         exit_code=device.app.wait(timeout=30)
         require(exit_code==0,'Privacy parent did not exit normally')
