@@ -144,11 +144,34 @@ try:
     u.SetForegroundWindow(hwnd)
     time.sleep(1)
     r = rect(container)
-    # Address bar immediately above the actual CEF container.
-    gui.click(r.left+180, r.top-15)
+    # The native CEF container is not a shell-layout anchor: a deferred tab
+    # may leave its rectangle behind the lazy-page overlay. Locate the real
+    # address control through read-only UIA, then use ordinary physical input.
+    if a.baseline:
+        gui.click(r.left+180, r.top-15)
+    else:
+        from pywinauto import Desktop
+        from comtypes import COMError
+        initial_window=Desktop(backend='uia').window(handle=hwnd)
+        initial_address=None;deadline=time.monotonic()+15
+        while time.monotonic()<deadline:
+            try:
+                candidates=[e for e in initial_window.descendants() if e.element_info.name=='Адрес страницы'
+                            and e.element_info.control_type in ('Edit','ComboBox') and e.is_visible() and e.is_enabled()]
+            except (COMError,KeyError):
+                candidates=[]
+            if len(candidates)==1:initial_address=candidates[0];break
+            time.sleep(.1)
+        assert initial_address is not None,'Initial native address control unavailable or ambiguous'
+        initial_address.click_input()
     gui.hotkey('ctrl','a')
     fixture = base+'/page'
     gui.write(fixture, interval=.003)
+    if not a.baseline:
+        deadline=time.monotonic()+3
+        while time.monotonic()<deadline and initial_address.iface_value.CurrentValue!=fixture:time.sleep(.05)
+        assert initial_address.iface_value.CurrentValue==fixture,'Initial physical address entry failed'
+        results.append({'initial_address_native_uia':True,'physical_entry_verified':True})
     gui.press('enter')
     if a.baseline:
         try:
