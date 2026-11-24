@@ -84,6 +84,12 @@ fn channel_send(
 }
 impl Node {
     pub fn begin_start(&mut self) -> Result<u64, &'static str> {
+        // Unlock IPC may legitimately start a cold Super before the next
+        // low-frequency policy tick. Synchronize that actual global state now.
+        if self.machine.locked() && !crate::browser_lock::locked_global() {
+            let effects = self.machine.apply(Event::Unlocked);
+            self.effects(effects, None);
+        }
         if self.machine.phase() == Phase::Sleeping {
             if self.machine.stamp().generation >= self.end_generation {
                 return Err("generation_exhausted");
@@ -857,6 +863,19 @@ pub async fn ensure_view_ready(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn successful_global_unlock_can_start_cold_locked_machine_without_waiting_for_tick() {
+        if crate::browser_lock::locked_global() {
+            return;
+        }
+        let mut node = Node::default();
+        node.machine.apply(Event::IntentRequested(Intent::Lock));
+        assert!(node.machine.locked());
+        assert_eq!(node.machine.phase(), Phase::Sleeping);
+        assert!(node.begin_start().is_ok());
+        assert!(!node.machine.locked());
+        assert_eq!(node.machine.phase(), Phase::Starting);
+    }
     #[test]
     fn full_real_channel_retries_same_control_without_fabricating_ack() {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
