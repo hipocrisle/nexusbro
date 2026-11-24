@@ -84,6 +84,9 @@ fn channel_send(
 }
 impl Node {
     pub fn begin_start(&mut self) -> Result<u64, &'static str> {
+        if crate::browser_lock::locked_global() {
+            return Err("browser_locked");
+        }
         // Unlock IPC may legitimately start a cold Super before the next
         // low-frequency policy tick. Synchronize that actual global state now.
         if self.machine.locked() && !crate::browser_lock::locked_global() {
