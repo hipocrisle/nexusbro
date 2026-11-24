@@ -558,3 +558,24 @@ fn poll_stop_probes(){
         true
     }));
 }
+
+/// Immutable committed native binding. Callers read CEF identities BEFORE
+/// entering this accessor; no CEF method is called while the grant mutex is held.
+pub fn privacy_binding(browser:i32,frame:&str,document:&str)->Option<u64>{
+    if browser<=0||frame.is_empty()||frame.len()>256{return None;}
+    let grants=documents().0.lock().ok()?;
+    let grant=grants.get(&browser).filter(|g|g.document==document&&g.document_frame.as_deref()==Some(frame)&&g.media.is_some())?;
+    Some(grant.generation)
+}
+/// Request URL remains RAM-only. Admission is exact against the validated native
+/// extractor result, not merely a googlevideo host or an origin supplied by JS.
+pub fn privacy_media_url(browser:i32,frame:&str,operation:u64,request_url:&str)->bool{
+    if request_url.len()>16384||request_url.bytes().any(|b|b.is_ascii_control()) {return false;}
+    let Ok(url)=reqwest::Url::parse(request_url)else{return false;};
+    if url.scheme()!="https"||!url.username().is_empty()||url.password().is_some()||url.port().is_some()
+        ||url.fragment().is_some()||url.path()!="/videoplayback"
+        ||!url.host_str().is_some_and(|host|host.ends_with(".googlevideo.com")&&host.len()>".googlevideo.com".len()){return false;}
+    let Ok(grants)=documents().0.lock()else{return false;};
+    grants.get(&browser).filter(|g|g.generation==operation&&g.document_frame.as_deref()==Some(frame))
+        .and_then(|g|g.media.as_ref()).is_some_and(|media|media.formats.iter().any(|format|format.url.as_str()==url.as_str()))
+}
