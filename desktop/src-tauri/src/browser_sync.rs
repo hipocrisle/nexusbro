@@ -130,7 +130,7 @@ fn id(kind: &str, key: &str) -> String {
 fn portable_super(n: &crate::Nastrojki) -> Value {
     json!({"id":n.id,"nazvanie":n.nazvanie,"cvet":n.cvet,"adres":n.adres,"rezat_reklamu":n.rezat_reklamu,"pustaya":n.pustaya,"poryadok":n.poryadok})
 }
-static HISTORY: Mutex<()> = Mutex::new(());
+pub(crate) static HISTORY: Mutex<()> = Mutex::new(());
 fn history_load(v: &VaultState) -> Result<sync_history::History, String> {
     let raw = v.get(sync_history::KEY)?;
     sync_history::History::parse(raw.as_deref().map(String::as_str))
@@ -815,7 +815,11 @@ pub async fn security_account(
         }
         return Ok(json!({"server":"https://nexusbro-sync.hipogas.org"}));
     }
+    let generation = crate::browser_lock::generation();
     let _guard = sync.serial.lock().await;
+    if generation != crate::browser_lock::generation() || crate::browser_lock::locked_global() {
+        return Err("Состояние блокировки изменилось; повторите действие".into());
+    }
     account
         .dispatch(&vault, &action, data.unwrap_or_else(|| json!({})))
         .await
@@ -830,7 +834,11 @@ pub async fn security_sync(
     action: String,
     data: Option<Value>,
 ) -> Result<Value, String> {
+    let generation = crate::browser_lock::generation();
     let _guard = sync.serial.lock().await;
+    if generation != crate::browser_lock::generation() || crate::browser_lock::locked_global() {
+        return Err("Состояние блокировки изменилось; повторите действие".into());
+    }
     let key = slot(&vault)?;
     let mut local = load(&vault, &key)?;
     let data = data.unwrap_or(Value::Null);

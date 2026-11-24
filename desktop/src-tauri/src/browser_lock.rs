@@ -442,6 +442,7 @@ async fn lock_inner(app: &tauri::AppHandle) -> Result<LockStatus, String> {
     engine_lock(app, true);
     hide_all(app);
     publish(app);
+    crate::passwords::broadcast(app, false);
     crate::passwords::security_vault(app.clone(), app.state(), "lock".into(), None).await?;
     Ok(publish(app))
 }
@@ -564,6 +565,9 @@ async fn recover_vault(
     let _sync_guard = sync.serial.lock().await;
     let vault = Arc::clone(&app.state::<Arc<VaultState>>());
     let operation = tauri::async_runtime::spawn_blocking(move || {
+        let _history = crate::browser_sync::HISTORY
+            .lock()
+            .map_err(|_| "История восстановления занята".to_string())?;
         let password = zeroize::Zeroizing::new(password);
         match backup {
             Some(id) => vault.restore_recovery_backup(&id, &password),

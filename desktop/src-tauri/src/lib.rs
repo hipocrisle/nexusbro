@@ -929,6 +929,12 @@ fn steret_profil(id: &str) {
 /// выбрасывается насовсем. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, sohranit: bool) -> Result<Otvet, String> {
+    let generation = browser_lock::generation();
+    let sync = app.state::<browser_sync::SyncState>();
+    let _vault_operation = sync.serial.lock().await;
+    if generation != browser_lock::generation() || browser_lock::locked_global() {
+        return Err("Состояние блокировки изменилось; повторите действие".into());
+    }
     let _sync_mutation=browser_sync::mutation("super",&id);
     if !sohranit {
         let settings=s.vkladki.lock().map_err(|_|"Список занят")?.get(&id).map(|v|v.nastrojki.clone());
@@ -1018,6 +1024,12 @@ async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State
 /// со всеми входами. Подтверждение спрашивает лицевая часть.
 #[tauri::command]
 async fn udalit_sohranennuyu(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String) -> Result<Otvet, String> {
+    let generation = browser_lock::generation();
+    let sync = app.state::<browser_sync::SyncState>();
+    let _vault_operation = sync.serial.lock().await;
+    if generation != browser_lock::generation() || browser_lock::locked_global() {
+        return Err("Состояние блокировки изменилось; повторите действие".into());
+    }
     let _sync_mutation=browser_sync::mutation("super",&id);
     let otkryta = s.vkladki.lock().map_err(|e| e.to_string())?.contains_key(&id);
     if !otkryta&&!privatnost::eto_id(&id){

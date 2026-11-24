@@ -683,6 +683,7 @@ pub async fn security_backup(
     action: String,
     data: Option<Value>,
 ) -> Result<Value> {
+    let generation = crate::browser_lock::generation();
     let owner = window.label().to_string();
     let vault = Arc::clone(&vault);
     let mut data = data.unwrap_or(Value::Null);
@@ -693,7 +694,7 @@ pub async fn security_backup(
             _ => String::new(),
         },
     );
-    tauri::async_runtime::spawn_blocking(move || run(&app, &owner, &vault, &action, &data, &pass))
+    tauri::async_runtime::spawn_blocking(move || run(&app, &owner, &vault, &action, &data, &pass, generation))
         .await
         .map_err(|_| "Ошибка резервного копирования".to_string())?
 }
@@ -704,12 +705,10 @@ fn run(
     action: &str,
     data: &Value,
     pass: &str,
+    lock_generation: u64,
 ) -> Result<Value> {
     let _serial = SERIAL.lock().map_err(|_| "Резервное копирование занято")?;
-    let (locked, lock_generation) = crate::browser_lock::engine_state();
-    if locked {
-        return Err("Браузер заблокирован".into());
-    }
+    unlocked_generation(lock_generation)?;
     if action == "cancel" {
         if let Some(token) = data["token"].as_str() {
             let mut entries = cache().lock().map_err(|_| error())?;
@@ -728,6 +727,10 @@ fn run(
     } else {
         None
     };
+    // Never hold the async vault-operation queue while a native file picker
+    // waits for the user. Recheck the invocation epoch after joining the queue.
+    let sync = app.state::<crate::browser_sync::SyncState>();
+    let _operation = sync.serial.blocking_lock();
     // A native file chooser can stay open while another window locks and even
     // unlocks the browser. Both the bit and generation must still match.
     unlocked_generation(lock_generation)?;

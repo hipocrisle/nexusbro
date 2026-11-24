@@ -87,10 +87,12 @@ fn field(data: &Value, key: &str, max: usize) -> Result<String, String> {
 }
 struct Draft {
     created: Instant,
+    generation: u64,
     credential: Credential,
 }
 static DRAFTS: OnceLock<Mutex<HashMap<String, Draft>>> = OnceLock::new();
 fn draft(vault: &VaultState, super_id: &str, origin: String, value: &Value) -> Result<Value, String> {
+    let generation = crate::browser_lock::generation();
     let username = field(value, "username", 512)?;
     let password = field(value, "password", 4096)?;
     if password.is_empty() {
@@ -108,7 +110,7 @@ fn draft(vault: &VaultState, super_id: &str, origin: String, value: &Value) -> R
     };
     let result = json!({"draft_id":id,"origin":credential.origin,"username":credential.username});
     let mut items = DRAFTS.get_or_init(Default::default).lock().unwrap();
-    if !vault.status().unlocked { return Err("Хранилище заблокировано".into()); }
+    if !vault.status().unlocked || crate::browser_lock::locked_global() || generation != crate::browser_lock::generation() { return Err("Хранилище заблокировано".into()); }
     items.retain(|_, d| d.created.elapsed() < Duration::from_secs(120));
     if items.len() >= 8 {
         items.clear();
@@ -117,6 +119,7 @@ fn draft(vault: &VaultState, super_id: &str, origin: String, value: &Value) -> R
         id,
         Draft {
             created: Instant::now(),
+            generation,
             credential,
         },
     );
@@ -156,6 +159,7 @@ pub fn receive(app: &tauri::AppHandle, super_id: &str, data: &Value) -> bool {
             true
         }
         Some("credential-offer") => {
+            if crate::browser_lock::locked_global() || !ENABLED.load(Ordering::SeqCst) { return true; }
             let vault = app.state::<Arc<VaultState>>();
             if !vault.status().unlocked {
                 return true;
@@ -328,6 +332,12 @@ pub async fn security_vault(
     action: String,
     password: Option<String>,
 ) -> Result<crate::secure_vault::VaultStatus, String> {
+    let generation = crate::browser_lock::generation();
+    let sync = app.state::<crate::browser_sync::SyncState>();
+    let _operation = if action == "status" { None } else { Some(sync.serial.lock().await) };
+    if action != "status" && generation != crate::browser_lock::generation() {
+        return Err("Состояние блокировки изменилось; повторите действие".into());
+    }
     let root = vault_root(&app)?;
     let state = Arc::clone(&vault);
     let status = tauri::async_runtime::spawn_blocking(
@@ -358,9 +368,15 @@ pub async fn security_passwords(
     window: tauri::WebviewWindow,
     state: tauri::State<'_, crate::Sostoyanie>,
     vault: tauri::State<'_, Arc<VaultState>>,
+    sync: tauri::State<'_, crate::browser_sync::SyncState>,
     action: String,
     data: Option<Value>,
 ) -> Result<Value, String> {
+    let generation = crate::browser_lock::generation();
+    let _operation = sync.serial.lock().await;
+    if generation != crate::browser_lock::generation() || crate::browser_lock::locked_global() {
+        return Err("Состояние блокировки изменилось; повторите действие".into());
+    }
     let data = data.unwrap_or(Value::Null);
     if !vault.status().unlocked {
         return Err("Хранилище заблокировано".into());
@@ -428,7 +444,7 @@ pub async fn security_passwords(
             let mut items = DRAFTS.get_or_init(Default::default).lock().unwrap();
             let draft = items
                 .get_mut(&id)
-                .filter(|d| d.created.elapsed() < Duration::from_secs(120))
+                .filter(|d| d.created.elapsed() < Duration::from_secs(120) && d.generation == crate::browser_lock::generation())
                 .ok_or("Срок сохранения формы истёк; введите данные заново")?;
             if let Some(username) = data["username"].as_str() {
                 if username.len() > 512 {
