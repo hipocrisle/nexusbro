@@ -10,3 +10,7 @@ publish = false
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 anyhow = "1"
+chacha20poly1305 = { version = "0.10", features = ["getrandom"] }
+base64 = "0.22"
+rand_core = { version = "0.6", features = ["getrandom"] }
+zeroize = "1.8"

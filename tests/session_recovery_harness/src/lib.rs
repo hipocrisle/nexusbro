@@ -1,4 +1,11 @@
 //! Isolated disk recovery verification: real session/store code, no CEF/Tauri.
+// Session command payloads reference these actual protocol/AEAD types. Include
+// the production modules so signature/serialization errors cannot be hidden by
+// recovery-only stand-ins.
+#[path = "../../../desktop/src-tauri/src/super_cookie_escrow.rs"]
+pub mod super_cookie_escrow;
+#[path = "../../../desktop/src-tauri/src/super_hibernation_protocol.rs"]
+pub mod super_hibernation_protocol;
 #[path = "../../../desktop/src-tauri/src/tab_routes.rs"]
 pub mod tab_routes;
 #[path = "../../../desktop/src-tauri/src/sessiya.rs"]
