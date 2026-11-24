@@ -186,8 +186,11 @@ class NativeRunner:
         if sys.platform == 'win32':
             self.trusted_thumb = x509.load_pem_x509_certificate(ca.read_bytes()).fingerprint(hashes.SHA1()).hex().upper()
             script = self.root / 'trust.ps1'
-            script.write_text('param([string]$Certificate)\nImport-Certificate -FilePath $Certificate -CertStoreLocation Cert:\\LocalMachine\\Root -Confirm:$false -ErrorAction Stop | Out-Null\n')
-            subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script), '-Certificate', str(ca)], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+            script.write_text("param([string]$Certificate,[string]$ExpectedThumbprint)\n" +
+                r"$location='Cert:\LocalMachine\Root'; Import-Certificate -FilePath $Certificate -CertStoreLocation $location -Confirm:$false -ErrorAction Stop | Out-Null" + "\n" +
+                r"$target=Join-Path $location $ExpectedThumbprint; if (!(Test-Path -LiteralPath $target)) { throw 'Fixture CA not present after import' }" + "\n")
+            subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script), '-Certificate', str(ca),
+                            '-ExpectedThumbprint', self.trusted_thumb], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
         else:
             database = self.root / 'home' / '.pki' / 'nssdb'; database.mkdir(parents=True)
             subprocess.run(['certutil', '-N', '-d', 'sql:' + str(database), '--empty-password'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
@@ -326,8 +329,10 @@ class NativeRunner:
     def close(self):
         if self.trusted_thumb:
             script = self.root / 'untrust.ps1'
-            script.write_text('param([string]$Thumbprint)\nRemove-Item -LiteralPath ("Cert:\\LocalMachine\\Root\\" + $Thumbprint) -Force -ErrorAction Stop\n')
+            script.write_text("param([string]$Thumbprint)\n" +
+                r"$target=Join-Path 'Cert:\LocalMachine\Root' $Thumbprint; if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }; if (Test-Path -LiteralPath $target) { throw 'Fixture CA still installed after cleanup' }" + "\n")
             subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script), '-Thumbprint', self.trusted_thumb], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+            self.trusted_thumb = None
         if self.x:
             self.x.terminate(); self.x.wait(timeout=5)
 
@@ -362,6 +367,7 @@ def main():
         certs = generate(root / 'tls')
         fixture = CookieFixture(certs / 'server.crt', certs / 'server.key')
         runner = NativeRunner(exe, cef, root, fixture); runner.trust(certs / 'ca.crt')
+        report['tls_fixture_trust_verified'] = True
         keys = {name: base64.b64encode(secrets.token_bytes(32)).decode() for name in ('a', 'b', 'empty', 'bad')}
         context_keys = {name: secrets.token_hex(32) for name in keys}
         scopes = {name: {'profile_key': secrets.token_hex(32), 'context_key': context_keys[name], 'generation': 1, 'attempt': 1} for name in keys}
