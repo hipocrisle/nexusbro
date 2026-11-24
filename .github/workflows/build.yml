@@ -446,6 +446,11 @@ jobs:
         timeout-minutes: 12
         run: |
           python3 tests/gui/super_hibernation_native.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/super-hibernation --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+      - name: Late response session cookie survives final snapshot (Linux)
+        if: matrix.os == 'ubuntu-24.04' && steps.native-routes-linux.outcome == 'success'
+        timeout-minutes: 4
+        run: |
+          python3 tests/gui/hibernation_late_cookie.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/hibernation-late-cookie --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
       - name: Native encrypted vault, CEF credentials and two-device sync
         if: matrix.os == 'ubuntu-24.04'
         timeout-minutes: 10
@@ -494,12 +499,14 @@ jobs:
         timeout-minutes: 8
         shell: pwsh
         run: |
+          python -m pip install psutil cryptography
           python tests/gui/hibernation_cookie_probe.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/hibernation-cookie
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native cookie escrow shutdown and restore prerequisite (Linux)
         if: always() && steps.app-build.outcome == 'success' && matrix.os == 'ubuntu-24.04'
         timeout-minutes: 8
         run: |
+          python3 -m pip install --break-system-packages psutil cryptography
           python3 tests/gui/hibernation_cookie_probe.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/hibernation-cookie
       - uses: actions/upload-artifact@v4
         if: always()
@@ -549,6 +556,19 @@ jobs:
         with:
           name: super-hibernation-${{ matrix.os }}
           path: .dev-check/super-hibernation/results.json
+          retention-days: 14
+      - name: Late response session cookie survives final snapshot (Windows)
+        if: matrix.os == 'windows-latest' && steps.native-routes-windows.outcome == 'success'
+        timeout-minutes: 4
+        shell: pwsh
+        run: |
+          python tests/gui/hibernation_late_cookie.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/hibernation-late-cookie --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hibernation-late-cookie-${{ matrix.os }}
+          path: .dev-check/hibernation-late-cookie/results.json
           retention-days: 14
       - name: Verify real background lifecycle and restored native input
         if: matrix.os == 'windows-latest'
