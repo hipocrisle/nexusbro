@@ -231,7 +231,7 @@ jobs:
   linux-layout:
     name: Inspect immutable Linux package layout DIAGNOSTIC ONLY
     runs-on: ubuntu-24.04
-    timeout-minutes: 8
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
       - name: Gate exact same-repository producer source
@@ -296,9 +296,86 @@ jobs:
           test -s .dev-check/layout-deb/usr/lib/NexusBro/libcef.so
           echo stage_rpm_digests
           rpm -K "${rpms[0]}"
-          rpm -qp --qf 'name=%{NAME} version=%{VERSION} size=%{SIZE} archive_size=%{ARCHIVESIZE} payload=%{PAYLOADCOMPRESSOR} digest_algo=%{PAYLOADDIGESTALGO}\n' "${rpms[0]}"
+          rpm -qp --qf 'name=%{NAME} version=%{VERSION} size=%{SIZE} archive_size=%{ARCHIVESIZE} long_archive_size=%{LONGARCHIVESIZE} payload=%{PAYLOADCOMPRESSOR} digest_algo=%{PAYLOADDIGESTALGO}\n' "${rpms[0]}"
           echo stage_libarchive_validation
           bsdtar -tf "${rpms[0]}" > .dev-check/layout-rpm-members.txt
           wc -l .dev-check/layout-rpm-members.txt
-          test "${statuses[0]}" -eq 0
-          test "${statuses[1]}" -eq 0
+          echo stage_strict_libarchive_extract
+          mkdir -p .dev-check/layout-rpm-verified
+          bsdtar -xf "${rpms[0]}" -C .dev-check/layout-rpm-verified --no-same-owner
+          python3 tools/verify_youtube_bundle.py --expected .dev-check/layout-deb/usr/lib/NexusBro/binaries/youtube-light --actual .dev-check/layout-rpm-verified/usr/lib/NexusBro/binaries/youtube-light --out .dev-check/layout-rpm-closure.json
+      - name: Require identical tracked desktop before diagnostic execution
+        if: ${{ !inputs.layout_only }}
+        env:
+          PRODUCER_SOURCE: ${{ inputs.source }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin "$PRODUCER_SOURCE"
+          git diff --exit-code "$PRODUCER_SOURCE" HEAD -- desktop > /tmp/desktop-diff.private
+          test ! -s /tmp/desktop-diff.private
+      - uses: actions/download-artifact@v4
+        if: ${{ !inputs.layout_only }}
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture
+          run-id: ${{ inputs.run }}
+          github-token: ${{ github.token }}
+      - name: Prepare installed Linux native fixtures without a desktop build
+        if: ${{ !inputs.layout_only }}
+        id: linux-ready
+        run: |
+          set -euo pipefail
+          sha256sum -c .dev-check/youtube-media-fixture/SHA256SUMS
+          sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxcb1-dev xvfb xdotool xclip x11-utils openbox libnss3-tools
+          python3 -m pip install Pillow psutil websocket-client cryptography
+          echo "YOUTUBE_OLD_UNPRIVILEGED_PORT_START=$(sysctl -n net.ipv4.ip_unprivileged_port_start)" >> "$GITHUB_ENV"
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+      - name: Linux same installed binary player DIAGNOSTIC
+        if: ${{ !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
+        timeout-minutes: 13
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: python3 tests/gui/youtube_player_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --out .dev-check/linux-reuse-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Linux same installed binary download DIAGNOSTIC
+        if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
+        timeout-minutes: 12
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: python3 tests/gui/youtube_download_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --components .dev-check/layout-deb/usr/lib/NexusBro/binaries/youtube-light --out .dev-check/linux-reuse-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Linux same installed binary features DIAGNOSTIC
+        if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
+        timeout-minutes: 10
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: python3 tests/gui/youtube_features_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --out .dev-check/linux-reuse-features --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --video-high-webm .dev-check/youtube-media-fixture/video-high.webm
+      - name: Linux same installed binary strict resume DIAGNOSTIC
+        if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
+        timeout-minutes: 8
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: python3 tests/gui/youtube_resume_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --out .dev-check/linux-reuse-resume --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Restore disposable Linux witness permission
+        if: ${{ always() && env.YOUTUBE_OLD_UNPRIVILEGED_PORT_START != '' }}
+        run: sudo sysctl -w "net.ipv4.ip_unprivileged_port_start=$YOUTUBE_OLD_UNPRIVILEGED_PORT_START"
+      - name: Mark same-binary results as diagnostics, never release acceptance
+        if: ${{ always() && !inputs.layout_only }}
+        run: |
+          python3 - <<'PY'
+          import json,pathlib
+          for label in ('player','download','features','resume'):
+              path=pathlib.Path('.dev-check/linux-reuse-'+label+'/result.json')
+              if path.is_file() and path.stat().st_size<=2*1024*1024:
+                  data=json.loads(path.read_text());data.update(diagnostic_only=True,acceptance_passed=False,current_binary=False)
+                  path.write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !inputs.layout_only }}
+        with:
+          name: youtube-native-reuse-diagnostic-linux
+          path: |
+            .dev-check/linux-reuse-player/result.json
+            .dev-check/linux-reuse-download/result.json
+            .dev-check/linux-reuse-features/result.json
+            .dev-check/linux-reuse-resume/result.json
+          if-no-files-found: warn
+          retention-days: 7

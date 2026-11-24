@@ -350,7 +350,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config \
-            libxcb1-dev patchelf rpm cpio xvfb xdotool xclip x11-utils openbox libnss3-tools
+            libxcb1-dev patchelf rpm libarchive-tools cpio xvfb xdotool xclip x11-utils openbox libnss3-tools
 
       # Движок CEF кладём внутрь установщика (замена ungoogled-chromium,
       # ветка cef-migration). Архивные файлы лежат в Release/ и Resources/ —
@@ -546,7 +546,12 @@ jobs:
           test "${#rpms[@]}" -eq 1
           dpkg-deb -x "${debs[0]}" .dev-check/installed-linux
           mkdir -p .dev-check/installed-rpm
-          rpm2cpio "${rpms[0]}" | (cd .dev-check/installed-rpm && cpio -id --quiet --no-absolute-filenames --no-preserve-owner)
+          # RPM 4.18 rpm2cpio returns 1 on this rpm-rs package although
+          # rpm -K verifies every digest and libarchive reads the full payload.
+          # ARCHIVESIZE is absent; do not ignore the converter's exit code.
+          # Use the independently validated strict RPM reader after rpm -K.
+          rpm -K "${rpms[0]}"
+          bsdtar -xf "${rpms[0]}" -C .dev-check/installed-rpm --no-same-owner
           test -x .dev-check/installed-linux/usr/bin/nexusbro
           test -s .dev-check/installed-linux/usr/lib/NexusBro/libcef.so
       - name: Verify every packaged YouTube helper and notice before execution
