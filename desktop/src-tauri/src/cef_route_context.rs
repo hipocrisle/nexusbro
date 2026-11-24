@@ -14,10 +14,11 @@ use std::{
 };
 
 wrap_resource_request_handler! {
-    struct Admission { state: Arc<AtomicU8> }
+    struct Admission { privacy:crate::cef_youtube_privacy::Scope, state: Arc<AtomicU8> }
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self,_browser:Option<&mut Browser>,_frame:Option<&mut Frame>,_request:Option<&mut Request>,_callback:Option<&mut Callback>)->ReturnValue {
-            if self.state.load(Ordering::Acquire)==1 {ReturnValue::CONTINUE} else {ReturnValue::CANCEL}
+            if self.state.load(Ordering::Acquire)!=1{return ReturnValue::CANCEL;}
+            crate::cef_youtube_privacy::before_resource(&self.privacy,_browser.as_deref(),_frame.as_deref(),_request.as_deref())
         }
     }
 }
@@ -33,7 +34,7 @@ wrap_request_context_handler! {
         fn resource_request_handler(&self,_browser:Option<&mut Browser>,_frame:Option<&mut Frame>,_request:Option<&mut Request>,_is_navigation:i32,_is_download:i32,_request_initiator:Option<&CefString>,_disable_default_handling:Option<&mut i32>)->Option<ResourceRequestHandler>{
             // Includes requests without a Browser (e.g. persisted service workers).
             // This gate proves admission ordering; SW behaviour still needs runtime acceptance.
-            Some(Admission::new(self.state.clone()))
+            Some(Admission::new(crate::cef_youtube_privacy::Scope::capture(_browser.as_deref(),_frame.as_deref(),&_request_initiator.map(|v|v.to_string()).unwrap_or_default()),self.state.clone()))
         }
     }
 }

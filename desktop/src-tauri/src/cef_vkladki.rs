@@ -52,9 +52,13 @@ wrap_display_handler! {
                 if let Some(browser)=browser.as_ref(){crate::cef_youtube_resume::on_tick(browser,message.is_some_and(|m|m.to_string()=="__NEXUSBRO_LIGHT_READY__"));}return 1;
             }
             if let Some(data)=message.map(|m|m.to_string()).and_then(|m|m.strip_prefix("__NEXUSBRO_COSMETIC__").map(str::to_owned)).filter(|s|s.len()<16000).and_then(|s|serde_json::from_str::<serde_json::Value>(&s).ok()){
-                let host=browser.and_then(|b|b.main_frame()).and_then(|f|reqwest::Url::parse(&CefString::from(&f.url()).to_string()).ok()).and_then(|u|u.host_str().map(str::to_owned)).unwrap_or_default();
+                let host=browser.as_ref().and_then(|b|b.main_frame()).and_then(|f|reqwest::Url::parse(&CefString::from(&f.url()).to_string()).ok()).and_then(|u|u.host_str().map(str::to_owned)).unwrap_or_default();
                 let _=self.tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"blocked_dom","id":self.id,"host":host,"rules":data,"privatnaya":self.privatnaya})));return 1;
             }
+            if browser.as_ref().and_then(|b|b.main_frame()).is_some_and(|f|{
+                let raw=CefString::from(&f.url()).to_string();
+                raw.strip_prefix("nb-lite://player/").and_then(|v|v.strip_suffix("/player.html")).is_some_and(|v|v.len()==48&&v.bytes().all(|b|b.is_ascii_hexdigit()&&!b.is_ascii_uppercase()))
+            }){return 1;}
             self.privatnaya as i32
         }
 
@@ -255,7 +259,7 @@ wrap_request_handler! {
             if !crate::borba_s_reklamoy::vklyuchena() { return None; }
             let initiator = request_initiator.map(|s| s.to_string()).unwrap_or_default();
             let navigaciya = is_navigation != 0 && frame.as_ref().map(|f| f.is_main() != 0).unwrap_or(true);
-            Some(crate::borba_s_reklamoy::handler_resursov(self.id, &initiator, navigaciya,self.tx.clone(),self.privatnaya).into())
+            Some(crate::borba_s_reklamoy::handler_resursov(crate::cef_youtube_privacy::Scope::capture(_browser.as_deref(),frame.as_deref(),&initiator),self.id, &initiator, navigaciya,self.tx.clone(),self.privatnaya).into())
         }
     }
 }

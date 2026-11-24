@@ -272,10 +272,11 @@ pub fn vklyuchena() -> bool {
 // ───────────────────────── обработчик ресурсов CEF ─────────────────────────
 
 wrap_resource_request_handler! {
-    struct ResursStranicy { id: u64, navigaciya: bool, tx:Sender<Sobytie>,privatnaya:bool }
+    struct ResursStranicy { privacy:crate::cef_youtube_privacy::Scope, id: u64, navigaciya: bool, tx:Sender<Sobytie>,privatnaya:bool }
     impl ResourceRequestHandler {
         fn on_before_resource_load(&self, _browser: Option<&mut Browser>, _frame: Option<&mut Frame>,
             request: Option<&mut Request>, _callback: Option<&mut Callback>) -> ReturnValue {
+            if crate::cef_youtube_privacy::before_resource(&self.privacy,_browser.as_deref(),_frame.as_deref(),request.as_deref())==ReturnValue::CANCEL{return ReturnValue::CANCEL;}
             let adres = request
                 .map(|r| CefString::from(&r.url()).to_string())
                 .unwrap_or_default();
@@ -291,8 +292,8 @@ wrap_resource_request_handler! {
 /// Обработчик вызова для одной страницы. `initiator` — сайт, с которого идёт
 /// вызов (для журнала; решение принимает сам адрес). `navigaciya` — это
 /// документ верхней навигации: его не режем никогда.
-pub fn handler_resursov(id: u64, _initiator: &str, navigaciya: bool,tx:Sender<Sobytie>,privatnaya:bool) -> ResourceRequestHandler {
-    ResursStranicy::new(id, navigaciya,tx,privatnaya)
+pub fn handler_resursov(privacy:crate::cef_youtube_privacy::Scope,id: u64, _initiator: &str, navigaciya: bool,tx:Sender<Sobytie>,privatnaya:bool) -> ResourceRequestHandler {
+    ResursStranicy::new(privacy,id, navigaciya,tx,privatnaya)
 }
 
 #[cfg(test)]
