@@ -287,7 +287,7 @@ class Fixture:
                         "addEventListener('beforeunload',event=>{if(document.querySelector('#draft').value){"
                         "event.preventDefault();event.returnValue='';}});")
         elif case == 'interactive':
-            controls = ("<button id='route-interaction' style='position:absolute;left:20px;top:20px'>Interact</button>"
+            controls = ("<button id='route-interaction' style='position:absolute;left:20px;top:20px;width:140px;height:40px;border:0;padding:0;background:#7b1fa2;color:white'>Interact</button>"
                         "<input id='route-search' type='search' style='position:absolute;left:20px;top:70px'>"
                         "<canvas id='route-canvas' width='120' height='60' style='position:absolute;left:20px;top:110px'></canvas>")
             handlers = ("sessionStorage.setItem('route-interactive','ordinary-api-use');"

@@ -101,6 +101,29 @@ class WindowsClient(Client):
                         button={1: 'left', 2: 'middle', 3: 'right'}[button])
 
 
+def painted_interaction_point(client):
+    """Wait for native CEF paint at the same physical point mouse() uses.
+
+    A server/JS receipt proves loading, not compositor presentation. Read only
+    the OS screenshot here; the following single real click must still produce
+    the fixture's trusted-event receipt.
+    """
+    from PIL import ImageGrab
+
+    def visible():
+        point = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x+50,r.y+30]})()')
+        label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        origin = client.command('plugin:window|inner_position', label=label)
+        scale = client.js('devicePixelRatio||1')
+        pixel = (round(origin['x'] + point[0] * scale), round(origin['y'] + point[1] * scale))
+        with ImageGrab.grab(**({'xdisplay': client.display} if sys.platform != 'win32' else {})) as shot:
+            if not (0 <= pixel[0] < shot.width and 0 <= pixel[1] < shot.height):
+                return None
+            return point if shot.getpixel(pixel)[:3] == (123, 31, 162) else None
+
+    return wait_for(visible, 'Actual CEF interaction button was not painted at the physical click point', 20)
+
+
 def windows_token_elevated():
     import ctypes
     from ctypes import wintypes
@@ -666,8 +689,8 @@ def run(args):
         # valid pages for an explicit route reload, unlike automatic eviction.
         select(client,'routes-a',11)
         assert_receipt(fixture,'interactive','A','A','A')
-        bounds=client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
-        client.mouse(bounds[0]+50,bounds[1]+30)
+        point=painted_interaction_point(client)
+        client.mouse(*point)
         wait_for(lambda:fixture.records('route-interaction'),'Actual ordinary CEF interaction did not occur')
         apply_route_ack(client,'routes-a',11,'Fixture B',connection('B'),screenshot=out/'native-route-selector-compact.png')
         call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':11,'adres':fixture.url('interactive-after')})
