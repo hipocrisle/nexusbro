@@ -27,6 +27,32 @@ on:
         type: choice
         options: [both, windows, linux]
         default: both
+  workflow_call:
+    inputs:
+      build_run:
+        description: Existing build artifact run (never rebuild)
+        type: string
+        required: true
+      source:
+        description: Exact40-character application source SHA
+        type: string
+        required: true
+      baseline:
+        description: Explicit0.2.26 baseline; not hibernation acceptance
+        type: boolean
+        default: true
+      diagnostic_pilot:
+        description: Short diagnostic only; acceptance stays false
+        type: boolean
+        default: true
+      pilot_seconds:
+        description: Pilot120..900; acceptance always7200
+        type: string
+        default: '120'
+      platform:
+        description: both, windows or linux
+        type: string
+        default: both
 permissions:
   contents: read
   actions: read
@@ -53,10 +79,12 @@ jobs:
           SOAK_BUILD_RUN: ${{ inputs.build_run }}
           SOAK_SOURCE: ${{ inputs.source }}
           SOAK_BASELINE: ${{ inputs.baseline }}
+          SOAK_REQUESTED_PLATFORM: ${{ inputs.platform }}
         run: |
           python - <<'PY'
           import json,os,re,subprocess
           run=os.environ['SOAK_BUILD_RUN'];source=os.environ['SOAK_SOURCE']
+          assert os.environ['SOAK_REQUESTED_PLATFORM'] in ('both','windows','linux')
           assert re.fullmatch(r'[0-9]+',run) and re.fullmatch(r'[0-9a-f]{40}',source)
           record=json.loads(subprocess.check_output(['gh','api',f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{run}']))
           assert record['head_sha']==source, 'Requested build source differs from actual producer'
