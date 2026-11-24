@@ -71,7 +71,13 @@
   function sourcesClear() {
     for (const m of [video, audio]) { m.pause(); m.removeAttribute('src'); m.load(); }
   }
-  function dispose() { captionsClear(); restoreClear(); qualities.clear(); segments = []; disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); button.disabled = true; quality.disabled = true; captions.disabled = true; downloadVideo.disabled = true; downloadAudio.disabled = true; downloadCancel.hidden = true; setStatus('Плеер остановлен. Обновите вкладку, чтобы продолжить просмотр.'); }
+  function dispose() {
+    disposed = true; ++epoch; pause(); sourcesClear();
+    restoreClear(); qualities.clear(); segments = []; captionsClear();
+    clearInterval(timer); button.disabled = true; quality.disabled = true; captions.disabled = true;
+    downloadVideo.disabled = true; downloadAudio.disabled = true; downloadCancel.hidden = true;
+    setStatus('Плеер остановлен. Обновите вкладку, чтобы продолжить просмотр.');
+  }
   button.addEventListener('click', () => intended ? pause() : void play());
   seek.addEventListener('input', () => {
     if (!duration || !configured) return;
