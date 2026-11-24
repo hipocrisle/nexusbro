@@ -52,7 +52,11 @@ class OwnedWindowManager:
             r = subprocess.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], env=self.env,
                                capture_output=True, text=True, timeout=3)
             return r.returncode == 0 and 'window id #' in r.stdout
-        wait_for(ready, 'Owned minimize window manager not ready', 15)
+        try:
+            wait_for(ready, 'Owned minimize window manager not ready', 15)
+        except BaseException:
+            self.close()
+            raise
     def close(self):
         if self.process.poll() is None:
             self.process.terminate()
