@@ -1,5 +1,6 @@
 //! GHA-only read-only observation of one ordinary public YouTube watch player.
-//! Does not prove codec, hardware decoding, route, absence of ads or benchmark acceptance.
+//! Requires the public player content ID and known ad markers to be clear.
+//! These observations are not universal ad absence, codec, GPU or route proof.
 use cef::*;
 use serde_json::{json, Value};
 use std::{
@@ -37,7 +38,7 @@ impl Drop for Clear {
         wipe(&mut self.0)
     }
 }
-const SCRIPT: &str = "(()=>{const list=document.querySelectorAll('video');if(list.length!==1||!document.querySelector('.html5-video-player'))return null;const v=list[0],q=v.getVideoPlaybackQuality();return {playing:!v.paused&&!v.ended,paused:v.paused,ended:v.ended,seeking:v.seeking,ready_state:v.readyState,position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,video_width:v.videoWidth,video_height:v.videoHeight,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,playback_rate:v.playbackRate,video_count:list.length};})()";
+const SCRIPT: &str = "(()=>{const list=document.querySelectorAll('video');if(list.length!==1)return null;const player=document.querySelector('#movie_player.html5-video-player');if(!player||player.classList.contains('ad-showing')||player.classList.contains('ad-interrupting'))return null;const data=typeof player.getVideoData==='function'?player.getVideoData():null;if(!data||data.video_id!==new URL(location.href).searchParams.get('v'))return null;const v=list[0],q=v.getVideoPlaybackQuality();return {playing:!v.paused&&!v.ended,paused:v.paused,ended:v.ended,seeking:v.seeking,ready_state:v.readyState,position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,video_width:v.videoWidth,video_height:v.videoHeight,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,playback_rate:v.playbackRate,video_count:list.length};})()";
 fn watch_id(document: &str) -> Option<crate::youtube_light::VideoId> {
     if document.len() > crate::youtube_light::MAX_INPUT_URL_BYTES {
         return None;
