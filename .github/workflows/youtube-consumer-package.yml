@@ -1,0 +1,38 @@
+name: Prepare sealed opt-in consumer extractor probe
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  package:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify exact extractor components (no media request)
+        run: python tools/package_youtube_components.py --platform linux-x64 --extractor-only
+      - name: Compile sealed opt-in nonroot probe and test admission
+        shell: bash
+        run: |
+          set -euo pipefail
+          export NEXUSBRO_CONSUMER_MANIFEST_SHA256="$(sha256sum desktop/src-tauri/binaries/youtube-light/components.json | cut -d' ' -f1)"
+          cargo test --manifest-path tests/youtube_light_harness/Cargo.toml --features consumer-probe
+          cargo build --release --manifest-path tests/youtube_light_harness/Cargo.toml --bin external_probe --features consumer-probe
+          python tests/gui/youtube_extract_consumer.py --self-test
+          mkdir -p .dev-check/consumer-probe
+          cp tests/youtube_light_harness/target/release/external_probe .dev-check/consumer-probe/
+          cp tests/gui/youtube_extract_consumer.py .dev-check/consumer-probe/
+          cp -R desktop/src-tauri/binaries/youtube-light .dev-check/consumer-probe/components
+          cd .dev-check/consumer-probe
+          sha256sum external_probe youtube_extract_consumer.py components/components.json > SHA256SUMS
+      - name: Preserve sealed probe for separately approved verified host
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-consumer-probe-linux-x64
+          path: .dev-check/consumer-probe/
+          retention-days: 7
+          if-no-files-found: error
