@@ -208,11 +208,15 @@ def run(args):
         exe,cef=pathlib.Path(args.exe).resolve(),pathlib.Path(args.cef).resolve()
         root=out/'private-device';device=WindowsDevice(root,exe,cef) if sys.platform=='win32' else Device('hibernate',root,exe,cef)
         specs=[('hb-a','roundtrip','A',False),('hb-b','keeper','B',False),
-               ('hb-private','private','A',True),('hb-multi','multi-a','A',False),('hb-pinned','pinned','A',False)]
+               ('pvt-hb-private','private','A',True),('hb-multi','multi-a','A',False),('hb-pinned','pinned','A',False)]
         specs += [('hb-'+case,case,'A',False) for case in ('audio','paused','draft','worker','download','unspecified')]
         definitions=[]
         for index,(identifier,case,lane,private) in enumerate(specs):
             item=super_record(identifier,'Hibernate '+identifier,fixture.url(case,True),proxy='http://127.0.0.1:'+str(fixture.routes.proxies[lane]),private=private);item['poryadok']=index;definitions.append(item)
+            if private:
+                # Runtime resolves pvt-* into its temporary private namespace;
+                # never seed an ordinary disk profile for a private fixture.
+                continue
             folder=device.data/'profili'/identifier;folder.mkdir(parents=True)
             tabs=[{'id':1,'adres':fixture.url(case,True),'zagolovok':'Fixture','otlozhena':True}]
             if identifier=='hb-pinned':tabs[0]['zakreplena']=True
@@ -327,7 +331,18 @@ def run(args):
         report['rapid_wake_writer_observation']={'samples':observer.samples,'peak_same_profile_writers':observer.peak,'period_seconds':.02}
         report['checks'].append('physical_wake_during_observed_prepare_or_stopping_keeps_single_native_writer')
         stage='private-native-refusal'
-        activate('hb-private');refuse('hb-private');report['checks'].append('private_super_native_profile_never_hibernates')
+        activate('pvt-hb-private')
+        private_row=running('pvt-hb-private')
+        arguments=psutil.Process(private_row['pid']).cmdline()
+        require('--nb-private-profile' in arguments,'Private fixture did not launch the actual private CEF process branch')
+        private_path=next((pathlib.Path(a.split('=',1)[1]) for a in arguments if a.startswith('--user-data-dir=')),None)
+        require(private_path is not None and private_path.name=='pvt-hb-private'
+                and private_path.parent.name=='NexusBro-private-'+str(foreground(device)),
+                'Private fixture did not use the actual temporary private namespace')
+        require(not (device.data/'profili'/'pvt-hb-private').exists(),'Private fixture accidentally created an ordinary disk profile')
+        report['private_fixture_runtime']={'private_process_flag':True,'temporary_private_namespace':True,
+                                           'ordinary_disk_profile_seeded':False,'disk_privacy_verified':False}
+        refuse('pvt-hb-private');report['checks'].append('actual_private_CEF_process_and_temporary_profile_namespace_never_hibernate')
         stage='guarded-native-pages'
         for case in ('audio','paused','draft','worker','download','unspecified'):
             identifier='hb-'+case
