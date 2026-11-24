@@ -47,7 +47,21 @@ async fn main() {
         allow_non_proxied_udp: false,
     };
     let (_tx, rx) = tokio::sync::watch::channel(false);
-    match youtube_light_sidecar::extract_diagnosed(&components, &video, &route, rx).await {
+    let experiment = std::env::var("NEXUSBRO_TEST_IMPERSONATE_CHROME").as_deref() == Ok("1");
+    let mut capability = None;
+    let result = if experiment {
+        youtube_light_sidecar::extract_chrome_experiment(
+            &components,
+            &video,
+            &route,
+            rx,
+            &mut capability,
+        )
+        .await
+    } else {
+        youtube_light_sidecar::extract_diagnosed(&components, &video, &route, rx).await
+    };
+    match result {
         Ok(bytes) => match youtube_light_extract::parse(&bytes, &video) {
             Ok(data) => {
                 let vp9 = data
@@ -68,7 +82,7 @@ async fn main() {
                 let ready = vp9 > 0 && opus > 0;
                 println!(
                     "{}",
-                    serde_json::json!({"stage":"parsed","ok":ready,"formats":data.formats.len(),"vp9":vp9,"opus":opus,"rejected_formats":data.rejected_formats})
+                    serde_json::json!({"stage":"parsed","impersonate_chrome":experiment,"chrome_available":capability,"ok":ready,"formats":data.formats.len(),"vp9":vp9,"opus":opus,"rejected_formats":data.rejected_formats})
                 );
                 if !ready {
                     std::process::exit(5);
@@ -77,7 +91,7 @@ async fn main() {
             Err(error) => {
                 println!(
                     "{}",
-                    serde_json::json!({"stage":"parser","ok":false,"reason":error})
+                    serde_json::json!({"stage":"parser","impersonate_chrome":experiment,"chrome_available":capability,"ok":false,"reason":error})
                 );
                 std::process::exit(4);
             }
@@ -87,7 +101,7 @@ async fn main() {
             let _ = diagnostic_capture::write_failure(&error);
             println!(
                 "{}",
-                serde_json::json!({"stage":"extractor","ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
+                serde_json::json!({"stage":"extractor","impersonate_chrome":experiment,"chrome_available":capability,"ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
             );
             // process::exit skips Drop; wipe retained CI stderr explicitly.
             drop(error);

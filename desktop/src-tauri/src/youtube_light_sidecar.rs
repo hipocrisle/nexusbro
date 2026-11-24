@@ -117,6 +117,7 @@ fn command(
     components: &Components,
     video: &VideoId,
     route: &NativeRoute,
+    chrome: bool,
 ) -> Result<Command, ExtractError> {
     if !route.validate() {
         return Err(ExtractError::InvalidRoute);
@@ -159,9 +160,15 @@ fn command(
         "0",
         "--extractor-retries",
         "1",
-    ])
-    .arg("--")
-    .arg(video.watch_url());
+    ]);
+    if chrome {
+        c.args(["--impersonate", "chrome"]);
+    }
+    c.arg("--").arg(video.watch_url());
+    configure_process(&mut c, components)?;
+    Ok(c)
+}
+fn configure_process(c: &mut Command, components: &Components) -> Result<(), ExtractError> {
     // No HTTP_PROXY/HTTPS_PROXY/ALL_PROXY/NO_PROXY, custom certificates, token,
     // cookie, Python/plugin/Deno configuration or inherited secret variables.
     c.env_clear();
@@ -187,7 +194,7 @@ fn command(
     {
         c.creation_flags(0x08000000);
     }
-    Ok(c)
+    Ok(())
 }
 async fn bounded<R: AsyncRead + Unpin>(
     mut source: R,
@@ -542,11 +549,12 @@ async fn extract_impl(
     mut cancel: watch::Receiver<bool>,
     failure_fingerprint: &mut FailureFingerprint,
     capture: Option<&mut Option<Zeroizing<Vec<u8>>>>,
+    chrome: bool,
 ) -> Result<Zeroizing<Vec<u8>>, ExtractError> {
     if *cancel.borrow() || cancel.has_changed().is_err() {
         return Err(ExtractError::Cancelled);
     }
-    let mut child = command(components, video, route)?
+    let mut child = command(components, video, route, chrome)?
         .spawn()
         .map_err(|_| ExtractError::SpawnFailed)?;
     let (stdout, stderr) = match (child.stdout.take(), child.stderr.take()) {
@@ -609,7 +617,16 @@ pub async fn extract(
     cancel: watch::Receiver<bool>,
 ) -> Result<Zeroizing<Vec<u8>>, ExtractError> {
     let mut diagnostic = FailureFingerprint::default();
-    extract_impl(components, video, route, cancel, &mut diagnostic, None).await
+    extract_impl(
+        components,
+        video,
+        route,
+        cancel,
+        &mut diagnostic,
+        None,
+        false,
+    )
+    .await
 }
 /// Diagnostic API for controlled native probes. No raw stderr/URLs are exposed.
 pub async fn extract_diagnosed(
@@ -627,6 +644,7 @@ pub async fn extract_diagnosed(
         cancel,
         &mut diagnostic,
         Some(&mut ci_stderr),
+        false,
     )
     .await
     .map_err(|error| ExtractFailure {
@@ -635,9 +653,131 @@ pub async fn extract_diagnosed(
         ci_stderr,
     })
 }
+/// Fixed CI-only experiment; production entrypoints never enable impersonation.
+/// `capability` is updated only after a successful bounded capability probe.
+pub async fn extract_chrome_experiment(
+    components: &Components,
+    video: &VideoId,
+    route: &NativeRoute,
+    mut cancel: watch::Receiver<bool>,
+    capability: &mut Option<bool>,
+) -> Result<Zeroizing<Vec<u8>>, ExtractFailure> {
+    let mut diagnostic = FailureFingerprint::default();
+    let mut ci_stderr = None;
+    let result = async {
+        if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+            || std::env::var("NEXUSBRO_TEST_IMPERSONATE_CHROME").as_deref() != Ok("1")
+        {
+            return Err(ExtractError::UnsupportedInvocation);
+        }
+        if !route.validate() {
+            return Err(ExtractError::InvalidRoute);
+        }
+        if !executable_path(&components.extractor) || !executable_path(&components.js_runtime) {
+            return Err(ExtractError::InvalidComponents);
+        }
+        if *cancel.borrow() || cancel.has_changed().is_err() {
+            return Err(ExtractError::Cancelled);
+        }
+        let mut command = Command::new(&components.extractor);
+        command.args([
+            "--ignore-config",
+            "--no-plugin-dirs",
+            "--no-remote-components",
+            "--no-cache-dir",
+            "--no-colors",
+            "--encoding",
+            "utf-8",
+            "--list-impersonate-targets",
+        ]);
+        configure_process(&mut command, components)?;
+        let mut child = command.spawn().map_err(|_| ExtractError::SpawnFailed)?;
+        let work = async {
+            let out = child.stdout.take().ok_or(ExtractError::ReadFailed)?;
+            let err = child.stderr.take().ok_or(ExtractError::ReadFailed)?;
+            let (bytes, _) = tokio::try_join!(
+                bounded(out, STDERR_LIMIT, true),
+                bounded(err, STDERR_LIMIT, true)
+            )?;
+            let status = child.wait().await.map_err(|_| ExtractError::WaitFailed)?;
+            if !status.success() {
+                return Err(ExtractError::UnsupportedInvocation);
+            }
+            Ok(chrome_available(&bytes))
+        };
+        let answer = tokio::select! {
+            biased;
+            _ = cancelled(&mut cancel) => Err(ExtractError::Cancelled),
+            _ = tokio::time::sleep(Duration::from_secs(10)) => Err(ExtractError::TimedOut),
+            result = work => result,
+        };
+        if answer.is_err() {
+            let _ = child.start_kill();
+            if !matches!(
+                tokio::time::timeout(REAP_TIMEOUT, child.wait()).await,
+                Ok(Ok(_))
+            ) {
+                return Err(ExtractError::ReapFailed);
+            }
+        }
+        let available = answer?;
+        *capability = Some(available);
+        if !available {
+            return Err(ExtractError::UnsupportedInvocation);
+        }
+        extract_impl(
+            components,
+            video,
+            route,
+            cancel,
+            &mut diagnostic,
+            Some(&mut ci_stderr),
+            true,
+        )
+        .await
+    }
+    .await;
+    result.map_err(|error| ExtractFailure {
+        error,
+        diagnostic,
+        ci_stderr,
+    })
+}
+// Exact 2026.11.23 __init__.py make_row/render_table: Client OS Source;
+// unavailable rows add '(unavailable)'. Require a versioned Chrome row and
+// exact curl_cffi handler, never a mere occurrence in warnings/error text.
+fn chrome_available(bytes: &[u8]) -> bool {
+    let Ok(text) = std::str::from_utf8(bytes) else {
+        return false;
+    };
+    text.lines().any(|line| {
+        let fields: Vec<_> = line.split_ascii_whitespace().collect();
+        fields.len() == 3
+            && fields[0].strip_prefix("Chrome-").is_some_and(|version| {
+                !version.is_empty() && version.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+            })
+            && fields[2] == "curl_cffi"
+    })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn chrome_capability_requires_available_table_row() {
+        assert!(chrome_available(
+            b"Client OS Source\nChrome-131 Windows-10 curl_cffi\n"
+        ));
+        for refused in [
+            b"Chrome - curl_cffi (unavailable)".as_slice(),
+            b"ERROR: Chrome-131 Windows-10 curl_cffi",
+            b"Chrome-131 Windows-10 other",
+            b"Chrome- Windows-10 curl_cffi",
+            b"Chrome-131 Windows-10 curl_cffi (unavailable)",
+            b"\xff",
+        ] {
+            assert!(!chrome_available(refused));
+        }
+    }
     #[test]
     fn failure_debug_never_reveals_retained_ci_stderr() {
         let failure = ExtractFailure {
@@ -725,7 +865,7 @@ mod tests {
             proxy: "http://127.0.0.1:1234".into(),
             allow_non_proxied_udp: false,
         };
-        let command = command(&components, &video, &route).unwrap();
+        let command = command(&components, &video, &route, false).unwrap();
         let args = command
             .as_std()
             .get_args()
@@ -759,9 +899,18 @@ mod tests {
         assert_eq!(args[proxy + 1], route.proxy);
         let encoding = args.iter().position(|a| *a == "--encoding").unwrap();
         assert_eq!(args[encoding + 1], "utf-8");
+        assert!(!args.contains(&"--impersonate"));
+        let experimental = super::command(&components, &video, &route, true).unwrap();
+        let experimental_args = experimental.as_std().get_args().collect::<Vec<_>>();
+        let marker = experimental_args
+            .iter()
+            .position(|a| *a == "--impersonate")
+            .unwrap();
+        assert_eq!(experimental_args[marker + 1], "chrome");
+        assert_eq!(experimental_args[marker + 2], "--");
         let mut bad = route;
         bad.proxy = "socks5://secret@remote:1080".into();
-        assert!(super::command(&components, &video, &bad).is_err());
+        assert!(super::command(&components, &video, &bad, false).is_err());
     }
     #[test]
     fn diagnostic_classification_never_reflects_remote_urls_or_secrets() {
