@@ -12,9 +12,12 @@ const SCHEME: &str = "nb-lite";
 const DOMAIN: &str = "player";
 const MAX_GRANTS: usize = 128;
 
+#[derive(Clone,Default)]
+struct ResourceCounts {html:u32,js:u32,css:u32,frame_refused:u32}
 #[derive(Clone)]
 struct Grant {
     generation: u64,
+    resources:ResourceCounts,
     document: String,
     config: Option<zeroize::Zeroizing<String>>,
     logical_url: Option<String>,
@@ -50,6 +53,7 @@ impl PlayerDocuments {
             browser,
             Grant {
                 generation,
+                resources:ResourceCounts::default(),
                 document: document.clone(),
                 config: None,
                 logical_url: None,
@@ -82,22 +86,24 @@ impl PlayerDocuments {
         frame: &str,
         request: &str,
     ) -> Option<(&'static [u8], &'static str)> {
-        let grants = self.0.lock().ok()?;
-        let grant = grants.get(&browser)?;
+        let mut grants = self.0.lock().ok()?;
+        let grant = grants.get_mut(&browser)?;
         let prefix = grant.document.strip_suffix("player.html")?;
         if request == grant.document {
+            grant.resources.html=grant.resources.html.saturating_add(1);
             // Main document navigation can still report the previous frame URL.
             return Some((include_bytes!("youtube_player/player.html"), "text/html"));
         }
         if frame != grant.document {
+            grant.resources.frame_refused=grant.resources.frame_refused.saturating_add(1);
             return None;
         }
         match request.strip_prefix(prefix)? {
-            "player.js" => Some((
+            "player.js" => {grant.resources.js=grant.resources.js.saturating_add(1);Some((
                 include_bytes!("youtube_player/player.js"),
                 "text/javascript",
-            )),
-            "player.css" => Some((include_bytes!("youtube_player/player.css"), "text/css")),
+            ))},
+            "player.css" => {grant.resources.css=grant.resources.css.saturating_add(1);Some((include_bytes!("youtube_player/player.css"), "text/css"))},
             _ => None,
         }
     }
@@ -199,7 +205,6 @@ pub fn open_webm(
         Option<std::path::PathBuf>,
     )>,
 ) -> Result<(), &'static str> {
-    use crate::youtube_light_extract::MediaKind;
     let video = data
         .formats
         .iter()
@@ -244,14 +249,7 @@ pub fn open_webm(
     let mut qualities: Vec<_> = data
         .formats
         .iter()
-        .filter(|f| {
-            f.ext == "webm"
-                && f.kind == MediaKind::VideoOnly
-                && f.height.is_some_and(|h| h <= 4320)
-                && f.vcodec
-                    .as_deref()
-                    .is_some_and(|c| c.starts_with("vp9") || c.starts_with("vp09"))
-        })
+        .filter(|f|crate::youtube_light_download::supports_video(f)&&f.height.is_some_and(|h|h<=4320))
         .collect();
     qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
     let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
@@ -365,7 +363,7 @@ pub fn logical_url(browser: i32, document: &str) -> Option<String> {
 }
 
 thread_local! {
-    static PROBES:std::cell::RefCell<Vec<(u64,std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,crate::cef_youtube_probe::Probe)>>=const{std::cell::RefCell::new(Vec::new())};
+    static PROBES:std::cell::RefCell<Vec<(u64,i32,std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,crate::cef_youtube_probe::Probe)>>=const{std::cell::RefCell::new(Vec::new())};
 }
 pub fn request_probe(
     browser: &Browser,
@@ -379,6 +377,7 @@ pub fn request_probe(
         }
         probes.push((
             tab,
+            browser.identifier(),
             sender,
             crate::cef_youtube_probe::Probe::start(browser)?,
         ));
@@ -387,11 +386,11 @@ pub fn request_probe(
 }
 pub fn poll_probes() {
     PROBES.with(|probes|{
-        probes.borrow_mut().retain_mut(|(tab,sender,probe)|{
+        probes.borrow_mut().retain_mut(|(tab,browser,sender,probe)|{
             let Some(result)=probe.poll() else{return true;};
             let data=match result {
                 Ok(state)=>serde_json::json!({"tip":"youtube-state","id":tab,"state":state}),
-                Err(code)=>serde_json::json!({"tip":"youtube-state","id":tab,"error":"Состояние плеера недоступно","code":code}),
+                Err(code)=>serde_json::json!({"tip":"youtube-state","id":tab,"error":"Состояние плеера недоступно","code":code,"resources":resource_counts(*browser)}),
             };
             let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(data));
             false
@@ -476,4 +475,8 @@ pub fn media(browser:&Browser)->Option<(u64,String,Arc<crate::youtube_light_extr
     let grants=documents().0.lock().ok()?;
     let grant=grants.get(&identity).filter(|g|g.document==actual)?;
     Some((grant.generation,grant.document.clone(),grant.media.clone()?))
+}
+
+fn resource_counts(browser:i32)->serde_json::Value {
+ documents().0.lock().ok().and_then(|all|all.get(&browser).map(|g|serde_json::json!({"html":g.resources.html,"js":g.resources.js,"css":g.resources.css,"frame_refused":g.resources.frame_refused}))).unwrap_or(serde_json::Value::Null)
 }

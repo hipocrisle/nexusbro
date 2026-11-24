@@ -3,7 +3,7 @@
 use crate::{
     tab_routes::NativeRoute,
     youtube_light_download::{self as download, DownloadError, Progress},
-    youtube_light_extract::{ExtractedVideo, MediaKind},
+    youtube_light_extract::ExtractedVideo,
 };
 use cef::*;
 use rand_core::{OsRng, RngCore};
@@ -236,11 +236,7 @@ pub fn target(browser: &Browser, route_generation: u64, request: &str, path: Opt
                 let audio_track = data
                     .formats
                     .iter()
-                    .filter(|f| {
-                        f.kind == MediaKind::AudioOnly
-                            && f.ext == "webm"
-                            && f.acodec.as_deref() == Some("opus")
-                    })
+                    .filter(|f| download::supports_audio(f))
                     .last()
                     .ok_or(DownloadError::UnsupportedFormat)?;
                 let selection = if audio {

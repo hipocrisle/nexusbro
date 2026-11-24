@@ -116,10 +116,15 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Prove profile exclusion and actual owned descendant exit
         run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
+  youtube-sources:
+    if: inputs.youtube_muxer_only
+    uses: ./.github/workflows/youtube-sources.yml
   youtube-minimal-muxer:
     if: inputs.youtube_muxer_only
     needs: [youtube-media-fixture]
     uses: ./.github/workflows/youtube-muxer.yml
+    with:
+      source_sha256: ce3fa044e0dd97ac7a2e7af710056daa850464ec11bdf804a8033c5eae1ec706
   security:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
