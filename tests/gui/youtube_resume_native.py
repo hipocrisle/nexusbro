@@ -239,6 +239,8 @@ def run(args):
             for lane in ('A', 'B', 'Direct')}
         report['controlled_route_observed']['other_tracks'] = sum(row.get('track') not in ('video', 'audio') for row in media)
         report['controlled_route_observed']['other_lanes'] = sum(row.get('lane') not in ('A', 'B', 'Direct') for row in media)
+        report['controlled_route_observed']['direct_connection_attempts'] = fixture.direct
+        require(fixture.direct == 0, 'Direct controlled media connection attempted')
         require(media and all(row['lane'] != 'Direct' for row in media), 'Unproxied controlled media request')
         require({row['track'] for row in media if row['lane'] == 'A'} == {'video', 'audio'}, 'Route A media proof missing')
         report['controlled_route_receipts'] = dict(direct=0, a=sum(row['lane'] == 'A' for row in media), b=sum(row['lane'] == 'B' for row in media))
@@ -270,6 +272,7 @@ def run(args):
             'Old player document remained admitted': 'old_document_still_admitted',
             'Actual media did not advance twelve seconds': 'actual_playback_not_advanced',
             'Returning changed original context browser': 'return_context_changed',
+            'Direct controlled media connection attempted': 'direct_controlled_connection',
             'Unproxied controlled media request': 'unproxied_controlled_media',
             'Route A media proof missing': 'routed_media_missing',
         }

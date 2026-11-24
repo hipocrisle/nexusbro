@@ -169,7 +169,7 @@ def run(args):
             is_native=not handler.headers.get('User-Agent')
             if is_native:
                 track=urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query).get('track',[''])[0]
-                with fixture.lock:native.append({'lane':fixture.peers.get(handler.client_address[1],'Direct'),'ranged':bool(handler.headers.get('Range')),'track':track if track in ('video','audio') else 'unknown'})
+                with fixture.lock:native.append({'lane':getattr(handler,'connection_lane','Direct'),'ranged':bool(handler.headers.get('Range')),'track':track if track in ('video','audio') else 'unknown'})
             writer=handler.wfile
             class PacedWriter:
                 # This owned HTTP origin paces genuine response bytes so at
