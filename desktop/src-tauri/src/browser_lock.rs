@@ -16,6 +16,8 @@ fn transition(locked: bool) {
         Some(((old & !1).wrapping_add(2)) | u64::from(locked))
     });
 }
+#[cfg(test)]
+pub(crate) fn transition_for_test(locked:bool){transition(locked);}
 pub fn engine_state() -> (bool, u64) {
     let state = LOCK_STATE.load(Ordering::SeqCst);
     (state & 1 != 0, state >> 1)
