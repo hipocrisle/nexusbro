@@ -350,8 +350,10 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
 }
 pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>) {
     let identity=browser.identifier();
-    retire_stop_probe(identity);
-    let stop_token=crate::cef_youtube_stop_probe::mint(browser).ok();
+    let binding=documents().0.lock().ok().and_then(|all|all.get(&identity).map(|g|(g.document.clone(),g.document_frame.clone())));
+    // Repeated lock notifications must keep the first in-flight observation.
+    // Cancellation still runs below even when extraction has no player grant.
+    let stop_token=if binding.is_some(){retire_stop_probe(identity);crate::cef_youtube_stop_probe::mint(browser).ok()}else{None};
     crate::youtube_light_jobs::cancel(identity);
     crate::youtube_light_aux::cancel(identity);
     crate::cef_youtube_resume::closed(identity);
@@ -368,7 +370,7 @@ pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::c
     if let Some((document,video))=hint {if let Ok(mut hints)=reload_hints().lock(){hints.remember(identity,&document,video);}}
     documents().revoke(identity);
     if active {
-        if let Some(frame) = browser.main_frame() {
+        if let Some(frame) = browser.main_frame().filter(|frame|binding.as_ref().is_some_and(|(doc,id)|id.as_deref()==Some(CefString::from(&frame.identifier()).to_string().as_str())&&*doc==CefString::from(&frame.url()).to_string())) {
             frame.execute_java_script(
                 Some(&CefString::from(
                     "window.NB_LIGHT && window.NB_LIGHT.dispose();",

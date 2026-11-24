@@ -42,7 +42,9 @@
   function pause() { ++epoch; intended = false; syncing = false; clearInterval(timer); timer = null; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; updateView(); tick(false); }
   function error() { if (disposed) return; pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
   function align() {
-    if (!separate || syncing || !Number.isFinite(video.currentTime)) return;
+    // Chromium may suspend muted hidden video while audio keeps playing.
+    // Seeking that suspended element repeatedly defeats the native saving.
+    if (!separate || syncing || document.hidden || (video.paused && !audio.paused) || !Number.isFinite(video.currentTime)) return;
     if (Math.abs(audio.currentTime - video.currentTime) > 0.12) video.currentTime = audio.currentTime;
     audio.playbackRate = video.playbackRate;
   }
@@ -211,7 +213,7 @@
     },
     dispose,
     snapshot() {
-      return {configured, disposed, playing: intended && !video.paused && (!separate || !audio.paused),
+      return {configured, disposed, hidden: document.hidden, video_paused: video.paused, audio_paused: audio.paused, playing: intended && !video.paused && (!separate || !audio.paused),
         position: (separate ? audio.currentTime : video.currentTime) || 0, audio_position: separate ? audio.currentTime || 0 : video.currentTime || 0, duration, separate,
         video_width: video.videoWidth || 0, video_height: video.videoHeight || 0,
         skew: separate ? Math.abs(audio.currentTime - video.currentTime) : 0,

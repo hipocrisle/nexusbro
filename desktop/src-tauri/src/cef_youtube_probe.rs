@@ -71,12 +71,15 @@ fn decode(bytes: &[u8]) -> Reply {
         "audio_position",
         "video_width",
         "video_height",
+        "hidden",
+        "video_paused",
+        "audio_paused",
     ];
     if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
         return Err(FAILED);
     }
     let mut clean = serde_json::Map::new();
-    for field in ["configured", "disposed", "playing", "separate"] {
+    for field in ["configured", "disposed", "playing", "separate", "hidden", "video_paused", "audio_paused"] {
         clean.insert(
             field.into(),
             Value::Bool(source.get(field).and_then(Value::as_bool).ok_or(FAILED)?),
@@ -156,6 +159,9 @@ fn diagnose(bytes: &[u8]) -> &'static str {
         "audio_position",
         "video_width",
         "video_height",
+        "hidden",
+        "video_paused",
+        "audio_paused",
     ];
     if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
         return "snapshot_schema_mismatch";
@@ -183,9 +189,10 @@ wrap_dev_tools_message_observer! {
  impl DevToolsMessageObserver{
   fn on_dev_tools_method_result(&self,browser:Option<&mut Browser>,message_id:i32,success:i32,result:Option<&[u8]>){
    if message_id!=self.message{return;}
+   let matches=browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document));
    let Ok(mut state)=self.state.lock()else{return;};if state.done{return;}
    state.done=true;
-   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v).map_err(|_|diagnose(v)))});
+   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !matches{Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v).map_err(|_|diagnose(v)))});
   }
   fn on_dev_tools_agent_detached(&self,browser:Option<&mut Browser>){
    if browser.is_some_and(|b|b.identifier()!=self.identity){return;}
@@ -305,7 +312,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn data() -> Value {
-        json!({"configured":true,"disposed":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
+        json!({"configured":true,"disposed":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
     }
     fn envelope(value: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":value}})).unwrap()
@@ -314,7 +321,7 @@ mod tests {
     fn reconstructs_only_bounded_native_player_fields() {
         let bytes = envelope(data());
         let value = decode(&bytes).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 12);
+        assert_eq!(value.as_object().unwrap().len(), 15);
         assert_eq!(value["decoded"], 66);
         assert_eq!(value["playing"], true);
         let mut result: Value = serde_json::from_slice(&bytes).unwrap();
