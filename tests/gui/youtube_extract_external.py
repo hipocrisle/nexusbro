@@ -398,7 +398,7 @@ def self_test():
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--probe-exe');parser.add_argument('--components');parser.add_argument('--out')
-    parser.add_argument('--video',default='BaW_jenozKc');parser.add_argument('--self-test',action='store_true')
+    parser.add_argument('--video',default='aqz-KE-bpKQ');parser.add_argument('--self-test',action='store_true')
     args=parser.parse_args()
     if args.self_test:self_test();return 0
     require(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform in ('win32','linux'),'isolated_native_ci_required')
