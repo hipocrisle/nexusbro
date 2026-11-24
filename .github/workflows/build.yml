@@ -122,6 +122,7 @@ jobs:
       source: ${{ fromJSON(inputs.youtube_native_reuse).source }}
       layout_only: ${{ fromJSON(inputs.youtube_native_reuse).layout_only || false }}
       platform: ${{ fromJSON(inputs.youtube_native_reuse).platform || 'both' }}
+      paired_config: ${{ fromJSON(inputs.youtube_native_reuse).paired && toJSON(fromJSON(inputs.youtube_native_reuse).paired) || '' }}
   youtube-deno-cache-probe:
     if: inputs.youtube_deno_cache_probe
     uses: ./.github/workflows/deno-cache-probe.yml

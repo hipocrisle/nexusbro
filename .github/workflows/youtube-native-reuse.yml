@@ -11,6 +11,9 @@ on:
       platform:
         type: string
         default: both
+      paired_config:
+        type: string
+        default: ''
       layout_only:
         type: boolean
         default: false
@@ -18,8 +21,15 @@ permissions:
   contents: read
   actions: read
 jobs:
+  paired:
+    if: inputs.paired_config != ''
+    uses: ./.github/workflows/youtube-paired.yml
+    with:
+      run: ${{ inputs.run }}
+      source: ${{ inputs.source }}
+      config: ${{ inputs.paired_config }}
   diagnostic:
-    if: ${{ !inputs.layout_only && inputs.platform != 'linux' }}
+    if: ${{ !inputs.layout_only && inputs.platform != 'linux' && inputs.paired_config == '' }}
     runs-on: windows-latest
     timeout-minutes: 55
     steps:
@@ -306,7 +316,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
   linux-layout:
-    if: ${{ inputs.platform != 'windows' }}
+    if: ${{ inputs.platform != 'windows' && inputs.paired_config == '' }}
     name: Inspect immutable Linux package layout DIAGNOSTIC ONLY
     runs-on: ubuntu-24.04
     timeout-minutes: 55
