@@ -169,12 +169,59 @@ class Fixture:
         for thread in self.threads:thread.join(timeout=3)
 
 
+def linux_fixture_ack(client, identifier, tab, diagnostics):
+    """Admission receipt only; configured and physical playback remain mandatory."""
+    receipt = {'received': False, 'accepted': False}
+    diagnostics['fixture_admission'] = receipt
+    expression = ('window.__playerFixtureResults.find(x=>x.super_id==='
+                  + json.dumps(identifier) + '&&x.data?.id===' + str(tab) + ')')
+    value = wait_for(lambda: client.js(expression), 'Native fixture admission acknowledgment missing', 10)
+    error = value.get('data', {}).get('error')
+    receipt.update(received=True, accepted=error is None)
+    # Unknown native values are never published (including raw URLs/errors).
+    errors = {
+        'Вкладка недоступна': 'browser_missing',
+        'Диагностика доступна только в CI': 'ci_only',
+        'Диагностика недоступна': 'fixture_invalid',
+        'Диагностические дорожки отклонены': 'tracks_rejected',
+        'Нет подходящих WebM дорожек для лёгкого плеера': 'tracks_unsupported',
+        'Контекст вкладки недоступен': 'context_missing',
+        'Не удалось подготовить внутренний плеер': 'scheme_install_failed',
+        'Не удалось открыть внутренний плеер': 'grant_failed',
+        'Плеер занят': 'grant_busy', 'Плеер закрыт': 'grant_closed',
+        'Плеер уже закрыт': 'grant_revoked',
+        'Не удалось подготовить видео': 'config_failed',
+        'Документ вкладки недоступен': 'frame_missing',
+    }
+    receipt['code'] = ('accepted' if error is None else
+                       errors.get(error, 'unknown_native_error') if isinstance(error, str)
+                       else 'invalid_native_error')
+    current = rows(client, identifier)
+    selected = next((r for r in current.get('vkladki', []) if r.get('id') == tab), {})
+    receipt['tab'] = {
+        'present': bool(selected), 'selected': current.get('aktivnaya') == tab,
+        'native_browser': isinstance(selected.get('browser_id'), int) and selected['browser_id'] > 0,
+        'loading': selected.get('zagruzka') is True,
+        'deferred': selected.get('otlozhena') is True,
+    }
+    require(error is None, 'Native fixture admission refused')
+
+
 def observe(client, identifier, tab, *, admitting=False, diagnostics=None):
     client.js('window.__playerObserved=[];true')
     call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_snapshot','id':tab})
     expression='window.__playerObserved.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'
     value=wait_for(lambda:client.js(expression),'Native player observation missing',10)
     if diagnostics is not None:diagnostics['native_probe_unavailable']='state' not in value.get('data',{})
+    if diagnostics is not None and sys.platform.startswith('linux'):
+        code = value.get('data', {}).get('code')
+        allowed = {'probe_wrong_thread', 'browser_invalid', 'frame_absent',
+                   'document_not_admitted', 'message_capacity', 'observer_unavailable',
+                   'dispatch_failed', 'timeout', 'document_changed', 'cdp_method_failed',
+                   'cdp_result_absent', 'snapshot_value_unavailable', 'cdp_agent_detached'}
+        if code is not None:
+            diagnostics['native_probe_code'] = code if isinstance(code, str) and code in allowed else 'unknown_probe_code'
+
     if admitting and isinstance(value.get('data',{}).get('error'),str) and 'state' not in value['data']:
         return {}  # only pre-admission: old document may still be navigating
     require(isinstance(value.get('data',{}).get('state'),dict),'Native observation refused')
@@ -253,13 +300,18 @@ def run(args):
             client=device.start();foreground(device)
             client.js('window.__playerObserved=[];window.__playerListenerReady=false;window.__playerHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerHandler}).then(()=>window.__playerListenerReady=true);true')
             js_wait(client,'window.__playerListenerReady','Actual native event listener missing')
+            if sys.platform.startswith('linux'):
+                client.js('window.__playerFixtureResults=[];window.__playerFixtureListenerReady=false;window.__playerFixtureHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-result")window.__playerFixtureResults.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerFixtureHandler}).then(()=>window.__playerFixtureListenerReady=true);true')
+                js_wait(client,'window.__playerFixtureListenerReady','Actual native fixture listener missing')
             for lane in ('A','B'):
                 identifier='player-'+lane.lower();report['stage']='load-'+lane
                 foreground(device);switch_super(client,identifier)
                 if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',20)
                 session=wait_for(lambda:rows(client,identifier) if any(r.get('browser_id',0)>0 and not r.get('zagruzka') for r in rows(client,identifier)['vkladki']) else None,'Actual native browser not loaded',40)
                 tab=session['aktivnaya']
+                if sys.platform.startswith('linux'):client.js('window.__playerFixtureResults=[];true')
                 call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
+                if sys.platform.startswith('linux'):linux_fixture_ack(client,identifier,tab,report['player_diagnostics'])
                 initial=wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,identifier,tab,admitting=True,diagnostics=report['player_diagnostics'])),'Player was not configured',30)
                 report['stage']='physical-play-'+lane;physical(client,device,'play',report['player_diagnostics'])
                 first=wait_for(lambda:(lambda s:s if s.get('playing') and s.get('decoded',0)>=3 else None)(observe(client,identifier,tab,diagnostics=report['player_diagnostics'])),'Physical play did not decode actual media',25)
@@ -281,7 +333,10 @@ def run(args):
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
-        codes={'Native player controls not physically painted':'controls_not_painted',
+        codes={'Native fixture admission acknowledgment missing':'fixture_ack_missing',
+               'Native fixture admission refused':'fixture_admission_refused',
+               'Actual native fixture listener missing':'fixture_listener_missing',
+               'Native player controls not physically painted':'controls_not_painted',
                'Physical play did not decode actual media':'playback_not_decoding',
                'Native player observation missing':'snapshot_missing','Native observation refused':'snapshot_refused',
                'Player was not configured':'not_configured','Dual media clocks failed':'clocks_not_advancing',
