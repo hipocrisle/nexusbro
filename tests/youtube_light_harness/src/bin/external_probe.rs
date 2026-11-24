@@ -1,4 +1,7 @@
 //! CI-only real invocation of production extractor/parser. No CEF playback claim.
+#[cfg(feature = "encrypted-diagnostics")]
+#[path = "../diagnostic_capture.rs"]
+mod diagnostic_capture;
 use nexusbro_youtube_light_verification::{
     tab_routes::NativeRoute,
     youtube_light::VideoId,
@@ -80,10 +83,14 @@ async fn main() {
             }
         },
         Err(error) => {
+            #[cfg(feature = "encrypted-diagnostics")]
+            let _ = diagnostic_capture::write_failure(&error);
             println!(
                 "{}",
                 serde_json::json!({"stage":"extractor","ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
             );
+            // process::exit skips Drop; wipe retained CI stderr explicitly.
+            drop(error);
             std::process::exit(3);
         }
     }

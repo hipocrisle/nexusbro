@@ -134,6 +134,8 @@ fn command(
         "--skip-download",
         "--dump-single-json",
         "--no-progress",
+        "--encoding",
+        "utf-8",
         "--no-cookies",
         "--no-cookies-from-browser",
         "--no-js-runtimes",
@@ -254,10 +256,33 @@ pub struct FailureFingerprint {
     pub timeout: bool,
     pub dns: bool,
 }
-#[derive(Debug)]
 pub struct ExtractFailure {
     pub error: ExtractError,
     pub diagnostic: FailureFingerprint,
+    ci_stderr: Option<Zeroizing<Vec<u8>>>,
+}
+impl fmt::Debug for ExtractFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("ExtractFailure")
+            .field("error", &self.error)
+            .field("diagnostic", &self.diagnostic)
+            .finish()
+    }
+}
+fn ci_capture_enabled() -> bool {
+    std::env::var("GITHUB_ACTIONS").as_deref() == Ok("true")
+        && std::env::var_os("NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY")
+            .is_some_and(|key| !key.is_empty() && key.len() <= 8192)
+}
+impl ExtractFailure {
+    /// Native CI probe only. Not a web/IPC error accessor. Operational private
+    /// keys must never be supplied to this process; the probe encrypts in RAM.
+    pub fn ci_stderr(&self) -> Option<&[u8]> {
+        if !ci_capture_enabled() {
+            return None;
+        }
+        self.ci_stderr.as_ref().map(|bytes| bytes.as_slice())
+    }
 }
 impl fmt::Display for ExtractFailure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -515,6 +540,7 @@ async fn extract_impl(
     route: &NativeRoute,
     mut cancel: watch::Receiver<bool>,
     failure_fingerprint: &mut FailureFingerprint,
+    capture: Option<&mut Option<Zeroizing<Vec<u8>>>>,
 ) -> Result<Zeroizing<Vec<u8>>, ExtractError> {
     if *cancel.borrow() || cancel.has_changed().is_err() {
         return Err(ExtractError::Cancelled);
@@ -543,7 +569,13 @@ async fn extract_impl(
             let status = child.wait().await.map_err(|_| ExtractError::WaitFailed)?;
             if !status.success() {
                 *failure_fingerprint = fingerprint(&diagnostic, status.code());
-                return Err(classify_failure(&diagnostic));
+                let error = classify_failure(&diagnostic);
+                if ci_capture_enabled() {
+                    if let Some(capture) = capture {
+                        *capture = Some(diagnostic);
+                    }
+                }
+                return Err(error);
             }
             if out.is_empty() {
                 return Err(ExtractError::EmptyOutput);
@@ -576,7 +608,7 @@ pub async fn extract(
     cancel: watch::Receiver<bool>,
 ) -> Result<Zeroizing<Vec<u8>>, ExtractError> {
     let mut diagnostic = FailureFingerprint::default();
-    extract_impl(components, video, route, cancel, &mut diagnostic).await
+    extract_impl(components, video, route, cancel, &mut diagnostic, None).await
 }
 /// Diagnostic API for controlled native probes. No raw stderr/URLs are exposed.
 pub async fn extract_diagnosed(
@@ -586,13 +618,39 @@ pub async fn extract_diagnosed(
     cancel: watch::Receiver<bool>,
 ) -> Result<Zeroizing<Vec<u8>>, ExtractFailure> {
     let mut diagnostic = FailureFingerprint::default();
-    extract_impl(components, video, route, cancel, &mut diagnostic)
-        .await
-        .map_err(|error| ExtractFailure { error, diagnostic })
+    let mut ci_stderr = None;
+    extract_impl(
+        components,
+        video,
+        route,
+        cancel,
+        &mut diagnostic,
+        Some(&mut ci_stderr),
+    )
+    .await
+    .map_err(|error| ExtractFailure {
+        error,
+        diagnostic,
+        ci_stderr,
+    })
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn failure_debug_never_reveals_retained_ci_stderr() {
+        let failure = ExtractFailure {
+            error: ExtractError::ProcessFailed,
+            diagnostic: FailureFingerprint::default(),
+            ci_stderr: Some(Zeroizing::new(
+                b"SECRET https://private.invalid/path".to_vec(),
+            )),
+        };
+        let public = format!("{failure:?} {failure}");
+        assert!(!public.contains("SECRET"));
+        assert!(!public.contains("private.invalid"));
+        assert!(!public.contains("ci_stderr"));
+    }
     #[test]
     fn all_errors_are_static_without_process_diagnostics() {
         let errors = [
@@ -698,6 +756,8 @@ mod tests {
         }
         let proxy = args.iter().position(|a| *a == "--proxy").unwrap();
         assert_eq!(args[proxy + 1], route.proxy);
+        let encoding = args.iter().position(|a| *a == "--encoding").unwrap();
+        assert_eq!(args[encoding + 1], "utf-8");
         let mut bad = route;
         bad.proxy = "socks5://secret@remote:1080".into();
         assert!(super::command(&components, &video, &bad).is_err());
