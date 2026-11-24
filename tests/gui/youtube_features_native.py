@@ -50,6 +50,16 @@ def input_observation(device):
 
 
 def keys(device,*sequence):
+    # Passive shell receipt distinguishes keys reaching GTK/WebKit from keys
+    # delivered to CEF. It never moves focus or synthesizes DOM input.
+    try:
+        device.client.js("""(()=>{if(window.__featureShellKeys)return true;
+        const count={keydown:0,key_up:0,trusted_tab:0,trusted_other:0};
+        const bump=k=>count[k]=Math.min(64,count[k]+1);
+        document.addEventListener('keydown',e=>{bump('keydown');if(e.isTrusted)bump(e.key==='Tab'?'trusted_tab':'trusted_other');},true);
+        document.addEventListener('keyup',()=>bump('key_up'),true);
+        window.__featureShellKeys=count;return true;})()""")
+    except Exception:pass
     trace=getattr(device,'feature_keys',None)
     if trace is None:trace=[];device.feature_keys=trace
     if len(trace)<32:trace.append({'keys':[key if key in {'Tab','shift+Tab','space','Home','End','Return','enter','Escape','esc','Up','Down'} else 'other' for key in sequence[:12]],'before':input_observation(device)})
@@ -219,6 +229,7 @@ def run(args):
         wait_for(lambda:(lambda s:s['playing'] and s['decoded']>=3)(snapshot(client,tab)),'Initial native decode missing',20)
         physical(client,device,'play',diagnostics)
         before_quality=paused(client,device,tab,diagnostics)
+        diagnostics['before_decode_input']=input_observation(device)
         report['stage']='native-decode-observation'
         call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_decode_snapshot','id':tab,'video_id':'BaW_jenozKc'})
         decode_ok=False
@@ -234,6 +245,7 @@ def run(args):
                 report['native_decoder']={'observed':False,'code':code if isinstance(code,str) and 0<len(code)<=96 and code.isascii() and all(c.isalnum() or c=='_' for c in code) else 'unavailable'}
         except Exception:
             report['native_decoder']={'observed':False,'code':'native_receipt_unavailable'}
+        diagnostics['after_decode_input']=input_observation(device)
         report['stage']='quality-paused'
         quality_control(client,device,tab,0,diagnostics)
         low=wait_for(lambda:(lambda s:s if s.get('quality_count')==2 and s.get('quality_index')==0 and s['video_width']==320 and s['video_height']==180 and not s['playing'] else None)(snapshot(client,tab)),'Paused low quality geometry missing',25)
@@ -284,6 +296,9 @@ def run(args):
             if Path(trace.tb_frame.f_code.co_filename).name==Path(__file__).name:report['failure_location']={'function':trace.tb_frame.f_code.co_name,'line':trace.tb_lineno}
             trace=trace.tb_next
     finally:
+        if device and getattr(device,'client',None):
+            try:report['shell_key_receipt']=device.client.js('window.__featureShellKeys??null')
+            except Exception:report['shell_key_receipt_unavailable']=True
         cleanup=True
         for obj in (device,fixture,trust,wm):
             if obj:
