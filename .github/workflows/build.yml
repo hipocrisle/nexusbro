@@ -120,6 +120,7 @@ jobs:
     with:
       run: ${{ fromJSON(inputs.youtube_native_reuse).run }}
       source: ${{ fromJSON(inputs.youtube_native_reuse).source }}
+      layout_only: ${{ fromJSON(inputs.youtube_native_reuse).layout_only || false }}
   youtube-deno-cache-probe:
     if: inputs.youtube_deno_cache_probe
     uses: ./.github/workflows/deno-cache-probe.yml

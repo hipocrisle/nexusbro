@@ -8,11 +8,15 @@ on:
       source:
         type: string
         required: true
+      layout_only:
+        type: boolean
+        default: false
 permissions:
   contents: read
   actions: read
 jobs:
   diagnostic:
+    if: ${{ !inputs.layout_only }}
     runs-on: windows-latest
     timeout-minutes: 55
     steps:
@@ -224,3 +228,43 @@ jobs:
             .dev-check/youtube-native-reuse/diagnostic-resume.json
           if-no-files-found: warn
           retention-days: 7
+  linux-layout:
+    name: Inspect immutable Linux package layout DIAGNOSTIC ONLY
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gate exact same-repository producer source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCER_RUN: ${{ inputs.run }}
+          PRODUCER_SOURCE: ${{ inputs.source }}
+        run: |
+          python3 - <<'PY'
+          import json,os,re,urllib.request
+          run,source=os.environ['PRODUCER_RUN'],os.environ['PRODUCER_SOURCE']
+          assert re.fullmatch(r'[1-9][0-9]{0,19}',run) and re.fullmatch(r'[0-9a-f]{40}',source)
+          repo=os.environ['GITHUB_REPOSITORY']
+          request=urllib.request.Request('https://api.github.com/repos/'+repo+'/actions/runs/'+run,headers={'Authorization':'Bearer '+os.environ['GH_TOKEN'],'Accept':'application/vnd.github+json'})
+          with urllib.request.urlopen(request,timeout=20) as response:data=json.loads(response.read(1024*1024))
+          assert data['head_sha']==source and data['repository']['full_name']==repo and data['head_repository']['full_name']==repo
+          assert data['event']=='workflow_dispatch' and data['path']=='.github/workflows/build.yml'
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: nexusbro-linux
+          path: .dev-check/layout-package
+          run-id: ${{ inputs.run }}
+          github-token: ${{ github.token }}
+      - name: Inspect package members without running application
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          packages=(.dev-check/layout-package/*.deb .dev-check/layout-package/deb/*.deb)
+          test "${#packages[@]}" -eq 1
+          dpkg-deb --fsys-tarfile "${packages[0]}" | python3 -c 'import sys,tarfile; t=tarfile.open(fileobj=sys.stdin.buffer,mode="r|"); count=0; matches=[]
+          for m in t:
+           count+=1
+           if count>20000:raise SystemExit("member_bound")
+           if m.name.startswith("./usr/bin/") or m.name.endswith(("/libcef.so","/icudtl.dat","/components.json")):matches.append({"name":m.name,"mode":oct(m.mode),"bytes":m.size,"file":m.isfile(),"link":m.issym()})
+          import json; print(json.dumps({"diagnostic_only":True,"acceptance_passed":False,"members":count,"selected":matches}))'
