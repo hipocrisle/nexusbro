@@ -157,6 +157,24 @@ jobs:
         run: |
           python tests/gui/youtube_player_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --out .dev-check/reuse-player --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm *> .dev-check/reuse-private/player-console.txt
           exit $LASTEXITCODE
+      - name: Preserve windows player checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/reuse-player/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-windows-player
+          path: .dev-check/reuse-player/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Latest controlled download fixture on same installer DIAGNOSTIC
         id: download
         if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success' && steps.installed.outputs.components_present == 'true'
@@ -165,6 +183,24 @@ jobs:
         run: |
           python tests/gui/youtube_download_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --components .dev-check/reuse-installed/binaries/youtube-light --out .dev-check/reuse-download --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm *> .dev-check/reuse-private/download-console.txt
           exit $LASTEXITCODE
+      - name: Preserve windows download checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/reuse-download/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-windows-download
+          path: .dev-check/reuse-download/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Latest quality captions fullscreen fixture on same installer DIAGNOSTIC
         id: features
         if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
@@ -175,6 +211,24 @@ jobs:
         run: |
           python tests/gui/youtube_features_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --out .dev-check/reuse-features --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm --video-high-webm .dev-check/reuse-media/video-high.webm *> .dev-check/reuse-private/features-console.txt
           exit $LASTEXITCODE
+      - name: Preserve windows features checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/reuse-features/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-windows-features
+          path: .dev-check/reuse-features/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Latest strict both-clock resume fixture on same installer DIAGNOSTIC
         id: resume
         if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
@@ -185,6 +239,24 @@ jobs:
         run: |
           python tests/gui/youtube_resume_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --out .dev-check/reuse-resume --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm *> .dev-check/reuse-private/resume-console.txt
           exit $LASTEXITCODE
+      - name: Preserve windows resume checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/reuse-resume/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-windows-resume
+          path: .dev-check/reuse-resume/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Wrap sanitized receipts as diagnostics with acceptance always false
         if: always() && !cancelled()
         shell: bash
@@ -340,6 +412,13 @@ jobs:
           python3 tests/gui/youtube_privacy_scan.py
           sudo apt-get install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libssl-dev libxcb1-dev xvfb xdotool xclip x11-utils openbox libnss3-tools
           python3 -m pip install Pillow psutil websocket-client cryptography
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          shopt -s nullglob
+          debs=(.dev-check/layout-package/*.deb .dev-check/layout-package/deb/*.deb)
+          test "${#debs[@]}" -eq 1
+          sudo dpkg -i "${debs[0]}"
+          cmp .dev-check/layout-deb/usr/bin/nexusbro /usr/bin/nexusbro
+          python3 tools/verify_youtube_bundle.py --expected .dev-check/layout-deb/usr/lib/NexusBro/binaries/youtube-light --actual /usr/lib/NexusBro/binaries/youtube-light --out .dev-check/linux-installed-closure.json
           echo "YOUTUBE_OLD_UNPRIVILEGED_PORT_START=$(sysctl -n net.ipv4.ip_unprivileged_port_start)" >> "$GITHUB_ENV"
           sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
       - name: Linux same installed binary player DIAGNOSTIC
@@ -347,25 +426,97 @@ jobs:
         timeout-minutes: 13
         env:
           NEXUSBRO_TEST_COLD_CEF: '1'
-        run: python3 tests/gui/youtube_player_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --out .dev-check/linux-reuse-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+        run: python3 tests/gui/youtube_player_native.py --exe /usr/bin/nexusbro --cef /usr/lib/NexusBro --out .dev-check/linux-reuse-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Preserve linux player checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/linux-reuse-player/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-linux-player
+          path: .dev-check/linux-reuse-player/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Linux same installed binary download DIAGNOSTIC
         if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
         timeout-minutes: 12
         env:
           NEXUSBRO_TEST_COLD_CEF: '1'
-        run: python3 tests/gui/youtube_download_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --components .dev-check/layout-deb/usr/lib/NexusBro/binaries/youtube-light --out .dev-check/linux-reuse-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+        run: python3 tests/gui/youtube_download_native.py --exe /usr/bin/nexusbro --cef /usr/lib/NexusBro --components /usr/lib/NexusBro/binaries/youtube-light --out .dev-check/linux-reuse-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Preserve linux download checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/linux-reuse-download/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-linux-download
+          path: .dev-check/linux-reuse-download/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Linux same installed binary features DIAGNOSTIC
         if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
         timeout-minutes: 10
         env:
           NEXUSBRO_TEST_COLD_CEF: '1'
-        run: python3 tests/gui/youtube_features_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --out .dev-check/linux-reuse-features --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --video-high-webm .dev-check/youtube-media-fixture/video-high.webm
+        run: python3 tests/gui/youtube_features_native.py --exe /usr/bin/nexusbro --cef /usr/lib/NexusBro --out .dev-check/linux-reuse-features --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --video-high-webm .dev-check/youtube-media-fixture/video-high.webm
+      - name: Preserve linux features checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/linux-reuse-features/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-linux-features
+          path: .dev-check/linux-reuse-features/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Linux same installed binary strict resume DIAGNOSTIC
         if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
         timeout-minutes: 8
         env:
           NEXUSBRO_TEST_COLD_CEF: '1'
-        run: python3 tests/gui/youtube_resume_native.py --exe .dev-check/layout-deb/usr/bin/nexusbro --cef .dev-check/layout-deb/usr/lib/NexusBro --out .dev-check/linux-reuse-resume --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+        run: python3 tests/gui/youtube_resume_native.py --exe /usr/bin/nexusbro --cef /usr/lib/NexusBro --out .dev-check/linux-reuse-resume --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Preserve linux resume checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json,pathlib
+          source=pathlib.Path('.dev-check/linux-reuse-resume/result.json')
+          if source.is_file() and source.stat().st_size<=2*1024*1024:
+              data=dict(diagnostic_only=True,acceptance_passed=False,current_binary=False,result=json.loads(source.read_text()))
+              source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(data,indent=2)+'\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: youtube-checkpoint-linux-resume
+          path: .dev-check/linux-reuse-resume/diagnostic-checkpoint.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Restore disposable Linux witness permission
         if: ${{ always() && env.YOUTUBE_OLD_UNPRIVILEGED_PORT_START != '' }}
         run: sudo sysctl -w "net.ipv4.ip_unprivileged_port_start=$YOUTUBE_OLD_UNPRIVILEGED_PORT_START"

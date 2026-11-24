@@ -555,6 +555,10 @@ jobs:
           bsdtar -xf "${rpms[0]}" -C .dev-check/installed-rpm --no-same-owner
           test -x .dev-check/installed-linux/usr/bin/nexusbro
           test -s .dev-check/installed-linux/usr/lib/NexusBro/libcef.so
+          # Exercise the supported installed layout, not a portable unpacked
+          # executable whose Tauri resource_dir still points at /usr/lib.
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          sudo dpkg -i "${debs[0]}"
       - name: Verify every packaged YouTube helper and notice before execution
         shell: bash
         run: |
@@ -590,8 +594,8 @@ jobs:
             BIN=.dev-check/installed/nexusbro.exe
             CEF=.dev-check/installed
           else
-            BIN=.dev-check/installed-linux/usr/bin/nexusbro
-            CEF=.dev-check/installed-linux/usr/lib/NexusBro
+            BIN=/usr/bin/nexusbro
+            CEF=/usr/lib/NexusBro
           fi
           python tests/gui/youtube_player_native.py --exe "$BIN" --cef "$CEF" --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - name: Real native video save, route, cancellation and no-overwrite acceptance
@@ -606,9 +610,9 @@ jobs:
             CEF=.dev-check/installed
             COMPONENTS=.dev-check/installed/binaries/youtube-light
           else
-            BIN=.dev-check/installed-linux/usr/bin/nexusbro
-            CEF=.dev-check/installed-linux/usr/lib/NexusBro
-            COMPONENTS=.dev-check/installed-linux/usr/lib/NexusBro/binaries/youtube-light
+            BIN=/usr/bin/nexusbro
+            CEF=/usr/lib/NexusBro
+            COMPONENTS=/usr/lib/NexusBro/binaries/youtube-light
           fi
           python tests/gui/youtube_download_native.py --exe "$BIN" --cef "$CEF" --components "$COMPONENTS" --out .dev-check/youtube-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - uses: actions/upload-artifact@v4
@@ -629,8 +633,8 @@ jobs:
             BIN=.dev-check/installed/nexusbro.exe
             CEF=.dev-check/installed
           else
-            BIN=.dev-check/installed-linux/usr/bin/nexusbro
-            CEF=.dev-check/installed-linux/usr/lib/NexusBro
+            BIN=/usr/bin/nexusbro
+            CEF=/usr/lib/NexusBro
           fi
           python tests/gui/youtube_features_native.py --exe "$BIN" --cef "$CEF" --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --video-high-webm .dev-check/youtube-media-fixture/video-high.webm --out .dev-check/youtube-features
       - name: Native real resume service and Super isolation acceptance
@@ -644,8 +648,8 @@ jobs:
             BIN=.dev-check/installed/nexusbro.exe
             CEF=.dev-check/installed
           else
-            BIN=.dev-check/installed-linux/usr/bin/nexusbro
-            CEF=.dev-check/installed-linux/usr/lib/NexusBro
+            BIN=/usr/bin/nexusbro
+            CEF=/usr/lib/NexusBro
           fi
           python tests/gui/youtube_resume_native.py --exe "$BIN" --cef "$CEF" --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --out .dev-check/youtube-resume
       - uses: actions/upload-artifact@v4
