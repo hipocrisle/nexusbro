@@ -176,6 +176,12 @@
       "url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/a8029b6528fecbcb5d99b331cfc76e6467b9bc77/LICENSE.md",
       "sha256": "2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af",
       "scope": "Exact FFmpeg source license text; active minimal build selects LGPL-2.1-or-later, not every shipped COPYING alternative"
+    },
+    {
+      "filename": "PyInstaller-COPYING.txt",
+      "url": "https://raw.githubusercontent.com/pyinstaller/pyinstaller/7e66014fea8c7412071f0eec1e82fd3fc3fe5d37/COPYING.txt",
+      "sha256": "0598064c7d2718e38d7914a7d08343b2fa008e3bea9ebba2aa7a6ffa5900dd64",
+      "scope": "Pinned yt-dlp PyInstaller bootloader license and exception; this is not a full binary dependency provenance assertion"
     }
   ],
   "source_inventory": [
