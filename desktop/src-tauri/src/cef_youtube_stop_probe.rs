@@ -26,8 +26,9 @@ fn wipe(v: &mut Value) {
             }
         }
         Value::Object(m) => {
-            for (_, v) in m.iter_mut() {
-                wipe(v)
+            for (mut key, mut value) in std::mem::take(m) {
+                key.zeroize();
+                wipe(&mut value);
             }
         }
         _ => {}
