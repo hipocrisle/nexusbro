@@ -1446,7 +1446,39 @@ def run(args):
 
         def recovery_fill(selector, value):
             recovery_prepare('document.querySelector(' + json.dumps(selector) + ')')
-            ca.fill(selector, value)
+            if selector != '[aria-label="Подтверждение сброса"]':
+                ca.fill(selector, value)
+                return
+            # xdotool type remaps one temporary keycode for non-Latin glyphs;
+            # GTK may consume later mappings before all queued key events. Paste
+            # ONLY these public confirmation phrases through this owned Xvfb's
+            # native clipboard. Master passwords/credentials never take this path.
+            require(value in ('НЕ СБРАСЫВАТЬ', 'СБРОСИТЬ'), 'Only public recovery confirmations may use the clipboard')
+            xenv = {**os.environ, 'DISPLAY': a.display}
+            clipboard = subprocess.Popen(['xclip', '-selection', 'clipboard', '-in', '-quiet'],
+                                         env=xenv, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
+                                         stderr=subprocess.DEVNULL, start_new_session=True)
+            try:
+                clipboard.stdin.write(value.encode('utf-8'))
+                clipboard.stdin.close()
+                def clipboard_ready():
+                    require(clipboard.poll() is None, 'Owned confirmation clipboard process exited')
+                    result = subprocess.run(['xclip', '-selection', 'clipboard', '-out'], env=xenv,
+                                            capture_output=True, text=True, timeout=2)
+                    return result.returncode == 0 and result.stdout == value
+                wait_for(clipboard_ready, 'Public confirmation did not reach the native clipboard', 5)
+                ca.click(selector)
+                subprocess.run(['xdotool', 'key', '--clearmodifiers', 'ctrl+a', 'ctrl+v'], env=xenv, check=True)
+                js_wait(ca, 'document.querySelector(' + json.dumps(selector) + ').value===' + json.dumps(value),
+                        'Native confirmation paste did not preserve the exact public phrase', 8)
+            finally:
+                if clipboard.poll() is None:
+                    clipboard.terminate()
+                    try:
+                        clipboard.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        clipboard.kill()
+                        clipboard.wait(timeout=3)
 
         def protected_snapshot():
             return {str(path.relative_to(security_root)): path.read_bytes()
