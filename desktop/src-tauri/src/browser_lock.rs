@@ -571,7 +571,7 @@ async fn recover_vault(
         }
     })
     .await
-    .map_err(|_| "Не удалось изменить хранилище".to_string())?;
+    .unwrap_or_else(|_| Err("Не удалось изменить хранилище".to_string()));
     if let Err(error) = operation {
         app.state::<Arc<VaultState>>().lock();
         crate::passwords::broadcast(app, false);
