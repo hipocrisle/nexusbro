@@ -480,7 +480,9 @@ jobs:
         if: ${{ always() && !cancelled() }}
         with:
           name: youtube-checkpoint-linux-download
-          path: .dev-check/linux-reuse-download/diagnostic-checkpoint.json
+          path: |
+            .dev-check/linux-reuse-download/diagnostic-checkpoint.json
+            .dev-check/linux-reuse-download/native-save-dialog.png
           if-no-files-found: ignore
           retention-days: 7
       - name: Linux same installed binary features DIAGNOSTIC
@@ -553,6 +555,7 @@ jobs:
             .dev-check/linux-reuse-provenance.json
             .dev-check/linux-reuse-player/result.json
             .dev-check/linux-reuse-download/result.json
+            .dev-check/linux-reuse-download/native-save-dialog.png
             .dev-check/linux-reuse-features/result.json
             .dev-check/linux-reuse-resume/result.json
           if-no-files-found: warn
