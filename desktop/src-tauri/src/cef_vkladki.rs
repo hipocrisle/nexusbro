@@ -916,6 +916,7 @@ impl Rabota {
         self.sync_native_visibility();
     }
     fn shag(&mut self) -> anyhow::Result<()> {
+        crate::cef_youtube::poll_probes();
         if self.hibernate.active()||self.hibernate.stopped(){return self.hibernate_shag();}
         self.route_tick()?;
         if !self.data_requests.is_empty(){
@@ -1049,6 +1050,11 @@ impl Rabota {
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
+                Sobytie::Komanda(Komanda::YoutubeSnapshot{id})=>{
+                    let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(|b|crate::cef_youtube::request_probe(b,id,tx.clone()));
+                    if result.is_err(){let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-state","id":id,"error":"Состояние плеера недоступно"})));}
+                    continue;
+                }
                 Sobytie::Komanda(Komanda::YoutubeLight{id})=>{
                     let result=(||->Result<(),&'static str>{
                         let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("Вкладка занята")?;

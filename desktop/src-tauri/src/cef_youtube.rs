@@ -220,7 +220,21 @@ pub fn open_webm(
     let url = documents()
         .grant(browser.identifier(), generation)
         .ok_or("Не удалось открыть внутренний плеер")?;
-    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str()});
+    let mut qualities: Vec<_> = data
+        .formats
+        .iter()
+        .filter(|f| {
+            f.ext == "webm"
+                && f.kind == MediaKind::VideoOnly
+                && f.height.is_some_and(|h| h <= 4320)
+                && f.vcodec
+                    .as_deref()
+                    .is_some_and(|c| c.starts_with("vp9") || c.starts_with("vp09"))
+        })
+        .collect();
+    qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
+    let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
+    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices});
     let json = zeroize::Zeroizing::new(
         serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
     );
@@ -299,4 +313,42 @@ pub fn logical_url(browser: i32, document: &str) -> Option<String> {
             .filter(|g| g.document == document)
             .and_then(|g| g.logical_url.clone())
     })
+}
+
+thread_local! {
+    static PROBES:std::cell::RefCell<Vec<(u64,std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,crate::cef_youtube_probe::Probe)>>=const{std::cell::RefCell::new(Vec::new())};
+}
+pub fn request_probe(
+    browser: &Browser,
+    tab: u64,
+    sender: std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,
+) -> Result<(), &'static str> {
+    PROBES.with(|probes| {
+        let mut probes = probes.borrow_mut();
+        if probes.len() >= 16 {
+            return Err("Слишком много запросов состояния плеера");
+        }
+        probes.push((
+            tab,
+            sender,
+            crate::cef_youtube_probe::Probe::start(browser)?,
+        ));
+        Ok(())
+    })
+}
+pub fn poll_probes() {
+    PROBES.with(|probes|{
+        probes.borrow_mut().retain_mut(|(tab,sender,probe)|{
+            let Some(result)=probe.poll() else{return true;};
+            let data=match result {
+                Ok(state)=>serde_json::json!({"tip":"youtube-state","id":tab,"state":state}),
+                Err(_)=>serde_json::json!({"tip":"youtube-state","id":tab,"error":"Состояние плеера недоступно"}),
+            };
+            let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(data));
+            false
+        });
+    });
+}
+pub fn clear_probes() {
+    PROBES.with(|p| p.borrow_mut().clear());
 }

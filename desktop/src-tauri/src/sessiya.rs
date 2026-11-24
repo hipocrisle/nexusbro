@@ -59,6 +59,8 @@ pub enum Komanda {
     ObnovitInterfeys,
     #[serde(rename="youtube_light")]
     YoutubeLight { id:u64 },
+    #[serde(rename="youtube_snapshot")]
+    YoutubeSnapshot { id:u64 },
     HibernatePrepare { request:crate::super_hibernation_protocol::Prepare },
     HibernateCommit { token:crate::super_hibernation_protocol::Token },
     HibernateAbort { token:crate::super_hibernation_protocol::Token },

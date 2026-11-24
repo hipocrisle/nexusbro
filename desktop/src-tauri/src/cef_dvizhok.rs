@@ -203,7 +203,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         eprintln!("Native cookie prerequisite failed");
         return 2;
     }
-    match crate::cef_vkladki::rabotat(
+    let result=crate::cef_vkladki::rabotat(
         roditel,
         crate::okna::Mesto {
             x,
@@ -214,7 +214,9 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         std::path::Path::new(&profil),
         url.as_deref(),
         bootstrap,
-    ) {
+    );
+    crate::cef_youtube::clear_probes();
+    match result {
         Ok(()) => {
             if let Some(token)=crate::cef_vkladki::take_hibernate_shutdown_token(){
                 shutdown();

@@ -10,6 +10,8 @@
   const seek = document.getElementById('seek');
   const status = document.getElementById('status');
   const clock = document.getElementById('clock');
+  const quality = document.getElementById('quality');
+  const qualities = new Map();
   let configured = false, disposed = false, intended = false, separate = false;
   let epoch = 0, syncing = false, duration = 0, timer = null;
   const setStatus = text => { status.textContent = text; };
@@ -43,6 +45,19 @@
     if (!duration || !configured) return;
     const t = Math.min(duration, Math.max(0, Number(seek.value)));
     video.currentTime = t; if (separate) audio.currentTime = t;
+  });
+  quality.addEventListener('change', () => {
+    const next = qualities.get(quality.value); if (!next || disposed) return;
+    const resume = intended, position = separate ? audio.currentTime : video.currentTime;
+    pause(); const change = epoch; video.src = next;
+    setStatus('Смена качества…');
+    video.addEventListener('loadedmetadata', () => {
+      if (disposed || epoch !== change) return;
+      const t = Math.min(position, Number.isFinite(video.duration) ? video.duration : position);
+      video.currentTime = t; if (separate) audio.currentTime = t;
+      if (resume) void play(); else setStatus('Готово к воспроизведению');
+    }, {once:true});
+    video.load();
   });
   document.getElementById('volume').addEventListener('input', event => {
     const v = Math.min(1, Math.max(0, Number(event.target.value)));
@@ -85,7 +100,18 @@
         catch (_) { return false; }
       };
       if (!valid(config.video) || (config.audio && !valid(config.audio))) return false;
+      if (config.qualities && (!Array.isArray(config.qualities) || config.qualities.length > 256)) return false;
+      for (const item of config.qualities || []) {
+        if (!item || typeof item.id !== 'string' || item.id.length > 128 || typeof item.label !== 'string' || !valid(item.url)) return false;
+      }
       configured = true; separate = Boolean(config.audio);
+      for (const item of config.qualities || []) {
+        if (qualities.has(item.id)) continue;
+        qualities.set(item.id, item.url);
+        const option = document.createElement('option'); option.value = item.id; option.textContent = item.label.slice(0,80);
+        option.selected = item.url === config.video; quality.append(option);
+      }
+      quality.hidden = qualities.size < 2;
       document.getElementById('title').textContent = config.title.slice(0, 512);
       document.title = config.title.slice(0, 512) + ' — Лёгкий YouTube';
       video.muted = separate; video.src = config.video;
@@ -95,7 +121,8 @@
     dispose,
     snapshot() {
       return {configured, disposed, playing: intended && !video.paused && (!separate || !audio.paused),
-        position: video.currentTime || 0, duration, separate,
+        position: video.currentTime || 0, audio_position: separate ? audio.currentTime || 0 : video.currentTime || 0, duration, separate,
+        video_width: video.videoWidth || 0, video_height: video.videoHeight || 0,
         skew: separate ? Math.abs(audio.currentTime - video.currentTime) : 0,
         decoded: video.getVideoPlaybackQuality?.().totalVideoFrames || 0,
         dropped: video.getVideoPlaybackQuality?.().droppedVideoFrames || 0};

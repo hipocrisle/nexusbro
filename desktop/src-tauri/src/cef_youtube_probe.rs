@@ -68,6 +68,9 @@ fn decode(bytes: &[u8]) -> Reply {
         "skew",
         "decoded",
         "dropped",
+        "audio_position",
+        "video_width",
+        "video_height",
     ];
     if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
         return Err(FAILED);
@@ -79,11 +82,19 @@ fn decode(bytes: &[u8]) -> Reply {
             Value::Bool(source.get(field).and_then(Value::as_bool).ok_or(FAILED)?),
         );
     }
-    for field in ["position", "duration", "skew"] {
+    for field in ["position", "duration", "skew", "audio_position"] {
         let number = source
             .get(field)
             .and_then(Value::as_f64)
             .filter(|n| n.is_finite() && (0.0..=MAX_SECONDS).contains(n))
+            .ok_or(FAILED)?;
+        clean.insert(field.into(), json!(number));
+    }
+    for field in ["video_width", "video_height"] {
+        let number = source
+            .get(field)
+            .and_then(Value::as_u64)
+            .filter(|n| *n <= 16384)
             .ok_or(FAILED)?;
         clean.insert(field.into(), json!(number));
     }
@@ -234,7 +245,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn data() -> Value {
-        json!({"configured":true,"disposed":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1})
+        json!({"configured":true,"disposed":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
     }
     fn envelope(value: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":value}})).unwrap()
@@ -243,7 +254,7 @@ mod tests {
     fn reconstructs_only_bounded_native_player_fields() {
         let bytes = envelope(data());
         let value = decode(&bytes).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 9);
+        assert_eq!(value.as_object().unwrap().len(), 12);
         assert_eq!(value["decoded"], 66);
         assert_eq!(value["playing"], true);
         let mut result: Value = serde_json::from_slice(&bytes).unwrap();
@@ -265,6 +276,8 @@ mod tests {
             ("skew", Value::Null),
             ("decoded", json!(9007199254740992u64)),
             ("dropped", json!(1.25)),
+            ("video_height", json!(16385)),
+            ("audio_position", json!(-1)),
             ("secret_url", json!("never-reflect")),
         ] {
             let mut v = data();

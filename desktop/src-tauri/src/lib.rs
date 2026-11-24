@@ -26,6 +26,7 @@ mod youtube_light_extract;
 mod youtube_light_components;
 mod youtube_light_jobs;
 mod cef_youtube;
+mod cef_youtube_probe;
 mod tab_route_parent;
 mod route_network;
 mod nastrojki;

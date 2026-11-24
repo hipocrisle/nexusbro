@@ -188,6 +188,14 @@ fn sidecar_error(error: sidecar::ExtractError) -> &'static str {
         OutputLimit => "Ответ извлечения превышает лимит",
         TimedOut => "Истекло время извлечения",
         ReapFailed => CLEANUP_UNKNOWN,
+        UnsupportedInvocation => "Компоненты лёгкого режима несовместимы",
+        HttpForbidden => "Сервер отклонил запрос видео (403)",
+        RateLimited => "Сервис ограничил частоту запросов; повторите позже",
+        TlsFailure => "Не удалось проверить защищённое соединение с видеосервисом",
+        ChallengeRequired => {
+            "YouTube потребовал дополнительную проверку. Используйте обычный режим."
+        }
+        VideoUnavailable => "Видео недоступно для анонимного просмотра",
         ProcessFailed | EmptyOutput => "Видео недоступно для анонимного извлечения",
         SpawnFailed | ReadFailed | WaitFailed => "Не удалось получить публичные данные видео",
     }
