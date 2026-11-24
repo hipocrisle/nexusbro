@@ -87,6 +87,7 @@
       if (!valid(config.video) || (config.audio && !valid(config.audio))) return false;
       configured = true; separate = Boolean(config.audio);
       document.getElementById('title').textContent = config.title.slice(0, 512);
+      document.title = config.title.slice(0, 512) + ' — Лёгкий YouTube';
       video.muted = separate; video.src = config.video;
       if (separate) audio.src = config.audio;
       button.disabled = false; setStatus('Готово к воспроизведению'); return true;

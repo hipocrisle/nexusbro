@@ -17,6 +17,7 @@ struct Grant {
     generation: u64,
     document: String,
     config: Option<zeroize::Zeroizing<String>>,
+    logical_url: Option<String>,
 }
 #[derive(Clone, Default)]
 pub struct PlayerDocuments(Arc<Mutex<HashMap<i32, Grant>>>);
@@ -49,6 +50,7 @@ impl PlayerDocuments {
                 generation,
                 document: document.clone(),
                 config: None,
+                logical_url: None,
             },
         );
         Some(document)
@@ -228,6 +230,7 @@ pub fn open_webm(
             .get_mut(&browser.identifier())
             .ok_or("Плеер уже закрыт")?;
         grant.config = Some(json);
+        grant.logical_url = Some(data.metadata.id().watch_url());
     }
     let Some(frame) = browser.main_frame() else {
         documents().revoke(browser.identifier());
@@ -286,4 +289,12 @@ pub fn stop(browser: &Browser) {
             );
         }
     }
+}
+
+pub fn logical_url(browser: i32, document: &str) -> Option<String> {
+    documents().0.lock().ok().and_then(|g| {
+        g.get(&browser)
+            .filter(|g| g.document == document)
+            .and_then(|g| g.logical_url.clone())
+    })
 }

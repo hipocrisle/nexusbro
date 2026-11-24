@@ -61,7 +61,7 @@ wrap_display_handler! {
                 if let Some(u) = url {
                     let u = u.to_string();
                     if self.bootstrap.skip_address(&u){return;}
-                    if let Some(b)=browser.as_ref(){let _ = self.tx.send(Sobytie::Adres(self.id, b.identifier(), u.clone()));}
+                    if let Some(b)=browser.as_ref(){let logical=crate::cef_youtube::logical_url(b.identifier(),&u).unwrap_or_else(||u.clone());let _ = self.tx.send(Sobytie::Adres(self.id, b.identifier(), logical));}
 
                 }
             }

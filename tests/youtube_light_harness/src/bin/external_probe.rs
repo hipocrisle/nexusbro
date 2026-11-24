@@ -11,6 +11,17 @@ async fn main() {
     if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true") || args.len() != 3 {
         std::process::exit(2);
     }
+    // The CI wrapper assigns the Windows Job BEFORE any helper can spawn.
+    // Linux wrapper establishes a new process group before this handshake.
+    use std::io::{BufRead, Read};
+    let mut admission = String::new();
+    if std::io::BufReader::new(std::io::stdin().take(4))
+        .read_line(&mut admission)
+        .is_err()
+        || admission != "GO\n"
+    {
+        std::process::exit(2);
+    }
     let directory = std::path::Path::new(&args[0]);
     let Some(video) = VideoId::parse(&args[2]).ok() else {
         std::process::exit(2);
