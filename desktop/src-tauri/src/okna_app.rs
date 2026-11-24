@@ -83,7 +83,7 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let _claim=crate::super_hibernation_parent::ViewClaim::new(&id);
     let previous=s.aktivnaya.lock().unwrap().clone();
     crate::super_hibernation_parent::ensure_view_ready(&app,&s,&id).await?;
-    if let Some(previous)=previous{crate::pereklyuchit_vnutri(&s,&previous);}
+    if let Some(previous)=previous{crate::pereklyuchit_vnutri(&app,&s,&previous);}
     create_window(&app,&s,id,privatnaya,None)
 }
 fn create_window(app:&tauri::AppHandle,s:&Sostoyanie,id:String,privatnaya:bool,recovery:Option<crate::window_recovery::WindowSession>)->Result<(),String>{
@@ -192,7 +192,7 @@ pub async fn vybrat(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,window:ta
     let _claim=crate::super_hibernation_parent::ViewClaim::new(&id);
     let previous=s.aktivnaya.lock().unwrap().clone();
     crate::super_hibernation_parent::ensure_view_ready(&app,&s,&id).await?;
-    if let Some(previous)=previous{crate::pereklyuchit_vnutri(&s,&previous);}
+    if let Some(previous)=previous{crate::pereklyuchit_vnutri(&app,&s,&previous);}
     let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).unwrap_or(0);
     let cached={let mut map=s.okna.0.lock().unwrap();let w=map.get_mut(&label).ok_or("Окно уже закрыто")?;if w.closing{return Err("Окно закрывается".into());}
         if w.super_id!=id{let old=Vid{hwnd:w.hwnd.take(),sessiya:w.sessiya.take(),engine:w.engine};if let Some(h)=old.hwnd{let _=sistema::pokazat(h,false);}w.others.insert(w.super_id.clone(),old);
@@ -315,7 +315,7 @@ pub async fn ready_command(app:&tauri::AppHandle,s:&Sostoyanie,label:&str,comman
         if !running{
             let previous=s.aktivnaya.lock().unwrap().clone();
             let result=crate::zapustit_vnutri(app,&app.state(),&id).await;
-            if let Some(previous)=previous{crate::pereklyuchit_vnutri(&app.state(),&previous);}
+            if let Some(previous)=previous{crate::pereklyuchit_vnutri(&app,&app.state(),&previous);}
             if !result.ok{if let Some(w)=s.okna.0.lock().unwrap().get_mut(label){w.recovery_lazy=true;}return Err(result.soobshchenie);}
         }
         let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).ok_or("Супер-вкладка уже закрыта")?;
@@ -423,7 +423,7 @@ pub async fn prepare_search(
         let previous = s.aktivnaya.lock().map_err(|_| "Список занят")?.clone();
         let result = crate::zapustit_vnutri(app, &app.state(), &entry.super_id).await;
         if let Some(previous) = previous {
-            crate::pereklyuchit_vnutri(&app.state(), &previous);
+            crate::pereklyuchit_vnutri(&app,&app.state(), &previous);
         }
         if !result.ok {
             return Err(result.soobshchenie);

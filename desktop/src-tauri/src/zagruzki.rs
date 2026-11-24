@@ -85,7 +85,7 @@ pub async fn zagruzka_deystvie(app:tauri::AppHandle,window:tauri::WebviewWindow,
         if !running{
             let previous=s.aktivnaya.lock().unwrap().clone();
             let result=crate::zapustit_vnutri(&app,&s,&super_id).await;
-            if let Some(id)=previous{if id!=super_id{crate::pereklyuchit_vnutri(&s,&id);}}
+            if let Some(id)=previous{if id!=super_id{crate::pereklyuchit_vnutri(&app,&s,&id);}}
             if !result.ok{return Err(result.soobshchenie);}
         }
         let channel=s.vkladki.lock().unwrap().get(&super_id).and_then(|v|v.kanal.clone()).ok_or("Супер-вкладка закрыта")?;

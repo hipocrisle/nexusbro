@@ -148,7 +148,7 @@ pub fn request(
         return;
     }
     display(browser, serde_json::json!({"choosing":true}));
-    if sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-save","id":tab,"browser_id":browser.identifier(),"route_generation":route_generation,"request":request,"filename":filename}))).is_err(){cancel(browser.identifier());}
+    if sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-save","id":tab,"browser_id":browser.identifier(),"route_generation":route_generation,"request":request,"filename":filename}))).is_err(){self::cancel(identity);}
 }
 pub fn target(browser: &Browser, route_generation: u64, request: &str, path: Option<String>) {
     let identity = browser.identifier();
@@ -273,7 +273,8 @@ pub fn target(browser: &Browser, route_generation: u64, request: &str, path: Opt
                             return false;
                         };
                         entry.progress = Some(progress);
-                        !*entry.cancel.borrow()
+                        let keep_running = !*entry.cancel.borrow();
+                        keep_running
                     },
                 ))
             }))
