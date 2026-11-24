@@ -325,14 +325,14 @@ pub fn dozhdatsya_okna(
         loop {
             use std::io::Read;
             let mut line=String::new();
-            let limit=crate::super_cookie_escrow::MAX_BYTES*2;
+            let limit=64*1024*1024;
             let read=Read::take(&mut chitat,(limit+1) as u64).read_line(&mut line);
             if read.as_ref().is_ok_and(|n|*n==0) || line.len()>limit || !line.ends_with('\n'){break;}
             let stroka=read.map(|_|line.trim_end_matches(['\r','\n']).to_string());
             match stroka {
                 Ok(s) => {
                     if let Some(json)=s.strip_prefix("NB-HIBERNATE "){
-                        if let Ok(frame)=serde_json::from_str(json){hibernate(frame);}
+                        if json.len()<=crate::super_cookie_escrow::MAX_BYTES*2 {if let Ok(frame)=serde_json::from_str(json){hibernate(frame);}}
                     } else if let Some(json) = s.strip_prefix("NB-UI ") {
                         if let Ok(data) = serde_json::from_str(json) { sluzhebnoe(data); }
                     } else if s == "NB-ADRES" { adresnyi_vvod(); }
