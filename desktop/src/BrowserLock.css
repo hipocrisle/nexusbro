@@ -14,3 +14,16 @@
 .browser-lock-hint{position:fixed;right:18px;bottom:18px;z-index:9000;display:flex;align-items:center;gap:12px;max-width:min(720px,calc(100vw - 36px));padding:14px 16px;background:var(--fon2,#171a24);color:var(--tekst,#e6e9f2);border:1px solid var(--kraj,#272c3a);border-radius:12px;box-shadow:0 12px 40px #0005}
 .browser-lock-hint button{flex-shrink:0;background:var(--fon,#11131a);color:var(--tekst,#e6e9f2);border:1px solid var(--kraj,#272c3a);border-radius:7px;padding:7px 10px;cursor:pointer}
 @media(max-width:520px){.browser-lock-card{padding:24px}.browser-lock-hint{flex-wrap:wrap}}
+
+.browser-lock-recovery{width:min(100%,520px);max-height:calc(100vh - 48px);overflow-y:auto;box-sizing:border-box}
+.browser-lock-card form{display:flex;flex-direction:column;gap:14px}
+.browser-lock-card form>button{margin-top:2px}
+.browser-lock-card small{color:var(--tiho,#8b93a7);font-size:12px;line-height:1.5}
+.browser-lock-warning{border-left:3px solid #cb9a61;padding-left:14px;margin-bottom:20px}
+.browser-lock-warning p{font-size:13px;margin-bottom:12px}
+.browser-lock-warning p:last-child{margin-bottom:0}
+.browser-lock-actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:18px}
+.browser-lock-card .browser-lock-secondary{flex:1 1 180px;margin:0;background:var(--fon,#11131a);color:var(--tekst,#e6e9f2);border:1px solid var(--kraj,#272c3a);font-size:13px}
+.browser-lock-card .browser-lock-danger{background:#bd5d5d;color:#fff}
+.browser-lock-card .vybor>button{margin:0;background:var(--fon,#11131a);color:var(--tekst,#e6e9f2);border:1px solid var(--kraj,#272c3a);font-weight:400}
+body:has(.browser-lock-screen)>.vybor-popup{z-index:10010}
