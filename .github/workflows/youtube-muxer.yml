@@ -1,0 +1,114 @@
+name: Minimal source-built YouTube muxer prototype
+on:
+  workflow_dispatch:
+    inputs:
+      source_sha256:
+        type: string
+        default: ''
+        description: Reviewed source archive SHA; empty means bootstrap evidence only
+      media_artifact:
+        type: string
+        default: youtube-controlled-media
+        description: Same-run controlled VP9 and Opus artifact (caller must generate)
+  workflow_call:
+    inputs:
+      source_sha256:
+        type: string
+        default: ''
+      media_artifact:
+        type: string
+        default: youtube-controlled-media
+permissions:
+  contents: read
+jobs:
+  minimal-muxer:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-x64
+          - os: windows-latest
+            platform: windows-x64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.media_artifact }}
+          path: .dev-check/youtube-media-fixture
+      - name: Fetch exact source and record bootstrap SHA before parsing
+        env:
+          SOURCE_SHA256: ${{ inputs.source_sha256 }}
+        run: python tools/build_youtube_muxer.py fetch --source-sha256 "$SOURCE_SHA256"
+        shell: bash
+      - name: Prepare MSVC environment
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Prepare official supported MSYS2 build shell (tools only)
+        if: runner.os == 'Windows'
+        uses: msys2/setup-msys2@v2
+        with:
+          update: false
+          install: make diffutils pkgconf
+          path-type: inherit
+      - name: Native Windows MSVC shared build, no assembly or external libraries
+        if: runner.os == 'Windows'
+        shell: msys2 {0}
+        run: |
+          set -euo pipefail
+          flags=$(python tools/build_youtube_muxer.py print-configure)
+          cd .dev-check/muxer-build/source/FFmpeg-a8029b6528fecbcb5d99b331cfc76e6467b9bc77
+          # Avoid MSYS coreutils link.exe shadowing the MSVC linker.
+          msvc_link="$(cygpath -u "$VCToolsInstallDir")/bin/Hostx64/x64/link.exe"
+          test -f "$msvc_link"
+          ./configure $flags --toolchain=msvc --ld="$msvc_link" --prefix="$(pwd)/../../install" > ../../configure.log 2>&1
+          make -j2 > ../../make.log 2>&1
+          make install > ../../install.log 2>&1
+      - name: Native Linux shared build, no assembly or external libraries
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          flags=$(python tools/build_youtube_muxer.py print-configure)
+          cd .dev-check/muxer-build/source/FFmpeg-a8029b6528fecbcb5d99b331cfc76e6467b9bc77
+          ./configure $flags --prefix="$(pwd)/../../install" > ../../configure.log 2>&1
+          make -j2 > ../../make.log 2>&1
+          make install > ../../install.log 2>&1
+      - name: Inspect Windows import closure
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $report = '.dev-check/muxer-build/runtime-dependencies.txt'
+          Get-ChildItem .dev-check/muxer-build/install/bin -File | Where-Object { $_.Extension -in '.exe','.dll' } | ForEach-Object {
+            "FILE $($_.Name)" | Out-File $report -Append
+            & dumpbin /dependents $_.FullName | Out-File $report -Append
+            if ($LASTEXITCODE -ne 0) { throw 'dependency_inspection_failed' }
+          }
+      - name: Package own libraries and prove real local stream-copy and protocol refusal
+        run: python tools/build_youtube_muxer.py package --platform ${{ matrix.platform }}
+      - name: Preserve source, corresponding build recipe, logs and native receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-minimal-muxer-${{ matrix.platform }}
+          path: |
+            .dev-check/muxer-build/source.tar.gz
+            .dev-check/muxer-build/source-receipt.json
+            .dev-check/muxer-build/package/
+            .dev-check/muxer-build/*log
+            .dev-check/muxer-build/verified-*.txt
+            .dev-check/muxer-build/runtime-dependencies.txt
+            .dev-check/muxer-build/smoke-summary.json
+            .dev-check/muxer-build/source/FFmpeg-*/ffbuild/config.log
+            tools/build_youtube_muxer.py
+            .github/workflows/youtube-muxer.yml
+          retention-days: 14
+          if-no-files-found: error
