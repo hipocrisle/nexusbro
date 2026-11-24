@@ -532,6 +532,7 @@ pub fn tick(app: &tauri::AppHandle) {
         return;
     }
     let s: tauri::State<crate::Sostoyanie> = app.state();
+    let _cleanup = cleanup_observation().lock().unwrap();
     let selection_guard = s.izmenenie_okon.lock().unwrap();
     let pending_views = view_claims().lock().unwrap();
     let selected = s.aktivnaya.lock().ok().and_then(|v| v.clone());
@@ -732,11 +733,17 @@ pub fn super_lifecycle_snapshot(
     if window.label() != "main" {
         return Err("Main window required".into());
     }
-    let map = s.vkladki.lock().map_err(|_| "Lifecycle unavailable")?;
-    let engines:Vec<_>=map.iter().map(|(id,v)|{
-  let st=v.hibernate.machine.stamp();let session=v.obychnye.as_ref();
-  serde_json::json!({"id":id,"phase":format!("{:?}",v.hibernate.machine.phase()),"generation":st.generation,"attempt":st.attempt,"profile_reserved":v.hibernate.machine.profile_reserved(),"lease_confirmed":v.hibernate.machine.lease_confirmed(),"pid":v.proc.as_ref().and_then(|p|p.pid()),"reason":v.hibernate.reason,"tab_count":session.map_or(0,|s|s.vkladki.len()),"live_count":if v.proc.is_some(){session.map_or(0,|s|s.vkladki.iter().filter(|t|!t.otlozhena).count())}else{0}})
- }).collect();
+    let _cleanup = cleanup_observation()
+        .lock()
+        .map_err(|_| "Lifecycle unavailable")?;
+    let mut map = s.vkladki.lock().map_err(|_| "Lifecycle unavailable")?;
+    let engines:Vec<_>=map.iter_mut().map(|(id,v)|{
+        let st=v.hibernate.machine.stamp();
+        let (members,complete)=match v.proc.as_mut(){Some(owner)=>match owner.members(){Ok(list)=>(list,true),Err(_)=>(Vec::new(),false)},None=>(Vec::new(),true)};
+        let owned:Vec<_>=members.into_iter().map(|p|serde_json::json!({"pid":p.pid,"birth":p.created.to_string(),"clock":if cfg!(target_os="windows"){"windows_filetime"}else{"linux_ticks"}})).collect();
+        let session=v.obychnye.as_ref();
+        serde_json::json!({"id":id,"phase":format!("{:?}",v.hibernate.machine.phase()),"generation":st.generation,"attempt":st.attempt,"profile_reserved":v.hibernate.machine.profile_reserved(),"lease_confirmed":v.hibernate.machine.lease_confirmed(),"pid":v.proc.as_ref().and_then(|p|p.pid()),"owned":owned,"owned_complete":complete,"reason":v.hibernate.reason,"tab_count":session.map_or(0,|s|s.vkladki.len()),"live_count":if v.proc.is_some(){session.map_or(0,|s|s.vkladki.iter().filter(|t|!t.otlozhena).count())}else{0}})
+    }).collect();
     Ok(serde_json::json!({"schema":1,"engines":engines}))
 }
 fn view_claims() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
@@ -865,4 +872,10 @@ mod tests {
         assert!(node.pending_control.is_none());
         assert!(!node.machine.successful_hibernation());
     }
+}
+
+/// Observation exclusion covers a short ordered resource-release transaction.
+pub(crate) fn cleanup_observation() -> &'static std::sync::Mutex<()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(Default::default)
 }
