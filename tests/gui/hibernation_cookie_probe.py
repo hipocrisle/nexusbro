@@ -33,6 +33,18 @@ from route_ca import generate
 from route_fixture import Fixture as RouteFixture
 
 MAX_FRAME = 9 * 1024 * 1024
+PROBE_STAGES = {'input','context','anchor','open','parse','restore','readback','verify','admission','target','target_close','cookie_capture','seal','anchor_close','flush','complete'}
+COOKIE_FIELDS = {'name','value','domain','path','expires','size','httpOnly','secure','session','sameSite','priority','sourceScheme','sourcePort','partitionKey','partitionKeyOpaque'}
+
+def safe_diagnostic(value):
+    fields={'expected_count','actual_count','missing_count','extra_count','parse_refused','mismatch_fields'}
+    require(isinstance(value,dict) and set(value)==fields,'native_diagnostic_schema_invalid')
+    require(all(type(value[k]) is int and 0<=value[k]<=4096 for k in ('expected_count','actual_count','missing_count','extra_count')),'native_diagnostic_counts_invalid')
+    require(type(value['parse_refused']) is bool,'native_diagnostic_boolean_invalid')
+    require(isinstance(value['mismatch_fields'],list) and len(value['mismatch_fields'])<=len(COOKIE_FIELDS) and
+            all(isinstance(k,str) and k in COOKIE_FIELDS for k in value['mismatch_fields']) and
+            len(set(value['mismatch_fields']))==len(value['mismatch_fields']),'native_diagnostic_fields_invalid')
+    return dict(value)
 
 
 def require(condition, stage):
@@ -230,6 +242,16 @@ class NativeRunner:
                 require(kind != 'failure', 'native_output_frame_invalid')
                 if kind == 'eof': eof = True; continue
                 self.last_probe['frames_received'] += 1
+                if set(value)=={'stage'}:
+                    require(isinstance(value['stage'],str) and value['stage'] in PROBE_STAGES,'native_progress_stage_invalid')
+                    self.last_probe['stage_count']=self.last_probe.get('stage_count',0)+1
+                    require(self.last_probe['stage_count']<=128,'native_progress_count_exceeded')
+                    self.last_probe['last_stage']=value['stage']
+                    continue
+                if set(value)=={'diagnostic'}:
+                    require('cookie_diagnostic' not in self.last_probe,'duplicate_native_diagnostic')
+                    self.last_probe['cookie_diagnostic']=safe_diagnostic(value['diagnostic'])
+                    continue
                 if value.get('readback_before_navigation') is True:
                     require(sealed is not None and not readback, 'unexpected_or_duplicate_readback')
                     self.fixture.admit(cycle)
@@ -391,7 +413,9 @@ def main():
                    'native_pipe_reader_did_not_exit','owned_native_tree_survived_exit','unsupported_cookie_schema_falsely_accepted',
                    'origin_requested_before_native_readback_admission','admission_cycle_changed','native_origin_or_blocking_storage_proof_missing',
                    'origin_before_admission_or_proxy_bypass','native_storage_or_httponly_visibility_failed','native_cookie_header_roundtrip_failed',
-                   'expired_cookie_resurrected','other_context_or_empty_jar_received_auth'}
+                   'expired_cookie_resurrected','other_context_or_empty_jar_received_auth','native_progress_stage_invalid',
+                   'native_progress_count_exceeded','duplicate_native_diagnostic','native_diagnostic_schema_invalid',
+                   'native_diagnostic_counts_invalid','native_diagnostic_boolean_invalid','native_diagnostic_fields_invalid'}
         report['failure_code'] = str(error) if type(error) is AssertionError and str(error) in allowed else 'unclassified'
         if runner: report['last_native_probe'] = runner.last_probe
     finally:
