@@ -928,6 +928,17 @@ pub fn restore_startup(
         drop(manager);
         drop(context);
         *s = snapshot.session;
+        // Preserve every row/route/scroll but admit only the selected ordinary
+        // page. Other original live pages wake through the existing lazy path.
+        anyhow::ensure!(
+            s.vkladki.iter().any(|t| t.id == s.aktivnaya),
+            "restore selection"
+        );
+        for tab in &mut s.vkladki {
+            if tab.id != s.aktivnaya {
+                tab.otlozhena = true;
+            }
+        }
         emit(Frame::Restored { generation })?;
         Ok(scroll)
     })();
