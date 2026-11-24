@@ -41,6 +41,38 @@ def sha256(path):
     return digest.hexdigest()
 
 
+def kernel_birth(pid, clock):
+    """Exact kernel identity, never a JS/psutil float-rounded timestamp."""
+    if sys.platform == 'win32':
+        require(clock == 'windows_filetime', 'Wrong native process clock')
+        import ctypes
+        from ctypes import wintypes
+        kernel = ctypes.WinDLL('kernel32', use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD,wintypes.BOOL,wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetProcessTimes.argtypes = [wintypes.HANDLE] + [ctypes.POINTER(wintypes.FILETIME)]*4
+        kernel.GetProcessTimes.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        handle = kernel.OpenProcess(0x1000,False,pid)
+        if not handle:
+            error=ctypes.get_last_error()
+            if error==5:raise psutil.AccessDenied(pid)
+            if error in (87,1168):raise psutil.NoSuchProcess(pid)
+            raise OSError('Kernel process handle unavailable')
+        try:
+            created,exited,kcpu,ucpu = (wintypes.FILETIME() for _ in range(4))
+            if not kernel.GetProcessTimes(handle,ctypes.byref(created),ctypes.byref(exited),ctypes.byref(kcpu),ctypes.byref(ucpu)):
+                raise OSError('Kernel process identity unavailable')
+            return str((int(created.dwHighDateTime)<<32)|int(created.dwLowDateTime))
+        finally: kernel.CloseHandle(handle)
+    require(clock == 'linux_ticks', 'Wrong native process clock')
+    try: raw = pathlib.Path('/proc').joinpath(str(pid),'stat').read_text()
+    except FileNotFoundError: raise psutil.NoSuchProcess(pid)
+    fields = raw[raw.rfind(')')+2:].split()
+    require(len(fields)>19 and fields[19].isdigit(), 'Kernel process identity unavailable')
+    return fields[19]
+
+
 def lifecycle(value):
     """Validate future readonly API strictly; never infer ACKs from a process."""
     require(isinstance(value, dict) and value.get('schema') == 1, 'Lifecycle schema is not 1')
@@ -57,20 +89,33 @@ def lifecycle(value):
         require(row.get('phase') in PHASES, 'Lifecycle phase invalid')
         for key in ('generation', 'attempt', 'tab_count', 'live_count'):
             require(type(row.get(key)) is int and row[key] >= 0, 'Lifecycle numeric field invalid')
-        require(row['tab_count'] == 125 and row['live_count'] <= 3, 'Lifecycle tab counts outside workload')
+        cold = row['phase']=='Sleeping' and row['generation']==0 and row['attempt']==0
+        require((row['tab_count']==125 or cold and row['tab_count']==0) and row['live_count']<=3, 'Lifecycle tab counts outside workload')
         require(type(row.get('profile_reserved')) is bool and type(row.get('lease_confirmed')) is bool,
                 'Lifecycle lease fields invalid')
+        require(type(row.get('owned_complete')) is bool and isinstance(row.get('owned'),list) and len(row['owned'])<=128,
+                'Lifecycle native ownership observation invalid')
+        members = []
+        member_pids = set()
+        for member in row['owned']:
+            require(isinstance(member,dict) and type(member.get('pid')) is int and member['pid']>0 and member['pid'] not in member_pids,
+                    'Lifecycle native member PID invalid')
+            require(isinstance(member.get('birth'),str) and re.fullmatch(r'[0-9]{1,20}',member['birth']) and int(member['birth'])>0,
+                    'Lifecycle native member birth invalid')
+            require(member.get('clock')==('windows_filetime' if sys.platform=='win32' else 'linux_ticks'), 'Lifecycle native member clock invalid')
+            member_pids.add(member['pid']); members.append({k:member[k] for k in ('pid','birth','clock')})
         pid = row.get('pid')
         require(pid is None or type(pid) is int and pid > 0, 'Lifecycle PID invalid')
         require(row.get('reason') is None or isinstance(row['reason'], str), 'Lifecycle reason invalid')
         if row['phase'] == 'Sleeping':
-            require(pid is None and not row['profile_reserved'] and not row['lease_confirmed'],
+            require(pid is None and not members and row['owned_complete'] and not row['profile_reserved'] and not row['lease_confirmed'],
                     'Sleeping row retains an OS/profile lease')
         if row['phase'] in ('Running', 'Preparing', 'Stopping'):
             require(row['profile_reserved'] and row['lease_confirmed'] and pid is not None,
                     'Live lifecycle phase has no confirmed lease')
-        clean.append({key: row[key] for key in ('id', 'phase', 'generation', 'attempt',
-                                               'profile_reserved', 'lease_confirmed', 'pid', 'tab_count', 'live_count')})
+        clean.append({**{key: row[key] for key in ('id', 'phase', 'generation', 'attempt',
+                                               'profile_reserved', 'lease_confirmed', 'pid', 'tab_count', 'live_count')},
+                      'owned':members,'owned_complete':row['owned_complete']})
     return clean
 
 
@@ -227,6 +272,10 @@ class Sampler:
         self.stop = threading.Event()
         self.error = None
         self.topology = None
+        self.native_members = None
+        self.native_members_complete = True
+        self.native_members_at = None
+        self.incomplete_since = None
         self.guard = threading.Lock()
         self.thread = threading.Thread(target=self.run, daemon=True)
 
@@ -234,29 +283,58 @@ class Sampler:
         require((self.root.pid, self.root.create_time()) == self.identity and self.root.is_running(), 'Soak app root exited')
         totals = collections.Counter()
         parent = None
-        for process in [self.root] + self.root.children(recursive=True):
+        with self.guard:
+            native_members = self.native_members
+            member_complete = self.native_members_complete
+            members_at = self.native_members_at
+        processes = {p.pid:p for p in [self.root]+self.root.children(recursive=True)}
+        expected = {}
+        skipped_stale_members = 0
+        if native_members is not None:
+            for member in native_members:
+                try:
+                    if kernel_birth(member['pid'],member['clock']) != member['birth']:
+                        skipped_stale_members += 1; continue
+                    processes[member['pid']] = psutil.Process(member['pid'])
+                    expected[member['pid']] = member
+                except psutil.NoSuchProcess:
+                    skipped_stale_members += 1
+        for process in processes.values():
             try:
-                identity = (process.pid, process.create_time())
+                clock = 'windows_filetime' if sys.platform=='win32' else 'linux_ticks'
+                before_birth = kernel_birth(process.pid,clock)
+                member = expected.get(process.pid)
+                if member and before_birth != member['birth']:
+                    skipped_stale_members += 1; continue
+                identity = (process.pid,before_birth)
                 memory = process.memory_info()
                 cpu = process.cpu_times()
                 private = getattr(memory, 'private', None)
                 if private is None:
                     private = process.memory_full_info().uss
+                if kernel_birth(process.pid,clock) != before_birth:
+                    skipped_stale_members += 1; continue
                 row = {'cpu_seconds': cpu.user + cpu.system, 'rss_bytes': memory.rss, 'private_bytes': private}
                 previous = self.previous.get(identity, row['cpu_seconds'])
                 self.previous[identity] = row['cpu_seconds']
                 totals.update({'processes': 1, 'cpu_seconds_delta': max(0, row['cpu_seconds'] - previous),
                                'rss_bytes': row['rss_bytes'], 'private_bytes': row['private_bytes']})
-                if identity == self.identity:
+                if process.pid == self.root.pid:
                     parent = row
             except psutil.NoSuchProcess:
                 continue
+        complete = member_complete and (members_at is None or time.monotonic()-members_at<20)
+        if not complete:
+            if self.incomplete_since is None:self.incomplete_since=time.monotonic()
+            require(time.monotonic()-self.incomplete_since<30,'Native ownership observation incomplete beyond bounded grace')
+        else:self.incomplete_since=None
         require(parent is not None, 'Soak app root not measurable')
         require(totals['processes'] <= 128 and totals['rss_bytes'] <= self.cap, 'Soak load guard exceeded')
         with self.guard:
             topology = self.topology
         return {'elapsed_seconds': round(time.monotonic() - self.started, 3),
-                'owned': dict(totals), 'parent': parent, 'topology': topology}
+                'owned': dict(totals), 'parent': parent, 'topology': topology,
+                'native_members_complete':complete,'skipped_stale_native_members':skipped_stale_members}
 
     def run(self):
         self.started = time.monotonic()
@@ -324,7 +402,7 @@ def run(args):
               'platform': sys.platform, 'runner_system': platform.system(), 'logical_cpus': psutil.cpu_count(),
               'private_metric': 'windows_private_commit' if sys.platform == 'win32' else 'linux_uss',
               'workload': {'supers': 8, 'saved_per_super': 125, 'saved_total': 1000, 'visited_limit': 24},
-              'coverage': {'writer_overlap': 'readonly_lease_plus_sampled_OS_identity_not_exhaustive', 'session_cookie_roundtrip': 'separate_fast_native_gate_required'},
+              'coverage': {'writer_overlap': 'baseline_ancestry_only_no_native_ownership_API' if args.baseline else 'readonly_lease_plus_verified_native_members_and_sampled_OS_identity_not_exhaustive', 'session_cookie_roundtrip': 'separate_fast_native_gate_required'},
               'drift_limits': {'parent_delta_mb': args.parent_delta_mb, 'parent_slope_mb_per_hour': args.parent_slope_mb_hour},
               'checks': [], 'requested_seconds': args.seconds if args.diagnostic_pilot else 7200}
     fixture = device = sampler = None
@@ -440,6 +518,7 @@ def run(args):
         sampler = Sampler(parent_pid, out / 'samples.jsonl', memory_cap); sampler.thread.start()
         sleepy = set(); cycles = 0; previous = {}; last_generation = {}; event_count = 0
         writer_identities = {}
+        missing_writers_since = {}
         next_poll = measured; next_cycle = measured + 3000
         while time.monotonic() - measured < duration:
             now = time.monotonic(); elapsed = now - measured
@@ -469,7 +548,7 @@ def run(args):
                     topology = (sum(bool(r.get('zapushchena')) for r in live), live_tabs, saved_count)
                 else:
                     engines = lifecycle(call(client, 'super_lifecycle_snapshot'))
-                    require(len(engines) == 8, 'Lifecycle omitted a seeded Super')
+                    require(len(engines) == 8 and sum(r['tab_count'] for r in engines)==1000, 'Measured lifecycle omitted a warmed seeded Super')
                     counts = collections.Counter(r['phase'] for r in engines)
                     topology = tuple(counts[p] for p in sorted(PHASES)) + (sum(r['live_count'] for r in engines), 1000)
                     pids = [r['pid'] for r in engines if r['pid'] is not None]
@@ -481,18 +560,40 @@ def run(args):
                         if previous.get(key) != state: event_count += 1
                         previous[key] = state
                         old_writer = writer_identities.get(key)
-                        if row['pid'] is not None:
-                            writer = psutil.Process(row['pid'])
-                            identity = (writer.pid, writer.create_time())
-                            owned_pids = {sampler.root.pid} | {p.pid for p in sampler.root.children(recursive=True)}
-                            require(writer.pid in owned_pids, 'Lifecycle writer outside owned app tree')
-                            if old_writer and old_writer != identity:
-                                require(not psutil.pid_exists(old_writer[0]) or psutil.Process(old_writer[0]).create_time() != old_writer[1], 'Replacement writer started before old writer exit')
-                            writer_identities[key] = identity
-                        if row['phase'] == 'Sleeping':
+                        native = next((m for m in row['owned'] if m['pid']==row['pid']),None)
+                        if row['pid'] is not None and native is not None:
+                            try:
+                                birth=kernel_birth(native['pid'],native['clock'])
+                                if birth!=native['birth']:raise psutil.NoSuchProcess(native['pid'])
+                                identity=(native['pid'],birth,native['clock'])
+                                if old_writer and old_writer!=identity:
+                                    try:still_old=kernel_birth(old_writer[0],old_writer[2])==old_writer[1]
+                                    except psutil.NoSuchProcess:still_old=False
+                                    require(not still_old,'Replacement writer started before old writer exit')
+                                writer_identities[key]=identity;missing_writers_since.pop(key,None)
+                            except psutil.NoSuchProcess:
+                                # A status read may race native exit. Re-read on
+                                # the next readonly poll; never invent an ACK.
+                                missing_writers_since.setdefault(key,now)
+                                require(now-missing_writers_since[key]<15,'Native writer missing beyond bounded observation race')
+                        elif row['pid'] is not None:
+                            if row['phase']=='Stopping' and row['owned_complete'] and not row['owned']:
+                                missing_writers_since.pop(key,None)
+                            else:
+                                missing_writers_since.setdefault(key,now)
+                                require(now-missing_writers_since[key]<15,'Native root identity missing beyond bounded observation race')
+                        if row['phase']=='Sleeping':
                             if old_writer:
-                                require(not psutil.pid_exists(old_writer[0]) or psutil.Process(old_writer[0]).create_time() != old_writer[1], 'Sleeping profile still has old OS writer')
-                            if key in ('soak-6', 'soak-7'): sleepy.add(key)
+                                try:still_old=kernel_birth(old_writer[0],old_writer[2])==old_writer[1]
+                                except psutil.NoSuchProcess:still_old=False
+                                require(not still_old,'Sleeping profile still has old OS writer')
+                            if key in ('soak-6','soak-7'):sleepy.add(key)
+                    members=[m for r in engines for m in r['owned']]
+                    require(len({m['pid'] for m in members})==len(members),'Native PID claimed by multiple profile leases')
+                    with sampler.guard:
+                        sampler.native_members=members
+                        sampler.native_members_complete=all(r['owned_complete'] for r in engines)
+                        sampler.native_members_at=now
                 with sampler.guard: sampler.topology = topology
                 next_poll = now + 5
             # Quiet6/7 remain untouched through the real default30min interval.
@@ -513,6 +614,7 @@ def run(args):
                       media_last_played_seconds=fixture.media[-1]['played'])
         stage = 'two-hour-and-drift-acceptance'
         if not args.diagnostic_pilot:
+            require(args.baseline or sum(not r['native_members_complete'] for r in sampler.samples)<=len(sampler.samples)*.05, 'Native member observation completeness below95percent')
             require(elapsed >= 7200 and cycles >= 10, 'Two-hour/cycle acceptance incomplete')
             require(report['drift']['comparable'], 'No sufficiently long comparable topology for parent drift')
             require(report['drift']['parent_private_delta_bytes'] <= args.parent_delta_mb * 1024**2 and
