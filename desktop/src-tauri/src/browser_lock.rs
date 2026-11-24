@@ -361,7 +361,7 @@ fn hide_all(app: &tauri::AppHandle) {
         let tabs = state.vkladki.lock().unwrap();
         for tab in tabs.values() {
             handles.extend(tab.okno);
-            pids.extend(tab.proc.as_ref().map(std::process::Child::id));
+            pids.extend(tab.proc.as_ref().and_then(|owner|owner.pid()));
             pids.extend(tab.zapas_pid);
         }
     }
