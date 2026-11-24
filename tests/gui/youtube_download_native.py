@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import urllib.parse
 
 import psutil
 from security_native import Device, call, js_wait, require, super_record, wait_for
@@ -54,7 +55,7 @@ def dialogs(device):
     return found
 
 
-def backtabs(*,busy=False):
+def backtabs(*,busy=False,audio=False):
     # Offline assertion against the SHIPPED HTML, including both footer links.
     # Actual key delivery remains physical; no CEF DOM actions are injected.
     class Focus(HTMLParser):
@@ -67,16 +68,16 @@ def backtabs(*,busy=False):
     parser=Focus();parser.feed((Path(__file__).resolve().parents[2]/'desktop/src-tauri/src/youtube_player/player.html').read_text())
     require(parser.order==['download-video','download-audio','download-cancel','sponsor','sponsor-link','ratings-link','play'],'Shipped player focus order changed')
     active=[name for name in parser.order if name not in ({'download-video','download-audio'} if busy else {'download-cancel'})]
-    target='download-cancel' if busy else 'download-video'
+    target='download-cancel' if busy else 'download-audio' if audio else 'download-video'
     return active.index('play')-active.index(target)
 
 
-def start_chooser(client,device,diagnostics):
+def start_chooser(client,device,diagnostics,*,audio=False):
     before=dialogs(device)
     # Painted native Play establishes genuine CEF focus; derive the complete
     # shipped native tab order, including footer links, before physical input.
     physical(client,device,'play',diagnostics)
-    keys(device,*(['shift+Tab']*backtabs()),'space')
+    keys(device,*(['shift+Tab']*backtabs(audio=audio)), 'space')
     appeared=wait_for(lambda:dialogs(device)-before,'Native SaveAs did not appear',15)
     require(len(appeared)==1,'Native SaveAs ambiguous')
     return next(iter(appeared))
@@ -129,7 +130,7 @@ def terminal(client,tab,kind,timeout=65):
 def clear_states(client):client.js('window.__downloadObserved=[];true')
 
 
-def ffprobe(args,output):
+def ffprobe(args,output,*,audio_only=False):
     directory=Path(args.components).resolve();manifest=json.loads((directory/'components.json').read_text());record=manifest['components']['ffmpeg']
     for item in record['files']:
         relative=Path(item['filename']);require(not relative.is_absolute() and '..' not in relative.parts,'Component path invalid')
@@ -142,9 +143,9 @@ def ffprobe(args,output):
     env['PATH' if sys.platform=='win32' else 'LD_LIBRARY_PATH']=str(binary.parent if sys.platform=='win32' else directory/'ffmpeg'/'lib')
     result=subprocess.run([str(binary),'-v','error','-protocol_whitelist','file,pipe','-f','matroska','-show_entries','stream=codec_name,codec_type:format=duration','-of','json',str(output)],env=env,stdin=subprocess.DEVNULL,capture_output=True,timeout=15)
     require(result.returncode==0 and len(result.stdout)+len(result.stderr)<=65536,'Native ffprobe failed')
-    data=json.loads(result.stdout);require(sorted((s['codec_type'],s['codec_name']) for s in data['streams'])==[('audio','opus'),('video','vp9')],'Output stream mismatch')
+    data=json.loads(result.stdout);require(sorted((s['codec_type'],s['codec_name']) for s in data['streams'])==([('audio','opus')] if audio_only else [('audio','opus'),('video','vp9')]),'Output stream mismatch')
     duration=float(data['format']['duration']);require(math.isfinite(duration) and 118<=duration<=122,'Output duration mismatch')
-    return {'streams':2,'vp9':True,'opus':True,'duration':round(duration,3),'actual_ffprobe':True}
+    return {'streams':1 if audio_only else 2,'vp9':not audio_only,'opus':True,'duration':round(duration,3),'actual_ffprobe':True}
 
 
 def clean_output(directory):
@@ -167,7 +168,8 @@ def run(args):
         def instrument(handler):
             is_native=not handler.headers.get('User-Agent')
             if is_native:
-                with fixture.lock:native.append({'lane':fixture.peers.get(handler.client_address[1],'Direct'),'ranged':bool(handler.headers.get('Range'))})
+                track=urllib.parse.parse_qs(urllib.parse.urlsplit(handler.path).query).get('track',[''])[0]
+                with fixture.lock:native.append({'lane':fixture.peers.get(handler.client_address[1],'Direct'),'ranged':bool(handler.headers.get('Range')),'track':track if track in ('video','audio') else 'unknown'})
             writer=handler.wfile
             class PacedWriter:
                 # This owned HTTP origin paces genuine response bytes so at
@@ -208,6 +210,14 @@ def run(args):
         require(any(isinstance(s.get('progress'),dict) and s['progress'].get('phase') in ('downloading','muxing','verifying','publishing') and type(s['progress'].get('bytes')) is int and s['progress']['bytes']>0 for s in states(client,tab)),'Actual nonzero worker progress missing')
         require(native and all(r['lane']=='A' and r['ranged'] for r in native),'Native download route witness missing')
         report['checks'].append(dict(name='actual-dual-stream-download',**ffprobe(args,target),native_route_requests=len(native)))
+        report['stage']='audio-only-download';clear_states(client)
+        with fixture.lock:audio_start=len(native)
+        audio_target=output/'audio-only.webm';dialog=start_chooser(client,device,diagnostics,audio=True);choose(device,dialog,audio_target)
+        audio_done=terminal(client,tab,'done')
+        require(audio_target.is_file() and audio_target.stat().st_size==audio_done.get('bytes'),'Native audio file missing')
+        with fixture.lock:audio_requests=list(native[audio_start:])
+        require(audio_requests and all(r['lane']=='A' and r['ranged'] and r['track']=='audio' for r in audio_requests),'Audio-only native route witness missing')
+        report['checks'].append(dict(name='actual-audio-only-download',**ffprobe(args,audio_target,audio_only=True),native_route_requests=len(audio_requests)))
         for attempt in range(2):
             report['stage']='cancel-'+str(attempt);clear_states(client)
             policy=fixture.stall_policy('A','video');policy['gate'].clear()
@@ -256,7 +266,9 @@ def run(args):
 
 
 def self_test():
-    require(backtabs()==5 and backtabs(busy=True)==4,'Shipped physical focus sequence mismatch')
+    import inspect
+    inspect.signature(Fixture).bind(Path("cert"),Path("key"),Path("video"),Path("audio"))
+    require(backtabs()==5 and backtabs(audio=True)==4 and backtabs(busy=True)==4,'Shipped physical focus sequence mismatch')
     class Client:
         def js(self,_):return [{'super_id':SUPER,'data':{'id':1,'state':{'done':True,'bytes':123}}}]
     require(terminal(Client(),1,'done')['bytes']==123,'Native receipt parsing mismatch')
