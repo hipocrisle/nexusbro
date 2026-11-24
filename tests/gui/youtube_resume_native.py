@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""GHA native RAM resume + exact Super/context isolation, not disk durability.
+"""GHA native RAM and post-restart resume + exact Super/context isolation.
 Positions originate only from the admitted native snapshot. No resume book is
 read/written by this fixture and no position/path is supplied to native IPC.
 """
@@ -16,7 +16,7 @@ import time
 
 from security_native import Device, call, js_wait, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
-from youtube_player_native import Fixture, Trust, certificates, observe, physical, foreground, HOST
+from youtube_player_native import Fixture, Trust, certificates, observe, physical, foreground, HOST, close_for_privacy, kernel_birth, trusted_fill
 from hibernation_cookie_probe import tls_proxy_preflight
 
 OWNERS = ('resume-a', 'resume-b')
@@ -102,6 +102,31 @@ def ordinary_navigation(client, owner, tab, browser):
             and isinstance(event.get('data', {}).get('error'), str), 'Old player document remained admitted')
 
 
+def different_process_identity(previous, current):
+    return previous != current and all(type(pid) is int and pid > 0 and isinstance(birth, str) and birth.isdigit()
+                                       for pid, birth in (previous, current))
+
+
+def native_owned_identities(client):
+    import psutil
+    clock = 'windows_filetime' if sys.platform == 'win32' else 'linux_ticks'
+    state = call(client, 'super_lifecycle_snapshot')
+    require(state.get('schema') == 1 and isinstance(state.get('engines'), list), 'Restart native ownership schema invalid')
+    identities = set()
+    for engine in state['engines']:
+        require(engine.get('owned_complete') is True and isinstance(engine.get('owned'), list), 'Restart native ownership incomplete')
+        for member in engine['owned']:
+            pid, birth = member.get('pid'), member.get('birth')
+            require(type(pid) is int and pid > 0 and member.get('clock') == clock
+                    and isinstance(birth, str) and birth.isdigit(), 'Restart native identity invalid')
+            try: actual = kernel_birth(pid, clock)
+            except psutil.NoSuchProcess: continue
+            require(actual == birth, 'Restart native identity changed')
+            identities.add((pid, birth))
+    require(bool(identities), 'Restart actual native processes missing')
+    return identities
+
+
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Disposable GHA runner required')
     out = Path(args.out).resolve(); out.mkdir(parents=True, exist_ok=False)
@@ -151,15 +176,61 @@ def run(args):
         report['checks'].append(dict(name='same-context-resume-a', native_position=position(resumed), initially_paused=True,
                                      browser_identity_preserved=True, old_document_probe_refused=True))
         report['stage'] = 'other-scope-b'
-        tab_b, _ = activate(client, device, OWNERS[1])
+        tab_b, browser_b = activate(client, device, OWNERS[1])
         isolated = admit(client, OWNERS[1], tab_b, 0, 1, report['player_diagnostics'])
         report['checks'].append(dict(name='other-super-context-b', native_position=position(isolated), initially_paused=True))
+        ordinary_navigation(client, OWNERS[1], tab_b, browser_b)
         report['stage'] = 'return-a'
         returned_tab, returned_browser = activate(client, device, OWNERS[0])
         require(returned_tab == tab_a and returned_browser == browser_a, 'Returning changed original context browser')
         ordinary_navigation(client, OWNERS[0], tab_a, browser_a)
         returned = admit(client, OWNERS[0], tab_a, 5, high, report['player_diagnostics'])
         report['checks'].append(dict(name='return-a-retains-position', native_position=position(returned), initially_paused=True))
+        report['stage'] = 'neutralize-exit-document-a'
+        ordinary_navigation(client, OWNERS[0], tab_a, browser_a)
+        report['exit_documents_neutral'] = True
+        report['exit_during_playback'] = False
+        report['stage'] = 'normal-owned-exit-before-restart'
+        clock = 'windows_filetime' if sys.platform == 'win32' else 'linux_ticks'
+        previous_parent = (device.app.pid, kernel_birth(device.app.pid, clock))
+        previous_native = native_owned_identities(client)
+        close_for_privacy(client, device, report)
+        report['restart_owned_exit'] = report.pop('owned_exit')
+        require(device.app is None and report['restart_owned_exit'].get('parent_normal_exit') is True
+                and report['restart_owned_exit'].get('all_known_native_executions_exited') is True,
+                'Restart old owned executions did not exit normally')
+        # app=None: these public lifecycle methods close only stale inspector/
+        # Windows policy handles, not a living acceptance process. Linux Xvfb
+        # remains owned and available. Profiles/settings are not reseeded.
+        device.stop_app()
+        report['stage'] = 'restart-same-device'
+        client = device.start(); foreground(device)
+        current_parent = (device.app.pid, kernel_birth(device.app.pid, clock))
+        require(different_process_identity(previous_parent, current_parent), 'Restart parent OS identity not fresh')
+        report['stage'] = 'restart-native-master-unlock'
+        js_wait(client, '!!document.querySelector(".browser-lock-screen")', 'Restart master lock screen missing', 25)
+        trusted_fill(client, device, '[aria-label="Мастер-пароль для разблокировки браузера"]', master)
+        client.text_button('Разблокировать браузер')
+        js_wait(client, '!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
+                'Restart actual master UI unlock failed', 25)
+        require(call(client, 'security_vault', action='status').get('unlocked') is True, 'Restart native vault remained locked')
+        install_listeners(client)
+        report['stage'] = 'restart-resume-a'
+        restarted_tab_a, _ = activate(client, device, OWNERS[0])
+        current_native = native_owned_identities(client)
+        require(previous_native.isdisjoint(current_native), 'Restart reused an old native OS execution')
+        restarted_a = admit(client, OWNERS[0], restarted_tab_a, 5, high, report['player_diagnostics'])
+        report['checks'].append(dict(name='durable-restart-a', native_position=position(restarted_a),
+                                     initially_paused=True, old_owned_tree_exited=True, new_parent_identity=True,
+                                     fresh_native_executions=True, native_members=len(current_native), actual_master_ui_unlock=True))
+        report['stage'] = 'restart-isolated-b'
+        restarted_tab_b, _ = activate(client, device, OWNERS[1])
+        restarted_b = admit(client, OWNERS[1], restarted_tab_b, 0, 1, report['player_diagnostics'])
+        report['checks'].append(dict(name='durable-restart-b-still-isolated', native_position=position(restarted_b), initially_paused=True))
+        report['durable_persistence_proven'] = True
+        report['stage'] = 'normal-owned-final-exit'
+        close_for_privacy(client, device, report)
+        report['final_owned_exit'] = report.pop('owned_exit')
         media = fixture.receipts
         require(media and all(row['lane'] != 'Direct' for row in media), 'Unproxied controlled media request')
         require({row['track'] for row in media if row['lane'] == 'A'} == {'video', 'audio'}, 'Route A media proof missing')
@@ -167,6 +238,17 @@ def run(args):
         report.update(completed=True, stage='complete'); code = 0
     except Exception as error:
         reasons = {
+            'Restart old owned executions did not exit normally': 'restart_old_owned_exit_failed',
+            'Restart parent OS identity not fresh': 'restart_parent_not_fresh',
+            'Restart master lock screen missing': 'restart_master_screen_missing',
+            'Restart actual master UI unlock failed': 'restart_master_unlock_failed',
+            'Restart native vault remained locked': 'restart_vault_locked',
+            'Restart reused an old native OS execution': 'restart_native_identity_reused',
+            'Restart native ownership schema invalid': 'restart_ownership_schema',
+            'Restart native ownership incomplete': 'restart_ownership_incomplete',
+            'Restart native identity invalid': 'restart_identity_invalid',
+            'Restart native identity changed': 'restart_identity_changed',
+            'Restart actual native processes missing': 'restart_native_missing',
             'Native resume listener missing': 'native_listener_missing',
             'Native resume browser unavailable': 'native_browser_unavailable',
             'Resume fixture acknowledgement missing': 'resume_ack_missing',
@@ -204,6 +286,10 @@ def run(args):
 
 
 def self_test():
+    assert different_process_identity((1, '10'), (2, '11'))
+    assert different_process_identity((1, '10'), (1, '11'))  # PID reuse is a new OS identity.
+    assert not different_process_identity((1, '10'), (1, '10'))
+    assert not different_process_identity((1, '10'), (2, 'invalid'))
     snapshot = dict(configured=True, disposed=False, separate=True, playing=False, video_paused=True, audio_paused=True, position=9., audio_position=8.9, skew=.1)
     assert configured(snapshot) and paused(snapshot) and position(snapshot) == 8.9
     assert not paused(dict(snapshot, playing=True))
