@@ -208,7 +208,14 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         url.as_deref(),
         bootstrap,
     ) {
-        Ok(()) => 0,
+        Ok(()) => {
+            if let Some(token)=crate::cef_vkladki::take_hibernate_shutdown_token(){
+                shutdown();
+                let frame=crate::super_hibernation_protocol::Frame::ShutdownAck{token};
+                if let Ok(wire)=serde_json::to_string(&frame){println!("NB-HIBERNATE {wire}");let _=std::io::stdout().flush();}
+            }
+            0
+        },
         Err(e) => {
             eprintln!("cef: {e}");
             1
@@ -226,11 +233,14 @@ pub fn zapustit_cep(
     rezat_reklamu: bool,
     m: crate::okna::Mesto,
     bootstrap: &crate::tab_routes::RouteBootstrap,
-) -> anyhow::Result<std::process::Child> {
-    let exe = std::env::current_exe()?;
+    generation:u64,
+    lease:crate::super_process_owner::ProfileLease,
+    restoring:bool,
+) -> anyhow::Result<crate::super_process_owner::ProcessOwner> {
     let profil = crate::brauzer::papka_profilya(id);
     std::fs::create_dir_all(&profil)?;
-    crate::brauzer::ochistit_blokirovki(id);
+    // Native Chromium Singleton remains authoritative across parent crashes.
+    // Never unlink a possibly live engine lock merely because parent lease opened.
     anyhow::ensure!(bootstrap.inherit.validate(),"Недопустимый начальный маршрут");
     let snapshot=serde_json::to_vec(bootstrap)?;
     anyhow::ensure!(snapshot.len()<=131072,"Снимок маршрутов слишком велик");
@@ -242,7 +252,7 @@ pub fn zapustit_cep(
     let stderr = std::fs::File::create(profil.join("cef.log"))
         .map(std::process::Stdio::from)
         .unwrap_or(std::process::Stdio::null());
-    let mut cmd = std::process::Command::new(exe);
+    let mut cmd = crate::super_process_owner::OwnedCommand::new_current_exe()?;
     cmd.arg("--nb-dvizhok")
         .arg(format!("--user-data-dir={}", profil.display()))
         .arg(format!("--nb-route-bootstrap={}", snapshot_path.display()))
@@ -251,6 +261,10 @@ pub fn zapustit_cep(
         .stdout(stdout)
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
+    use sha2::{Digest,Sha256};
+    cmd.arg(format!("--nb-profile-key={:x}",Sha256::digest(id.as_bytes())));
+    cmd.arg(format!("--nb-engine-generation={generation}"));
+    if restoring {cmd.arg("--nb-restore-escrow");}
     if crate::privatnost::eto_id(id){cmd.arg("--nb-private-profile");}
     if crate::passwords::enabled(){cmd.arg("--nb-passwords");}
     let (browser_locked,lock_generation)=crate::browser_lock::engine_state();
@@ -263,25 +277,19 @@ pub fn zapustit_cep(
     if let Some(u) = url {
         cmd.arg(format!("--nb-url={u}"));
     }
-    #[cfg(target_os = "linux")]
-    unsafe {
-        use std::os::unix::process::CommandExt;
-        cmd.process_group(0);
-        cmd.pre_exec(|| {
-            libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGKILL);
-            Ok(())
-        });
+    crate::brauzer::zapustit_cef_owned(cmd,lease)
+}
+
+/// USER close/startup failure only; hibernation never calls this function.
+/// Retain ownership while polling actual exit; no timer permits a replacement.
+pub fn ostanovit_owned_process(mut owner:crate::super_process_owner::ProcessOwner){
+    loop {
+        match owner.terminate_explicit(){
+            Ok(())=>return,
+            Err(retained)=>owner=retained,
+        }
+        std::thread::sleep(std::time::Duration::from_millis(25));
     }
-    let ditya = crate::brauzer::zapustit_cef(cmd)?;
-    #[cfg(target_os = "windows")]
-    let mut ditya = ditya;
-    #[cfg(target_os = "windows")]
-    if let Err(e) = crate::brauzer::privyazat_k_zadanie_pub(&ditya) {
-        let _ = ditya.kill();
-        let _ = ditya.wait();
-        return Err(e);
-    }
-    Ok(ditya)
 }
 
 pub fn ostanovit_process(mut ditya: std::process::Child) {
@@ -303,17 +311,26 @@ pub fn ostanovit_process(mut ditya: std::process::Child) {
 pub fn dozhdatsya_okna(
     stdout: std::process::ChildStdout,
     sek: u64,
+    hibernate:impl Fn(crate::super_hibernation_protocol::Frame)+Send+'static,
     sessiya: impl Fn(crate::sessiya::Sessiya) + Send + 'static,
     adresnyi_vvod: impl Fn() + Send + 'static,
     sluzhebnoe: impl Fn(serde_json::Value) + Send + 'static,
 ) -> Option<u32> {
     let (tx, rx) = std::sync::mpsc::channel::<Option<u32>>();
     std::thread::spawn(move || {
-        let chitat = std::io::BufReader::new(stdout);
-        for stroka in chitat.lines() {
+        let mut chitat = std::io::BufReader::new(stdout);
+        loop {
+            use std::io::Read;
+            let mut line=String::new();
+            let limit=crate::super_cookie_escrow::MAX_BYTES*2;
+            let read=Read::take(&mut chitat,(limit+1) as u64).read_line(&mut line);
+            if read.as_ref().is_ok_and(|n|*n==0) || line.len()>limit || !line.ends_with('\n'){break;}
+            let stroka=read.map(|_|line.trim_end_matches(['\r','\n']).to_string());
             match stroka {
                 Ok(s) => {
-                    if let Some(json) = s.strip_prefix("NB-UI ") {
+                    if let Some(json)=s.strip_prefix("NB-HIBERNATE "){
+                        if let Ok(frame)=serde_json::from_str(json){hibernate(frame);}
+                    } else if let Some(json) = s.strip_prefix("NB-UI ") {
                         if let Ok(data) = serde_json::from_str(json) { sluzhebnoe(data); }
                     } else if s == "NB-ADRES" { adresnyi_vvod(); }
                     else if let Some(h) = s.strip_prefix("NB-OKNO ") {
@@ -335,16 +352,19 @@ pub fn dozhdatsya_okna(
     }
 }
 
-pub fn kanal_komand(
+pub fn kanal_komand(stdin:std::process::ChildStdin)->std::sync::mpsc::SyncSender<crate::sessiya::Komanda>{kanal_komand_bootstrap(stdin,None)}
+pub fn kanal_komand_bootstrap(
     mut stdin: std::process::ChildStdin,
+    bootstrap:Option<zeroize::Zeroizing<Vec<u8>>>,
 ) -> std::sync::mpsc::SyncSender<crate::sessiya::Komanda> {
     let (tx, rx) = std::sync::mpsc::sync_channel::<crate::sessiya::Komanda>(32);
     std::thread::spawn(move || {
+        if let Some(frame)=bootstrap {if stdin.write_all(&frame).and_then(|_|stdin.flush()).is_err(){return;}}
         for k in rx {
-            let Ok(json) = serde_json::to_string(&k) else {
+            let Ok(json) = serde_json::to_string(&k).map(zeroize::Zeroizing::new) else {
                 continue;
             };
-            if writeln!(stdin, "{json}")
+            if writeln!(stdin, "{}", json.as_str())
                 .and_then(|_| stdin.flush())
                 .is_err()
             {

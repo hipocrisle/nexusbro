@@ -348,6 +348,14 @@ impl Registry {
             self.entries.values().map(|e| e.context.clone()).collect(),
         ))
     }
+    /// Irreversibly deny new requests for the committing singleton context.
+    /// Only called AFTER all preflight/freeze proofs and immediately before
+    /// closing origins. A new process rebuilds admission on authenticated wake.
+    pub fn quiesce_hibernation(&self,key:&str)->bool {
+        if self.private || self.entries.len()!=1 {return false;}
+        let Some(entry)=self.entries.get(&(key.to_owned(),false))else{return false;};
+        entry.state.compare_exchange(1,4,Ordering::AcqRel,Ordering::Acquire).is_ok()
+    }
     /// Conservative first scope: exactly one initialized, ordinary native context.
     pub fn hibernation_context(&self) -> Option<(String, RequestContext)> {
         if self.private || self.entries.len()!=1 {return None;}

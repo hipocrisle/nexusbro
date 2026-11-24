@@ -80,11 +80,14 @@ pub async fn pokazat_glavnoe(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>)
 #[tauri::command]
 pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Option<String>,privatnaya:bool)->Result<(),String>{
     let id=id.or_else(||s.aktivnaya.lock().unwrap().clone()).ok_or("Сначала откройте супер-вкладку")?;
-    let running=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.proc.is_some());
-    if !running{let result=crate::zapustit_vnutri(&app,&s,&id).await;if !result.ok{return Err(result.soobshchenie);}}
+    let _claim=crate::super_hibernation_parent::ViewClaim::new(&id);
+    let previous=s.aktivnaya.lock().unwrap().clone();
+    crate::super_hibernation_parent::ensure_view_ready(&app,&s,&id).await?;
+    if let Some(previous)=previous{crate::pereklyuchit_vnutri(&s,&previous);}
     create_window(&app,&s,id,privatnaya,None)
 }
 fn create_window(app:&tauri::AppHandle,s:&Sostoyanie,id:String,privatnaya:bool,recovery:Option<crate::window_recovery::WindowSession>)->Result<(),String>{
+    let _claim=crate::super_hibernation_parent::ViewClaim::new(&id);
     static NEXT:AtomicU64=AtomicU64::new(1);
     let label=loop{let label=format!("browser-{}",NEXT.fetch_add(1,Ordering::Relaxed));if app.get_webview_window(&label).is_none(){break label;}};
     let recovering=recovery.is_some();
@@ -186,8 +189,10 @@ pub fn zakryt(app:&tauri::AppHandle,label:&str){
 /// Полная оболочка в каждом окне; CEF-виды других Super сохраняются скрытыми.
 pub async fn vybrat(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,window:tauri::WebviewWindow,id:String)->Result<crate::Otvet,String>{
     let label=window.label().to_owned();
-    let running=s.vkladki.lock().unwrap().get(&id).is_some_and(|v|v.proc.is_some());
-    if !running{let previous=s.aktivnaya.lock().unwrap().clone();let result=crate::zapustit_vnutri(&app,&s,&id).await;if let Some(previous)=previous{crate::pereklyuchit_vnutri(&s,&previous);}if !result.ok{return Ok(result);}}
+    let _claim=crate::super_hibernation_parent::ViewClaim::new(&id);
+    let previous=s.aktivnaya.lock().unwrap().clone();
+    crate::super_hibernation_parent::ensure_view_ready(&app,&s,&id).await?;
+    if let Some(previous)=previous{crate::pereklyuchit_vnutri(&s,&previous);}
     let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id).unwrap_or(0);
     let cached={let mut map=s.okna.0.lock().unwrap();let w=map.get_mut(&label).ok_or("Окно уже закрыто")?;if w.closing{return Err("Окно закрывается".into());}
         if w.super_id!=id{let old=Vid{hwnd:w.hwnd.take(),sessiya:w.sessiya.take(),engine:w.engine};if let Some(h)=old.hwnd{let _=sistema::pokazat(h,false);}w.others.insert(w.super_id.clone(),old);

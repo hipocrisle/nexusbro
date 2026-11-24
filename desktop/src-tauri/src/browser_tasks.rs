@@ -34,7 +34,7 @@ pub async fn browser_tasks_snapshot(
                 let mut roots = Vec::new();
                 let mut seen = BTreeSet::new();
                 for pid in [
-                    tab.proc.as_ref().map(std::process::Child::id),
+                    tab.proc.as_ref().and_then(|p|p.pid()),
                     tab.zapas_pid,
                     tab.tunnel.as_ref().map(std::process::Child::id),
                 ]

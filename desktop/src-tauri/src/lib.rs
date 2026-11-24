@@ -26,6 +26,8 @@ mod cef_vkladki;
 mod cef_route_context;
 mod cdp;
 mod super_lifecycle;
+mod super_process_owner;
+mod super_hibernation_parent;
 mod super_hibernation_protocol;
 mod super_cookie_escrow;
 mod cef_cookie_transfer;
@@ -173,7 +175,8 @@ struct Vkladka {
     /// None = вкладка сохранена, но движок не запущен.
     /// ⛔ Запускать все сразу нельзя: каждый экземпляр ест сотни мегабайт,
     /// десять вкладок — несколько гигабайт на пустом месте.
-    proc: Option<Child>,
+    proc: Option<super_process_owner::ProcessOwner>,
+    hibernate:super_hibernation_parent::Node,
     /// Движок спавнится, хэндл окна ещё не получен (фоновый поток ждёт
     /// NB-OKNO). Пока true — повторный запуск не начинать.
     zapusk_idet: bool,
@@ -386,7 +389,7 @@ async fn otkryt(
         // останется в списке, и человек сможет поправить настройки.
         v.insert(
             id.clone(),
-            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None },
+            Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None, hibernate:Default::default() },
         );
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
@@ -427,18 +430,17 @@ fn vstroit_vse_okna(
 /// Запустить движок для уже записанной вкладки.
 async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: &str) -> Otvet {
     if browser_lock::locked_global() { return net("Браузер заблокирован. Введите мастер-пароль."); }
-    static SLEDUYUSHCHIJ_ZAPUSK: std::sync::atomic::AtomicU64 =
-        std::sync::atomic::AtomicU64::new(1);
     let (nastrojki, zapusk_id) = {
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(id) else { return net("такой супер-вкладки нет") };
+        if vk.hibernate.wake(vk.kanal.as_ref()) { drop(v); pereklyuchit_vnutri(s,id); return da(); }
         if vk.zapusk_idet || vk.proc.is_some() {
             drop(v);
             pereklyuchit_vnutri(s, id);
             return da();
         }
+        vk.zapusk_id=match vk.hibernate.begin_start(){Ok(generation)=>generation,Err(_)=>return net("Предыдущий движок ещё завершает работу")};
         vk.zapusk_idet = true;
-        vk.zapusk_id = SLEDUYUSHCHIJ_ZAPUSK.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         (vk.nastrojki.clone(), vk.zapusk_id)
     };
     pereklyuchit_vnutri(s, id);
@@ -447,6 +449,7 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
         let mut v = s.vkladki.lock().unwrap();
         if let Some(vk) = v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id) {
             vk.zapusk_idet = false;
+            if vk.proc.is_none(){if vk.hibernate.machine.lease_confirmed(){vk.hibernate.no_child_start_failed(zapusk_id);}else{vk.hibernate.lease_failed(zapusk_id);}}
         }
     }
     otvet
@@ -536,7 +539,18 @@ async fn podgotovit_dvizhok(
         },
         bindings: Vec::new(),
     };
-    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, nastrojki.rezat_reklamu, m, &route_bootstrap) {
+    let profile=brauzer::papka_profilya(id);
+    if std::fs::create_dir_all(&profile).is_err(){return net("Не удалось открыть профиль");}
+    let lease=match super_process_owner::ProfileLease::acquire(&profile){
+        Ok(lease)=>lease,
+        Err(_)=>{if let Some(v)=s.vkladki.lock().unwrap().get_mut(id).filter(|v|v.zapusk_id==zapusk_id){v.hibernate.lease_failed(zapusk_id);} nash.ostanovit(); if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}return net("Предыдущий движок ещё использует профиль");}
+    };
+    let restore={let mut tabs=s.vkladki.lock().unwrap();
+        let Some(v)=tabs.get_mut(id).filter(|v|v.zapusk_id==zapusk_id&&v.zapusk_idet)else{nash.ostanovit();if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}return da();};
+        if !v.hibernate.lease_acquired(zapusk_id){nash.ostanovit();if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}return net("Запуск отменён");}
+        match v.hibernate.restore_wire(){Ok(wire)=>wire,Err(_)=>{nash.ostanovit();if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}return net("Не удалось подготовить сохранённый вход");}}
+    };
+    let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, nastrojki.rezat_reklamu, m, &route_bootstrap, zapusk_id, lease, restore.is_some()) {
         Ok(d) => d,
         Err(e) => {
             nash.ostanovit();
@@ -548,8 +562,8 @@ async fn podgotovit_dvizhok(
         }
     };
 
-    let stdout = ditya.stdout.take().unwrap();
-    let kanal = cef_dvizhok::kanal_komand(ditya.stdin.take().unwrap());
+    let stdout = ditya.take_stdout().unwrap();
+    let kanal = cef_dvizhok::kanal_komand_bootstrap(ditya.take_stdin().unwrap(),restore);
     {
         let mut v = s.vkladki.lock().unwrap();
         match v.get_mut(id).filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet) {
@@ -576,7 +590,8 @@ async fn podgotovit_dvizhok(
         let id_sessii = id_fon.clone();
         let h_adresa = h.clone(); let id_adresa = id_fon.clone();
         let h_ui = h.clone(); let id_ui = id_fon.clone();
-        let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25, move |sessiya| {
+        let h_hibernate=h.clone();let id_hibernate=id_fon.clone();
+        let okno = cef_dvizhok::dozhdatsya_okna(stdout, 25, move |frame|{super_hibernation_parent::receive(&h_hibernate,&id_hibernate,zapusk_id,frame);}, move |sessiya| {
             let _zapis = sessiya::ZAPIS.lock().unwrap();
             let s: State<Sostoyanie> = h_sessii.state();
             let smena_vidimosti = {
@@ -632,6 +647,7 @@ async fn podgotovit_dvizhok(
         vk.zapusk_idet = false;
         if let Some(okno) = okno {
             vk.okno = Some(okno);
+            vk.hibernate.ready(zapusk_id);
             drop(v);
             {
                 let _okna = s.izmenenie_okon.lock().unwrap();
@@ -644,6 +660,7 @@ async fn podgotovit_dvizhok(
             drop(v);
             ostanovit_resursy(resursy.0, resursy.1, resursy.2);
             release_route_resources(&s, &id_fon, zapusk_id);
+            if let Some(v)=s.vkladki.lock().unwrap().get_mut(&id_fon).filter(|v|v.zapusk_id==zapusk_id&&v.proc.is_none()){v.hibernate.no_child_start_failed(zapusk_id);}
             zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
             let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
         }
@@ -658,56 +675,9 @@ async fn pereklyuchit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: Stat
     v_zhurnal_granica("pereklyuchit", &id, "вход");
     let zapushchena = match s.vkladki.lock().unwrap().get_mut(&id) {
         Some(vk) => {
-            // ⛔ Дочерний процесс — «пусковая ракета»: Chromium на Windows
-            // перезапускает себя и стартовый процесс выходит. Смерть
-            // дочернего ≠ смерть движка — движок жив, пока живо ЕГО окно
-            // и его реальный pid. Хоронили живой движок и перезапускали
-            // его — а подметание при перезапуске резало соседнюю вкладку
-            // (12.11.2026, диагностика user'а: «мёртвый движок при
-            // переключении» через 2 с после успешного запуска).
-            if vk.zapusk_idet {
-                // Движок спавнится прямо сейчас — считаем запущенной,
-                // повторный спавн не начинаем.
-                true
-            } else {
-            let rebenok_zhiv = matches!(
-                vk.proc.as_mut().map(|p| p.try_wait()),
-                Some(Ok(None))
-            );
-            if rebenok_zhiv {
-                true
-            } else {
-                // Вкладка могла вообще не запускаться (спит с открытия
-                // программы) — тогда «мёртвого движка» в журнале не пишем.
-                let bilo_chto_to =
-                    vk.proc.is_some() || vk.okno.is_some() || vk.zapas_pid.is_some();
-                if let Some(mut p) = vk.proc.take() {
-                    let _ = p.try_wait(); // прибрать мёртвого ребёнка
-                }
-                let okno_zhivo = vk.okno.map(sistema::okno_zhivo).unwrap_or(false);
-                let dvizhok_zhiv = vk.zapas_pid.map(sistema::pid_zhiv).unwrap_or(false);
-                if okno_zhivo && dvizhok_zhiv {
-                    true
-                } else {
-                    if bilo_chto_to {
-                        zapisat_v_zhurnal(format!("{id}: мёртвый движок при переключении, поднимаю заново"));
-                    }
-                    if let Some(zp) = vk.zapas_pid.take() {
-                        sistema::ubit_po_pid(zp);
-                    }
-                    vk.okno = None;
-                    if let Some(p) = vk.nash_proxy.take() {
-                        p.ostanovit();
-                    }
-                    if let Some(mut t) = vk.tunnel.take() {
-                        let _ = t.kill();
-                        let _ = t.wait();
-                    }
-                    release_route_resources(&s, &id, vk.zapusk_id);
-                    false
-                }
-            }
-            }
+            let waiting=vk.hibernate.wake(vk.kanal.as_ref());
+            // Launcher exit cannot drop a still-live descendant/profile lease.
+            waiting || vk.zapusk_idet || vk.proc.is_some()
         }
         None => return Ok(net("такой супер-вкладки нет")),
     };
@@ -796,10 +766,10 @@ fn release_route_resources(s: &Sostoyanie, id: &str, engine: u64) {
 }
 
 fn ostanovit_resursy(
-    proc: Option<Child>, proxy: Option<proxy::Rabotayushchij>, tunnel: Option<Child>,
+    proc: Option<super_process_owner::ProcessOwner>, proxy: Option<proxy::Rabotayushchij>, tunnel: Option<Child>,
 ) {
     if let Some(p) = proc {
-        cef_dvizhok::ostanovit_process(p);
+        cef_dvizhok::ostanovit_owned_process(p);
     }
     if let Some(p) = proxy {
         p.ostanovit();
@@ -825,6 +795,7 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
         ostanovit_resursy(resursy.0, resursy.1, resursy.2);
     }).await;
     release_route_resources(s, id, resursy.3);
+    if let Some(v)=s.vkladki.lock().unwrap().get_mut(id).filter(|v|v.zapusk_id==resursy.3){v.hibernate=Default::default();}
 }
 
 /// Правка настроек супер-вкладки после создания. Работающую перезапускаем
@@ -867,6 +838,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
     tauri::async_runtime::spawn_blocking(move || supervkladki::obnovit_sohranennye(|list| {
         if let Some(n) = list.iter_mut().find(|n| n.id == archive.id) { *n = archive; }
     })).await.map_err(|e| e.to_string())??;
+    if !rabotaet && nuzhen_restart {if let Some(v)=s.vkladki.lock().unwrap().get_mut(&nastrojki.id){v.hibernate=Default::default();}}
     if rabotaet && nuzhen_restart {
         ostanovit_vnutri(&s, &nastrojki.id).await;
         let result = zapustit_vnutri(&app, &s, &nastrojki.id).await;
@@ -1017,7 +989,7 @@ async fn vosstanovit(app: tauri::AppHandle,window:tauri::WebviewWindow, s: State
         if v.contains_key(&id) {
             return Ok(net("такая супер-вкладка уже открыта"));
         }
-        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
+        v.insert(id.clone(), Vkladka { nastrojki: nastrojki.clone(), proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None, hibernate:Default::default() });
         let vse: Vec<Nastrojki> = v.values().map(|x| x.nastrojki.clone()).collect();
         sohranit_spisok(&vse);
     }
@@ -1288,7 +1260,8 @@ pub fn run() {
             biblioteka::biblioteka_spisok,biblioteka::biblioteka_udalit,biblioteka::zakladki_sohranit,biblioteka::zakladki_pereklyuchit,biblioteka::zakladki_import,
             nastrojki::nastrojki_poluchit, nastrojki::nastrojki_sohranit, vpn::uzly_podpiski, vpn::proverit_vyhod, vpn::proverit_uzel,
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
-            browser_backup::security_backup, browser_tasks::browser_tasks_snapshot, tab_search::tab_search_snapshot, tab_search::tab_search_activate, fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
+            browser_backup::security_backup, browser_tasks::browser_tasks_snapshot,
+            super_hibernation_parent::super_lifecycle_snapshot, tab_search::tab_search_snapshot, tab_search::tab_search_activate, fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
             tab_route_parent::tab_route_choices, tab_route_parent::tab_route_set,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
@@ -1332,7 +1305,7 @@ pub fn run() {
                 let s: tauri::State<Sostoyanie> = app.state();
                 let mut v = s.vkladki.lock().unwrap();
                 for n in zagruzit_spisok() {
-                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None });
+                    v.insert(n.id.clone(), Vkladka { nastrojki: n, proc: None, okno: None, zapas_pid: None, nash_proxy: None, inherit_route: None, route_settings: None, tunnel: None, zapusk_idet: false, zapusk_id: 0, kanal: None, obychnye: None, hibernate:Default::default() });
                 }
             }
             if !browser_lock::locked_global(){okna_app::restore_windows(app.handle());}
@@ -1409,12 +1382,13 @@ pub fn run() {
                     if ZAVERSHENIE.load(std::sync::atomic::Ordering::SeqCst) {
                         return;
                     }
+                    super_hibernation_parent::tick(&h);
                     let s: State<Sostoyanie> = h.state();
                     let mertvye: Vec<_> = {
                         let Ok(mut v) = s.vkladki.try_lock() else { continue };
                         v.iter_mut().filter_map(|(id, vk)| {
-                            if vk.zapusk_idet { return None }
-                            let umer = matches!(vk.proc.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
+                            if vk.zapusk_idet || matches!(vk.hibernate.machine.phase(),super_lifecycle::Phase::Stopping) { return None }
+                            let umer = vk.proc.as_mut().is_some_and(|p|p.probe()==super_process_owner::ExitProbe::Exited);
                             let vpn_umer = matches!(vk.tunnel.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
                             if !umer && !vpn_umer { return None }
                             let active = vk.obychnye.as_ref().map(|s| s.aktivnaya);
@@ -1427,6 +1401,7 @@ pub fn run() {
                     for (id, proc, proxy, tunnel, vpn_umer, active, engine) in mertvye {
                         ostanovit_resursy(proc, proxy, tunnel);
                         release_route_resources(&s, &id, engine);
+                        if let Some(v)=s.vkladki.lock().unwrap().get_mut(&id).filter(|v|v.zapusk_id==engine){v.hibernate=Default::default();}
                         {
                             let _okna = s.izmenenie_okon.lock().unwrap();
                             primenit_vidimost(&s);

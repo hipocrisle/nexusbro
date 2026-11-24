@@ -86,6 +86,11 @@ pub fn papka_profilya(id:&str)->PathBuf {
 }
 
 enum Zakaz {
+    CefOwned {
+        komanda:crate::super_process_owner::OwnedCommand,
+        lease:crate::super_process_owner::ProfileLease,
+        otvet:SyncSender<anyhow::Result<crate::super_process_owner::ProcessOwner>>,
+    },
     Cef {
         komanda: Command,
         otvet: SyncSender<anyhow::Result<Child>>,
@@ -123,6 +128,10 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .spawn(move || {
                 while let Ok(z) = rx.recv() {
                     match z {
+                        Zakaz::CefOwned{komanda,lease,otvet}=>{
+                            let result=crate::super_process_owner::ProcessOwner::spawn_owned(komanda,lease).map_err(anyhow::Error::from);
+                            if let Err(send)=otvet.send(result){if let Ok(owner)=send.0{crate::cef_dvizhok::ostanovit_owned_process(owner);}}
+                        }
                         Zakaz::Cef { mut komanda, otvet } => {
                             let itog = komanda.spawn().map_err(anyhow::Error::from);
                             if let Err(e) = otvet.send(itog) {
@@ -143,6 +152,12 @@ fn zapuskatel() -> &'static Sender<Zakaz> {
             .expect("не завёлся поток запуска движков");
         tx
     })
+}
+
+pub fn zapustit_cef_owned(komanda:crate::super_process_owner::OwnedCommand,lease:crate::super_process_owner::ProfileLease)->anyhow::Result<crate::super_process_owner::ProcessOwner>{
+    let (otvet,zhdem)=sync_channel(1);
+    zapuskatel().send(Zakaz::CefOwned{komanda,lease,otvet}).map_err(|_|anyhow::anyhow!("Engine launcher unavailable"))?;
+    zhdem.recv().map_err(|_|anyhow::anyhow!("Engine launcher stopped"))?
 }
 
 pub fn zapustit_cef(komanda: Command) -> anyhow::Result<Child> {

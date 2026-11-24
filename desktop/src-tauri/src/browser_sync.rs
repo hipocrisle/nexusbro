@@ -615,6 +615,7 @@ async fn apply(
                             zapusk_id: 0,
                             kanal: None,
                             obychnye: None,
+                            hibernate:Default::default(),
                         },
                     );
                 }
