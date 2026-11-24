@@ -486,6 +486,16 @@ def run(args):
                     selected_count:document.querySelectorAll('.obychnaya[aria-selected=true]').length,
                     active_tag:document.activeElement?.tagName??null,
                     viewport:r?[r.x,r.y,r.width,r.height]:null};})()''')
+                selector = '.obychnaya[data-id="' + str(report.get('warmup_tab_index', -1) + 1) + '"]'
+                report['native_failure_diagnostics']['tab_hit_geometry'] = device.client.js(
+                    '(()=>{const e=document.querySelector(' + json.dumps(selector) + ');'
+                    'if(!e)return {exists:false};const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,h=document.elementFromPoint(x,y);'
+                    'return {exists:true,rect:[r.x,r.y,r.width,r.height],center:[x,y],viewport:[innerWidth,innerHeight],'
+                    'visible_rect_count:e.getClientRects().length,center_in_viewport:x>=0&&x<innerWidth&&y>=0&&y<innerHeight,'
+                    'center_hits_self:!!h&&(h===e||e.contains(h)),hit_tag:h?.tagName??null,hit_role:h?.getAttribute("role")??null,'
+                    'hit_close_button:!!h?.closest(".zakryt-obychnuyu"),'
+                    'hit_expected_tab:h?.closest(".obychnaya")===e,'
+                    'load_placeholder_button:!![...document.querySelectorAll(".pusto button")].find(b=>b.textContent.trim()==="Загрузить вкладку")};})()')
                 # A single RGB sample of the public test button, never an OS
                 # screenshot or arbitrary page/terminal text.
                 from PIL import ImageGrab
