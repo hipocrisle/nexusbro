@@ -68,28 +68,79 @@ class OwnedWindowManager:
 def native_owner(device):
     import psutil
     client=device.client
-    title=call(client,'plugin:window|title',label='main')
-    owned={device.app.pid}|{p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}
     if sys.platform=='win32':
+        title=call(client,'plugin:window|title',label='main')
+        owned={device.app.pid}|{p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}
         from pywinauto import Desktop
         windows=[w for w in Desktop(backend='uia').windows() if w.process_id() in owned and w.window_text()==title]
         require(len(windows)==1,'Native minimize owner ambiguous')
         return windows[0]
     wm=device.player_wm
-    listing=subprocess.check_output(['xprop','-root','_NET_CLIENT_LIST'],env=wm.env,text=True,timeout=3)
     import re
-    matches=[]
-    for xid in re.findall(r'0x[0-9a-fA-F]+',listing):
-        name=subprocess.check_output(['xdotool','getwindowname',xid],env=wm.env,text=True,timeout=3).strip()
-        if name!=title:continue
-        pid=int(subprocess.check_output(['xdotool','getwindowpid',xid],env=wm.env,text=True,timeout=3).strip())
-        if pid not in owned:continue
-        process=psutil.Process(pid);argv=process.cmdline()
-        if '--nb-dvizhok' in argv or any(a.startswith('--type=') for a in argv):continue
-        if pathlib.Path(process.exe()).resolve()!=device.exe.resolve():continue
-        matches.append(xid)
-    require(len(matches)==1,'Native minimize owner ambiguous')
-    return matches[0]
+    clock='linux_ticks'
+    parent_birth=kernel_birth(device.app.pid,clock)
+    record={'observations':0,'zero_observations':0,'max_exact_matches':0,'waited_ms':0,
+            'ready':False,'initial':None,'last':None}
+    diagnostics=getattr(device,'player_owner_diagnostics',None)
+    if diagnostics is None:
+        diagnostics={'calls':0,'startup':record,'latest':record}
+        device.player_owner_diagnostics=diagnostics
+    diagnostics['calls']+=1;diagnostics['latest']=record
+    started=time.monotonic();deadline=started+10
+    remaining=lambda:max(.01,min(3,deadline-time.monotonic()))
+    while time.monotonic()<deadline:
+        require(device.app.poll() is None and kernel_birth(device.app.pid,clock)==parent_birth,
+                'Native owner parent identity changed')
+        title=call(client,'plugin:window|title',label='main',timeout=remaining())
+        owned={device.app.pid}|{p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}
+        require(len(owned)<=128,'Native owner observation outside bounds')
+        listing=subprocess.check_output(['xprop','-root','_NET_CLIENT_LIST'],env=wm.env,text=True,
+                                        stderr=subprocess.DEVNULL,timeout=remaining())
+        clients=re.findall(r'0x[0-9a-fA-F]+',listing)
+        counts={'ewmh_clients':len(clients),'title_matches':0,'owned_pid_matches':0,
+                'exe_matches':0,'cef_exclusions':0,'exact_matches':0,'birth_verified':0,'transient_candidates':0,'scan_complete':True}
+        require(len(clients)<=128,'Native owner observation outside bounds')
+        matches=[]
+        for xid in clients:
+            if time.monotonic()>=deadline:
+                counts['scan_complete']=False;break
+            try:
+                name=subprocess.check_output(['xdotool','getwindowname',xid],env=wm.env,text=True,
+                                             stderr=subprocess.DEVNULL,timeout=remaining()).strip()
+                if name!=title:continue
+                counts['title_matches']+=1
+                pid=int(subprocess.check_output(['xdotool','getwindowpid',xid],env=wm.env,text=True,
+                                                stderr=subprocess.DEVNULL,timeout=remaining()).strip())
+                if pid not in owned:continue
+                counts['owned_pid_matches']+=1
+                birth=kernel_birth(pid,clock)
+                process=psutil.Process(pid);argv=process.cmdline()
+                if '--nb-dvizhok' in argv or any(a.startswith('--type=') for a in argv):
+                    counts['cef_exclusions']+=1;continue
+                if pathlib.Path(process.exe()).resolve()!=device.exe.resolve():continue
+                counts['exe_matches']+=1
+                if kernel_birth(pid,clock)!=birth:continue
+                counts['birth_verified']+=1
+                matches.append(xid)
+            except subprocess.TimeoutExpired:
+                counts['scan_complete']=False;break
+            except (psutil.NoSuchProcess,subprocess.CalledProcessError):
+                # A manager may still be adopting or retiring a client. This
+                # observation does not grant authority or perform an action.
+                counts['transient_candidates']+=1
+        counts['exact_matches']=len(matches)
+        record['observations']+=1
+        record['waited_ms']=round((time.monotonic()-started)*1000)
+        record['max_exact_matches']=max(record['max_exact_matches'],len(matches))
+        if record['initial'] is None:record['initial']=counts.copy()
+        record['last']=counts.copy()
+        require(len(matches)<=1,'Native minimize owner ambiguous')
+        if len(matches)==1 and counts['scan_complete']:
+            record['ready']=True
+            return matches[0]
+        record['zero_observations']+=1
+        time.sleep(.1)
+    require(False,'Native minimize owner ambiguous')
 
 
 def foreground(device):
@@ -839,6 +890,8 @@ def run(args):
                'Owned minimize window manager not ready':'window_manager_not_ready',
                'Owned minimize window manager exited':'window_manager_exited',
                'Native minimize owner ambiguous':'minimize_owner_ambiguous',
+               'Native owner parent identity changed':'native_owner_parent_changed',
+               'Native owner observation outside bounds':'native_owner_bound',
                'Native minimize receipt missing':'minimize_receipt_missing',
                'Background audio froze or paused':'background_audio_freeze',
                'Background return did not automatically resume synchronized decode':'background_return_failed',
@@ -888,6 +941,7 @@ def run(args):
                'windows_chain_operation_failed':'windows_chain_operation_failed'}
         report['failure_code']=codes.get(str(error),'unclassified')
     finally:
+        if device and getattr(device,'player_owner_diagnostics',None):report['native_owner']=device.player_owner_diagnostics
         if trust and trust.windows:report['windows_chain_preflight']=trust.windows.receipts
         cleanup_ok=True
         for owned in (wm,device,fixture,trust):
