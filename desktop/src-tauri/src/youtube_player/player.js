@@ -228,7 +228,7 @@
     },
     dispose,
     snapshot() {
-      return {configured, disposed, hidden: document.hidden, video_paused: video.paused, audio_paused: audio.paused, playing: intended && !video.paused && (!separate || !audio.paused),
+      return {configured, disposed, caption_selected: Number.parseInt(captions.value, 10), caption_cues: textTrack?.cues?.length || 0, caption_active: textTrack?.activeCues?.length || 0, caption_showing: textTrack?.mode === 'showing', fullscreen: Boolean(document.fullscreenElement), hidden: document.hidden, video_paused: video.paused, audio_paused: audio.paused, playing: intended && !video.paused && (!separate || !audio.paused),
         position: (separate ? audio.currentTime : video.currentTime) || 0, audio_position: separate ? audio.currentTime || 0 : video.currentTime || 0, duration, separate,
         video_width: video.videoWidth || 0, video_height: video.videoHeight || 0,
         skew: separate ? Math.abs(audio.currentTime - video.currentTime) : 0,

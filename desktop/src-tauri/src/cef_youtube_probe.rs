@@ -74,16 +74,27 @@ fn decode(bytes: &[u8]) -> Reply {
         "hidden",
         "video_paused",
         "audio_paused",
+        "caption_selected",
+        "caption_cues",
+        "caption_active",
+        "caption_showing",
+        "fullscreen",
     ];
     if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
         return Err(FAILED);
     }
     let mut clean = serde_json::Map::new();
-    for field in ["configured", "disposed", "playing", "separate", "hidden", "video_paused", "audio_paused"] {
+    for field in ["configured", "disposed", "playing", "separate", "hidden", "video_paused", "audio_paused", "caption_showing", "fullscreen"] {
         clean.insert(
             field.into(),
             Value::Bool(source.get(field).and_then(Value::as_bool).ok_or(FAILED)?),
         );
+    }
+    let selected=source.get("caption_selected").and_then(Value::as_i64).filter(|n|(-1..=255).contains(n)).ok_or(FAILED)?;
+    clean.insert("caption_selected".into(),json!(selected));
+    for field in ["caption_cues","caption_active"]{
+        let count=source.get(field).and_then(Value::as_u64).filter(|n|*n<=10000).ok_or(FAILED)?;
+        clean.insert(field.into(),json!(count));
     }
     for field in ["position", "duration", "skew", "audio_position"] {
         let number = source
@@ -162,6 +173,11 @@ fn diagnose(bytes: &[u8]) -> &'static str {
         "hidden",
         "video_paused",
         "audio_paused",
+        "caption_selected",
+        "caption_cues",
+        "caption_active",
+        "caption_showing",
+        "fullscreen",
     ];
     if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
         return "snapshot_schema_mismatch";
@@ -312,7 +328,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn data() -> Value {
-        json!({"configured":true,"disposed":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
+        json!({"configured":true,"disposed":false,"caption_selected":-1,"caption_cues":0,"caption_active":0,"caption_showing":false,"fullscreen":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
     }
     fn envelope(value: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":value}})).unwrap()
@@ -321,7 +337,7 @@ mod tests {
     fn reconstructs_only_bounded_native_player_fields() {
         let bytes = envelope(data());
         let value = decode(&bytes).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 15);
+        assert_eq!(value.as_object().unwrap().len(), 20);
         assert_eq!(value["decoded"], 66);
         assert_eq!(value["playing"], true);
         let mut result: Value = serde_json::from_slice(&bytes).unwrap();

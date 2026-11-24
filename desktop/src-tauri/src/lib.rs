@@ -34,6 +34,8 @@ mod youtube_light_reload;
 mod youtube_light_resume_service;
 mod youtube_light_aux;
 mod cef_youtube_resume;
+mod cef_youtube_resume_fixture;
+mod cef_files;
 mod cef_youtube;
 mod cef_youtube_captions;
 mod cef_youtube_download;
@@ -354,20 +356,7 @@ fn aktivnaya(window:tauri::WebviewWindow,s: State<Sostoyanie>) -> Option<String>
 
 #[tauri::command]
 fn dvizhok_est() -> bool {
-    // ⛔ Старая проверка искала chromium/ungoogled-chromium — со схемой
-    // CEF она врала «движок не найден», хотя файлы лежали рядом (12.11.2026,
-    // промежуточная сборка ветки cef-migration). Ищем libcef рядом с exe
-    // или в CEF_PATH.
-    let ryadom = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|x| x.to_path_buf()))
-        .unwrap_or_default();
-    for baza in [ryadom, std::env::var("CEF_PATH").map(std::path::PathBuf::from).unwrap_or_default()] {
-        if baza.join("libcef.dll").exists() || baza.join("libcef.so").exists() {
-            return true;
-        }
-    }
-    false
+    crate::cef_files::directory().is_some()
 }
 
 /// Спрятать/показать встроенные окна движков. Нужно лицевой части:

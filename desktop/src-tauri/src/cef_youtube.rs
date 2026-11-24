@@ -289,6 +289,7 @@ pub fn open_webm(
 }
 
 pub fn on_navigation(browser: i32, target: &str) {
+    crate::cef_youtube_resume_fixture::cancel(browser);
     retire_stop_probe(browser);
     if let Ok(mut hints)=reload_hints().lock(){hints.navigated(browser,target);}
     crate::youtube_light_jobs::cancel(browser);
@@ -350,6 +351,7 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
 }
 pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>) {
     let identity=browser.identifier();
+    crate::cef_youtube_resume_fixture::cancel(identity);
     let binding=documents().0.lock().ok().and_then(|all|all.get(&identity).map(|g|(g.document.clone(),g.document_frame.clone())));
     // Repeated lock notifications must keep the first in-flight observation.
     // Cancellation still runs below even when extraction has no player grant.
@@ -390,7 +392,7 @@ fn reload_hints()->&'static std::sync::Mutex<crate::youtube_light_reload::Reload
     HINTS.get_or_init(Default::default)
 }
 /// Clear on native browser close. This does not grant any document authority.
-pub fn forget_reload(browser:i32){retire_stop_probe(browser);if let Ok(mut hints)=reload_hints().lock(){hints.forget(browser);}}
+pub fn forget_reload(browser:i32){crate::cef_youtube_resume_fixture::cancel(browser);retire_stop_probe(browser);if let Ok(mut hints)=reload_hints().lock(){hints.forget(browser);}}
 /// ONLY for canonical reload/extractor URL normalization, never admission.
 pub fn reload_url(browser:i32,document:&str)->Option<String>{
     logical_url(browser,document).or_else(||reload_hints().lock().ok()?.video(browser,document).map(|video|video.watch_url()))
@@ -450,7 +452,7 @@ pub fn clear_probes() {
 
 /// Protocol/media fixture only. Does not replace real anonymous extraction.
 /// Fixed GoogleVideo host is mapped to an owned HTTPS server by the CI proxy.
-pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
+fn open_fixture_inner(browser:&Browser,generation:u64,resume:Option<(crate::youtube_light_resume::ResumeScope,Option<std::path::PathBuf>)>,route:Option<crate::tab_routes::NativeRoute>) -> Result<(), &'static str> {
     if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
         || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
     {
@@ -470,14 +472,30 @@ pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
             format["url"]=serde_json::json!(format!("{source}&nb_privacy={sentinel}"));
         }
     }
+    if std::env::var("NEXUSBRO_TEST_YOUTUBE_FEATURES").as_deref()==Ok("1"){
+        json["formats"][0]["format_id"]=serde_json::json!("fixture-video-low");
+        let low=json["formats"][0]["url"].as_str().ok_or("Диагностика недоступна")?.to_owned();
+        json["formats"][0]["url"]=serde_json::json!(format!("{low}&quality=low"));
+        let high=json["formats"][0]["url"].as_str().ok_or("Диагностика недоступна")?.replace("quality=low","quality=high");
+        json["formats"].as_array_mut().ok_or("Диагностика недоступна")?.push(serde_json::json!({"format_id":"fixture-video-high","ext":"webm","vcodec":"vp9","acodec":"none","width":640,"height":360,"fps":12,"protocol":"https","url":high}));
+        json["subtitles"]=serde_json::json!({"de":[{"url":"https://www.youtube.com/api/timedtext?v=BaW_jenozKc&fmt=vtt&lang=de","ext":"vtt","name":"Deutsch"}]});
+    }
     let bytes = serde_json::to_vec(&json).map_err(|_| "Диагностика недоступна")?;
     let parsed = crate::youtube_light_extract::parse(&bytes, &id)
         .map_err(|_| "Диагностические дорожки отклонены")?;
-    open_webm(browser, 1, Arc::new(parsed), None)?;
+    let data=Arc::new(parsed);
+    open_webm(browser,generation,data.clone(),resume)?;
     let identity=browser.identifier();
     if let Ok(mut grants)=documents().0.lock(){if let Some(g)=grants.get_mut(&identity){g.fixture=true;}}
+    if let (Some(route),Some(document))=(route,current_document(identity)){
+        crate::cef_youtube_captions::attach(identity,generation,document,data.captions.clone(),route);
+    }
     Ok(())
 }
+pub fn open_fixture(browser:&Browser)->Result<(),&'static str>{open_fixture_inner(browser,1,None,None)}
+pub fn open_fixture_routed(browser:&Browser,route:crate::tab_routes::NativeRoute)->Result<(),&'static str>{open_fixture_inner(browser,1,None,Some(route))}
+pub fn open_fixture_with_resume(browser:&Browser,generation:u64,resume:(crate::youtube_light_resume::ResumeScope,Option<std::path::PathBuf>))->Result<(),&'static str>{open_fixture_inner(browser,generation,Some(resume),None)}
+
 
 pub fn current_document(browser: i32) -> Option<String> {
     documents()

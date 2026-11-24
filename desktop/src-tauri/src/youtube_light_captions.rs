@@ -440,18 +440,34 @@ pub(crate) fn tracks(
 }
 /// No retries/cookie jar/redirects/environment proxies. Caller cancels by dropping
 /// this future and verifies native route+operation generation before applying.
+// Strict extra CA for the fixed owned CI transcript endpoint only.
+fn fixture_trust(builder:reqwest::ClientBuilder,track:&CaptionTrack)->Result<reqwest::ClientBuilder,CaptionError>{
+    if std::env::var("GITHUB_ACTIONS").as_deref()!=Ok("true")||std::env::var_os("NEXUSBRO_TEST_DATA").is_none()||std::env::var("NEXUSBRO_TEST_YOUTUBE_FEATURES").as_deref()!=Ok("1"){return Ok(builder);}
+    let url=reqwest::Url::parse(track.url.as_str()).map_err(|_|CaptionError::Unavailable)?;
+    if url.host_str()!=Some("www.youtube.com")||url.path()!="/api/timedtext"||!url.query_pairs().any(|(k,v)|k=="v"&&v=="BaW_jenozKc"){return Ok(builder);}
+    let Some(path)=std::env::var_os("NEXUSBRO_TEST_YOUTUBE_CAPTIONS_CA") else{return Ok(builder);};
+    let path=std::path::PathBuf::from(path);let metadata=std::fs::symlink_metadata(&path).map_err(|_|CaptionError::Unavailable)?;
+    if !path.is_absolute()||!metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>16384{return Err(CaptionError::Unavailable);}
+    let pem=std::fs::read(path).map_err(|_|CaptionError::Unavailable)?;
+    let expected=std::env::var("NEXUSBRO_TEST_YOUTUBE_CAPTIONS_CA_SHA256").map_err(|_|CaptionError::Unavailable)?;
+    use sha2::Digest;
+    if expected.len()!=64||expected!=format!("{:x}",sha2::Sha256::digest(&pem)){return Err(CaptionError::Unavailable);}
+    let cert=reqwest::Certificate::from_pem(&pem).map_err(|_|CaptionError::Unavailable)?;
+    Ok(builder.add_root_certificate(cert))
+}
 pub async fn fetch(route: &NativeRoute, track: &CaptionTrack) -> Result<Vec<Cue>, CaptionError> {
     if !route.validate() {
         return Err(CaptionError::RouteUnavailable);
     }
     let proxy = reqwest::Proxy::all(&route.proxy).map_err(|_| CaptionError::RouteUnavailable)?;
-    let client = reqwest::Client::builder()
+    let builder = reqwest::Client::builder()
         .no_proxy()
         .proxy(proxy)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(12))
-        .user_agent("NexusBro/light-youtube")
+        .user_agent("NexusBro/light-youtube");
+    let client = fixture_trust(builder,track)?
         .build()
         .map_err(|_| CaptionError::RouteUnavailable)?;
     let mut response = client

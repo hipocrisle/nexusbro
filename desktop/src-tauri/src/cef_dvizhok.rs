@@ -137,15 +137,11 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         let _ = unsafe { libc::dup2(f.as_raw_fd(), 2) };
     }
 
-    // Файлы движка: рядом с exe или CEF_PATH (dev).
-    let cef_dir = std::env::var("CEF_PATH")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| {
-            std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|x| x.to_path_buf()))
-                .unwrap_or_default()
-        });
+    // Same resolver as the parent: installed resources or an explicit dev path.
+    let Some(cef_dir)=crate::cef_files::directory() else {
+        eprintln!("cef: packaged resources are unavailable");
+        return 1;
+    };
     let mut nastrojki = Settings::default();
     nastrojki.no_sandbox = 1;
     #[cfg(target_os = "linux")]
@@ -277,6 +273,8 @@ pub fn zapustit_cep(
         .stdout(stdout)
         .stdin(std::process::Stdio::piped())
         .stderr(stderr);
+    let cef_resources=crate::cef_files::directory().ok_or_else(||anyhow::anyhow!("CEF resources are unavailable"))?;
+    cmd.arg(format!("--nb-cef-resources={}",cef_resources.display()));
     if let Some(resources)=crate::brauzer::papka_resursov(){cmd.arg(format!("--nb-youtube-components={}",resources.join("binaries/youtube-light").display()));}
     use sha2::{Digest,Sha256};
     cmd.arg(format!("--nb-profile-key={:x}",Sha256::digest(id.as_bytes())));

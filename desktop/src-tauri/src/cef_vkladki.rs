@@ -11,6 +11,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 pub(crate) enum Sobytie {
     Sluzhebnoe(serde_json::Value),
     YoutubeReady(crate::youtube_light_jobs::Ready),
+    YoutubeResumeFixtureReady(crate::cef_youtube_resume_fixture::Ready),
     YoutubeAuxReady(crate::youtube_light_aux::Ready),
     YoutubeCaptionReady(crate::cef_youtube_captions::Ready),
     YoutubeDownloadRequest{browser:i32,audio:bool,format:String},
@@ -1076,7 +1077,38 @@ impl Rabota {
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
                 Sobytie::Komanda(Komanda::YoutubeFixture{id})=>{
-                    let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(crate::cef_youtube::open_fixture);
+                    let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(|browser|{
+                        if std::env::var("NEXUSBRO_TEST_YOUTUBE_FEATURES").as_deref()==Ok("1"){
+                            let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending).ok_or("Путь вкладки недоступен")?;
+                            let route=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate()).ok_or("Путь вкладки недоступен")?;
+                            if k.routes.borrow().key_for_browser(browser.identifier()).as_deref()!=Some(route.key.as_str()){return Err("Путь вкладки изменился");}
+                            crate::cef_youtube::open_fixture_routed(browser,route)
+                        }else{crate::cef_youtube::open_fixture(browser)}
+                    });
+                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":false,"error":result.err()})));
+                    continue;
+                }
+                Sobytie::Komanda(Komanda::YoutubeResumeFixture{id})=>{
+                    let result=(||->Result<(),&'static str>{
+                        if *browser_locked||*closing{return Err("Вкладка недоступна");}
+                        let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("Вкладка недоступна")?;
+                        let browser=brauzery.get(&id).ok_or("Вкладка недоступна")?;
+                        let route=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate()).ok_or("Путь вкладки недоступен")?;
+                        if k.routes.borrow().key_for_browser(browser.identifier()).as_deref()!=Some(route.key.as_str()){return Err("Путь вкладки изменился");}
+                        crate::cef_youtube_resume_fixture::start(browser,id,tab.route_generation,&route,tab.privatnaya||*force_private,tx.clone())
+                    })();
+                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":result.is_ok(),"error":result.err()})));
+                    continue;
+                }
+                Sobytie::YoutubeResumeFixtureReady(ready)=>{
+                    let id=ready.tab;
+                    if *browser_locked||*closing{crate::cef_youtube_resume_fixture::discard(ready);continue;}
+                    let Some(tab)=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending)else{crate::cef_youtube_resume_fixture::discard(ready);continue;};
+                    let Some(browser)=brauzery.get(&id).filter(|b|b.identifier()==ready.browser)else{crate::cef_youtube_resume_fixture::discard(ready);continue;};
+                    let Some(route)=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate())else{crate::cef_youtube_resume_fixture::discard(ready);continue;};
+                    if k.routes.borrow().key_for_browser(browser.identifier()).as_deref()!=Some(route.key.as_str()){crate::cef_youtube_resume_fixture::discard(ready);continue;}
+                    let result=crate::cef_youtube_resume_fixture::admit(ready,browser,&route,tab.route_generation,tab.privatnaya||*force_private)
+                        .and_then(|(operation,resume)|crate::cef_youtube::open_fixture_with_resume(browser,operation,resume));
                     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":false,"error":result.err()})));
                     continue;
                 }

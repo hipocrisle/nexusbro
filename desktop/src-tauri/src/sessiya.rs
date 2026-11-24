@@ -63,6 +63,7 @@ pub enum Komanda {
     YoutubeSnapshot { id:u64 },
     #[serde(rename="youtube_fixture")]
     YoutubeFixture { id:u64 },
+    YoutubeResumeFixture { id:u64 },
     YoutubeDownloadTarget {id:u64,request:String,path:Option<String>},
     YoutubeExitFullscreen,
     HibernatePrepare { request:crate::super_hibernation_protocol::Prepare },
