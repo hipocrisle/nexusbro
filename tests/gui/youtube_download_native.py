@@ -84,6 +84,9 @@ def start_chooser(client,device,diagnostics,*,audio=False):
 
 
 def choose(device,dialog,path=None,*,replace=False):
+    # A replacement confirmation is a distinct native modal. Do not send its
+    # acceptance key before it exists or to the underlying file chooser.
+    before_confirmation=dialogs(device) if replace else set()
     if sys.platform=='win32':
         from pywinauto import Desktop
         window=Desktop(backend='uia').window(handle=dialog);window.set_focus()
@@ -108,7 +111,17 @@ def choose(device,dialog,path=None,*,replace=False):
     if replace:
         # Explicit physical confirmation is part of this synthetic user's choice;
         # backend must still refuse replacing any already-existing target.
-        time.sleep(.5);keys(device,'enter' if sys.platform=='win32' else 'Return')
+        confirmations=wait_for(lambda:dialogs(device)-before_confirmation,
+                               'Native replacement confirmation did not appear',15)
+        require(len(confirmations)==1,'Native replacement confirmation ambiguous')
+        confirmation=next(iter(confirmations))
+        if sys.platform=='win32':
+            Desktop(backend='uia').window(handle=confirmation).set_focus()
+        else:
+            subprocess.run(['xdotool','windowfocus','--sync',str(confirmation)],
+                           env={**os.environ,'DISPLAY':device.display},check=True,
+                           stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
+        keys(device,'enter' if sys.platform=='win32' else 'Return')
     wait_for(lambda:dialog not in dialogs(device),'Native SaveAs did not close',15)
 
 
