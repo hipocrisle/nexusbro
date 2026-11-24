@@ -361,6 +361,7 @@ def validate_muxer_package(directory, pin, native_platform):
             or record.get('source_sha256') != pin['source_sha256']
             or record.get('source_url') != pin['source_archive_url']
             or record.get('configure') != pin['configure'] or record.get('license') != 'LGPL-2.1-or-later'
+            or record.get('source_pin_verified') is not True or record.get('bootstrap_only') is not False
             or record.get('native_smoke') is not True or record.get('network_protocol_refused') is not True):
         raise Blocked('muxer_source_or_evidence')
     files = record.get('files')
@@ -579,7 +580,7 @@ def minimal_muxer_self_tests(root):
         for name in pin['files']:
             path=directory/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(b'tiny fixture')
             files.append(dict(filename=name,bytes=path.stat().st_size,sha256=sha256(path)))
-        record=dict(platform=platform_name,source_commit=pin['source_commit'],source_sha256=pin['source_sha256'],source_url=pin['source_archive_url'],configure=pin['configure'],license=pin['license'],native_smoke=True,network_protocol_refused=True,files=files,filename='ffmpeg/bin/ffmpeg'+('.exe' if platform_name=='windows-x64' else ''),ffprobe_filename='ffmpeg/bin/ffprobe'+('.exe' if platform_name=='windows-x64' else ''),verification={'-version':'0'*64})
+        record=dict(platform=platform_name,source_commit=pin['source_commit'],source_sha256=pin['source_sha256'],source_url=pin['source_archive_url'],configure=pin['configure'],license=pin['license'],native_smoke=True,network_protocol_refused=True,source_pin_verified=True,bootstrap_only=False,files=files,filename='ffmpeg/bin/ffmpeg'+('.exe' if platform_name=='windows-x64' else ''),ffprobe_filename='ffmpeg/bin/ffprobe'+('.exe' if platform_name=='windows-x64' else ''),verification={'-version':'0'*64})
         record['sha256']=next(item['sha256'] for item in files if item['filename']==record['filename'])
         manifest=directory/'components.json'
         def write(value):manifest.write_text(json.dumps({'ffmpeg':value}))
@@ -589,7 +590,7 @@ def minimal_muxer_self_tests(root):
             except Blocked:return
             raise AssertionError('invalid minimal muxer accepted')
         write(record);assert validate_muxer_package(directory,pin,platform_name)['native_smoke']
-        for field,value in [('source_sha256','0'*64),('native_smoke',False),('network_protocol_refused',False),('configure',pin['configure'][:-1])]:
+        for field,value in [('source_sha256','0'*64),('native_smoke',False),('network_protocol_refused',False),('source_pin_verified',False),('bootstrap_only',True),('configure',pin['configure'][:-1])]:
             changed=dict(record);changed[field]=value;refused(changed)
         changed=json.loads(json.dumps(record));changed['files'][0]['filename']='../escape';refused(changed)
         changed=json.loads(json.dumps(record));changed['files'][0]['sha256']='0'*64;refused(changed)
