@@ -18,7 +18,7 @@ import tempfile
 import time
 
 from security_native import Device, call, js_wait, require, super_record, wait_for
-from tab_routes import WindowsDevice, switch_super, rows
+from tab_routes import WindowsDevice, switch_super, rows, click_control
 from youtube_player_native import (HOST, Fixture, Trust, certificates, observe, physical,
                                   foreground, OwnedWindowManager, native_owner)
 from hibernation_cookie_probe import tls_proxy_preflight
@@ -136,6 +136,8 @@ def run(args):
         foreground(device)
         client.js('window.__playerObserved=[];window.__featureReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__featureReady=true);true')
         js_wait(client,'window.__featureReady','Native feature listener missing');switch_super(client,SUPER)
+        # Restored lazy about:blank needs the shipped physical Open action.
+        if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',20)
         session=wait_for(lambda:rows(client,SUPER) if any(t.get('browser_id',0)>0 and not t.get('zagruzka') for t in rows(client,SUPER)['vkladki']) else None,'Native feature browser missing',40);tab=session['aktivnaya']
         call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_fixture','id':tab})
         initial=wait_for(lambda:(lambda s:s if s.get('configured') and s.get('video_width')==640 and s.get('video_height')==360 else None)(observe(client,SUPER,tab,admitting=True)),'Initial high geometry missing',35)
