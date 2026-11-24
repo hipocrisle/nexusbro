@@ -1,0 +1,8 @@
+<!doctype html><html lang="ru"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; media-src https://*.googlevideo.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<link rel="stylesheet" href="player.css"><title>Лёгкий YouTube</title>
+<main id="player"><header><span>Лёгкий YouTube</span><h1 id="title">Подготовка видео</h1></header>
+<video id="video" preload="metadata" playsinline></video><audio id="audio" preload="metadata"></audio>
+<div id="controls"><button id="play" disabled>Воспроизвести</button><input id="seek" aria-label="Позиция" type="range" min="0" max="0" step="0.1" value="0"><span id="clock">0 / 0 с</span><input id="volume" aria-label="Громкость" type="range" min="0" max="1" step="0.01" value="1"><button id="fullscreen">На весь экран</button></div>
+<p id="status" role="status">Подготовка…</p></main><script src="player.js"></script></html>
