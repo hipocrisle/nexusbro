@@ -188,6 +188,18 @@ def physical(client, device, kind):
     require(point['w']>=700 and point['h']>=250,'Native player viewport too small')
     x=point['x']+(65 if kind=='play' else point['w']*.45)
     y=point['y']+point['h']-65
+    from PIL import ImageGrab
+    label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    origin=call(client,'plugin:window|inner_position',label=label)
+    scale=client.js('devicePixelRatio')
+    # Read the button's left padding (away from text), at the same row as
+    # the one physical click. Shell RAF alone is not CEF compositor proof.
+    pixel=(round(origin['x']+(point['x']+23)*scale),round(origin['y']+y*scale))
+    def controls_painted():
+        with ImageGrab.grab(**({'xdisplay':device.display} if sys.platform!='win32' else {})) as image:
+            return (0<=pixel[0]<image.width and 0<=pixel[1]<image.height
+                    and image.getpixel(pixel)[:3] in ((41,43,59),(54,56,77)))
+    wait_for(controls_painted,'Native player controls not physically painted',15)
     client.mouse(x,y)
 
 
