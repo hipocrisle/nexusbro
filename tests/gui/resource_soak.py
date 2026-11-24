@@ -33,6 +33,13 @@ BASELINE_SOURCE = '35ee6500c134d7bcec42bfca9b3f6127a8208a1b'
 PHASES = {'Running', 'Preparing', 'Stopping', 'Sleeping', 'Starting'}
 
 
+def load_guard_ok(process_count, private_bytes, available_bytes, cap, private_complete=True):
+    """RSS is reported separately: summing shared CEF mappings is not RAM use."""
+    return (private_complete is True and type(process_count) is int and 0<process_count<=128
+            and type(private_bytes) is int and 0<=private_bytes<=cap
+            and type(available_bytes) is int and available_bytes>=512*1024**2)
+
+
 def sha256(path):
     digest = hashlib.sha256()
     with path.open('rb') as stream:
@@ -330,12 +337,14 @@ class Sampler:
             require(time.monotonic()-self.incomplete_since<30,'Native ownership observation incomplete beyond bounded grace')
         else:self.incomplete_since=None
         require(parent is not None, 'Soak app root not measurable')
-        require(totals['processes'] <= 128 and totals['rss_bytes'] <= self.cap, 'Soak load guard exceeded')
+        available=psutil.virtual_memory().available
+        require(load_guard_ok(totals['processes'],totals['private_bytes'],available,self.cap), 'Soak load guard exceeded')
         with self.guard:
             topology = self.topology
         return {'elapsed_seconds': round(time.monotonic() - self.started, 3),
                 'owned': dict(totals), 'parent': parent, 'topology': topology,
-                'native_members_complete':complete,'skipped_stale_native_members':skipped_stale_members}
+                'native_members_complete':complete,'skipped_stale_native_members':skipped_stale_members,
+                'system_available_bytes':available}
 
     def run(self):
         self.started = time.monotonic()
@@ -447,27 +456,27 @@ def run(args):
             require(device.app.poll() is None, 'Owned app exited during warmup')
             processes = [psutil.Process(device.app.pid)]
             processes += processes[0].children(recursive=True)
-            rss = 0
+            rss=private_sum=count=0;private_complete=True
+            clock='windows_filetime' if sys.platform=='win32' else 'linux_ticks'
             for process in processes:
                 try:
-                    rss += process.memory_info().rss
-                except psutil.NoSuchProcess:
-                    pass
-            report['warmup_load_measurement'] = {'owned_processes': len(processes), 'sum_owned_rss_bytes': rss,
-                'max_owned_rss_bytes': memory_cap, 'system_available_bytes': psutil.virtual_memory().available}
-            if len(processes) > 128 or rss > memory_cap:
-                private_sum = 0; private_complete = True
-                for process in processes:
-                    try:
-                        info = process.memory_info()
-                        value = getattr(info, 'private', None)
-                        private_sum += value if value is not None else process.memory_full_info().uss
-                    except psutil.NoSuchProcess: pass
-                    except psutil.AccessDenied: private_complete = False
-                report['warmup_load_measurement'].update(sum_owned_private_bytes=private_sum,
-                    private_complete=private_complete, process_limit_exceeded=len(processes)>128,
-                    sum_rss_limit_exceeded=rss>memory_cap)
-                require(False, 'Warmup load guard exceeded')
+                    before=kernel_birth(process.pid,clock)
+                    info=process.memory_info()
+                    value=getattr(info,'private',None)
+                    if value is None:value=process.memory_full_info().uss
+                    if kernel_birth(process.pid,clock)!=before:continue
+                    rss+=info.rss;private_sum+=value;count+=1
+                except psutil.NoSuchProcess:pass
+                except psutil.AccessDenied:private_complete=False
+            available=psutil.virtual_memory().available
+            report['warmup_load_measurement']={'owned_processes':count,'sum_owned_rss_bytes':rss,
+                'sum_owned_private_bytes':private_sum,'max_owned_private_bytes':memory_cap,
+                'system_available_bytes':available,'minimum_system_available_bytes':512*1024**2,
+                'private_complete':private_complete,'process_limit_exceeded':count>128,
+                'private_limit_exceeded':private_sum>memory_cap,'system_available_limit_exceeded':available<512*1024**2,
+                'guard_metric':'windows_private_commit' if sys.platform=='win32' else 'linux_uss',
+                'sum_rss_is_physical_ram_usage':False}
+            require(load_guard_ok(count,private_sum,available,memory_cap,private_complete),'Warmup load guard exceeded')
         require(not fixture.hits, 'Cold saved fixtures caused unsolicited navigation')
         if not args.baseline:
             lifecycle(call(client, 'super_lifecycle_snapshot'))
@@ -514,7 +523,9 @@ def run(args):
         # Setup is excluded. Full acceptance measures two actual hours below.
         measured = time.monotonic(); duration = args.seconds if args.diagnostic_pilot else 7200
         report['started_utc'] = datetime.datetime.now(datetime.timezone.utc).isoformat()
-        report['load_guard'] = {'max_processes': 128, 'max_owned_rss_bytes': memory_cap}
+        report['load_guard'] = {'max_processes':128,'max_owned_private_bytes':memory_cap,
+                                'minimum_system_available_bytes':512*1024**2,'guard_metric':report['private_metric'],
+                                'sum_rss_is_physical_ram_usage':False}
         parent_pid = foreground(device)
         sampler = Sampler(parent_pid, out / 'samples.jsonl', memory_cap); sampler.thread.start()
         sleepy = set(); cycles = 0; previous = {}; last_generation = {}; event_count = 0
