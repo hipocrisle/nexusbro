@@ -287,7 +287,20 @@ def run(args):
         report['checks'].append('selected_main_native_super_remains_running_beyond_test_idle')
         stage='physical-wheel-before-whole-engine-sleep'
         wheel(device)
-        scroll=wait_for(lambda:next((r for r in reversed(latest_proof('roundtrip')) if r['trusted'] and r['scroll']>=200),None),'Native trusted wheel receipt absent',20)['scroll']
+        wait_for(lambda:next((r for r in reversed(latest_proof('roundtrip')) if r['trusted'] and r['scroll']>=200),None),'Native trusted wheel receipt absent',20)
+        # Native wheel scrolling may animate beyond the last injected event.
+        # Capture the actual settled server-observed position, not an in-flight
+        # animation sample. Selected Super stays protected throughout this wait.
+        stable_value=None;stable_since=time.monotonic();scroll_deadline=time.monotonic()+10
+        while time.monotonic()<scroll_deadline:
+            proof=next((r for r in reversed(latest_proof('roundtrip')) if r['trusted'] and r['scroll']>=200),None)
+            current=proof['scroll'] if proof else None
+            if current!=stable_value:stable_value=current;stable_since=time.monotonic()
+            if stable_value is not None and time.monotonic()-stable_since>=1:break
+            time.sleep(.1)
+        require(stable_value is not None and time.monotonic()-stable_since>=1,'Native scroll never settled')
+        scroll=stable_value
+        report['native_scroll_expected']=scroll
         report['checks'].append('physical_native_wheel_without_page_click_sets_real_scroll')
         stage='whole-engine-exit-cookie-storage-scroll-roundtrip'
         for cycle in range(3):
@@ -309,7 +322,10 @@ def run(args):
             proofs=wait_for(lambda:latest_proof('roundtrip')[receipts_before:] or None,'Restored page never reached real origin',30)
             require(all(p['lane']=='A' and p['auth']=='A' and p['storage'] for p in proofs),'Whole-engine wake lost session HttpOnly auth/storage or route')
             stage='roundtrip-native-scroll-proof'
-            wait_for(lambda:any(abs(p['scroll']-scroll)<=64 for p in latest_proof('roundtrip')[receipts_before:]),'Whole-engine wake lost physical scroll',20)
+            try:
+                wait_for(lambda:any(abs(p['scroll']-scroll)<=64 for p in latest_proof('roundtrip')[receipts_before:]),'Whole-engine wake lost physical scroll',20)
+            finally:
+                report['native_scroll_observed']=[p['scroll'] for p in latest_proof('roundtrip')[receipts_before:]][-16:]
         report['checks'].append('three_actual_whole_engine_exit_new_generation_session_httponly_secure_persistent_headers_storage_scroll_roundtrips')
         stage='rapid-wake-before-shutdown-exit'
         before=running('hb-a');owners=identities(before['pid'])
