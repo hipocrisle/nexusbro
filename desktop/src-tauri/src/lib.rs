@@ -1388,7 +1388,9 @@ pub fn run() {
                         let Ok(mut v) = s.vkladki.try_lock() else { continue };
                         v.iter_mut().filter_map(|(id, vk)| {
                             if vk.zapusk_idet || matches!(vk.hibernate.machine.phase(),super_lifecycle::Phase::Stopping) { return None }
-                            let umer = vk.proc.as_mut().is_some_and(|p|matches!(p.try_wait(),Ok(Some(_))) && p.probe()==super_process_owner::ExitProbe::Exited);
+                            // A dead launcher permits crash cleanup, never lease release.
+                            // The retained reaper still waits for the whole Job/group.
+                            let umer = vk.proc.as_mut().is_some_and(|p|matches!(p.try_wait(),Ok(Some(_))));
                             let vpn_umer = matches!(vk.tunnel.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
                             if !umer && !vpn_umer { return None }
                             let active = vk.obychnye.as_ref().map(|s| s.aktivnaya);

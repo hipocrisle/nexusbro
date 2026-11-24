@@ -193,9 +193,14 @@ pub fn run(
             .duration_since(std::time::UNIX_EPOCH)?
             .as_secs();
         stage("verify")?;
-        expected
-            .verify_readback_at(&actual, now)
-            .map_err(|_| anyhow::anyhow!("Probe readback differs"))?;
+        if expected.verify_readback_at(&actual, now).is_err() {
+            println!(
+                "NB-PROBE {}",
+                serde_json::json!({"diagnostic":expected.readback_diagnostic_at(&actual,now)})
+            );
+            std::io::stdout().flush()?;
+            anyhow::bail!("Probe readback differs");
+        }
         println!("NB-PROBE {{\"readback_before_navigation\":true}}");
         std::io::stdout().flush()?;
         stage("admission")?;
