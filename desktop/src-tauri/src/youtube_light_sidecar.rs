@@ -483,6 +483,7 @@ fn classify_failure(stderr: &[u8]) -> ExtractError {
     }
     if [
         b"video unavailable".as_slice(),
+        b"this video is unavailable",
         b"private video",
         b"this video has been removed",
         b"this video is not available",
@@ -786,6 +787,7 @@ mod tests {
                 "Video unavailable. This video has been removed",
                 ExtractError::VideoUnavailable,
             ),
+            ("This video is unavailable", ExtractError::VideoUnavailable),
             ("opaque upstream failure", ExtractError::ProcessFailed),
         ] {
             let bytes = Zeroizing::new(format!(
