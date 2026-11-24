@@ -65,6 +65,53 @@ def dialogs(device):
     return actual
 
 
+def capture_owned_linux_dialog(device,out,report):
+    """Best-effort evidence only; no input and no full-screen capture."""
+    receipt={'saved':False,'incomplete':True}
+    report['native_dialog_capture']=receipt
+    if sys.platform=='win32':return
+    try:
+        from PIL import ImageGrab
+        root=psutil.Process(device.app.pid)
+        birth=root.create_time()
+        require(device.app.poll() is None,'Capture owner exited')
+        owned={p.pid:p.create_time() for p in [root,*root.children(recursive=True)]}
+        candidates=dialogs(device)
+        require(len(candidates)==1,'Capture dialog ambiguous')
+        window=next(iter(candidates))
+        env={**os.environ,'DISPLAY':device.display}
+        def identity():
+            require(device.app.poll() is None and root.is_running() and root.create_time()==birth,'Capture owner changed')
+            result=subprocess.run(['xprop','-id',str(window),'_NET_WM_PID','_NET_WM_WINDOW_TYPE'],env=env,capture_output=True,text=True,timeout=3)
+            require(result.returncode==0 and len(result.stdout)<=4096,'Capture metadata unavailable')
+            import re
+            match=re.search(r'_NET_WM_PID[^=]*=\s*(\d+)',result.stdout)
+            require(match is not None and '_NET_WM_WINDOW_TYPE_DIALOG' in result.stdout,'Capture dialog identity missing')
+            pid=int(match[1]);require(pid in owned and psutil.Process(pid).create_time()==owned[pid],'Capture dialog owner changed')
+            require(dialogs(device)=={window},'Capture dialog changed')
+            return pid
+        pid=identity()
+        result=subprocess.run(['xdotool','getwindowgeometry','--shell',str(window)],env=env,capture_output=True,text=True,timeout=3)
+        require(result.returncode==0 and len(result.stdout)<=4096,'Capture geometry unavailable')
+        values={}
+        for line in result.stdout.splitlines():
+            key,_,value=line.partition('=')
+            if key in {'X','Y','WIDTH','HEIGHT'} and value.lstrip('-').isdecimal():values[key]=int(value)
+        require(set(values)=={'X','Y','WIDTH','HEIGHT'},'Capture geometry invalid')
+        x,y,w,h=(values[k] for k in ('X','Y','WIDTH','HEIGHT'))
+        screen=subprocess.check_output(['xdotool','getdisplaygeometry'],env=env,text=True,timeout=3).split()
+        require(len(screen)==2 and all(v.isdecimal() for v in screen),'Capture screen invalid')
+        sw,sh=map(int,screen)
+        require(80<=w<=1600 and 80<=h<=1200 and x>=0 and y>=0 and x+w<=sw and y+h<=sh,'Capture bounds invalid')
+        image=ImageGrab.grab(bbox=(x,y,x+w,y+h),xdisplay=device.display)
+        require(identity()==pid,'Capture identity changed')
+        # Commit evidence only after the same live owner and dialog recheck.
+        image.save(out/'native-save-dialog.png')
+        receipt.update(saved=True,incomplete=False,width=w,height=h)
+    except Exception:
+        pass  # Preserve the original native test failure, never substitute it.
+
+
 def backtabs(*,busy=False,audio=False):
     # Offline assertion against the SHIPPED HTML, including both footer links.
     # Actual key delivery remains physical; no CEF DOM actions are injected.
@@ -325,6 +372,8 @@ def run(args):
         require(clean_output(output),'Temporary leftovers after owned exit')
         report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
+        if device is not None and sys.platform!='win32':
+            capture_owned_linux_dialog(device,out,report)
         report['failure_class']=type(error).__name__
         report['failure_code']={
             'Native replacement confirmation did not appear':'replacement_confirmation_missing',
