@@ -92,7 +92,7 @@ def start_chooser(client,device,diagnostics,*,audio=False):
     physical(client,device,'play',diagnostics)
     backtabs(audio=audio)  # Keep the shipped control-order contract checked.
     focus_download(client,device,rows(client,SUPER)['aktivnaya'],8 if audio else 7,diagnostics)
-    keys(device,'space')
+    keys(device,'enter' if sys.platform=='win32' else 'Return')
     appeared=wait_for(lambda:dialogs(device)-before,'Native SaveAs did not appear',15)
     require(len(appeared)==1,'Native SaveAs ambiguous')
     return next(iter(appeared))
@@ -283,6 +283,30 @@ def run(args):
         report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
+        if device is not None and 'client' in locals() and 'tab' in locals():
+            try:
+                recent=states(client,tab)[-8:]
+                report['native_download_receipts']=[{name:state.get(name) is True for name in ('cancelled','done','choosing')}|{'has_error':bool(state.get('error')),'has_progress':isinstance(state.get('progress'),dict)} for state in recent]
+                if sys.platform=='win32':
+                    import ctypes
+                    from ctypes import wintypes
+                    from pywinauto import Desktop
+                    from youtube_player_native import native_owner
+                    root_handle=native_owner(device).handle;owned=owned_pids(device)
+                    user=ctypes.WinDLL('user32',use_last_error=True)
+                    user.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];user.GetWindow.restype=wintypes.HWND
+                    counts={'owned_process':0,'owned_window_chain':0,'other':0}
+                    for window in Desktop(backend='uia').windows():
+                        if window.class_name()!='#32770' or not window.is_visible():continue
+                        cursor=window.handle;seen=set();owner_match=False
+                        for depth in range(8):
+                            if not cursor or cursor in seen:break
+                            if cursor==root_handle:owner_match=True;break
+                            seen.add(cursor);cursor=user.GetWindow(cursor,4)
+                        counts['owned_process' if window.process_id() in owned else 'owned_window_chain' if owner_match else 'other']+=1
+                    report['native_dialog_counts']=counts
+            except Exception:
+                report['native_download_diagnostic_unavailable']=True
         trace=error.__traceback__
         while trace:
             if Path(trace.tb_frame.f_code.co_filename).name==Path(__file__).name:
