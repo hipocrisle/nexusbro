@@ -54,3 +54,8 @@ pub mod youtube_light_jobs;
 
 #[path = "../../../desktop/src-tauri/src/youtube_light_resume.rs"]
 pub mod youtube_light_resume;
+
+#[path = "../../../desktop/src-tauri/src/youtube_light_resume_service.rs"]
+pub mod youtube_light_resume_service;
+#[path = "../../../desktop/src-tauri/src/youtube_light_aux.rs"]
+pub mod youtube_light_aux;

@@ -1,7 +1,16 @@
 name: YouTube anonymous component probe
 on:
   workflow_dispatch:
+    inputs:
+      diagnostic_public_key:
+        type: string
+        default: ""
+        description: Optional public key only; diagnostic private key never enters CI
   workflow_call:
+    inputs:
+      diagnostic_public_key:
+        type: string
+        default: ""
 permissions:
   contents: read
 jobs:
@@ -29,13 +38,27 @@ jobs:
       - name: Verify and package exact upstream components
         run: python tools/package_youtube_components.py --platform ${{ matrix.platform }} --extractor-only
       - name: Compile production extractor and parser probe (no desktop build)
-        run: cargo build --release --manifest-path tests/youtube_light_harness/Cargo.toml --bin external_probe
+        shell: bash
+        env:
+          NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY: ${{ inputs.diagnostic_public_key }}
+        run: |
+          if [ -n "$NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY" ]; then
+            cargo test --manifest-path tests/youtube_light_harness/Cargo.toml --features encrypted-diagnostics diagnostic_capture
+            cargo build --release --manifest-path tests/youtube_light_harness/Cargo.toml --bin external_probe --features encrypted-diagnostics
+          else
+            cargo build --release --manifest-path tests/youtube_light_harness/Cargo.toml --bin external_probe
+          fi
       - name: Real anonymous extraction through witnessed local transport
+        env:
+          NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY: ${{ inputs.diagnostic_public_key }}
+          NEXUSBRO_TEST_DIAGNOSTIC_OUTPUT: ${{ github.workspace }}/.dev-check/youtube-extract-external/capture.enc.json
         run: python tests/gui/youtube_extract_external.py --probe-exe "${{ matrix.probe }}" --components desktop/src-tauri/binaries/youtube-light --out .dev-check/youtube-extract-external/result.json
       - name: Preserve sanitized receipt only
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: youtube-extract-${{ matrix.platform }}
-          path: .dev-check/youtube-extract-external/result.json
+          path: |
+            .dev-check/youtube-extract-external/result.json
+            .dev-check/youtube-extract-external/capture.enc.json
           if-no-files-found: warn

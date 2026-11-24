@@ -12,11 +12,14 @@
   const clock = document.getElementById('clock');
   const quality = document.getElementById('quality');
   const qualities = new Map();
+  const sponsor = document.getElementById('sponsor');
+  let segments = [];
   let configured = false, disposed = false, intended = false, separate = false;
   let epoch = 0, syncing = false, duration = 0, timer = null;
   const setStatus = text => { status.textContent = text; };
+  const tick = ready => console.debug(ready ? '__NEXUSBRO_LIGHT_READY__' : '__NEXUSBRO_LIGHT_TICK__');
   const media = () => separate ? [video, audio] : [video];
-  function pause() { ++epoch; intended = false; syncing = false; clearInterval(timer); timer = null; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; updateView(); }
+  function pause() { ++epoch; intended = false; syncing = false; clearInterval(timer); timer = null; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; updateView(); tick(false); }
   function error() { pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
   function align() {
     if (!separate || syncing || !Number.isFinite(video.currentTime)) return;
@@ -33,7 +36,7 @@
       align(); await Promise.all(media().map(m => m.play()));
       if (run !== epoch) return;
       if (disposed || !intended) { media().forEach(m => m.pause()); return; }
-      button.textContent = 'Пауза'; setStatus('');
+      button.textContent = 'Пауза'; setStatus(''); tick(false);
     } catch (_) { if (run === epoch && intended && !syncing) error(); }
   }
   function sourcesClear() {
@@ -44,7 +47,7 @@
   seek.addEventListener('input', () => {
     if (!duration || !configured) return;
     const t = Math.min(duration, Math.max(0, Number(seek.value)));
-    video.currentTime = t; if (separate) audio.currentTime = t;
+    video.currentTime = t; if (separate) audio.currentTime = t; tick(false);
   });
   quality.addEventListener('change', () => {
     const next = qualities.get(quality.value); if (!next || disposed) return;
@@ -86,7 +89,14 @@
     if (separate && Number.isFinite(audio.duration)) duration = Math.min(duration, audio.duration);
     seek.max = String(duration); seek.value = String(video.currentTime || 0);
     clock.textContent = `${Math.floor(video.currentTime || 0)} / ${Math.floor(duration)} с`;
-    if (intended && !syncing) align();
+    if (intended && !syncing) {
+      align();
+      if (sponsor.checked && duration > 0) {
+        const current = separate ? audio.currentTime : video.currentTime;
+        const skip = segments.find(s => current >= s[0] && current < s[1] - 0.2 && s[1] <= duration);
+        if (skip) { video.currentTime = skip[1]; if (separate) audio.currentTime = skip[1]; tick(false); setStatus('Пропущена интеграция SponsorBlock'); }
+      }
+    }
   }
   for (const m of [video, audio]) { m.addEventListener('loadedmetadata', updateView); m.addEventListener('seeked', updateView); }
   window.addEventListener('pagehide', dispose, {once: true});
@@ -114,9 +124,31 @@
       quality.hidden = qualities.size < 2;
       document.getElementById('title').textContent = config.title.slice(0, 512);
       document.title = config.title.slice(0, 512) + ' — Лёгкий YouTube';
+      let restored = false;
+      const restore = () => {
+        if (restored || video.readyState < 1 || (separate && audio.readyState < 1)) return;
+        restored = true;
+        const position = typeof config.position === 'number' && Number.isFinite(config.position) && config.position > 0 && config.position < video.duration - 5 ? config.position : 0;
+        video.currentTime = position; if (separate) audio.currentTime = position;
+        updateView(); tick(true);
+      };
+      video.addEventListener('loadedmetadata', restore);
+      audio.addEventListener('loadedmetadata', restore);
       video.muted = separate; video.src = config.video;
       if (separate) audio.src = config.audio;
       button.disabled = false; setStatus('Готово к воспроизведению'); return true;
+    },
+    setAux(data) {
+      if (disposed || !configured || !data) return;
+      if (Array.isArray(data.segments) && data.segments.length <= 500) {
+        segments = data.segments.filter(s => Array.isArray(s) && s.length === 2 && s.every(Number.isFinite) && s[0] >= 0 && s[1] > s[0] && s[1] <= 604800);
+        sponsor.title = `Сегменты SponsorBlock: ${segments.length}`;
+      } else { segments = []; sponsor.title = 'SponsorBlock временно недоступен'; }
+      const ratings = document.getElementById('ratings');
+      if (Number.isSafeInteger(data.dislikes) && data.dislikes >= 0) {
+        ratings.textContent = 'Дизлайки: ' + new Intl.NumberFormat('ru-RU', {notation:'compact'}).format(data.dislikes);
+        ratings.title = 'Оценка Return YouTube Dislike';
+      } else { ratings.textContent = 'Дизлайки недоступны'; ratings.title = 'Сервис Return YouTube Dislike временно недоступен'; }
     },
     dispose,
     snapshot() {

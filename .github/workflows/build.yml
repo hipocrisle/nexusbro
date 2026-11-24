@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      youtube_probe_diagnostic_key:
+        description: Optional public encryption key for private extractor diagnosis (never a private key)
+        type: string
+        default: ""
       youtube_probe_only:
         description: Verify real anonymous packaged YouTube extraction without publication
         type: boolean
@@ -86,6 +90,8 @@ jobs:
   youtube-components-probe:
     if: inputs.youtube_probe_only
     uses: ./.github/workflows/youtube-probe.yml
+    with:
+      diagnostic_public_key: ${{ inputs.youtube_probe_diagnostic_key }}
   process-ownership:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
@@ -404,6 +410,7 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_probe::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube_resume::tests -- --test-threads=1
 
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'

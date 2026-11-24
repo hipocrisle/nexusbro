@@ -18,6 +18,7 @@ struct Grant {
     document: String,
     config: Option<zeroize::Zeroizing<String>>,
     logical_url: Option<String>,
+    auxiliary: Option<serde_json::Value>,
 }
 #[derive(Clone, Default)]
 pub struct PlayerDocuments(Arc<Mutex<HashMap<i32, Grant>>>);
@@ -51,6 +52,7 @@ impl PlayerDocuments {
                 document: document.clone(),
                 config: None,
                 logical_url: None,
+                auxiliary: None,
             },
         );
         Some(document)
@@ -190,6 +192,10 @@ pub fn open_webm(
     browser: &Browser,
     generation: u64,
     data: &crate::youtube_light_extract::ExtractedVideo,
+    resume: Option<(
+        crate::youtube_light_resume::ResumeScope,
+        Option<std::path::PathBuf>,
+    )>,
 ) -> Result<(), &'static str> {
     use crate::youtube_light_extract::MediaKind;
     let video = data
@@ -220,6 +226,24 @@ pub fn open_webm(
     let url = documents()
         .grant(browser.identifier(), generation)
         .ok_or("Не удалось открыть внутренний плеер")?;
+    {
+        let mut grants = documents().0.lock().map_err(|_| "Плеер занят")?;
+        grants
+            .get_mut(&browser.identifier())
+            .ok_or("Плеер закрыт")?
+            .logical_url = Some(data.metadata.id().watch_url());
+    }
+    let position = if let Some((scope, root)) = resume {
+        crate::cef_youtube_resume::attach(
+            browser,
+            url.clone(),
+            scope,
+            root,
+            data.metadata.id().clone(),
+        )?
+    } else {
+        0.0
+    };
     let mut qualities: Vec<_> = data
         .formats
         .iter()
@@ -234,7 +258,7 @@ pub fn open_webm(
         .collect();
     qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
     let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
-    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices});
+    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"position":position});
     let json = zeroize::Zeroizing::new(
         serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
     );
@@ -256,11 +280,19 @@ pub fn open_webm(
 
 pub fn on_navigation(browser: i32, target: &str) {
     crate::youtube_light_jobs::cancel(browser);
-    let Ok(mut grants) = documents().0.lock() else {
-        return;
+    let leaving = {
+        let Ok(mut grants) = documents().0.lock() else {
+            return;
+        };
+        let leaving = grants.get(&browser).is_none_or(|g| g.document != target);
+        if leaving {
+            grants.remove(&browser);
+        }
+        leaving
     };
-    if grants.get(&browser).is_some_and(|g| g.document != target) {
-        grants.remove(&browser);
+    if leaving {
+        crate::youtube_light_aux::cancel(browser);
+        crate::cef_youtube_resume::closed(browser);
     }
 }
 pub fn on_loaded(browser: &Browser, frame: &Frame) {
@@ -278,9 +310,23 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
             .and_then(|g| g.config.take())
     };
     if let Some(config) = config {
+        let auxiliary = {
+            let mut grants = match documents().0.lock() {
+                Ok(v) => v,
+                Err(_) => return,
+            };
+            grants
+                .get_mut(&browser.identifier())
+                .filter(|g| g.document == url)
+                .and_then(|g| g.auxiliary.take())
+        };
+        let auxiliary = auxiliary
+            .map(|v| format!("window.NB_LIGHT && window.NB_LIGHT.setAux({v});"))
+            .unwrap_or_default();
         let script = zeroize::Zeroizing::new(format!(
-            "window.NB_LIGHT && window.NB_LIGHT.configure({});",
-            config.as_str()
+            "window.NB_LIGHT && window.NB_LIGHT.configure({});{}",
+            config.as_str(),
+            auxiliary
         ));
         // This is a JS expression passed through CEF, never interpolated HTML.
         frame.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
@@ -288,6 +334,8 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
 }
 pub fn stop(browser: &Browser) {
     crate::youtube_light_jobs::cancel(browser.identifier());
+    crate::youtube_light_aux::cancel(browser.identifier());
+    crate::cef_youtube_resume::closed(browser.identifier());
     let active = documents()
         .0
         .lock()
@@ -351,6 +399,7 @@ pub fn poll_probes() {
 }
 pub fn clear_probes() {
     PROBES.with(|p| p.borrow_mut().clear());
+    crate::cef_youtube_resume::clear();
 }
 
 /// Protocol/media fixture only. Does not replace real anonymous extraction.
@@ -370,5 +419,50 @@ pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
     let bytes = serde_json::to_vec(&json).map_err(|_| "Диагностика недоступна")?;
     let parsed = crate::youtube_light_extract::parse(&bytes, &id)
         .map_err(|_| "Диагностические дорожки отклонены")?;
-    open_webm(browser, 1, &parsed)
+    open_webm(browser, 1, &parsed, None)
+}
+
+pub fn current_document(browser: i32) -> Option<String> {
+    documents()
+        .0
+        .lock()
+        .ok()
+        .and_then(|g| g.get(&browser).map(|g| g.document.clone()))
+}
+pub fn apply_aux(browser: &Browser, ready: crate::youtube_light_aux::Ready) {
+    let data = serde_json::json!({
+        "segments":ready.segments.map(|v|v.into_iter().map(|s|[s.start,s.end]).collect::<Vec<_>>()),
+        "likes":ready.dislikes.map(|d|d.likes),"dislikes":ready.dislikes.map(|d|d.dislikes),
+        "segment_error":ready.segment_error,"rating_error":ready.rating_error
+    });
+    let Some(frame) = browser.main_frame() else {
+        return;
+    };
+    let actual = CefString::from(&frame.url()).to_string();
+    let apply = {
+        let Ok(mut grants) = documents().0.lock() else {
+            return;
+        };
+        let Some(grant) = grants
+            .get_mut(&browser.identifier())
+            .filter(|g| g.generation == ready.operation && g.document == ready.document)
+        else {
+            return;
+        };
+        if grant.config.is_some() {
+            grant.auxiliary = Some(data.clone());
+            false
+        } else {
+            actual == grant.document
+        }
+    };
+    if apply {
+        frame.execute_java_script(
+            Some(&CefString::from(
+                format!("window.NB_LIGHT && window.NB_LIGHT.setAux({data});").as_str(),
+            )),
+            None,
+            0,
+        );
+    }
 }

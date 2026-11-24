@@ -39,10 +39,7 @@ fn endpoint(api: AuxiliaryApi, video: &str) -> Result<reqwest::Url, ApiError> {
         AuxiliaryApi::SponsorBlock => {
             url.query_pairs_mut()
                 .append_pair("videoID", video)
-                .append_pair(
-                    "categories",
-                    r#"["sponsor","selfpromo","interaction","intro","outro"]"#,
-                );
+                .append_pair("categories", r#"["sponsor"]"#);
         }
         AuxiliaryApi::Dislikes => {
             url.query_pairs_mut().append_pair("videoId", video);
