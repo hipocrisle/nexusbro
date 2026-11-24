@@ -273,7 +273,7 @@ jobs:
           set -euo pipefail
           shopt -s nullglob
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends rpm2cpio cpio
+          sudo apt-get install -y --no-install-recommends rpm2cpio cpio rpm libarchive-tools
           debs=(.dev-check/layout-package/*.deb .dev-check/layout-package/deb/*.deb)
           rpms=(.dev-check/layout-package/*.rpm .dev-check/layout-package/rpm/*.rpm)
           printf 'package_counts deb=%s rpm=%s\n' "${#debs[@]}" "${#rpms[@]}"
@@ -288,11 +288,17 @@ jobs:
           statuses=("${PIPESTATUS[@]}")
           set -e
           printf 'rpm_pipe_codes %s %s\n' "${statuses[0]}" "${statuses[1]}"
-          test "${statuses[0]}" -eq 0
-          test "${statuses[1]}" -eq 0
           echo stage_executable
           stat -c '%a %s %n' .dev-check/layout-deb/usr/bin/nexusbro
           test -x .dev-check/layout-deb/usr/bin/nexusbro
           echo stage_libcef
           stat -c '%a %s %n' .dev-check/layout-deb/usr/lib/NexusBro/libcef.so
           test -s .dev-check/layout-deb/usr/lib/NexusBro/libcef.so
+          echo stage_rpm_digests
+          rpm -K "${rpms[0]}"
+          rpm -qp --qf 'name=%{NAME} version=%{VERSION} size=%{SIZE} archive_size=%{ARCHIVESIZE} payload=%{PAYLOADCOMPRESSOR} digest_algo=%{PAYLOADDIGESTALGO}\n' "${rpms[0]}"
+          echo stage_libarchive_validation
+          bsdtar -tf "${rpms[0]}" > .dev-check/layout-rpm-members.txt
+          wc -l .dev-check/layout-rpm-members.txt
+          test "${statuses[0]}" -eq 0
+          test "${statuses[1]}" -eq 0
