@@ -211,6 +211,7 @@ class Fixture:
     def __init__(self, cert, key, video, audio):
         self.lock = threading.Lock(); self.peers = {}; self.receipts = []; self.connects = []; self.direct = 0
         self.servers = []; self.sockets = set(); self.threads = []
+        self.stalls = {}; self.closing = threading.Event()
         self.payload = {'video': video.read_bytes(), 'audio': audio.read_bytes()}
         require(all(0 < len(v) <= 32*1024*1024 for v in self.payload.values()), 'Media fixture size invalid')
         owner = self
@@ -229,6 +230,8 @@ class Fixture:
                     start = int(match[1]); end = min(int(match[2]) if match[2] else end,end); ranged=True
                     if start > end: self.send_error(416); return
                 with owner.lock:
+                    lane=owner.peers.get(self.client_address[1],'Direct')
+                    policy=owner.stalls.get((lane,track))
                     owner.receipts.append({'lane':owner.peers.get(self.client_address[1],'Direct'),'track':track,'range':ranged,'bytes':end-start+1})
                 self.send_response(206 if ranged else 200)
                 self.send_header('Content-Type','video/webm' if track=='video' else 'audio/webm')
@@ -236,7 +239,31 @@ class Fixture:
                 self.send_header('Content-Length',str(end-start+1))
                 if ranged:self.send_header('Content-Range',f'bytes {start}-{end}/{len(body)}')
                 self.end_headers()
-                try:self.wfile.write(body[start:end+1])
+                try:
+                    if policy is None:
+                        self.wfile.write(body[start:end+1])
+                    else:
+                        # Cues/SeekHead at the tail may be required before the
+                        # first frame. This bounded metadata window cannot fill
+                        # the continuous beginning of a 120-second media track.
+                        tail_metadata=start>=max(0,len(body)-16384) and end-start+1<=16384
+                        for offset in range(start,end+1,4096):
+                            if owner.closing.is_set():return
+                            if not tail_metadata:
+                                blocked=False
+                                while not policy['gate'].wait(.1):
+                                    if owner.closing.is_set():return
+                                    if not blocked:
+                                        with owner.lock:policy['blocked_writers']+=1
+                                        blocked=True
+                            chunk=body[offset:min(offset+4096,end+1)]
+                            self.wfile.write(chunk);self.wfile.flush()
+                            with owner.lock:
+                                policy['sent_bytes']+=len(chunk)
+                                if tail_metadata:policy['metadata_bytes']+=len(chunk)
+                            # ~2x real-time: enough to start, not enough to
+                            # prebuffer all 120 seconds before gate admission.
+                            if not tail_metadata and owner.closing.wait(len(chunk)*60/len(body)):return
                 except (OSError,ssl.SSLError):pass
         origin = http.server.ThreadingHTTPServer(('127.0.0.1',0),Origin); origin.daemon_threads=True
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert,key)
@@ -278,8 +305,19 @@ class Fixture:
         trap=Server(('127.0.0.1',443),Trap);self.start(trap)
     def start(self,server):
         self.servers.append(server);thread=threading.Thread(target=server.serve_forever,daemon=True);self.threads.append(thread);thread.start()
-    def close(self):
+    def stall_policy(self,lane,track):
+        gate=threading.Event();gate.set()
+        policy={'gate':gate,'sent_bytes':0,'metadata_bytes':0,'blocked_writers':0}
+        with self.lock:self.stalls[(lane,track)]=policy
+        return policy
+    def retire_stall(self,lane,track,policy):
+        policy['gate'].set()
         with self.lock:
+            if self.stalls.get((lane,track)) is policy:self.stalls.pop((lane,track))
+    def close(self):
+        self.closing.set()
+        with self.lock:
+            for policy in self.stalls.values():policy['gate'].set()
             for sock in list(self.sockets):
                 try:sock.shutdown(socket.SHUT_RDWR)
                 except OSError:pass
@@ -402,6 +440,58 @@ def video_paint(client, device):
         return image.crop(box).resize((32,18)).convert('RGB').tobytes()
 
 
+def stall_receipt(client,device,fixture,lane,identifier,tab,track,report):
+    require(len(fixture.payload[track])>32768,'Stall fixture media too small for bounded metadata bypass')
+    policy=fixture.stall_policy(lane,track)
+    diagnostics=report['player_diagnostics']
+    try:
+        report['stage']='stall-load-'+track+'-'+lane
+        if sys.platform.startswith('linux'):client.js('window.__playerFixtureResults=[];true')
+        call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
+        if sys.platform.startswith('linux'):linux_fixture_ack(client,identifier,tab,diagnostics)
+        wait_for(lambda:(lambda v:v if v.get('configured') and not v.get('disposed') else None)(observe(client,identifier,tab,admitting=True,diagnostics=diagnostics)),
+                 'Player was not configured',30)
+        physical(client,device,'play',diagnostics)
+        started=wait_for(lambda:(lambda v:v if v.get('playing') and v['decoded']>=6 and min(v['position'],v['audio_position'])>1 else None)(observe(client,identifier,tab,diagnostics=diagnostics)),
+                         'Stall fixture did not start actual media',30)
+        report['stage']='stall-hold-'+track+'-'+lane
+        policy['gate'].clear()
+        wait_for(lambda:policy['blocked_writers']>0,'Stall gate did not block a real writer',15)
+        deadline=time.monotonic()+45;stable=0;previous=None;stopped=None
+        while time.monotonic()<deadline:
+            time.sleep(1)
+            current=observe(client,identifier,tab,diagnostics=diagnostics)
+            require(not current.get('disposed'),'Stall unexpectedly disposed player')
+            require(current['duration']>5 and max(current['position'],current['audio_position'])<current['duration']-5,
+                    'Stall fixture reached natural media end')
+            if previous is not None and abs(current['position']-previous['position'])<.15 and abs(current['audio_position']-previous['audio_position'])<.15:
+                stable+=1
+            else:stable=0
+            if stable>=3:stopped=current;break
+            previous=current
+        require(stopped is not None,'Stall did not actually stop both native clocks')
+        with fixture.lock:
+            held_sent=policy['sent_bytes'];blocked=policy['blocked_writers'];metadata=policy['metadata_bytes']
+        require(blocked>0 and held_sent>0,'Stall transport receipt missing')
+        report['stage']='stall-release-'+track+'-'+lane
+        policy['gate'].set()
+        resumed=wait_for(lambda:(lambda v:v if v.get('playing') and v['position']>stopped['position']+1 and v['audio_position']>stopped['audio_position']+1 and v['decoded']>stopped['decoded'] and v['skew']<1 else None)(observe(client,identifier,tab,diagnostics=diagnostics)),
+                         'Stall release did not automatically resume media',25)
+        before=video_paint(client,device);time.sleep(2);after=video_paint(client,device)
+        require(sum(a!=b for a,b in zip(before,after))>30,'Actual OS video paint did not change')
+        with fixture.lock:require(fixture.direct==0,'Media bypassed actual selected route')
+        physical(client,device,'play',diagnostics)
+        require(not observe(client,identifier,tab,diagnostics=diagnostics).get('playing'),'Physical pause failed')
+        return {'name':'actual-stall-'+track+'-'+lane,'real_blocked_writers':blocked,
+                'actual_start_position':round(started['position'],3),'actual_start_audio_position':round(started['audio_position'],3),
+                'held_sent_bytes':held_sent,'metadata_bytes':metadata,'stable_clock_samples':stable,
+                'stopped_position':round(stopped['position'],3),'stopped_audio_position':round(stopped['audio_position'],3),
+                'automatic_resume_video_advance':round(resumed['position']-stopped['position'],3),
+                'automatic_resume_audio_advance':round(resumed['audio_position']-stopped['audio_position'],3),
+                'return_skew':resumed['skew'],'return_paint_changed':True,'manual_play_after_release':False,'direct_connections':0}
+    finally:fixture.retire_stall(lane,track,policy)
+
+
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS')=='true','Disposable GHA runner required')
     out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=False)
@@ -489,6 +579,8 @@ def run(args):
                 physical(client,device,'play',report['player_diagnostics'])
                 require(not observe(client,identifier,tab,diagnostics=report['player_diagnostics']).get('playing'),'Physical pause failed')
                 report['checks'].append({'name':'actual-dual-webm-'+lane,'decoded':second['decoded'],'width':second['video_width'],'height':second['video_height'],'skew':second['skew'],'range_requests':range_count,'physical_pause':True,'physical_seek':True,'actual_os_paint_changed':True,'direct_connections':direct})
+                for stalled_track in ('video','audio'):
+                    report['checks'].append(stall_receipt(client,device,fixture,lane,identifier,tab,stalled_track,report))
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
@@ -512,6 +604,14 @@ def run(args):
                'Background playback browser changed':'background_browser_changed',
                'Background test requires actual playback':'background_not_playing',
                'Physical rewind failed':'rewind_failed',
+               'Stall fixture media too small for bounded metadata bypass':'stall_media_too_small',
+               'Stall fixture did not start actual media':'stall_start_failed',
+               'Stall gate did not block a real writer':'stall_writer_not_blocked',
+               'Stall unexpectedly disposed player':'stall_disposed',
+               'Stall fixture reached natural media end':'stall_natural_end',
+               'Stall did not actually stop both native clocks':'stall_clocks_not_stopped',
+               'Stall transport receipt missing':'stall_transport_missing',
+               'Stall release did not automatically resume media':'stall_auto_resume_failed',
                'windows_fixture_chain_not_trusted':'windows_chain_untrusted',
                'windows_chain_operation_failed':'windows_chain_operation_failed'}
         report['failure_code']=codes.get(str(error),'unclassified')
