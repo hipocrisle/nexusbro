@@ -175,7 +175,7 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
     import math
     cases=diagnostics.setdefault('background_cases',[])
     require(len(cases)<6,'Background diagnostic case bound exceeded')
-    case={'name':kind,'snapshots':[],'hide_complete':False,'restore_complete':False}
+    case={'name':kind,'snapshots':[],'hide_complete':False,'restore_complete':False,'restore_callback_entered':False}
     cases.append(case);started=time.monotonic()
     fields={'configured','disposed','playing','separate','position','audio_position','duration','skew',
             'decoded','dropped','video_width','video_height'}
@@ -228,6 +228,7 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
             # Chromium may suspend hidden video decoding. No hidden video-growth assertion.
             samples.append(current['audio_position']);previous=current['audio_position']
     finally:
+        case['restore_callback_entered']=True
         restore();case['restore_complete']=True
         case['rows_restored']=row_record()
         restored=observe(client,identifier,tab,diagnostics=diagnostics)
@@ -1021,7 +1022,17 @@ def run(args):
                     'Actual cache privacy scan not accepted')
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
-        report['failure_class']=type(error).__name__
+        # Code locations only: never serialize exception messages, paths or locals.
+        frames=[]
+        trace=error.__traceback__
+        while trace:
+            name=trace.tb_frame.f_code.co_name
+            if name in {'run','background_receipt','switch_super','click_control','js_wait','wait_for','require','observe','row_record'}:
+                frames.append({'function':name,'line':trace.tb_lineno})
+            trace=trace.tb_next
+        report['failure_trace']=frames[-8:]
+        kind=type(error).__name__
+        report['failure_class']=kind if kind in {'NativeFailure','AssertionError','TimeoutError','RuntimeError','ValueError','KeyError','StopIteration'} else 'other'
         codes={'Native fixture admission acknowledgment missing':'fixture_ack_missing',
                'Native fixture admission refused':'fixture_admission_refused',
                'Actual native fixture listener missing':'fixture_listener_missing',
