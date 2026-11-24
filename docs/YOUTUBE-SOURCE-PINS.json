@@ -1,11 +1,83 @@
 {
   "schema": 1,
   "repositories": [
-    {"repository": "denoland/deno", "version": "2.9.8", "commit": "fe7ed012d92c642fd8e5607ac5a45d517538b5c5", "archive_sha256": ""},
-    {"repository": "denoland/rusty_v8", "version": "150.4.0", "commit": "5c15a6995c9bb4bacd3e341b59fff32c909c80bf", "archive_sha256": ""},
-    {"repository": "denoland/v8", "commit": "ac1e23989121713ca642f6650b34deff7b686896", "archive_sha256": ""},
-    {"repository": "yt-dlp/yt-dlp", "version": "2026.11.23", "commit": "6f73a8d1664a58cdef8c25f01ffb5ab9cf730408", "archive_sha256": ""}
+    {
+      "repository": "denoland/deno",
+      "version": "2.9.8",
+      "commit": "fe7ed012d92c642fd8e5607ac5a45d517538b5c5",
+      "archive_sha256": "b445fe30431bbfc306108e1f54b0858e374cfd42928df9e791aacd76292437b4"
+    },
+    {
+      "repository": "denoland/rusty_v8",
+      "version": "150.4.0",
+      "commit": "5c15a6995c9bb4bacd3e341b59fff32c909c80bf",
+      "archive_sha256": "96ee509f4a771846d3aa6ebd0e30a0ef4c99c62a073021df67d760b4f9a22fc8"
+    },
+    {
+      "repository": "denoland/v8",
+      "commit": "ac1e23989121713ca642f6650b34deff7b686896",
+      "archive_sha256": "208fc32bb41a5758bdb0e130a0019c908e68599ff5d9a40ef029a8e793b9039e"
+    },
+    {
+      "repository": "yt-dlp/yt-dlp",
+      "version": "2026.11.23",
+      "commit": "6f73a8d1664a58cdef8c25f01ffb5ab9cf730408",
+      "archive_sha256": "b166214b906f15aaf4c5aa30f92deee8bb50f70b43fe19c0f31e3dd123192cac"
+    }
   ],
   "commit_pin_provenance": "Exact upstream tag resolutions and Git blob checks recorded by CI45456015776; empty archive SHA requires CI bootstrap receipt review before product reuse",
-  "product_notices_cleared": false
+  "product_notices_cleared": false,
+  "archive_sha256_review": "Approved by root after primary exact-commit provenance and actual CI45458960563 archive receipts",
+  "required_native_notice_scopes": [],
+  "notice_classification": "All Deno lock crates without proven linked target graph are unknown linkage; DEPS tests/build-tools optional superset; required only explicit reviewed scopes",
+  "native_asset_provenance": {
+    "source_evidence": "Exact reviewed Deno Cargo feature declarations/release workflow and rusty_v8 build.rs/CI are copied into provenance/native-source; not an exact linked-binary attestation",
+    "missing_asset_digest_is_not_automatically_missing_notice": true,
+    "source_facts": [
+      "Deno Cargo.toml110 enables deno_v8 facade simdutf; libs/deno_v8/Cargo.toml40 selects v8 150.4.0 without default features; cli/Cargo.toml27 default v8",
+      "Deno ci.generated.yml release builds --release --locked with deno/panic-trace; this source declaration alone is not proof of actual release environment",
+      "rusty_v8 build.rs671-717 derives release/target plus ptrcomp/sandbox/simdutf suffix; ci.yml builds V8_FROM_SOURCE=1 and gzips gn_out static libraries",
+      "rusty_v8 static_checksum_path cache contains URL text, not a cryptographic native asset digest"
+    ],
+    "recipe_derived_candidates_not_linkage_attested": [
+      "https://github.com/denoland/rusty_v8/releases/download/v150.4.0/librusty_v8_simdutf_release_x86_64-unknown-linux-gnu.a.gz",
+      "https://github.com/denoland/rusty_v8/releases/download/v150.4.0/rusty_v8_simdutf_release_x86_64-pc-windows-msvc.lib.gz"
+    ]
+  },
+  "optional_build_test_notice_scopes": [
+    "third_party/catapult",
+    "third_party/clang-format/script",
+    "third_party/colorama/src",
+    "third_party/depot_tools",
+    "third_party/google_benchmark_chrome",
+    "third_party/google_benchmark_chrome/src",
+    "third_party/fuzztest",
+    "third_party/fuzztest/src",
+    "third_party/googletest/src",
+    "third_party/jinja2",
+    "third_party/logdog/logdog",
+    "third_party/markupsafe",
+    "third_party/requests",
+    "third_party/ninja",
+    "third_party/siso/cipd",
+    "third_party/v8-perf"
+  ],
+  "native_notice_priority": [
+    "third_party/icu",
+    "third_party/simdutf",
+    "third_party/fp16/src",
+    "third_party/fast_float/src",
+    "third_party/dragonbox/src",
+    "third_party/highway/src",
+    "third_party/libc++/src",
+    "third_party/libc++abi/src",
+    "third_party/libunwind/src",
+    "third_party/zlib",
+    "third_party/partition_alloc",
+    "third_party/re2/src",
+    "third_party/abseil-cpp",
+    "third_party/protobuf",
+    "third_party/perfetto",
+    "third_party/jsoncpp/source"
+  ]
 }

@@ -3,6 +3,8 @@
 No upstream code, DEPS, build scripts or extracted executables are executed.
 """
 import argparse
+import ast
+import base64
 import posixpath
 import concurrent.futures
 import hashlib
@@ -113,11 +115,97 @@ def repository_relative(directory, path):
     return joined
 
 
+def resolve_deps(data):
+    """Non-executing bounded DEPS subset. Conditions are data, never evaluated."""
+    if len(data) > 128 * 1024: raise ValueError('deps_source_bound')
+    module = ast.parse(data)
+    if sum(1 for _ in ast.walk(module)) > 8192: raise ValueError('deps_ast_bound')
+    assignments = {}
+    for node in module.body:
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name) and target.id in ('vars', 'deps'):
+                    if target.id in assignments: raise ValueError('duplicate_deps_assignment')
+                    assignments[target.id] = node.value
+    variables = {}
+
+    def value(node, depth=0):
+        if depth > 32: raise ValueError('deps_ast_depth')
+        if isinstance(node, ast.Constant) and isinstance(node.value, (str, bool, int, type(None))):
+            if isinstance(node.value, str) and len(node.value) > 4096: raise ValueError('deps_string_bound')
+            return node.value
+        if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+            left, right = value(node.left, depth + 1), value(node.right, depth + 1)
+            if not isinstance(left, str) or not isinstance(right, str) or len(left) + len(right) > 4096:
+                raise ValueError('deps_concat_type_or_bound')
+            return left + right
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and len(node.args) == 1 and not node.keywords:
+            arg = node.args[0]
+            if not isinstance(arg, ast.Constant) or not isinstance(arg.value, str): raise ValueError('deps_call_argument')
+            if node.func.id == 'Str': return arg.value
+            if node.func.id == 'Var' and arg.value in variables: return variables[arg.value]
+            raise ValueError('deps_unknown_call')
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return [value(item, depth + 1) for item in node.elts]
+        if isinstance(node, ast.Dict):
+            result = {}
+            for key, item in zip(node.keys, node.values):
+                if not isinstance(key, ast.Constant) or not isinstance(key.value, str): raise ValueError('deps_dict_key')
+                if key.value in result: raise ValueError('deps_duplicate_dict_key')
+                result[key.value] = value(item, depth + 1)
+            return result
+        raise ValueError('deps_unsupported_ast')
+
+    raw_vars = assignments.get('vars')
+    if not isinstance(raw_vars, ast.Dict): raise ValueError('deps_missing_vars')
+    for key, item in zip(raw_vars.keys, raw_vars.values):
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str): raise ValueError('deps_var_key')
+        try: variables[key.value] = value(item)
+        except ValueError: pass  # A dependent Var remains explicitly unresolved.
+    raw_deps = assignments.get('deps')
+    if not isinstance(raw_deps, ast.Dict): raise ValueError('deps_missing_dict')
+    records = []
+    for key, item in zip(raw_deps.keys, raw_deps.values):
+        if not isinstance(key, ast.Constant) or not isinstance(key.value, str): raise ValueError('deps_path_key')
+        path = key.value; safe_path(path)
+        try:
+            parsed = value(item)
+            spec = parsed if isinstance(parsed, dict) else dict(url=parsed)
+            url = spec.get('url')
+            condition = spec.get('condition')
+            record = dict(path=path, condition=condition if isinstance(condition, str) else None)
+            if spec.get('dep_type') == 'cipd': record.update(status='cipd_not_fetched')
+            elif isinstance(url, str) and '@' in url:
+                origin, revision = url.rsplit('@', 1)
+                endpoint = urllib.parse.urlsplit(origin)
+                if not re.fullmatch('[0-9a-f]{40}', revision): record.update(status='nonexact_revision_not_fetched')
+                elif endpoint.scheme != 'https' or endpoint.hostname not in GITILES_HOSTS or endpoint.username or endpoint.password or endpoint.port or endpoint.query or endpoint.fragment:
+                    record.update(status='nonallowlisted_origin_not_fetched')
+                else: record.update(status='resolved_exact_public', origin=origin.rstrip('/'), commit=revision)
+            else: record.update(status='unsupported_dependency_not_fetched')
+        except (ValueError, TypeError):
+            record = dict(path=path, condition=None, status='unsupported_ast_not_fetched')
+        record['notice_scope'] = ('optional_build_or_test_superset' if path.startswith(('test/', 'tools/', 'build', 'agents/'))
+                                  else 'unknown_native_linkage')
+        records.append(record)
+    if len(records) > 256: raise ValueError('deps_entry_bound')
+    return records
+
+
+def decode_gitiles_json(data):
+    if not data.startswith(b")]}'\n"): raise ValueError('gitiles_json_prefix')
+    return json.loads(data[5:])
+
+
+GITILES_HOSTS = ('chromium.googlesource.com', 'v8.googlesource.com',
+                 'skia.googlesource.com', 'boringssl.googlesource.com')
+
+
 class PrimaryRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, request, fp, code, msg, headers, newurl):
         old, new = urllib.parse.urlsplit(request.full_url), urllib.parse.urlsplit(newurl)
         if new.scheme != 'https' or new.hostname not in (
-                'raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com'):
+                'raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com', *GITILES_HOSTS):
             raise ValueError('source_redirect_host')
         if request.has_header('Authorization') and new.hostname != old.hostname:
             raise ValueError('authenticated_api_crosshost_redirect')
@@ -134,16 +222,26 @@ class Collector:
         self.repository_archives, self.workspace_packages = [], []
         self.tree_cache = {}
         self.tree_lock = threading.Lock()
+        self.native_dependency_notices = []
+        self.gitiles_notice_count = 0
+        self.required_native_notice_scopes = set()
+        self.optional_native_notice_scopes = set()
+        self.native_notice_priority = []
         out.mkdir(parents=True, exist_ok=False)
 
-    def gap(self, scope, reason):
-        with self.lock: self.gaps.append(dict(scope=scope, reason=reason))
+    def gap(self, scope, reason, category=None):
+        if category is None:
+            category = ('unknown_linkage_notice_coverage' if 'grant' in reason or 'notice' in reason
+                        else 'source_or_binary_provenance_review')
+        with self.lock:
+            self.gaps.append(dict(scope=scope, reason=reason, category=category,
+                                  required_distribution_notice_missing=category == 'required_distribution_notice_missing'))
 
     def download(self, url, limit=DOWNLOAD_LIMIT):
         if time.monotonic() >= self.deadline: raise ValueError('collector_deadline')
         parsed = urllib.parse.urlsplit(url)
         if parsed.scheme != 'https' or parsed.hostname not in (
-            'raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com'):
+            'raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com', *GITILES_HOSTS):
             raise ValueError('nonprimary_source_host')
         headers = {'User-Agent': 'NexusBro-source-inventory/2'}
         if parsed.hostname == 'api.github.com':
@@ -155,7 +253,7 @@ class Collector:
         opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), PrimaryRedirect())
         with opener.open(request, timeout=20) as response:
             final = urllib.parse.urlsplit(response.geturl())
-            if final.scheme != 'https' or final.hostname not in ('raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com'):
+            if final.scheme != 'https' or final.hostname not in ('raw.githubusercontent.com', 'api.github.com', 'static.crates.io', 'codeload.github.com', *GITILES_HOSTS):
                 raise ValueError('source_redirect_host')
             data = bytearray()
             while True:
@@ -294,6 +392,11 @@ class Collector:
             actual = sha(data)  # BEFORE parsing any tar headers.
             if expected and actual != expected: raise ValueError('source_archive_sha256_mismatch')
             prefix = repo.split('/')[1] + '-' + commit
+            evidence = {
+                'denoland/deno': {'Cargo.toml', 'cli/Cargo.toml', 'libs/deno_v8/Cargo.toml', 'libs/core/Cargo.toml', '.github/workflows/ci.generated.yml'},
+                'denoland/rusty_v8': {'Cargo.toml', 'build.rs', '.gitmodules', '.github/workflows/ci.yml', '.github/workflows/release.yml'},
+                'denoland/v8': {'DEPS', 'BUILD.gn'},
+            }.get(repo, set())
             expanded, count = 0, 0
             with tarfile.open(fileobj=io.BytesIO(data), mode='r|gz') as archive:
                 for member in archive:
@@ -304,6 +407,16 @@ class Collector:
                     if count > 100000 or expanded > 512 * 1024 ** 2: raise ValueError('repository_archive_expanded_bound')
                     if not (member.isdir() or member.isfile() or member.issym()):
                         raise ValueError('repository_archive_special_entry')
+                    relative = '/'.join(rel.parts[1:])
+                    if member.isfile() and relative in evidence:
+                        if member.size > 2 * 1024 * 1024: raise ValueError('native_source_evidence_bound')
+                        contents = archive.extractfile(member).read()
+                        self.store('provenance/native-source/' + repo.replace('/', '-') + '/' + relative,
+                                   contents, url, 'reviewed_archive_sha256' if expected else 'unreviewed_archive_source_evidence')
+                        if repo == 'denoland/v8' and relative == 'DEPS':
+                            try: self.v8_deps_notices(contents, self.required_native_notice_scopes)
+                            except (ValueError, KeyError):
+                                self.gap('V8', 'safe_deps_resolution_incomplete', 'unknown_native_linkage_notice_coverage')
                     if member.issym():
                         target = repository_relative('/'.join(rel.parts[:-1]), member.linkname)
                         if PurePosixPath(target).parts[0] != prefix: raise ValueError('repository_link_escape')
@@ -315,6 +428,91 @@ class Collector:
         except (ValueError, OSError, urllib.error.URLError, tarfile.TarError):
             self.gap(repo, 'source_archive_collection_or_verification_failed')
             self.repository_archives.append(dict(repository=repo, commit=commit, reviewed=False, complete_source_archive=False))
+
+    def gitiles_notices(self, dependency, required=False):
+        origin, commit = dependency['origin'], dependency['commit']
+        prefix = hashlib.sha256((origin + '@' + commit).encode()).hexdigest()[:16]
+        queue = [('', 0)]
+        visited = 0
+        found, grants = 0, 0
+        while queue:
+            directory, depth = queue.pop(0)
+            visited += 1
+            if visited > 8: raise ValueError('gitiles_directory_bound')
+            location = urllib.parse.quote(directory, safe='/')
+            tree_url = f'{origin}/+/{commit}/{location}?format=JSON'
+            tree = decode_gitiles_json(self.download(tree_url, 1024 * 1024))
+            entries = tree.get('entries', [])
+            if len(entries) > 2048: raise ValueError('gitiles_tree_entry_bound')
+            for entry in entries:
+                name = entry.get('name', '')
+                safe_path(name)
+                if '/' in name: raise ValueError('gitiles_entry_name')
+                path = '/'.join(x for x in (directory, name) if x)
+                kind = entry.get('type')
+                if kind == 'tree' and depth < 2 and name.lower() in ('licenses', 'license', 'copying', 'icu4c'):
+                    queue.append((path, depth + 1))
+                elif kind == 'blob' and (is_notice(name) or name.upper().startswith('README') or name == 'PATENTS'):
+                    if self.gitiles_notice_count >= 128: raise ValueError('gitiles_notice_total_bound')
+                    if not re.fullmatch('[0-9a-f]{40}', entry.get('id', '')): raise ValueError('gitiles_blob_id')
+                    text_url = f'{origin}/+/{commit}/{urllib.parse.quote(path, safe="/")}?format=TEXT'
+                    encoded = self.download(text_url, 2 * 1024 * 1024)
+                    contents = base64.b64decode(b''.join(encoded.split()), validate=True)
+                    if len(contents) > 1536 * 1024: raise ValueError('gitiles_decoded_notice_bound')
+                    git_sha = hashlib.sha1(b'blob ' + str(len(contents)).encode() + b'\0' + contents).hexdigest()
+                    if git_sha != entry['id']: raise ValueError('gitiles_blob_mismatch')
+                    self.store('notices/native-deps/' + prefix + '/' + path, contents, text_url,
+                               'exact_commit_gitiles_tree_blob_sha1_and_sha256', True)
+                    self.gitiles_notice_count += 1
+                    found += 1
+                    if has_grant(contents): grants += 1
+        dependency.update(notice_files=found, grant_text_files=grants,
+                          required_distribution_notice_missing=required and grants == 0,
+                          notice_status='grant_prose_collected' if grants else 'grant_prose_unresolved')
+        if not grants:
+            self.gap(dependency['path'], 'exact_native_dependency_grant_prose_not_collected',
+                     'required_distribution_notice_missing' if required else 'unknown_native_linkage_notice_coverage')
+
+    def v8_deps_notices(self, data, required_scopes):
+        dependencies = resolve_deps(data)
+        for dependency in dependencies:
+            if dependency['path'] in self.optional_native_notice_scopes:
+                dependency['notice_scope'] = 'optional_build_or_test_superset'
+        priority = {name: i for i, name in enumerate(self.native_notice_priority)}
+        dependencies.sort(key=lambda item: (item['path'] not in required_scopes,
+                                            priority.get(item['path'], 1000)))
+        fetched = {}
+        for dependency in dependencies:
+            required = dependency['path'] in required_scopes
+            dependency['reviewed_required_scope'] = required
+            # Tests/build tools are inventory only, never a source/testdata fetch.
+            if dependency['notice_scope'] == 'optional_build_or_test_superset' and not required:
+                dependency['notice_status'] = 'optional_inventory_only'
+            elif dependency['status'] != 'resolved_exact_public':
+                dependency['notice_status'] = 'not_fetched_unresolved'
+                self.gap(dependency['path'], dependency['status'],
+                         'required_distribution_notice_missing' if required else 'unknown_native_linkage_notice_coverage')
+            else:
+                key = (dependency['origin'], dependency['commit'])
+                if key in fetched:
+                    previous = fetched[key]
+                    for field in ('notice_files', 'grant_text_files', 'notice_status'):
+                        if field in previous: dependency[field] = previous[field]
+                    if required and not dependency.get('grant_text_files'):
+                        self.gap(dependency['path'], 'shared_exact_dependency_grant_unresolved', 'required_distribution_notice_missing')
+                elif len(fetched) >= 32:
+                    dependency['notice_status'] = 'repository_bound_not_fetched'
+                    self.gap(dependency['path'], 'gitiles_repository_total_bound',
+                             'required_distribution_notice_missing' if required else 'unknown_native_linkage_notice_coverage')
+                else:
+                    fetched[key] = dependency
+                    try: self.gitiles_notices(dependency, required)
+                    except (ValueError, KeyError, OSError, urllib.error.URLError):
+                        dependency['notice_status'] = 'exact_dependency_collection_incomplete'
+                        self.gap(dependency['path'], 'gitiles_notice_collection_incomplete',
+                                 'required_distribution_notice_missing' if required else 'unknown_native_linkage_notice_coverage')
+        self.native_dependency_notices.extend(dependencies)
+        self.gap('V8', 'conservative_notice_superset_not_exact_native_linked_graph', 'provenance_not_exact_linked_graph')
 
     def repository_provenance(self, repo, revision, expected_commit=None):
         # GitHub API resolves exact tag to commit. Mutable tag identity remains
@@ -351,7 +549,7 @@ class Collector:
                     self.store('provenance/' + prefix + '-deps-literal-revisions.json',
                                (json.dumps([x.decode('ascii') for x in references], indent=2) + '\n').encode(),
                                url, 'literal_references_only_not_selected_native_graph')
-                    self.gap(repo, 'deps_saved_unexecuted_conditions_cipd_and_native_build_selection_unresolved')
+                    # DEPS coverage now lives in bounded AST/Gitiles inventory above.
         except (ValueError, KeyError, OSError, urllib.error.URLError):
             self.gap(repo, 'repository_provenance_collection_incomplete')
 
@@ -360,6 +558,7 @@ class Collector:
                          dependency_scope='all_Deno_Cargo_lock_superset_not_exact_linked_binary_graph',
                          sources_bytes=self.sources, notices_bytes=self.notices,
                          repository_archives=self.repository_archives, workspace_packages=self.workspace_packages,
+                         native_dependency_notices=self.native_dependency_notices,
                          files=sorted(self.records, key=lambda item: item['filename']),
                          pending_gaps=sorted(self.gaps, key=lambda item: (item['scope'], item['reason'])))
         data = (json.dumps(inventory, indent=2) + '\n').encode()
@@ -371,6 +570,9 @@ class Collector:
 def collect(pins, source_pins, out):
     import tomllib  # CI Python3.12; offline archive tests also support3.10.
     c = Collector(out)
+    c.required_native_notice_scopes = set(source_pins.get('required_native_notice_scopes', []))
+    c.optional_native_notice_scopes = set(source_pins.get('optional_build_test_notice_scopes', []))
+    c.native_notice_priority = source_pins.get('native_notice_priority', [])
     try:
         for pin in pins['licenses']: c.pinned(pin, 'notices/pinned', True)
         lock = None
@@ -393,7 +595,7 @@ def collect(pins, source_pins, out):
         with concurrent.futures.ThreadPoolExecutor(max_workers=4) as pool:
             list(pool.map(c.crate, packages))
         c.gap('yt-dlp-PyInstaller', 'aggregate_notice_retained_exact_bundled_dependency_source_versions_not_machine_proven')
-        c.gap('deno-native-V8', 'prebuilt_v8_asset_provenance_selected_DEPS_and_release_feature_graph_not_proven')
+        c.gap('deno-native-V8', 'source_build_recipe_recorded_binary_asset_linkage_not_asserted', 'native_asset_provenance_not_a_notice_failure')
         c.gap('distribution', 'source_offer_retention_and_license_review_not_completed')
     except (ValueError, KeyError, OSError, urllib.error.URLError):
         c.gap('collector', 'collection_incomplete_fail_closed')
@@ -403,6 +605,22 @@ def collect(pins, source_pins, out):
 
 
 def self_test():
+    revision = 'a' * 40
+    sample = ("vars = {'host': Str('https://chromium.googlesource.com'), 'rev': '" + revision + "'}\n"
+              "deps = {'third_party/icu': {'url': Var('host') + '/chromium/deps/icu.git@' + Var('rev'), "
+              "'condition': '__import__(do_not_execute)'}, 'test/data': 'https://chromium.googlesource.com/v8/data@HEAD', "
+              "'third_party/bad': __import__('os').system('do_not_execute')}\n")
+    resolved = resolve_deps(sample.encode())
+    assert resolved[0]['status'] == 'resolved_exact_public'
+    assert resolved[0]['commit'] == revision
+    assert resolved[0]['condition'] == '__import__(do_not_execute)'
+    assert resolved[1]['status'] == 'nonexact_revision_not_fetched'
+    assert resolved[1]['notice_scope'] == 'optional_build_or_test_superset'
+    assert resolved[2]['status'] == 'unsupported_ast_not_fetched'
+    assert decode_gitiles_json(b")]}'\n{\"entries\": []}") == {'entries': []}
+    try: decode_gitiles_json(b'{"entries": []}')
+    except ValueError: pass
+    else: raise AssertionError('gitiles_xssi_prefix_ignored')
     assert not has_grant(b'')
     assert not has_grant(b'Licensed under Apache License 2.0. See the license file for details.' * 2)
     assert has_grant(b'Permission is hereby granted, free of charge, to any person obtaining a copy of this software.')
@@ -418,6 +636,29 @@ def self_test():
     except ValueError: pass
     else: raise AssertionError('api_token_crosshost_redirect_accepted')
     import tempfile
+    grant = b'Permission is hereby granted, free of charge, to any person obtaining a copy of this software.'
+    blob_id = hashlib.sha1(b'blob ' + str(len(grant)).encode() + b'\0' + grant).hexdigest()
+    tree_bytes = b")]}'\n" + json.dumps({'entries': [{'name': 'LICENSE', 'type': 'blob', 'id': blob_id}]}).encode()
+    native = dict(origin='https://chromium.googlesource.com/chromium/deps/icu.git', commit='a' * 40, path='third_party/icu')
+    with tempfile.TemporaryDirectory() as temporary:
+        good = Collector(Path(temporary) / 'good')
+        good.download = lambda url, *_: tree_bytes if url.endswith('format=JSON') else base64.b64encode(grant)
+        good.gitiles_notices(dict(native))
+        assert good.gitiles_notice_count == 1 and not good.gaps
+        bad = Collector(Path(temporary) / 'bad')
+        bad.download = lambda url, *_: tree_bytes if url.endswith('format=JSON') else base64.b64encode(grant + b'tampered')
+        try: bad.gitiles_notices(dict(native))
+        except ValueError: pass
+        else: raise AssertionError('gitiles_blob_tampering_accepted')
+        assert not bad.records
+        absent = Collector(Path(temporary) / 'absent')
+        absent.download = lambda *_: b")]}'\n{\"entries\": []}"
+        absent.gitiles_notices(dict(native), required=True)
+        assert absent.gaps[0]['required_distribution_notice_missing'] is True
+        optional = Collector(Path(temporary) / 'optional')
+        optional.download = absent.download
+        optional.gitiles_notices(dict(native))
+        assert optional.gaps[0]['required_distribution_notice_missing'] is False
     commit = 'a' * 40
     archive_bytes = io.BytesIO()
     with tarfile.open(fileobj=archive_bytes, mode='w:gz') as archive:
