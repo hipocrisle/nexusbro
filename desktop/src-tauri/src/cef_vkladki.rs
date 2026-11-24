@@ -941,7 +941,7 @@ impl Rabota {
     fn shag(&mut self) -> anyhow::Result<()> {
         crate::cef_youtube::poll_probes();
         crate::cef_youtube_resume::maintenance(&self.brauzery);
-        crate::cef_youtube_download::poll(&self.brauzery);
+        crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
         if self.hibernate.active()||self.hibernate.stopped(){return self.hibernate_shag();}
         self.route_tick()?;
         if !self.data_requests.is_empty(){

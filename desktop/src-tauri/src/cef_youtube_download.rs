@@ -300,7 +300,7 @@ pub fn target(browser: &Browser, route_generation: u64, request: &str, path: Opt
         }
     }
 }
-pub fn poll(browsers: &HashMap<u64, Browser>) {
+pub fn poll(browsers: &HashMap<u64, Browser>,sender:&Sender<crate::cef_vkladki::Sobytie>) {
     let owned = browsers
         .values()
         .map(|b| b.identifier())
@@ -364,6 +364,12 @@ pub fn poll(browsers: &HashMap<u64, Browser>) {
                     .main_frame()
                     .is_some_and(|f| CefString::from(&f.url()).to_string() == document)
             {
+                if crate::cef_youtube::media(browser).is_none_or(|(current,doc,_)|current!=operation||doc!=document){continue;}
+                if std::env::var("GITHUB_ACTIONS").as_deref()==Ok("true")&&std::env::var_os("NEXUSBRO_TEST_DATA").is_some(){
+                    if let Some(tab)=browsers.iter().find_map(|(tab,b)| (b.identifier()==identity).then_some(*tab)){
+                        let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-download-state","id":tab,"operation":operation,"state":value.clone()})));
+                    }
+                }
                 display(browser, value);
             }
         }
