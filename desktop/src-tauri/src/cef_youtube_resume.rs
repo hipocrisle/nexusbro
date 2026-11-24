@@ -215,7 +215,10 @@ fn stats(value: &serde_json::Value) -> Option<Stats> {
     // The independent video clock is diagnostic; resume follows audible media.
     let position = value[if value["separate"] == true { "audio_position" } else { "position" }].as_f64()?;
     let duration = value["duration"].as_f64()?;
-    let playing = value["playing"].as_bool()?;
+    let visible_playing = value["playing"].as_bool()?;
+    // Chromium may suspend only hidden video while audible media advances.
+    // Keep recording the audio master instead of permanently idling probes.
+    let playing = if value["separate"] == true { !value["audio_paused"].as_bool()? } else { visible_playing };
     if !position.is_finite()
         || !duration.is_finite()
         || position < 0.0
@@ -421,8 +424,11 @@ mod tests {
     }
     #[test]
     fn split_tracks_resume_uses_audio_without_hiding_the_independent_video_clock() {
-        let mut value = serde_json::json!({"configured":true,"disposed":false,"playing":false,"separate":true,"position":10.5,"audio_position":11.25,"duration":100});
+        let mut value = serde_json::json!({"configured":true,"disposed":false,"playing":false,"separate":true,"audio_paused":false,"video_paused":true,"position":10.5,"audio_position":11.25,"duration":100});
         assert_eq!(stats(&value).unwrap().position, 11.25);
+        assert!(stats(&value).unwrap().playing);
+        value["audio_paused"] = serde_json::json!(true);
+        assert!(!stats(&value).unwrap().playing);
         value["audio_position"] = serde_json::Value::Null;
         assert!(stats(&value).is_none());
         value["separate"] = serde_json::json!(false);
