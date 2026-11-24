@@ -460,6 +460,14 @@ pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
         {"format_id":"fixture-video","ext":"webm","vcodec":"vp9","acodec":"none","width":320,"height":180,"fps":12,"protocol":"https","url":"https://fixture.googlevideo.com/videoplayback?track=video"},
         {"format_id":"fixture-audio","ext":"webm","vcodec":"none","acodec":"opus","protocol":"https","url":"https://fixture.googlevideo.com/videoplayback?track=audio"}
     ]});
+    let mut json=json;
+    if let Ok(sentinel)=std::env::var("NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL"){
+        if sentinel.len()!=48||!sentinel.bytes().all(|b|b.is_ascii_digit()||(b'a'..=b'f').contains(&b)){return Err("Диагностический маркер отклонён");}
+        for format in json["formats"].as_array_mut().ok_or("Диагностика недоступна")?{
+            let source=format["url"].as_str().ok_or("Диагностика недоступна")?;
+            format["url"]=serde_json::json!(format!("{source}&nb_privacy={sentinel}"));
+        }
+    }
     let bytes = serde_json::to_vec(&json).map_err(|_| "Диагностика недоступна")?;
     let parsed = crate::youtube_light_extract::parse(&bytes, &id)
         .map_err(|_| "Диагностические дорожки отклонены")?;
