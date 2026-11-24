@@ -5,6 +5,8 @@ normal-quality fallback. Future reference hook MUST verify movie_player exists,
 no observed ad markers and getVideoData().video_id matches native expected ID.
 That guard is not universal ad detection. Unknown evidence blocks acceptance.
 Startup cost is WALL time; 5s sampling cannot count all short-lived startup CPU.
+Exit0 means valid DIAGNOSTIC measurement, not comparison acceptance. The current
+13-field reference schema cannot prove both audio outputs unmuted/volume=1.
 """
 import argparse
 import hashlib
@@ -235,7 +237,7 @@ def run(args):
     manifest_sha=digest(manifest)
     exe=Path(args.exe).resolve();cef=Path(args.cef).resolve()/('libcef.dll' if sys.platform=='win32' else 'libcef.so')
     provenance={'component_manifest_input_sha256':manifest_sha,'exe_sha256':digest(exe),'cef_sha256':digest(cef),'system':platform.system(),'machine':platform.machine(),'logical_cpus':psutil.cpu_count(),'video_id':args.video_id,'route_mode':'proxy' if proxy else 'direct','hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'normal_guard_scope':'observed_ad_markers_and_public_player_id_not_universal_ad_proof','order':list(ORDER),'warmup_seconds':30,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'windows_private_commit' if sys.platform=='win32' else 'linux_uss'}
-    report={'schema':1,'completed':False,'acceptance_passed':False,'fixture_used':False,'provenance':provenance,'arms':[]}
+    report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'provenance':provenance,'arms':[]}
     try:
         for index,mode in enumerate(ORDER):
             if digest(exe)!=provenance['exe_sha256'] or digest(cef)!=provenance['cef_sha256'] or digest(manifest)!=manifest_sha:raise Blocked('same_binary_changed')
@@ -251,10 +253,18 @@ def run(args):
         summary={mode:{key:statistics.median(r[key] for r in values) for key in ('cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio','observed_fps')} for mode,values in grouped.items()}
         if summary['normal']['cpu_core_percent']<=0 or summary['normal']['peak_private_bytes']<=0:raise Blocked('baseline_metrics_invalid')
         cpu=summary['light']['cpu_core_percent']/summary['normal']['cpu_core_percent'];memory=summary['light']['peak_private_bytes']/summary['normal']['peak_private_bytes']
-        report.update(completed=True,measurement_valid=True,summary=summary,cpu_ratio=cpu,private_ratio=memory,acceptance_passed=cpu<1 and memory<1 and summary['light']['dropped_ratio']<=summary['normal']['dropped_ratio']+.01,claim_scope='observed_software_same_vm_four_arms_not_general_hardware_performance')
+        report.update(completed=True,measurement_valid=True,comparison_valid=False,accepted_measurement=False,
+                      diagnostic_only=True,acceptance_passed=False,audio_equivalence_proven=False,
+                      acceptance_blocker='audio_output_equivalence_unproven',summary=summary,cpu_ratio=cpu,private_ratio=memory,
+                      improvement_observed=cpu<1 and memory<1,
+                      drop_regression_observed=summary['light']['dropped_ratio']>summary['normal']['dropped_ratio']+.01,
+                      claim_scope='observed_software_same_vm_four_arms_audio_policy_unproven_not_general_hardware_performance')
     except Exception as error:report['blocked_reason']=str(error) if isinstance(error,Blocked) else 'paired_experiment_unavailable';report['failure_class']=type(error).__name__
     (out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
-    return 0 if report['acceptance_passed'] else 1
+    # A completed honest diagnostic measurement is successful even if the light
+    # mode uses more resources. Acceptance remains explicitly blocked until
+    # both actual audio outputs are proven volume=1 and unmuted.
+    return 0 if report['measurement_valid'] else 1
 
 
 def self_test():
