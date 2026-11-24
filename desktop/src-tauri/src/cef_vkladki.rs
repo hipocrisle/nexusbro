@@ -922,7 +922,7 @@ impl Rabota {
         for extra in self.extras.values_mut(){extra.set_browser_locked(locked,generation);}
         if locked{
             if cancel_routes_for_lock(&mut self.s,&mut self.route_attempts,&self.brauzery,&self.tx){let _=self.route_publish();}
-            for (tab,browser) in &self.brauzery{crate::cef_youtube_fullscreen::leave_browser(browser,*tab,&self.tx);crate::cef_youtube::stop(browser);crate::cef_interfeys::cancel_context(browser.identifier());}
+            for (tab,browser) in &self.brauzery{crate::cef_youtube_fullscreen::leave_browser(browser,*tab,&self.tx);crate::cef_youtube::stop(browser,*tab,&self.tx);crate::cef_interfeys::cancel_context(browser.identifier());}
             for browser in self.brauzery.values(){
                 if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}
                 let _=sistema::pokazat(handle(browser),false);
@@ -1636,7 +1636,7 @@ impl Rabota {
                     for extra in extras.values_mut(){extra.set_browser_locked(locked,generation);}
                     if locked{
                         izmeneno|=cancel_routes_for_lock(s,route_attempts,brauzery,tx);
-                        for (tab,browser) in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);crate::cef_youtube::stop(browser);crate::cef_interfeys::cancel_context(browser.identifier());}
+                        for (tab,browser) in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);crate::cef_youtube::stop(browser,*tab,tx);crate::cef_interfeys::cancel_context(browser.identifier());}
                         for browser in brauzery.values(){if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}let _=sistema::pokazat(handle(browser),false);}
                         for hwnd in devtools.values(){let _=sistema::pokazat(*hwnd,false);}
                         devtools_pending.clear();devtools.clear();

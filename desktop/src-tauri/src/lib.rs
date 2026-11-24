@@ -41,6 +41,7 @@ mod cef_youtube_fullscreen;
 mod youtube_fullscreen_parent;
 mod youtube_download_parent;
 mod cef_youtube_probe;
+mod cef_youtube_stop_probe;
 mod tab_route_parent;
 mod route_network;
 mod nastrojki;
