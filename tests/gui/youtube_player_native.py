@@ -233,7 +233,7 @@ def run(args):
                 session=wait_for(lambda:rows(client,identifier) if any(r.get('browser_id',0)>0 and not r.get('zagruzka') for r in rows(client,identifier)['vkladki']) else None,'Actual native browser not loaded',40)
                 tab=session['aktivnaya']
                 call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
-                initial=wait_for(lambda:(lambda s:s if s.get('configured') and s.get('duration',0)>0 else None)(observe(client,identifier,tab)),'Player was not configured',30)
+                initial=wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,identifier,tab)),'Player was not configured',30)
                 report['stage']='physical-play-'+lane;physical(client,device,'play')
                 first=wait_for(lambda:(lambda s:s if s.get('playing') and s.get('decoded',0)>=3 else None)(observe(client,identifier,tab)),'Physical play did not decode actual media',25)
                 require(first['video_width']==320 and first['video_height']==180 and first['separate'],'Actual VP9/Opus geometry differs')
