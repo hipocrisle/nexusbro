@@ -1,14 +1,14 @@
 //! CI-only source harness: no CEF or desktop build, not playback acceptance.
 #[path = "../../../desktop/src-tauri/src/tab_routes.rs"]
-mod tab_routes;
+pub mod tab_routes;
 #[path = "../../../desktop/src-tauri/src/youtube_light.rs"]
-mod youtube_light;
+pub mod youtube_light;
 #[path = "../../../desktop/src-tauri/src/youtube_light_extract.rs"]
-mod youtube_light_extract;
+pub mod youtube_light_extract;
 #[path = "../../../desktop/src-tauri/src/youtube_light_http.rs"]
-mod youtube_light_http;
+pub mod youtube_light_http;
 #[path = "../../../desktop/src-tauri/src/youtube_light_sidecar.rs"]
-mod youtube_light_sidecar;
+pub mod youtube_light_sidecar;
 
 #[cfg(test)]
 mod transport_tests {
