@@ -14,7 +14,7 @@
   let epoch = 0, syncing = false, duration = 0;
   const setStatus = text => { status.textContent = text; };
   const media = () => separate ? [video, audio] : [video];
-  function pause() { intended = false; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; }
+  function pause() { ++epoch; intended = false; syncing = false; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; }
   function error() { pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
   function align() {
     if (!separate || syncing || !Number.isFinite(video.currentTime)) return;
@@ -24,12 +24,14 @@
   async function play() {
     if (!configured || disposed) return;
     intended = true; const run = ++epoch;
+    if (media().every(m => m.readyState >= 3)) syncing = false;
+    for (const m of media()) m.preload = 'auto';
     try {
       align(); await Promise.all(media().map(m => m.play()));
       if (run !== epoch) return;
       if (disposed || !intended) { media().forEach(m => m.pause()); return; }
       button.textContent = 'Пауза'; setStatus('');
-    } catch (_) { if (run === epoch) error(); }
+    } catch (_) { if (run === epoch && intended && !syncing) error(); }
   }
   function sourcesClear() {
     for (const m of [video, audio]) { m.pause(); m.removeAttribute('src'); m.load(); }
@@ -50,7 +52,7 @@
     p?.catch(() => setStatus('Полноэкранный режим недоступен'));
   });
   for (const m of [video, audio]) m.addEventListener('error', error);
-  video.addEventListener('ended', () => { pause(); setStatus('Просмотр завершён'); });
+  for (const m of [video, audio]) m.addEventListener('ended', () => { pause(); setStatus('Просмотр завершён'); });
   // Pause both clocks during a buffer stall; resume only the user's play intent.
   for (const m of [video, audio]) {
     m.addEventListener('waiting', () => {
@@ -65,6 +67,7 @@
   const timer = setInterval(() => {
     if (disposed || !configured) return;
     duration = Number.isFinite(video.duration) ? video.duration : 0;
+    if (separate && Number.isFinite(audio.duration)) duration = Math.min(duration, audio.duration);
     seek.max = String(duration); seek.value = String(video.currentTime || 0);
     clock.textContent = `${Math.floor(video.currentTime || 0)} / ${Math.floor(duration)} с`;
     if (intended && !syncing) align();
