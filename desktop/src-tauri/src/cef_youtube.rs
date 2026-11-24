@@ -5,7 +5,7 @@ use cef::*;
 use rand_core::{OsRng, RngCore};
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
 };
 
 const SCHEME: &str = "nb-lite";
@@ -16,6 +16,7 @@ const MAX_GRANTS: usize = 128;
 struct Grant {
     generation: u64,
     document: String,
+    config: Option<zeroize::Zeroizing<String>>,
 }
 #[derive(Clone, Default)]
 pub struct PlayerDocuments(Arc<Mutex<HashMap<i32, Grant>>>);
@@ -47,6 +48,7 @@ impl PlayerDocuments {
             Grant {
                 generation,
                 document: document.clone(),
+                config: None,
             },
         );
         Some(document)
@@ -172,5 +174,116 @@ mod tests {
         assert!(docs.document_matches(7, 5, &new));
         docs.revoke_all();
         assert!(!docs.document_matches(7, 5, &new));
+    }
+}
+
+static DOCUMENTS: OnceLock<PlayerDocuments> = OnceLock::new();
+pub fn documents() -> &'static PlayerDocuments {
+    DOCUMENTS.get_or_init(Default::default)
+}
+
+/// Native-only prototype admission; no codec capability is inferred from metadata.
+/// Real playback/seek/background proof is required before enabling the UI action.
+pub fn open_webm(
+    browser: &Browser,
+    generation: u64,
+    data: &crate::youtube_light_extract::ExtractedVideo,
+) -> Result<(), &'static str> {
+    use crate::youtube_light_extract::MediaKind;
+    let video = data
+        .formats
+        .iter()
+        .filter(|f| {
+            f.ext == "webm"
+                && f.kind == MediaKind::VideoOnly
+                && f.vcodec
+                    .as_deref()
+                    .is_some_and(|c| c.starts_with("vp9") || c.starts_with("vp09"))
+                && f.height.is_some_and(|h| h <= 1080)
+        })
+        .max_by_key(|f| f.height);
+    let audio = data.formats.iter().find(|f| {
+        f.ext == "webm" && f.kind == MediaKind::AudioOnly && f.acodec.as_deref() == Some("opus")
+    });
+    let (Some(video), Some(audio)) = (video, audio) else {
+        return Err("Нет подходящих WebM дорожек для лёгкого плеера");
+    };
+    let context = browser
+        .host()
+        .and_then(|h| h.request_context())
+        .ok_or("Контекст вкладки недоступен")?;
+    if !documents().install(&context) {
+        return Err("Не удалось подготовить внутренний плеер");
+    }
+    let url = documents()
+        .grant(browser.identifier(), generation)
+        .ok_or("Не удалось открыть внутренний плеер")?;
+    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str()});
+    let json = zeroize::Zeroizing::new(
+        serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
+    );
+    {
+        let mut grants = documents().0.lock().map_err(|_| "Плеер занят")?;
+        let grant = grants
+            .get_mut(&browser.identifier())
+            .ok_or("Плеер уже закрыт")?;
+        grant.config = Some(json);
+    }
+    let Some(frame) = browser.main_frame() else {
+        documents().revoke(browser.identifier());
+        return Err("Документ вкладки недоступен");
+    };
+    frame.load_url(Some(&CefString::from(url.as_str())));
+    Ok(())
+}
+
+pub fn on_navigation(browser: i32, target: &str) {
+    let Ok(mut grants) = documents().0.lock() else {
+        return;
+    };
+    if grants.get(&browser).is_some_and(|g| g.document != target) {
+        grants.remove(&browser);
+    }
+}
+pub fn on_loaded(browser: &Browser, frame: &Frame) {
+    if frame.is_main() == 0 {
+        return;
+    }
+    let url = CefString::from(&frame.url()).to_string();
+    let config = {
+        let Ok(mut grants) = documents().0.lock() else {
+            return;
+        };
+        grants
+            .get_mut(&browser.identifier())
+            .filter(|g| g.document == url)
+            .and_then(|g| g.config.take())
+    };
+    if let Some(config) = config {
+        let script = zeroize::Zeroizing::new(format!(
+            "window.NB_LIGHT && window.NB_LIGHT.configure({});",
+            config.as_str()
+        ));
+        // This is a JS expression passed through CEF, never interpolated HTML.
+        frame.execute_java_script(Some(&CefString::from(script.as_str())), None, 0);
+    }
+}
+pub fn stop(browser: &Browser) {
+    let active = documents()
+        .0
+        .lock()
+        .ok()
+        .is_some_and(|g| g.contains_key(&browser.identifier()));
+    documents().revoke(browser.identifier());
+    if active {
+        if let Some(frame) = browser.main_frame() {
+            frame.execute_java_script(
+                Some(&CefString::from(
+                    "window.NB_LIGHT && window.NB_LIGHT.dispose();",
+                )),
+                None,
+                0,
+            );
+        }
     }
 }
