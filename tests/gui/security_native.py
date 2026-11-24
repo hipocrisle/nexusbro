@@ -1431,8 +1431,47 @@ def run(args):
                           'if(r.width<3||r.height<3||r.top<Math.max(0,c?.top??0)-1||'
                           'r.bottom>Math.min(innerHeight,c?.bottom??innerHeight)+1||r.left<0||r.right>innerWidth)return false;'
                           'return [r.x+r.width/2,r.y+r.height/2]})()')
-            js_wait(ca, expression, 'Recovery control is missing, disabled or clipped', 40)
-            painted(ca)
+            point = js_wait(ca, expression, 'Recovery control is missing, disabled or clipped', 40)
+            # Several real restored windows share this display. DOM coordinates
+            # alone do not establish that the intended shell owns the OS hit.
+            env = {**os.environ, 'DISPLAY': a.display}
+            label = ca.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+            title = ca.command('plugin:window|title', label=label)
+            require(isinstance(title, str) and title.startswith('NexusBro'), 'Recovery native owner title unavailable')
+            candidates = subprocess.check_output(['xdotool', 'search', '--onlyvisible', '--name', '^' + re.escape(title) + '$'], env=env, text=True).splitlines()
+            require(len(candidates) == 1, 'Recovery native owner title is ambiguous')
+            native = candidates[0]
+            pid = int(subprocess.check_output(['xdotool', 'getwindowpid', native], env=env, text=True))
+            owned_pids = {a.app.pid, *(process.pid for process in psutil.Process(a.app.pid).children(recursive=True))}
+            require(pid in owned_pids, 'Recovery native owner is outside fixture process tree')
+            visible = subprocess.check_output(['xdotool', 'search', '--onlyvisible', '--name', '^NexusBro'], env=env, text=True).splitlines()
+            owned_count = sum(int(subprocess.check_output(['xdotool', 'getwindowpid', xid], env=env, text=True)) in owned_pids for xid in visible)
+            origin = ca.command('plugin:window|inner_position', label=label)
+            scale = ca.js('devicePixelRatio||1')
+            subprocess.run(['xdotool', 'mousemove', str(round(origin['x']+point[0]*scale)), str(round(origin['y']+point[1]*scale))], env=env, check=True)
+            import ctypes
+            x11 = ctypes.CDLL('libX11.so.6')
+            x11.XOpenDisplay.argtypes = [ctypes.c_char_p]; x11.XOpenDisplay.restype = ctypes.c_void_p
+            x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]; x11.XDefaultRootWindow.restype = ctypes.c_ulong
+            x11.XQueryPointer.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_ulong), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_uint)]
+            x11.XQueryPointer.restype = ctypes.c_int
+            x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+            display = x11.XOpenDisplay(a.display.encode())
+            require(bool(display), 'Recovery native display unavailable')
+            def owner_hit():
+                root_return, child = ctypes.c_ulong(), ctypes.c_ulong()
+                rx, ry, wx, wy, mask = ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_int(), ctypes.c_uint()
+                require(bool(x11.XQueryPointer(display, x11.XDefaultRootWindow(display), ctypes.byref(root_return), ctypes.byref(child), ctypes.byref(rx), ctypes.byref(ry), ctypes.byref(wx), ctypes.byref(wy), ctypes.byref(mask))), 'Recovery pointer ownership unavailable')
+                return child.value == int(native)
+            try:
+                before = owner_hit()
+                subprocess.run(['xdotool', 'windowraise', native, 'windowfocus', native], env=env, check=True)
+                painted(ca)
+                after = owner_hit()
+                checks.append({'native_recovery_foreground_owner': {'intended_owner_hit_before': before, 'intended_owner_hit_after': after, 'owned_visible_window_count': owned_count}})
+                require(after, 'Recovery control is occluded by another native window')
+            finally:
+                x11.XCloseDisplay(display)
             return js_wait(ca, expression, 'Recovery control did not remain visible', 5)
 
         def recovery_click(selector):
