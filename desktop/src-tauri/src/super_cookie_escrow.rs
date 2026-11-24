@@ -423,6 +423,16 @@ fn identity(c: &Value) -> Result<String> {
     serde_json::to_string(&(&c["domain"], &c["path"], &c["name"], &c["partitionKey"]))
         .map_err(|_| ERROR.into())
 }
+/// Diagnostic metadata only; never an admission or verification result.
+#[derive(Debug, Serialize)]
+pub struct ReadbackDiagnostic {
+    pub expected_count: usize,
+    pub actual_count: usize,
+    pub missing_count: usize,
+    pub extra_count: usize,
+    pub parse_refused: bool,
+    pub mismatch_fields: Vec<&'static str>,
+}
 impl CookieSnapshot {
     pub fn from_cdp_result(bytes: &[u8]) -> Result<Self> {
         Ok(Self {
@@ -514,6 +524,100 @@ impl CookieSnapshot {
             return refusal();
         }
         Ok(())
+    }
+    /// Reports bounded counts and fixed field labels only. Never accepts data,
+    /// changes the snapshot, or exposes cookie identity/value/error payloads.
+    pub fn readback_diagnostic_at(
+        &self,
+        bytes: &[u8],
+        now_unix_seconds: u64,
+    ) -> ReadbackDiagnostic {
+        let mut report = ReadbackDiagnostic {
+            expected_count: 0,
+            actual_count: 0,
+            missing_count: 0,
+            extra_count: 0,
+            parse_refused: false,
+            mismatch_fields: Vec::new(),
+        };
+        let analyze = (|| -> Result<()> {
+            if now_unix_seconds > 9_007_199_254_740_991 {
+                return refusal();
+            }
+            let expected = Clear(serde_json::from_slice(&self.canonical).map_err(|_| ERROR)?);
+            let expected = expected.0["cookies"]
+                .as_array()
+                .ok_or(ERROR)?
+                .iter()
+                .filter(|c| {
+                    !(c["session"] == false
+                        && c["expires"]
+                            .as_f64()
+                            .is_some_and(|v| v <= now_unix_seconds as f64))
+                })
+                .collect::<Vec<_>>();
+            report.expected_count = expected.len();
+            let normalized = canonical(bytes)?;
+            let actual_tree = Clear(serde_json::from_slice(&normalized).map_err(|_| ERROR)?);
+            let actual = actual_tree.0["cookies"].as_array().ok_or(ERROR)?;
+            report.actual_count = actual.len();
+            // Internal identity comparison borrows zeroizing trees; nothing
+            // derived from names/domains/paths is put into the report or logs.
+            let same_base = |a: &Value, b: &Value| {
+                a["name"] == b["name"] && a["domain"] == b["domain"] && a["path"] == b["path"]
+            };
+            let same_identity =
+                |a: &Value, b: &Value| same_base(a, b) && a["partitionKey"] == b["partitionKey"];
+            report.missing_count = expected
+                .iter()
+                .filter(|e| !actual.iter().any(|a| same_identity(e, a)))
+                .count();
+            report.extra_count = actual
+                .iter()
+                .filter(|a| !expected.iter().any(|e| same_identity(e, a)))
+                .count();
+            const FIELDS: &[&str] = &[
+                "secure",
+                "httpOnly",
+                "sameSite",
+                "expires",
+                "sourceScheme",
+                "sourcePort",
+                "priority",
+                "session",
+                "size",
+                "partitionKey",
+            ];
+            for e in &expected {
+                let exact = actual.iter().find(|a| same_identity(e, a));
+                // Partition-key drift can change identity. Diagnose it only if
+                // the remaining internal base identity is unambiguous.
+                let candidate = exact.or_else(|| {
+                    let mut matches = actual.iter().filter(|a| same_base(e, a));
+                    let first = matches.next()?;
+                    if matches.next().is_some()
+                        || expected.iter().filter(|other| same_base(e, other)).count() != 1
+                    {
+                        None
+                    } else {
+                        Some(first)
+                    }
+                });
+                if let Some(a) = candidate {
+                    for &field in FIELDS {
+                        if e[field] != a[field] && !report.mismatch_fields.contains(&field) {
+                            report.mismatch_fields.push(field);
+                        }
+                    }
+                }
+            }
+            report.mismatch_fields.sort_unstable();
+            Ok(())
+        })();
+        if analyze.is_err() {
+            report.parse_refused = true;
+        }
+        report
     }
     pub fn verify_readback(&self, bytes: &[u8]) -> Result<()> {
         if *self.canonical != *canonical(bytes)? {
@@ -773,5 +877,75 @@ mod tests {
         assert!(session
             .verify_readback_at(br#"{"cookies":[]}"#, 9000000000)
             .is_err());
+    }
+    #[test]
+    fn readback_diagnostic_is_redacted_and_does_not_authorize_field_loss() {
+        let original = jar(cookie());
+        let snapshot = CookieSnapshot::from_cdp_result(&original).unwrap();
+        let mut changed = cookie();
+        changed["sourcePort"] = json!(8443);
+        changed["httpOnly"] = json!(false);
+        let changed = jar(changed);
+        let diagnostic = snapshot.readback_diagnostic_at(&changed, 100);
+        assert!(!diagnostic.parse_refused);
+        assert_eq!(diagnostic.expected_count, 1);
+        assert_eq!(diagnostic.actual_count, 1);
+        assert_eq!(diagnostic.missing_count, 0);
+        assert_eq!(diagnostic.extra_count, 0);
+        assert_eq!(diagnostic.mismatch_fields, vec!["httpOnly", "sourcePort"]);
+        let serialized = serde_json::to_string(&diagnostic).unwrap();
+        for forbidden in [
+            "secret-cookie-value",
+            "__Host-session",
+            "example.com",
+            "domain",
+            "name",
+            "value",
+            "path",
+        ] {
+            assert!(!serialized.contains(forbidden));
+        }
+        assert!(snapshot.verify_readback_at(&changed, 100).is_err());
+        snapshot.verify_readback_at(&original, 100).unwrap();
+        let mut unknown = cookie();
+        unknown["malicious-secret-field"] = json!("LEAK-ME");
+        let report = snapshot.readback_diagnostic_at(&jar(unknown), 100);
+        assert!(report.parse_refused);
+        assert!(report.mismatch_fields.is_empty());
+        let wire = serde_json::to_string(&report).unwrap();
+        assert!(!wire.contains("malicious"));
+        assert!(!wire.contains("LEAK"));
+    }
+    #[test]
+    fn readback_diagnostic_distinguishes_expiry_and_partition_identity_drift() {
+        let mut persistent = cookie();
+        persistent["session"] = json!(false);
+        persistent["expires"] = json!(1000);
+        persistent["name"] = json!("persistent");
+        let original = serde_json::to_vec(&json!({"cookies":[cookie(),persistent]})).unwrap();
+        let snapshot = CookieSnapshot::from_cdp_result(&original).unwrap();
+        let before = snapshot.readback_diagnostic_at(&jar(cookie()), 999);
+        assert_eq!(before.expected_count, 2);
+        assert_eq!(before.missing_count, 1);
+        let after = snapshot.readback_diagnostic_at(&jar(cookie()), 1000);
+        assert_eq!(after.expected_count, 1);
+        assert_eq!(after.missing_count, 0);
+        assert_eq!(after.extra_count, 0);
+        let mut partitioned = cookie();
+        partitioned["partitionKey"] =
+            json!({"topLevelSite":"https://outer.example","hasCrossSiteAncestor":true});
+        let snapshot = CookieSnapshot::from_cdp_result(&jar(partitioned.clone())).unwrap();
+        partitioned["partitionKey"]["hasCrossSiteAncestor"] = json!(false);
+        let raw = jar(partitioned);
+        let report = snapshot.readback_diagnostic_at(&raw, 1000);
+        assert_eq!(report.missing_count, 1);
+        assert_eq!(report.extra_count, 1);
+        assert_eq!(report.mismatch_fields, vec!["partitionKey"]);
+        assert!(snapshot.verify_readback_at(&raw, 1000).is_err());
+        assert!(
+            snapshot
+                .readback_diagnostic_at(&vec![b' '; MAX_BYTES + 1], 1000)
+                .parse_refused
+        );
     }
 }
