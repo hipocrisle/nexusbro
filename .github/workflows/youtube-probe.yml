@@ -27,7 +27,7 @@ jobs:
         run: python -m pip install psutil
       - uses: dtolnay/rust-toolchain@stable
       - name: Verify and package exact upstream components
-        run: python tools/package_youtube_components.py --platform ${{ matrix.platform }}
+        run: python tools/package_youtube_components.py --platform ${{ matrix.platform }} --extractor-only
       - name: Compile production extractor and parser probe (no desktop build)
         run: cargo build --release --manifest-path tests/youtube_light_harness/Cargo.toml --bin external_probe
       - name: Real anonymous extraction through witnessed local transport

@@ -345,36 +345,37 @@ def package(args):
             destination.chmod(0o755)
             records[name] = dict(version=pin['version'], filename=pin['filename'], sha256=sha256(destination),
                                  asset_sha256=pin['sha256'], upstream_url=pin['url'], source_url=pin['source_url'])
-        ffmpeg_pin = selected['ffmpeg']
-        ffmpeg_asset = staging / 'ffmpeg.asset'
-        fetch_verified(ffmpeg_pin['url'], ffmpeg_pin['sha256'], ffmpeg_asset, MAX_ASSET)
-        # Daily upstream assets expire. Preserve the verified archive separately
-        # from installer resources for the existing private GHA artifact upload.
-        archive_directory = root / '.dev-check' / 'youtube-component-upstream'
-        archive_directory.mkdir(parents=True, exist_ok=True)
-        archive_name = ffmpeg_pin['sha256'][:16] + '-' + pathlib.PurePosixPath(urllib.parse.urlsplit(ffmpeg_pin['url']).path).name
-        preserved = archive_directory / archive_name
-        temporary_archive = archive_directory / ('.copy-' + uuid.uuid4().hex)
-        try:
-            shutil.copyfile(ffmpeg_asset, temporary_archive)
-            if sha256(temporary_archive) != ffmpeg_pin['sha256']:
-                raise Blocked('ffmpeg_preserved_sha256')
-            os.replace(temporary_archive, preserved)
-        finally:
-            temporary_archive.unlink(missing_ok=True)
-        ffmpeg_directory = bundle / 'ffmpeg'
-        ffmpeg_files = extract_ffmpeg(ffmpeg_asset, ffmpeg_pin, ffmpeg_directory, args.platform)
-        ffmpeg_verified = verify_ffmpeg(ffmpeg_directory, ffmpeg_pin, args.platform, staging)
-        for path in sorted(ffmpeg_directory.glob('verified-*.txt')):
-            ffmpeg_files.append(dict(filename='ffmpeg/' + path.name, sha256=sha256(path), bytes=path.stat().st_size, materialized_from=None))
-        records['ffmpeg'] = dict(version=ffmpeg_pin['version'], filename='ffmpeg/bin/' + ('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg'),
-            sha256=sha256(ffmpeg_directory/'bin'/('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg')),
-            ffprobe_filename='ffmpeg/bin/' + ('ffprobe.exe' if args.platform == 'windows-x64' else 'ffprobe'),
-            asset_sha256=ffmpeg_pin['sha256'], upstream_url=ffmpeg_pin['url'], source_url=ffmpeg_pin['source_url'],
-            source_archive_url=ffmpeg_pin['source_archive_url'], recipe_url=ffmpeg_pin['recipe_url'],
-            ci_archive_artifact=preserved.relative_to(root).as_posix(),
-            files=ffmpeg_files, verification=ffmpeg_verified, upstream_retention=ffmpeg_pin['upstream_retention'],
-            redistribution_review='pending_external_library_notices_and_matching_source_archive_preservation')
+        if not args.extractor_only:
+            ffmpeg_pin = selected['ffmpeg']
+            ffmpeg_asset = staging / 'ffmpeg.asset'
+            fetch_verified(ffmpeg_pin['url'], ffmpeg_pin['sha256'], ffmpeg_asset, MAX_ASSET)
+            # Daily upstream assets expire. Preserve the verified archive separately
+            # from installer resources for the existing private GHA artifact upload.
+            archive_directory = root / '.dev-check' / 'youtube-component-upstream'
+            archive_directory.mkdir(parents=True, exist_ok=True)
+            archive_name = ffmpeg_pin['sha256'][:16] + '-' + pathlib.PurePosixPath(urllib.parse.urlsplit(ffmpeg_pin['url']).path).name
+            preserved = archive_directory / archive_name
+            temporary_archive = archive_directory / ('.copy-' + uuid.uuid4().hex)
+            try:
+                shutil.copyfile(ffmpeg_asset, temporary_archive)
+                if sha256(temporary_archive) != ffmpeg_pin['sha256']:
+                    raise Blocked('ffmpeg_preserved_sha256')
+                os.replace(temporary_archive, preserved)
+            finally:
+                temporary_archive.unlink(missing_ok=True)
+            ffmpeg_directory = bundle / 'ffmpeg'
+            ffmpeg_files = extract_ffmpeg(ffmpeg_asset, ffmpeg_pin, ffmpeg_directory, args.platform)
+            ffmpeg_verified = verify_ffmpeg(ffmpeg_directory, ffmpeg_pin, args.platform, staging)
+            for path in sorted(ffmpeg_directory.glob('verified-*.txt')):
+                ffmpeg_files.append(dict(filename='ffmpeg/' + path.name, sha256=sha256(path), bytes=path.stat().st_size, materialized_from=None))
+            records['ffmpeg'] = dict(version=ffmpeg_pin['version'], filename='ffmpeg/bin/' + ('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg'),
+                sha256=sha256(ffmpeg_directory/'bin'/('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg')),
+                ffprobe_filename='ffmpeg/bin/' + ('ffprobe.exe' if args.platform == 'windows-x64' else 'ffprobe'),
+                asset_sha256=ffmpeg_pin['sha256'], upstream_url=ffmpeg_pin['url'], source_url=ffmpeg_pin['source_url'],
+                source_archive_url=ffmpeg_pin['source_archive_url'], recipe_url=ffmpeg_pin['recipe_url'],
+                ci_archive_artifact=preserved.relative_to(root).as_posix(),
+                files=ffmpeg_files, verification=ffmpeg_verified, upstream_retention=ffmpeg_pin['upstream_retention'],
+                redistribution_review='pending_external_library_notices_and_matching_source_archive_preservation')
         license_records = []
         for pin in pins['licenses'] + pins.get('source_inventory', []):
             destination = licenses / pin['filename']
@@ -526,6 +527,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--platform', choices=('windows-x64', 'linux-x64'))
     parser.add_argument('--self-test', action='store_true')
+    parser.add_argument('--extractor-only', action='store_true', help='Isolated extractor probe only; desktop bundles always include the muxer')
     args = parser.parse_args()
     try:
         if args.self_test:

@@ -361,6 +361,14 @@ jobs:
           esac
           python tools/package_youtube_components.py --platform "$PLATFORM"
 
+      - name: Preserve verified dated component archive beyond upstream retention
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-component-upstream-${{ matrix.os }}
+          path: .dev-check/youtube-component-upstream/
+          retention-days: 90
+          if-no-files-found: error
+
       - name: Поставить зависимости
         working-directory: desktop
         run: npm ci
