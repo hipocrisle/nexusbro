@@ -358,7 +358,7 @@ jobs:
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-dev libgtk-3-dev \
             libayatana-appindicator3-dev librsvg2-dev libssl-dev pkg-config \
-            libxcb1-dev patchelf rpm xvfb xdotool xclip x11-utils openbox libnss3-tools
+            libxcb1-dev patchelf rpm cpio xvfb xdotool xclip x11-utils openbox libnss3-tools
 
       # Движок CEF кладём внутрь установщика (замена ungoogled-chromium,
       # ветка cef-migration). Архивные файлы лежат в Release/ и Resources/ —
@@ -540,6 +540,38 @@ jobs:
           if ($items.Count -ne 1) { throw 'Expected exactly one newly built installer' }
           7z x -y $items[0].FullName "-o.dev-check/installed"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Extract packaged Linux applications for helper and native acceptance
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          debs=(desktop/src-tauri/target/${{ matrix.target }}/release/bundle/deb/*.deb)
+          rpms=(desktop/src-tauri/target/${{ matrix.target }}/release/bundle/rpm/*.rpm)
+          test "${#debs[@]}" -eq 1
+          test "${#rpms[@]}" -eq 1
+          dpkg-deb -x "${debs[0]}" .dev-check/installed-linux
+          mkdir -p .dev-check/installed-rpm
+          rpm2cpio "${rpms[0]}" | (cd .dev-check/installed-rpm && cpio -id --quiet --no-absolute-filenames --no-preserve-owner)
+          test -x .dev-check/installed-linux/usr/bin/nexusbro
+          test -s .dev-check/installed-linux/usr/lib/nexusbro/libcef.so
+      - name: Verify every packaged YouTube helper and notice before execution
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed/binaries/youtube-light --out .dev-check/youtube-bundle-windows.json
+          else
+            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed-linux/usr/lib/nexusbro/binaries/youtube-light --out .dev-check/youtube-bundle-deb.json
+            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed-rpm/usr/lib/nexusbro/binaries/youtube-light --out .dev-check/youtube-bundle-rpm.json
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-packaged-closure-${{ matrix.os }}
+          path: .dev-check/youtube-bundle-*.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Prepare disposable Linux direct-attempt witness permission
         if: matrix.os == 'ubuntu-24.04'
         shell: bash
@@ -556,8 +588,8 @@ jobs:
             BIN=.dev-check/installed/nexusbro.exe
             CEF=.dev-check/installed
           else
-            BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
-            CEF=desktop/src-tauri/cef
+            BIN=.dev-check/installed-linux/usr/bin/nexusbro
+            CEF=.dev-check/installed-linux/usr/lib/nexusbro
           fi
           python tests/gui/youtube_player_native.py --exe "$BIN" --cef "$CEF" --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - name: Real native video save, route, cancellation and no-overwrite acceptance
@@ -570,9 +602,9 @@ jobs:
             CEF=.dev-check/installed
             COMPONENTS=.dev-check/installed/binaries/youtube-light
           else
-            BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
-            CEF=desktop/src-tauri/cef
-            COMPONENTS=desktop/src-tauri/binaries/youtube-light
+            BIN=.dev-check/installed-linux/usr/bin/nexusbro
+            CEF=.dev-check/installed-linux/usr/lib/nexusbro
+            COMPONENTS=.dev-check/installed-linux/usr/lib/nexusbro/binaries/youtube-light
           fi
           python tests/gui/youtube_download_native.py --exe "$BIN" --cef "$CEF" --components "$COMPONENTS" --out .dev-check/youtube-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - uses: actions/upload-artifact@v4

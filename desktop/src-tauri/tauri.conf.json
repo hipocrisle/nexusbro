@@ -41,7 +41,8 @@
     "createUpdaterArtifacts": true,
     "resources": {
       "cef/": "",
-      "binaries/*": "binaries/"
+      "binaries/*": "binaries/",
+      "binaries/youtube-light/": "binaries/youtube-light/"
     }
   },
   "plugins": {
