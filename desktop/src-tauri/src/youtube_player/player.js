@@ -212,7 +212,7 @@
     dispose,
     snapshot() {
       return {configured, disposed, playing: intended && !video.paused && (!separate || !audio.paused),
-        position: video.currentTime || 0, audio_position: separate ? audio.currentTime || 0 : video.currentTime || 0, duration, separate,
+        position: (separate ? audio.currentTime : video.currentTime) || 0, audio_position: separate ? audio.currentTime || 0 : video.currentTime || 0, duration, separate,
         video_width: video.videoWidth || 0, video_height: video.videoHeight || 0,
         skew: separate ? Math.abs(audio.currentTime - video.currentTime) : 0,
         decoded: video.getVideoPlaybackQuality?.().totalVideoFrames || 0,

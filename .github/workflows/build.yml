@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      youtube_deno_cache_probe:
+        description: Observe Deno cache fallback on disposable unprivileged runner
+        type: boolean
+        default: false
       youtube_consumer_package:
         description: Prepare sealed opt-in consumer probe without media request
         type: boolean
@@ -107,6 +111,9 @@ on:
         default: false
 
 jobs:
+  youtube-deno-cache-probe:
+    if: inputs.youtube_deno_cache_probe
+    uses: ./.github/workflows/deno-cache-probe.yml
   youtube-consumer-package:
     if: inputs.youtube_consumer_package
     uses: ./.github/workflows/youtube-consumer-package.yml
