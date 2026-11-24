@@ -2,12 +2,18 @@ name: YouTube anonymous component probe
 on:
   workflow_dispatch:
     inputs:
+      impersonate_chrome:
+        type: boolean
+        default: false
       diagnostic_public_key:
         type: string
         default: ""
         description: Optional public key only; diagnostic private key never enters CI
   workflow_call:
     inputs:
+      impersonate_chrome:
+        type: boolean
+        default: false
       diagnostic_public_key:
         type: string
         default: ""
@@ -51,6 +57,7 @@ jobs:
       - name: Real anonymous extraction through witnessed local transport
         env:
           NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY: ${{ inputs.diagnostic_public_key }}
+          NEXUSBRO_TEST_IMPERSONATE_CHROME: ${{ inputs.impersonate_chrome && '1' || '' }}
           NEXUSBRO_TEST_DIAGNOSTIC_OUTPUT: ${{ github.workspace }}/.dev-check/youtube-extract-external/capture.enc.json
         run: python tests/gui/youtube_extract_external.py --probe-exe "${{ matrix.probe }}" --components desktop/src-tauri/binaries/youtube-light --out .dev-check/youtube-extract-external/result.json
       - name: Preserve sanitized receipt only

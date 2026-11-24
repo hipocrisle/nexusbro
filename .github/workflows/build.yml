@@ -8,6 +8,14 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      youtube_probe_chrome:
+        description: Single explicit CI-only Chrome fingerprint experiment (no production default change)
+        type: boolean
+        default: false
+      youtube_muxer_only:
+        description: Verify minimal source-built local muxer prototype without desktop publication
+        type: boolean
+        default: false
       youtube_probe_diagnostic_key:
         description: Optional public encryption key for private extractor diagnosis (never a private key)
         type: string
@@ -92,6 +100,7 @@ jobs:
     uses: ./.github/workflows/youtube-probe.yml
     with:
       diagnostic_public_key: ${{ inputs.youtube_probe_diagnostic_key }}
+      impersonate_chrome: ${{ inputs.youtube_probe_chrome }}
   process-ownership:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
@@ -107,6 +116,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Prove profile exclusion and actual owned descendant exit
         run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
+  youtube-minimal-muxer:
+    if: inputs.youtube_muxer_only
+    needs: [youtube-media-fixture]
+    uses: ./.github/workflows/youtube-muxer.yml
   security:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
@@ -173,7 +186,7 @@ jobs:
           python3 tests/memory_bootstrap_browser.py
   youtube-media-fixture:
     if: >-
-      !inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
+      (inputs.youtube_muxer_only || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build)) &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-24.04
     timeout-minutes: 8

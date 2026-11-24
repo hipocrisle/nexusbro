@@ -303,18 +303,16 @@ fn vp9(value: &Option<String>) -> bool {
 fn opus(format: &MediaFormat) -> bool {
     format.ext == "webm" && format.acodec.as_deref() == Some("opus")
 }
+pub(crate) fn supports_audio(a: &MediaFormat) -> bool {
+    a.kind == MediaKind::AudioOnly && opus(a) && a.vcodec.is_none()
+}
+pub(crate) fn supports_video(v: &MediaFormat) -> bool {
+    v.ext == "webm" && v.kind == MediaKind::VideoOnly && vp9(&v.vcodec) && v.acodec.is_none()
+}
 fn selection_valid(selection: &Selection<'_>) -> bool {
     match selection {
-        Selection::Audio(a) => a.kind == MediaKind::AudioOnly && opus(a) && a.vcodec.is_none(),
-        Selection::Video { video, audio } => {
-            video.ext == "webm"
-                && video.kind == MediaKind::VideoOnly
-                && vp9(&video.vcodec)
-                && video.acodec.is_none()
-                && audio.kind == MediaKind::AudioOnly
-                && opus(audio)
-                && audio.vcodec.is_none()
-        }
+        Selection::Audio(a) => supports_audio(a),
+        Selection::Video { video, audio } => supports_video(video) && supports_audio(audio),
         Selection::Muxed(v) => v.kind == MediaKind::Muxed && opus(v) && vp9(&v.vcodec),
     }
 }

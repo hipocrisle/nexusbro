@@ -203,17 +203,10 @@ pub fn open_webm(
     let video = data
         .formats
         .iter()
-        .filter(|f| {
-            f.ext == "webm"
-                && f.kind == MediaKind::VideoOnly
-                && f.vcodec
-                    .as_deref()
-                    .is_some_and(|c| c.starts_with("vp9") || c.starts_with("vp09"))
-                && f.height.is_some_and(|h| h <= 1080)
-        })
+        .filter(|f|crate::youtube_light_download::supports_video(f)&&f.height.is_some_and(|h|h<=1080))
         .max_by_key(|f| f.height);
     let audio = data.formats.iter().find(|f| {
-        f.ext == "webm" && f.kind == MediaKind::AudioOnly && f.acodec.as_deref() == Some("opus")
+        crate::youtube_light_download::supports_audio(f)
     });
     let (Some(video), Some(audio)) = (video, audio) else {
         return Err("Нет подходящих WebM дорожек для лёгкого плеера");

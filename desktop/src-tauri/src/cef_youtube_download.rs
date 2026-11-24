@@ -81,16 +81,11 @@ pub fn request(
         return;
     };
     let allowed = if audio {
-        data.formats.iter().any(|f| {
-            f.kind == MediaKind::AudioOnly && f.ext == "webm" && f.acodec.as_deref() == Some("opus")
-        })
+        data.formats.iter().any(download::supports_audio)
     } else {
-        data.formats.iter().any(|f| {
-            f.format_id == format
-                && f.kind == MediaKind::VideoOnly
-                && f.ext == "webm"
-                && f.vcodec.as_deref().is_some_and(|c| c.starts_with("vp9"))
-        })
+        data.formats
+            .iter()
+            .any(|f| f.format_id == format && download::supports_video(f))
     };
     if !allowed || !route.validate() {
         display(

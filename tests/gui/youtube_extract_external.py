@@ -168,9 +168,13 @@ def safe_summary(raw):
     require(0<len(raw)<=LIMIT,'probe_summary_size')
     lines=raw.decode('utf-8').splitlines();require(len(lines)==1,'probe_summary_lines')
     value=json.loads(lines[0]);require(isinstance(value,dict),'probe_summary_shape')
-    require(set(value)<= {'stage','ok','reason','formats','vp9','opus','rejected_formats','diagnostic'},'probe_summary_unknown_fields')
+    require(set(value)<= {'stage','ok','reason','formats','vp9','opus','rejected_formats','diagnostic','impersonate_chrome','chrome_available'},'probe_summary_unknown_fields')
     require(value.get('stage') in ('components','extractor','parser','parsed') and type(value.get('ok')) is bool,'probe_summary_state')
     result={'stage':value['stage'],'ok':value['ok']}
+    if 'impersonate_chrome' in value or 'chrome_available' in value:
+        require(type(value.get('impersonate_chrome')) is bool and (value.get('chrome_available') is None or type(value['chrome_available']) is bool),'probe_summary_experiment')
+        result['impersonate_chrome']=value['impersonate_chrome'];result['chrome_available']=value.get('chrome_available')
+
     if 'reason' in value:
         reasons={'InvalidComponents','InvalidRoute','Cancelled','SpawnFailed','OutputLimit','ReadFailed','WaitFailed','ProcessFailed','TimedOut','ReapFailed','EmptyOutput',
                  'UnsupportedInvocation','HttpForbidden','RateLimited','TlsFailure','ChallengeRequired','VideoUnavailable','HttpBadRequest','HttpNotFound','HttpServerError','NetworkFailure','RuntimeFailure','ChallengeSolverUnavailable','FormatUnavailable','FfmpegUnavailable','ExtractionFailure',
@@ -257,7 +261,7 @@ def run_probe(executable,components,proxy,video,diagnostics):
     env={k:os.environ[k] for k in ('SystemRoot','WINDIR','TEMP','TMP','TMPDIR') if k in os.environ}
     env['GITHUB_ACTIONS']='true'
     # Explicit CI-only public recipient/output; never inherit arbitrary env.
-    for name in ('NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY','NEXUSBRO_TEST_DIAGNOSTIC_OUTPUT'):
+    for name in ('NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY','NEXUSBRO_TEST_DIAGNOSTIC_OUTPUT','NEXUSBRO_TEST_IMPERSONATE_CHROME'):
         value=os.environ.get(name,'')
         require(len(value)<=8192,'diagnostic_input_limit')
         if value:env[name]=value
