@@ -172,6 +172,10 @@ def foreground(device):
         require(bool(display), 'Soak native display unavailable')
         candidates = []
         owned_count = 0
+        root_count = 0
+        cef_excluded = 0
+        main_branch_count = 0
+        shell_size = client.js('[Math.round(innerWidth*devicePixelRatio),Math.round(innerHeight*devicePixelRatio)]')
         try:
             for xid in native:
                 result = subprocess.run(['xdotool', 'getwindowpid', xid], env=env, capture_output=True, text=True, timeout=5)
@@ -183,9 +187,27 @@ def foreground(device):
                 children = ctypes.POINTER(ctypes.c_ulong)()
                 ok = x11.XQueryTree(display, int(xid), ctypes.byref(root), ctypes.byref(parent), ctypes.byref(children), ctypes.byref(count))
                 if children: x11.XFree(children)
-                if ok and parent.value == root.value: candidates.append((xid, pid))
+                if not (ok and parent.value == root.value): continue
+                root_count += 1
+                # main.rs selects CEF before Tauri using these exact flags.
+                # A live but not-yet-embedded CEF top-level can share the shell
+                # title; it is never the inspector owner. No argv is retained.
+                process = psutil.Process(pid)
+                arguments = process.cmdline()
+                if '--nb-dvizhok' in arguments or any(a.startswith('--type=') for a in arguments):
+                    cef_excluded += 1
+                    continue
+                if pathlib.Path(process.exe()).resolve() != device.exe.resolve(): continue
+                main_branch_count += 1
+                geometry = subprocess.check_output(['xdotool', 'getwindowgeometry', '--shell', xid], env=env, text=True, timeout=5)
+                dimensions = dict(line.split('=', 1) for line in geometry.splitlines() if '=' in line)
+                if not all(k in dimensions and dimensions[k].isdigit() for k in ('WIDTH', 'HEIGHT')): continue
+                if abs(int(dimensions['WIDTH'])-shell_size[0]) > 2 or abs(int(dimensions['HEIGHT'])-shell_size[1]) > 2: continue
+                candidates.append((xid, pid))
             device.soak_foreground_diagnostics = {'exact_title_visible_count': len(native),
-                'owned_exact_title_count': owned_count, 'owned_root_level_count': len(candidates)}
+                'owned_exact_title_count': owned_count, 'owned_root_level_count': root_count,
+                'cef_branch_excluded_count': cef_excluded, 'main_branch_count': main_branch_count,
+                'main_geometry_match_count': len(candidates)}
             require(len(candidates) == 1, 'Soak native shell is ambiguous')
             xid, owner_pid = candidates[0]
             subprocess.run(['xdotool', 'windowraise', xid, 'windowfocus', xid], env=env, check=True, timeout=5)
