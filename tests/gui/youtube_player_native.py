@@ -655,25 +655,40 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
                 'stop_token_expired','stop_document_changed','stop_token_retired','probe_wrong_thread',
                 'probe_timeout','probe_document_changed','probe_message_capacity','probe_observer_unavailable',
                 'probe_dispatch_failed','cdp_method_failed','cdp_result_absent','cdp_agent_detached'}
+    stop_bools={'disposed','video_paused','audio_paused','video_source_attribute_absent','audio_source_attribute_absent',
+                'video_source_object_absent','audio_source_object_absent','video_source_children_absent','audio_source_children_absent'}
+    stop_uints={'video_network_state':3,'audio_network_state':3,'video_ready_state':4,'audio_ready_state':4}
+    stop_clocks={'position','audio_position'}
+    fields=stop_bools|set(stop_uints)|stop_clocks
     safe_state={}
     if isinstance(state,dict):
-        for key in ('disposed','video_paused','audio_paused','video_source_empty','audio_source_empty'):
+        for key in stop_bools:
             if type(state.get(key)) is bool:safe_state[key]=state[key]
-        for key in ('position','audio_position'):
+        for key,maximum in stop_uints.items():
+            if type(state.get(key)) is int and 0<=state[key]<=maximum:safe_state[key]=state[key]
+        for key in stop_clocks:
             value=state.get(key)
             if type(value) in (int,float) and math.isfinite(value) and 0<=value<=604800:safe_state[key]=value
+    observations=data.get('observations');stable_ms=data.get('stable_ms')
+    proof_counts_valid=(type(observations) is int and 2<=observations<=4
+                        and type(stable_ms) is int and 200<=stable_ms<=5000)
     diagnostics['stop_receipt']={'received':True,
             'complete':data.get('complete') if type(data.get('complete')) is bool else None,
             'code':data.get('code') if isinstance(data.get('code'),str) and data.get('code') in stop_codes else 'unknown_stop_code',
-            'state_present':isinstance(state,dict),'state_valid':isinstance(state,dict) and len(safe_state)==7 and set(state)==set(safe_state),
-            'state':safe_state}
+            'state_present':isinstance(state,dict),'state_field_count':len(state) if isinstance(state,dict) else 0,
+            'state_valid':isinstance(state,dict) and len(safe_state)==15 and set(state)==fields,
+            'state':safe_state,'proof_counts_valid':proof_counts_valid,
+            'observations':observations if type(observations) is int and 0<=observations<=4 else None,
+            'stable_ms':stable_ms if type(stable_ms) is int and 0<=stable_ms<=5000 else None}
     require(data.get('complete') is True and data.get('code')=='stopped' and isinstance(state,dict),
             'Native post-lock stop receipt incomplete')
-    fields={'disposed','video_paused','audio_paused','video_source_empty','audio_source_empty','position','audio_position'}
-    require(set(state)==fields and all(state[name] is True for name in fields-{'position','audio_position'}),
+    require(set(state)==fields and all(state[name] is True for name in stop_bools),
             'Native post-lock media not actually stopped')
-    require(all(type(state[name]) in (int,float) and 0<=state[name]<=604800 for name in ('position','audio_position')),
+    require(all(type(state[name]) is int and state[name]==0 for name in stop_uints),
+            'Native post-lock resource not actually detached')
+    require(all(type(state[name]) in (int,float) and math.isfinite(state[name]) and 0<=state[name]<=604800 for name in stop_clocks),
             'Native post-lock clocks invalid')
+    require(proof_counts_valid,'Native post-lock stable observations missing')
     report['stage']='physical-unlock-'+lane
     foreground(device)
     trusted_fill(client,device,'[aria-label="Мастер-пароль для разблокировки браузера"]',master)
@@ -708,7 +723,8 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     physical(client,device,'play',diagnostics)
     require(not observe(client,identifier,tab,diagnostics=diagnostics).get('playing'),'Physical pause failed')
     return {'name':'native-lock-stops-both-media-'+lane,'physical_lock':True,'native_stop_complete':True,
-            'disposed':True,'video_paused':True,'audio_paused':True,'video_source_empty':True,'audio_source_empty':True,
+            'resources_detached':True,'native_stop_state':safe_state,
+            'stop_observations':observations,'stop_stable_ms':stable_ms,
             'stop_position':state['position'],'stop_audio_position':state['audio_position'],
             'actual_master_ui_unlock':True,'same_native_browser_after_unlock':True,'old_grant_refused':True,'new_admission_initially_paused':True,
             'explicit_play_decoded':resumed['decoded'],'direct_connections':0,'production_reload_tested':False}
@@ -1006,6 +1022,8 @@ def run(args):
                'Native post-lock stop receipt incomplete':'stop_receipt_incomplete',
                'Native post-lock media not actually stopped':'stop_media_not_stopped',
                'Native post-lock clocks invalid':'stop_clocks_invalid',
+               'Native post-lock resource not actually detached':'stop_resource_attached',
+               'Native post-lock stable observations missing':'stop_stable_observations_missing',
                'Native unlock input missing':'unlock_input_missing',
                'Trusted unlock input did not match':'unlock_input_mismatch',
                'Actual master UI did not unlock browser':'master_unlock_failed',
