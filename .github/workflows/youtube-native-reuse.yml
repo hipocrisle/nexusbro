@@ -14,7 +14,7 @@ permissions:
 jobs:
   diagnostic:
     runs-on: windows-latest
-    timeout-minutes: 32
+    timeout-minutes: 55
     steps:
       - uses: actions/checkout@v4
         with:
@@ -159,12 +159,34 @@ jobs:
         run: |
           python tests/gui/youtube_download_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --components .dev-check/reuse-installed/binaries/youtube-light --out .dev-check/reuse-download --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm *> .dev-check/reuse-private/download-console.txt
           exit $LASTEXITCODE
+      - name: Latest quality captions fullscreen fixture on same installer DIAGNOSTIC
+        id: features
+        if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
+        timeout-minutes: 10
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        shell: pwsh
+        run: |
+          python tests/gui/youtube_features_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --out .dev-check/reuse-features --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm --video-high-webm .dev-check/reuse-media/video-high.webm *> .dev-check/reuse-private/features-console.txt
+          exit $LASTEXITCODE
+      - name: Latest strict both-clock resume fixture on same installer DIAGNOSTIC
+        id: resume
+        if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
+        timeout-minutes: 8
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        shell: pwsh
+        run: |
+          python tests/gui/youtube_resume_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --out .dev-check/reuse-resume --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm *> .dev-check/reuse-private/resume-console.txt
+          exit $LASTEXITCODE
       - name: Wrap sanitized receipts as diagnostics with acceptance always false
         if: always() && !cancelled()
         shell: bash
         env:
           PLAYER_OUTCOME: ${{ steps.player.outcome }}
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
+          FEATURES_OUTCOME: ${{ steps.features.outcome }}
+          RESUME_OUTCOME: ${{ steps.resume.outcome }}
         run: |
           python - <<'PY'
           import json,math,os,pathlib,re
@@ -178,7 +200,7 @@ jobs:
               if isinstance(value,dict):return {k:safe(v,k,depth+1) for k,v in value.items() if isinstance(k,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}',k)}
               if isinstance(value,str) and (key in ('stage','state','phase','platform','reason','mode') and re.fullmatch(r'[A-Za-z0-9_. -]{0,96}',value) or key.endswith('sha256') and re.fullmatch(r'[0-9a-fA-F]{64}',value)):return value
               return 'redacted'
-          for label in ('player','download'):
+          for label in ('player','download','features','resume'):
               path=pathlib.Path('.dev-check/reuse-'+label+'/result.json');report=None
               if path.is_file() and path.stat().st_size<=2*1024*1024:
                   try:report=safe(json.loads(path.read_text()))
@@ -187,7 +209,7 @@ jobs:
               (root/('diagnostic-'+label+'.json')).write_text(json.dumps(result,indent=2)+'\n')
           path=root/'provenance.json'
           if path.is_file():
-              data=json.loads(path.read_text());data.update(player_step_outcome=os.environ['PLAYER_OUTCOME'],download_step_outcome=os.environ['DOWNLOAD_OUTCOME'],acceptance_passed=False);path.write_text(json.dumps(data,indent=2)+'\n')
+              data=json.loads(path.read_text());data.update(player_step_outcome=os.environ['PLAYER_OUTCOME'],download_step_outcome=os.environ['DOWNLOAD_OUTCOME'],features_step_outcome=os.environ['FEATURES_OUTCOME'],resume_step_outcome=os.environ['RESUME_OUTCOME'],acceptance_passed=False);path.write_text(json.dumps(data,indent=2)+'\n')
           PY
       - name: Preserve JSON diagnostics only; no engine logs or URLs
         if: always() && !cancelled()
@@ -198,5 +220,7 @@ jobs:
             .dev-check/youtube-native-reuse/provenance.json
             .dev-check/youtube-native-reuse/diagnostic-player.json
             .dev-check/youtube-native-reuse/diagnostic-download.json
+            .dev-check/youtube-native-reuse/diagnostic-features.json
+            .dev-check/youtube-native-reuse/diagnostic-resume.json
           if-no-files-found: warn
           retention-days: 7
