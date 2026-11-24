@@ -349,6 +349,16 @@ def run(args):
             'Route A media proof missing': 'routed_media_missing',
         }
         report['failure_class'] = reasons.get(str(error), 'native_resume_check_failed')
+        classes={'NativeFailure','AssertionError','ValueError','AttributeError','TimeoutExpired','CalledProcessError','RuntimeError'}
+        report['failure_exception_class']=type(error).__name__ if type(error).__name__ in classes else 'other'
+        trace=error.__traceback__
+        while trace:
+            source=Path(trace.tb_frame.f_code.co_filename).name
+            function=trace.tb_frame.f_code.co_name
+            if source in {'youtube_player_native.py','youtube_resume_native.py'} and len(function)<=64 and function.isidentifier():
+                report['failure_location']={'source':source,'function':function,'line':trace.tb_lineno}
+            trace=trace.tb_next
+
         # Only exact source literals are mapped; raw errors/paths never leave.
 
     finally:
