@@ -121,9 +121,9 @@ jobs:
               match=re.fullmatch(r'([0-9a-f]{64}) [ *](.+)',line)
               if not match:raise SystemExit('media_hash_schema')
               name=pathlib.PurePosixPath(match[2])
-              if name.is_absolute() or '..' in name.parts or '\\' in match[2] or name.name not in ('video.webm','audio.webm') or name.name in expected:raise SystemExit('media_path')
+              if name.is_absolute() or '..' in name.parts or '\\' in match[2] or name.name not in ('video.webm','audio.webm','video-high.webm') or name.name in expected:raise SystemExit('media_path')
               expected[name.name]=match[1]
-          if set(expected)!={'video.webm','audio.webm'}:raise SystemExit('media_closure')
+          if not {'video.webm','audio.webm'}.issubset(expected) or len(expected)>3:raise SystemExit('media_closure')
           for name,digest in expected.items():
               path=root/name
               if path.is_symlink() or not path.is_file() or not 0<path.stat().st_size<=128*1024*1024 or hashlib.sha256(path.read_bytes()).hexdigest()!=digest:raise SystemExit('media_hash_mismatch')

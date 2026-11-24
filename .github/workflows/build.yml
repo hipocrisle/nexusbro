@@ -255,6 +255,7 @@ jobs:
           mkdir -p .dev-check/youtube-media-fixture
           ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=12' -t 120 -an -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -threads 1 -b:v 180k -y .dev-check/youtube-media-fixture/video.webm
           ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 120 -af volume=0.05 -vn -c:a libopus -b:a 32k -y .dev-check/youtube-media-fixture/audio.webm
+          ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=640x360:rate=12' -t 120 -an -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -threads 1 -b:v 350k -y .dev-check/youtube-media-fixture/video-high.webm
           sha256sum .dev-check/youtube-media-fixture/*.webm > .dev-check/youtube-media-fixture/SHA256SUMS
       - uses: actions/upload-artifact@v4
         with:
@@ -499,6 +500,8 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_stop_probe::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_privacy::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_resume::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube_resume_fixture::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_files::tests -- --test-threads=1
 
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'
@@ -554,7 +557,7 @@ jobs:
           mkdir -p .dev-check/installed-rpm
           rpm2cpio "${rpms[0]}" | (cd .dev-check/installed-rpm && cpio -id --quiet --no-absolute-filenames --no-preserve-owner)
           test -x .dev-check/installed-linux/usr/bin/nexusbro
-          test -s .dev-check/installed-linux/usr/lib/nexusbro/libcef.so
+          test -s .dev-check/installed-linux/usr/lib/NexusBro/libcef.so
       - name: Verify every packaged YouTube helper and notice before execution
         shell: bash
         run: |
@@ -562,8 +565,8 @@ jobs:
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed/binaries/youtube-light --out .dev-check/youtube-bundle-windows.json
           else
-            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed-linux/usr/lib/nexusbro/binaries/youtube-light --out .dev-check/youtube-bundle-deb.json
-            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed-rpm/usr/lib/nexusbro/binaries/youtube-light --out .dev-check/youtube-bundle-rpm.json
+            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed-linux/usr/lib/NexusBro/binaries/youtube-light --out .dev-check/youtube-bundle-deb.json
+            python tools/verify_youtube_bundle.py --expected desktop/src-tauri/binaries/youtube-light --actual .dev-check/installed-rpm/usr/lib/NexusBro/binaries/youtube-light --out .dev-check/youtube-bundle-rpm.json
           fi
       - uses: actions/upload-artifact@v4
         if: always()
@@ -582,6 +585,8 @@ jobs:
       - name: Real native controlled dual-WebM playback and per-context routing
         id: native-youtube-player
         timeout-minutes: 13
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
         shell: bash
         run: |
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
@@ -589,11 +594,13 @@ jobs:
             CEF=.dev-check/installed
           else
             BIN=.dev-check/installed-linux/usr/bin/nexusbro
-            CEF=.dev-check/installed-linux/usr/lib/nexusbro
+            CEF=.dev-check/installed-linux/usr/lib/NexusBro
           fi
           python tests/gui/youtube_player_native.py --exe "$BIN" --cef "$CEF" --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - name: Real native video save, route, cancellation and no-overwrite acceptance
         timeout-minutes: 12
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
         shell: bash
         run: |
           set -euo pipefail
@@ -603,8 +610,8 @@ jobs:
             COMPONENTS=.dev-check/installed/binaries/youtube-light
           else
             BIN=.dev-check/installed-linux/usr/bin/nexusbro
-            CEF=.dev-check/installed-linux/usr/lib/nexusbro
-            COMPONENTS=.dev-check/installed-linux/usr/lib/nexusbro/binaries/youtube-light
+            CEF=.dev-check/installed-linux/usr/lib/NexusBro
+            COMPONENTS=.dev-check/installed-linux/usr/lib/NexusBro/binaries/youtube-light
           fi
           python tests/gui/youtube_download_native.py --exe "$BIN" --cef "$CEF" --components "$COMPONENTS" --out .dev-check/youtube-download --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - uses: actions/upload-artifact@v4
@@ -612,6 +619,45 @@ jobs:
         with:
           name: youtube-native-download-${{ matrix.os }}
           path: .dev-check/youtube-download/result.json
+          if-no-files-found: warn
+          retention-days: 14
+      - name: Native quality subtitles and real fullscreen acceptance
+        timeout-minutes: 10
+        shell: bash
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            BIN=.dev-check/installed/nexusbro.exe
+            CEF=.dev-check/installed
+          else
+            BIN=.dev-check/installed-linux/usr/bin/nexusbro
+            CEF=.dev-check/installed-linux/usr/lib/NexusBro
+          fi
+          python tests/gui/youtube_features_native.py --exe "$BIN" --cef "$CEF" --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --video-high-webm .dev-check/youtube-media-fixture/video-high.webm --out .dev-check/youtube-features
+      - name: Native real resume service and Super isolation acceptance
+        timeout-minutes: 8
+        shell: bash
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            BIN=.dev-check/installed/nexusbro.exe
+            CEF=.dev-check/installed
+          else
+            BIN=.dev-check/installed-linux/usr/bin/nexusbro
+            CEF=.dev-check/installed-linux/usr/lib/NexusBro
+          fi
+          python tests/gui/youtube_resume_native.py --exe "$BIN" --cef "$CEF" --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm --out .dev-check/youtube-resume
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-native-features-${{ matrix.os }}
+          path: |
+            .dev-check/youtube-features/result.json
+            .dev-check/youtube-resume/result.json
           if-no-files-found: warn
           retention-days: 14
       - name: Restore disposable Linux direct-witness permission

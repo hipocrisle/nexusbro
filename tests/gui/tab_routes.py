@@ -235,6 +235,8 @@ class WindowsDevice:
                'CEF_PATH': str(self.cef), 'PATH': str(self.cef) + os.pathsep + os.environ.get('PATH', ''),
                'WEBVIEW2_USER_DATA_FOLDER': str(self.root / 'webview2'),
                'WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS': '--remote-debugging-port=' + str(self.inspector)}
+        if os.environ.get('NEXUSBRO_TEST_COLD_CEF')=='1':
+            env.pop('CEF_PATH',None);env['PATH']=os.environ.get('PATH','')
         self.log = (self.root / ('app-' + str(time.time_ns()) + '.log')).open('wb')
         self.app = subprocess.Popen([str(self.exe)], env=env, stdout=self.log, stderr=subprocess.STDOUT)
 

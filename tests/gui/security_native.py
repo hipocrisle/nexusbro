@@ -273,6 +273,8 @@ class Device:
                'XDG_DATA_HOME': str(self.root / 'xdg-data'),
                'XDG_CACHE_HOME': str(self.root / 'cache'),
                'NO_PROXY': '127.0.0.1,localhost,::1', 'no_proxy': '127.0.0.1,localhost,::1'}
+        if os.environ.get('NEXUSBRO_TEST_COLD_CEF')=='1':
+            env.pop('CEF_PATH',None);env.pop('LD_LIBRARY_PATH',None)
         env.pop('NEXUSBRO_TEST_TRANSLATE_URL', None)
         if hasattr(self, 'sync_url'):
             env['NEXUSBRO_TEST_SYNC_URL'] = self.sync_url
