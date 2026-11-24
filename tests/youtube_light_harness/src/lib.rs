@@ -51,3 +51,6 @@ mod transport_tests {
 
 #[path = "../../../desktop/src-tauri/src/youtube_light_jobs.rs"]
 pub mod youtube_light_jobs;
+
+#[path = "../../../desktop/src-tauri/src/youtube_light_resume.rs"]
+pub mod youtube_light_resume;

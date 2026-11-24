@@ -25,6 +25,7 @@ mod youtube_light_sidecar;
 mod youtube_light_extract;
 mod youtube_light_components;
 mod youtube_light_jobs;
+mod youtube_light_resume;
 mod cef_youtube;
 mod cef_youtube_probe;
 mod tab_route_parent;

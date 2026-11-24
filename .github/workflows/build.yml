@@ -164,8 +164,33 @@ jobs:
           python3 tests/cloud_supers.py
           python3 tests/memory_safety_browser.py
           python3 tests/memory_bootstrap_browser.py
+  youtube-media-fixture:
+    if: >-
+      !inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - name: Generate controlled real VP9 and Opus streams (runner only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v ffmpeg >/dev/null; then
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends ffmpeg
+          fi
+          mkdir -p .dev-check/youtube-media-fixture
+          ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=320x180:rate=12' -t 120 -an -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -threads 1 -b:v 180k -y .dev-check/youtube-media-fixture/video.webm
+          ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 120 -af volume=0.05 -vn -c:a libopus -b:a 32k -y .dev-check/youtube-media-fixture/audio.webm
+          sha256sum .dev-check/youtube-media-fixture/*.webm > .dev-check/youtube-media-fixture/SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture/
+          retention-days: 7
+
   build:
-    needs: [security, process-ownership]
+    needs: [security, process-ownership, youtube-media-fixture]
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
@@ -366,6 +391,7 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib browser_backup::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib super_hibernation_parent::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib youtube_light_resume::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_http -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
@@ -390,6 +416,58 @@ jobs:
           name: nexusbro-linux-runtime
           path: desktop/src-tauri/target/x86_64-unknown-linux-gnu/release/nexusbro
           retention-days: 7
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture
+      - name: Prepare native player test dependencies
+        shell: bash
+        run: |
+          sha256sum -c .dev-check/youtube-media-fixture/SHA256SUMS
+          python -m pip install Pillow psutil websocket-client cryptography
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            python -m pip install pyautogui pywinauto
+          fi
+      - name: Prepare existing Windows installation for independent native tests
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          $items = @(Get-ChildItem desktop/src-tauri/target/${{ matrix.target }}/release/bundle/nsis/*.exe)
+          if ($items.Count -ne 1) { throw 'Expected exactly one newly built installer' }
+          7z x -y $items[0].FullName "-o.dev-check/installed"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Prepare disposable Linux direct-attempt witness permission
+        if: matrix.os == 'ubuntu-24.04'
+        shell: bash
+        run: |
+          test "$RUNNER_ENVIRONMENT" = github-hosted
+          echo "YOUTUBE_OLD_UNPRIVILEGED_PORT_START=$(sysctl -n net.ipv4.ip_unprivileged_port_start)" >> "$GITHUB_ENV"
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+      - name: Real native controlled dual-WebM playback and per-context routing
+        id: native-youtube-player
+        timeout-minutes: 7
+        shell: bash
+        run: |
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            BIN=.dev-check/installed/nexusbro.exe
+            CEF=.dev-check/installed
+          else
+            BIN=desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro
+            CEF=desktop/src-tauri/cef
+          fi
+          python tests/gui/youtube_player_native.py --exe "$BIN" --cef "$CEF" --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Restore disposable Linux direct-witness permission
+        if: always() && matrix.os == 'ubuntu-24.04' && env.YOUTUBE_OLD_UNPRIVILEGED_PORT_START != ''
+        shell: bash
+        run: sudo sysctl -w net.ipv4.ip_unprivileged_port_start="$YOUTUBE_OLD_UNPRIVILEGED_PORT_START"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: youtube-native-player-${{ matrix.os }}
+          path: .dev-check/youtube-player/result.json
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Проверить списки и подписки в интерфейсе
         if: matrix.os == 'ubuntu-24.04'
