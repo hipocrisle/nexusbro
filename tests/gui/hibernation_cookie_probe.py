@@ -74,7 +74,7 @@ class CookieFixture:
                 cycle = query.get('cycle', [''])[0]
                 if name not in ('a', 'b', 'bad', 'empty') or mode not in ('seed', 'check', 'empty'):
                     self.send_error(404); return
-                names = ('session_lax', 'session_strict', 'secure_session', 'persist', 'domain_auth', 'path_auth')
+                names = ('session_lax', 'session_strict', 'secure_session', 'persist', 'domain_auth', 'path_auth', 'partitioned_session')
                 token = owner.tokens.get(name, '')
                 cookies = dict(pair.strip().split('=', 1) for pair in self.headers.get('Cookie', '').split(';') if '=' in pair)
                 # CONNECT tunnels preserve TLS byte-for-byte; their proxy lane
@@ -115,9 +115,10 @@ class CookieFixture:
                         self.send_header('Set-Cookie', 'unspecified=' + token + '; HttpOnly; Path=/')
                     else:
                         for key_ in names:
-                            cookie = key_ + '=' + token + '; HttpOnly; SameSite=' + ('Strict' if key_ == 'session_strict' else 'Lax')
+                            cookie = key_ + '=' + token + '; HttpOnly; SameSite=' + ('Strict' if key_ == 'session_strict' else 'None' if key_ == 'partitioned_session' else 'Lax')
                             cookie += '; Path=' + ('/scoped' if key_ == 'path_auth' else '/')
-                            if key_ == 'secure_session': cookie += '; Secure'
+                            if key_ in ('secure_session','partitioned_session'): cookie += '; Secure'
+                            if key_ == 'partitioned_session': cookie += '; Partitioned'
                             if key_ == 'persist': cookie += '; Max-Age=86400'
                             if key_ == 'domain_auth': cookie += '; Domain=127.0.0.1'
                             self.send_header('Set-Cookie', cookie)
@@ -378,7 +379,7 @@ def main():
         stage = 'session-secure-persistent-native-restore'
         _, receipts = launch('a', 'check', first)
         check_receipts(receipts, authenticated=True, storage=True)
-        report['checks'].append('new_native_process_server_headers_session_lax_strict_secure_persistent_path_domain_and_expiry_storage_preserved')
+        report['checks'].append('new_native_process_server_headers_session_lax_strict_secure_persistent_path_domain_CHIPS_and_expiry_storage_preserved')
         stage = 'second-context-isolation'
         _, receipts = launch('b', 'empty')
         check_receipts(receipts, authenticated=False, storage=False)
@@ -400,6 +401,7 @@ def main():
         report['checks'].append('unspecified_samesite_session_cookie_refused_without_sealed_success_or_shutdown_ack')
         report['native_exit_receipts'] = runner.exit_receipts
         report['coverage']['session_cookie_restore'] = 'passed'
+        report['coverage']['first_party_CHIPS_session'] = 'server_header_roundtrip_required_and_passed'
         report['completed'] = True; code = 0
         runner.close(); runner = None
         fixture.close(); fixture = None
