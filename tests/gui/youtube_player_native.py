@@ -12,6 +12,7 @@ import json
 import os
 import pathlib
 import select
+import secrets
 import shutil
 import socket
 import socketserver
@@ -492,6 +493,92 @@ def stall_receipt(client,device,fixture,lane,identifier,tab,track,report):
     finally:fixture.retire_stall(lane,track,policy)
 
 
+def trusted_fill(client,device,selector,text):
+    js_wait(client,'!!document.querySelector('+json.dumps(selector)+')','Native unlock input missing',10)
+    client.js('document.querySelector('+json.dumps(selector)+').scrollIntoView({block:"center"});true')
+    client.click(selector)
+    if sys.platform=='win32':
+        import pyautogui
+        pyautogui.hotkey('ctrl','a');pyautogui.write(text,interval=.01)
+    else:
+        env={**os.environ,'DISPLAY':device.display}
+        subprocess.run(['xdotool','key','--clearmodifiers','ctrl+a'],env=env,check=True,timeout=5)
+        subprocess.run(['xdotool','type','--clearmodifiers','--delay','8','--',text],env=env,check=True,timeout=15)
+    js_wait(client,'document.querySelector('+json.dumps(selector)+').value==='+json.dumps(text),
+            'Trusted unlock input did not match',5)
+
+
+def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
+    diagnostics=report['player_diagnostics']
+    report['stage']='lock-start-'+lane
+    if sys.platform.startswith('linux'):client.js('window.__playerFixtureResults=[];true')
+    call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
+    if sys.platform.startswith('linux'):linux_fixture_ack(client,identifier,tab,diagnostics)
+    wait_for(lambda:(lambda v:v if v.get('configured') and not v.get('disposed') else None)(observe(client,identifier,tab,admitting=True,diagnostics=diagnostics)),
+             'Player was not configured',30)
+    physical(client,device,'play',diagnostics)
+    started=wait_for(lambda:(lambda v:v if v.get('playing') and v['decoded']>=6 and v['audio_position']>1 else None)(observe(client,identifier,tab,diagnostics=diagnostics)),
+                     'Lock fixture did not start actual media',25)
+    # No generic Tauri lock command: the CEF view still owns keyboard focus
+    # after the single actual Play click.
+    client.js('window.__playerStopped=[];true')
+    report['stage']='physical-lock-'+lane
+    if sys.platform=='win32':
+        import pyautogui
+        pyautogui.hotkey('ctrl','shift','l')
+    else:
+        subprocess.run(['xdotool','key','--clearmodifiers','ctrl+shift+l'],env={**os.environ,'DISPLAY':device.display},check=True,timeout=5)
+    js_wait(client,'!!document.querySelector(".browser-lock-screen")','Physical shortcut did not show master gate',10)
+    # Only the fixed native fixture event remains observable while locked.
+    # No generic player command or data IPC is invoked behind the lock gate.
+    expression='window.__playerStopped.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'
+    receipt=wait_for(lambda:client.js(expression),'Native post-lock stop receipt missing',10)
+    data=receipt.get('data',{});state=data.get('state')
+    require(data.get('complete') is True and data.get('code')=='stopped' and isinstance(state,dict),
+            'Native post-lock stop receipt incomplete')
+    fields={'disposed','video_paused','audio_paused','video_source_empty','audio_source_empty','position','audio_position'}
+    require(set(state)==fields and all(state[name] is True for name in fields-{'position','audio_position'}),
+            'Native post-lock media not actually stopped')
+    require(all(type(state[name]) in (int,float) and 0<=state[name]<=604800 for name in ('position','audio_position')),
+            'Native post-lock clocks invalid')
+    report['stage']='physical-unlock-'+lane
+    foreground(device)
+    trusted_fill(client,device,'[aria-label="Мастер-пароль для разблокировки браузера"]',master)
+    client.text_button('Разблокировать браузер')
+    js_wait(client,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
+            'Actual master UI did not unlock browser',25)
+    # Old authority must remain revoked after unlocking. This is distinct from
+    # an explicit, new fixture admission below (no claim about production CtrlR).
+    client.js('window.__playerObserved=[];true')
+    call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_snapshot','id':tab})
+    old=wait_for(lambda:client.js('window.__playerObserved.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'),
+                 'Old player authority refusal missing',10)
+    require('state' not in old.get('data',{}) and isinstance(old.get('data',{}).get('error'),str),
+            'Old player authority survived browser lock')
+    report['stage']='new-fixture-admission-after-unlock-'+lane
+    if sys.platform.startswith('linux'):client.js('window.__playerFixtureResults=[];true')
+    call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
+    if sys.platform.startswith('linux'):linux_fixture_ack(client,identifier,tab,diagnostics)
+    paused=wait_for(lambda:(lambda v:v if v.get('configured') and not v.get('disposed') else None)(observe(client,identifier,tab,admitting=True,diagnostics=diagnostics)),
+                    'Player was not configured',30)
+    require(not paused.get('playing'),'New fixture started without explicit Play')
+    time.sleep(1)
+    still=observe(client,identifier,tab,diagnostics=diagnostics)
+    require(not still.get('playing') and abs(still['audio_position']-paused['audio_position'])<.15,
+            'New fixture did not remain paused')
+    physical(client,device,'play',diagnostics)
+    resumed=wait_for(lambda:(lambda v:v if v.get('playing') and v['decoded']>=6 and v['audio_position']>1 else None)(observe(client,identifier,tab,diagnostics=diagnostics)),
+                     'Explicit Play after unlock did not resume new fixture',25)
+    with fixture.lock:require(fixture.direct==0,'Media bypassed actual selected route')
+    physical(client,device,'play',diagnostics)
+    require(not observe(client,identifier,tab,diagnostics=diagnostics).get('playing'),'Physical pause failed')
+    return {'name':'native-lock-stops-both-media-'+lane,'physical_lock':True,'native_stop_complete':True,
+            'disposed':True,'video_paused':True,'audio_paused':True,'video_source_empty':True,'audio_source_empty':True,
+            'stop_position':state['position'],'stop_audio_position':state['audio_position'],
+            'actual_master_ui_unlock':True,'old_grant_refused':True,'new_admission_initially_paused':True,
+            'explicit_play_decoded':resumed['decoded'],'direct_connections':0,'production_reload_tested':False}
+
+
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS')=='true','Disposable GHA runner required')
     out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=False)
@@ -515,12 +602,16 @@ def run(args):
             for filename in ('vkladki.json','sohranennye.json'):(device.data/filename).write_text(json.dumps(definitions))
             (device.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False}))
             os.environ['NEXUSBRO_TEST_YOUTUBE_DNS_GUARD']='1'
+            master='nb-player-'+secrets.token_hex(16)
             client=device.start()
             if sys.platform.startswith('linux'):
                 wm=OwnedWindowManager(device,root/'wm');device.player_wm=wm
             foreground(device)
+            require(call(client,'security_vault',action='create',password=master).get('unlocked') is True,'Synthetic fixture vault not unlocked')
             client.js('window.__playerObserved=[];window.__playerListenerReady=false;window.__playerHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerHandler}).then(()=>window.__playerListenerReady=true);true')
             js_wait(client,'window.__playerListenerReady','Actual native event listener missing')
+            client.js('window.__playerStopped=[];window.__playerStopListenerReady=false;window.__playerStopHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-stop-state")window.__playerStopped.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerStopHandler}).then(()=>window.__playerStopListenerReady=true);true')
+            js_wait(client,'window.__playerStopListenerReady','Native stop listener missing')
             if sys.platform.startswith('linux'):
                 client.js('window.__playerFixtureResults=[];window.__playerFixtureListenerReady=false;window.__playerFixtureHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-result")window.__playerFixtureResults.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerFixtureHandler}).then(()=>window.__playerFixtureListenerReady=true);true')
                 js_wait(client,'window.__playerFixtureListenerReady','Actual native fixture listener missing')
@@ -581,6 +672,7 @@ def run(args):
                 report['checks'].append({'name':'actual-dual-webm-'+lane,'decoded':second['decoded'],'width':second['video_width'],'height':second['video_height'],'skew':second['skew'],'range_requests':range_count,'physical_pause':True,'physical_seek':True,'actual_os_paint_changed':True,'direct_connections':direct})
                 for stalled_track in ('video','audio'):
                     report['checks'].append(stall_receipt(client,device,fixture,lane,identifier,tab,stalled_track,report))
+                report['checks'].append(lock_receipt(client,device,fixture,lane,identifier,tab,master,report))
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
@@ -604,6 +696,22 @@ def run(args):
                'Background playback browser changed':'background_browser_changed',
                'Background test requires actual playback':'background_not_playing',
                'Physical rewind failed':'rewind_failed',
+               'Synthetic fixture vault not unlocked':'fixture_vault_failed',
+               'Native stop listener missing':'stop_listener_missing',
+               'Lock fixture did not start actual media':'lock_start_failed',
+               'Physical shortcut did not show master gate':'physical_lock_failed',
+               'Native post-lock stop receipt missing':'stop_receipt_missing',
+               'Native post-lock stop receipt incomplete':'stop_receipt_incomplete',
+               'Native post-lock media not actually stopped':'stop_media_not_stopped',
+               'Native post-lock clocks invalid':'stop_clocks_invalid',
+               'Native unlock input missing':'unlock_input_missing',
+               'Trusted unlock input did not match':'unlock_input_mismatch',
+               'Actual master UI did not unlock browser':'master_unlock_failed',
+               'Old player authority refusal missing':'old_grant_refusal_missing',
+               'Old player authority survived browser lock':'old_grant_survived',
+               'New fixture started without explicit Play':'new_fixture_autoplay',
+               'New fixture did not remain paused':'new_fixture_pause_failed',
+               'Explicit Play after unlock did not resume new fixture':'new_fixture_play_failed',
                'Stall fixture media too small for bounded metadata bypass':'stall_media_too_small',
                'Stall fixture did not start actual media':'stall_start_failed',
                'Stall gate did not block a real writer':'stall_writer_not_blocked',
