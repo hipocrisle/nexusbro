@@ -256,6 +256,11 @@ def run_probe(executable,components,proxy,video,diagnostics):
     kwargs={'creationflags':subprocess.CREATE_NEW_PROCESS_GROUP} if sys.platform=='win32' else {'start_new_session':True}
     env={k:os.environ[k] for k in ('SystemRoot','WINDIR','TEMP','TMP','TMPDIR') if k in os.environ}
     env['GITHUB_ACTIONS']='true'
+    # Explicit CI-only public recipient/output; never inherit arbitrary env.
+    for name in ('NEXUSBRO_TEST_DIAGNOSTIC_PUBLIC_KEY','NEXUSBRO_TEST_DIAGNOSTIC_OUTPUT'):
+        value=os.environ.get(name,'')
+        require(len(value)<=8192,'diagnostic_input_limit')
+        if value:env[name]=value
     process=subprocess.Popen([str(executable),str(components),proxy.url,video],stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,**kwargs)
     root=psutil.Process(process.pid);owned={(root.pid,root.create_time())};streams={'stdout':bytearray()};failed=threading.Event();reader_error=[]
