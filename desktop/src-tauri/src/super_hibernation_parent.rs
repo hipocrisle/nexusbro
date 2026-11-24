@@ -33,6 +33,7 @@ pub(crate) struct Node {
     final_received: bool,
     restored_received: bool,
     eligible: bool,
+    pending_control: Option<(sessiya::Komanda, u8)>,
 }
 impl Default for Node {
     fn default() -> Self {
@@ -58,6 +59,7 @@ impl Default for Node {
             final_received: false,
             restored_received: false,
             eligible: false,
+            pending_control: None,
         }
     }
 }
@@ -167,6 +169,30 @@ impl Node {
         wire.push(b'\n');
         Ok(Some(wire))
     }
+    fn control(
+        &mut self,
+        channel: Option<&std::sync::mpsc::SyncSender<sessiya::Komanda>>,
+        command: sessiya::Komanda,
+    ) {
+        self.pending_control = Some((command, 0));
+        self.flush_control(channel);
+    }
+    fn flush_control(&mut self, channel: Option<&std::sync::mpsc::SyncSender<sessiya::Komanda>>) {
+        let Some((command, attempts)) = self.pending_control.take() else {
+            return;
+        };
+        let Some(channel) = channel else {
+            self.reason = Some("control_channel_closed");
+            return;
+        };
+        match channel.try_send(command) {
+            Ok(()) => {}
+            Err(std::sync::mpsc::TrySendError::Full(command)) if attempts < 30 => {
+                self.pending_control = Some((command, attempts + 1))
+            }
+            Err(_) => self.reason = Some("control_delivery_failed"),
+        }
+    }
     fn effects(
         &mut self,
         effects: Vec<Effect>,
@@ -178,8 +204,8 @@ impl Node {
                     stamp,
                     eligibility_revision,
                 } => {
-                    self.deadline = Some(Instant::now() + Duration::from_secs(20));
-                    let _ = channel_send(
+                    self.deadline = Some(Instant::now() + Duration::from_secs(40));
+                    self.control(
                         channel,
                         sessiya::Komanda::HibernateAbort {
                             token: token(stamp, eligibility_revision),
@@ -191,14 +217,12 @@ impl Node {
                     kind: StopKind::Hibernate,
                 } => {
                     self.deadline = Some(Instant::now() + Duration::from_secs(60));
-                    if !channel_send(
+                    self.control(
                         channel,
                         sessiya::Komanda::HibernateCommit {
                             token: token(stamp, self.operation_revision.unwrap_or(self.revision)),
                         },
-                    ) {
-                        self.reason = Some("commit_channel_failed");
-                    }
+                    );
                 }
                 Effect::ReleaseRoutes { .. } => self.release_pending = true,
                 Effect::Report { reason, .. } => {
@@ -434,12 +458,10 @@ pub fn receive(app: &tauri::AppHandle, id: &str, generation: u64, frame: Frame) 
             v.obychnye = Some(snapshot.session.clone());
             v.hibernate.snapshot = Some(snapshot);
             v.hibernate.final_received = true;
-            if !channel_send(
+            v.hibernate.control(
                 channel.as_ref(),
                 sessiya::Komanda::HibernateFinalAck { token: ack },
-            ) {
-                v.hibernate.reason = Some("final_ack_channel_failed");
-            }
+            );
         }
         Frame::Refused { token, reason: _ } => {
             let effects = v.hibernate.machine.apply(Event::Refused {
@@ -524,6 +546,7 @@ pub fn tick(app: &tauri::AppHandle) {
             .sum::<usize>();
         for (id, v) in map.iter_mut() {
             let channel = v.kanal.clone();
+            v.hibernate.flush_control(channel.as_ref());
             let eligible = settings.memory_saver
                 && parent_eligible(v, id, selected.as_deref(), &views, locked)
                 && v.proc
@@ -761,5 +784,78 @@ pub async fn ensure_view_ready(
             return Err("Движок ещё завершает восстановление. Повторите действие.".into());
         }
         tokio::time::sleep(Duration::from_millis(40)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn full_real_channel_retries_same_control_without_fabricating_ack() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        tx.send(sessiya::Komanda::ObnovitInterfeys).unwrap();
+        let mut node = Node::default();
+        node.control(
+            Some(&tx),
+            sessiya::Komanda::HibernateFinalAck {
+                token: Token {
+                    generation: 7,
+                    attempt: 9,
+                    revision: 11,
+                },
+            },
+        );
+        assert!(node.pending_control.is_some());
+        assert_eq!(node.machine.phase(), Phase::Sleeping);
+        let _ = rx.recv().unwrap();
+        node.flush_control(Some(&tx));
+        assert!(matches!(
+            rx.recv().unwrap(),
+            sessiya::Komanda::HibernateFinalAck {
+                token: Token {
+                    generation: 7,
+                    attempt: 9,
+                    revision: 11
+                }
+            }
+        ));
+        assert!(node.pending_control.is_none());
+        node.flush_control(Some(&tx));
+        assert!(rx.try_recv().is_err());
+    }
+    #[test]
+    fn blocked_and_disconnected_control_delivery_is_bounded_and_never_an_ack() {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        tx.send(sessiya::Komanda::ObnovitInterfeys).unwrap();
+        let mut node = Node::default();
+        node.control(
+            Some(&tx),
+            sessiya::Komanda::HibernateAbort {
+                token: Token {
+                    generation: 1,
+                    attempt: 2,
+                    revision: 3,
+                },
+            },
+        );
+        for _ in 0..31 {
+            node.flush_control(Some(&tx));
+        }
+        assert!(node.pending_control.is_none());
+        assert_eq!(node.reason, Some("control_delivery_failed"));
+        assert!(!node.machine.successful_hibernation());
+        drop(rx);
+        node.control(
+            Some(&tx),
+            sessiya::Komanda::HibernateCommit {
+                token: Token {
+                    generation: 1,
+                    attempt: 2,
+                    revision: 3,
+                },
+            },
+        );
+        assert!(node.pending_control.is_none());
+        assert!(!node.machine.successful_hibernation());
     }
 }
