@@ -140,7 +140,10 @@ jobs:
       - name: Prove profile exclusion and actual owned descendant exit
         run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
   youtube-sources:
-    if: inputs.youtube_sources_inventory
+    if: >-
+      inputs.youtube_sources_inventory ||
+      (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     uses: ./.github/workflows/youtube-sources.yml
   youtube-minimal-muxer:
     if: >-
@@ -251,7 +254,7 @@ jobs:
           retention-days: 7
 
   build:
-    needs: [security, process-ownership, youtube-media-fixture, youtube-minimal-muxer]
+    needs: [security, process-ownership, youtube-media-fixture, youtube-minimal-muxer, youtube-sources]
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
@@ -418,6 +421,12 @@ jobs:
           name: youtube-minimal-muxer-${{ runner.os == 'Windows' && 'windows-x64' || 'linux-x64' }}
           path: .dev-check/minimal-muxer
 
+      - name: Download same-run verified source notice inventory
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-source-inventory
+          path: .dev-check/source-notices
+
       - name: Package verified YouTube helpers and notices
         shell: bash
         run: |
@@ -429,7 +438,7 @@ jobs:
           set -euo pipefail
           MUXER_PACKAGE=.dev-check/minimal-muxer/.dev-check/muxer-build/package
           test -s "$MUXER_PACKAGE/components.json"
-          python tools/package_youtube_components.py --platform "$PLATFORM" --muxer-package "$MUXER_PACKAGE"
+          python tools/package_youtube_components.py --platform "$PLATFORM" --muxer-package "$MUXER_PACKAGE" --notices-inventory .dev-check/source-notices
 
       - name: Preserve verified minimal muxer source and exact recipe beyond upstream retention
         uses: actions/upload-artifact@v4
