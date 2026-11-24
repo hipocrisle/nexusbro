@@ -436,9 +436,194 @@ def package_minimal_muxer(directory, pin, native_platform, bundle, staging):
                 redistribution_review='preserve_exact_source_recipe_and_license_closure_release_review_pending')
 
 
+MAX_NOTICES_INDEX = 8 * 1024 * 1024
+MAX_NOTICES_GAPS = 1024 * 1024
+MAX_TRANSITIVE_NOTICES = 16 * 1024 * 1024
+MAX_COMPONENT_MANIFEST = 128 * 1024
+NOTICE_GAP_CATEGORIES = {
+    'unknown_linkage_notice_coverage', 'unknown_native_linkage_notice_coverage',
+    'required_distribution_notice_missing', 'optional_build_or_test_superset',
+    'provenance_not_exact_linked_graph', 'source_or_binary_provenance_review',
+    'native_asset_provenance_not_a_notice_failure',
+}
+
+
+def inventory_relative(name):
+    if not isinstance(name, str) or not name or len(name) > 512 or '\\' in name or ':' in name:
+        raise Blocked('notices_path')
+    parts = name.split('/')
+    reserved = {'CON', 'PRN', 'AUX', 'NUL'} | {f'{p}{i}' for p in ('COM', 'LPT') for i in range(1, 10)}
+    if any(not part or part in ('.', '..') or part.endswith((' ', '.')) or '\x00' in part
+           or part.split('.')[0].upper() in reserved for part in parts):
+        raise Blocked('notices_path')
+    return pathlib.PurePosixPath(*parts)
+
+
+def inventory_node(path):
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+        raise Blocked('notices_symlink')
+    return info
+
+
+def inventory_file(base, relative, limit):
+    path = base
+    for index, part in enumerate(inventory_relative(relative).parts):
+        path = path / part
+        info = inventory_node(path)
+        if index < len(inventory_relative(relative).parts) - 1:
+            if not stat.S_ISDIR(info.st_mode): raise Blocked('notices_parent')
+        elif not stat.S_ISREG(info.st_mode) or not 0 <= info.st_size <= limit:
+            raise Blocked('notices_file_bound')
+    with path.open('rb') as source:
+        data = source.read(limit + 1)
+    if len(data) != info.st_size or len(data) > limit: raise Blocked('notices_file_changed')
+    return data
+
+
+def inventory_json(data):
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result: raise Blocked('notices_json_duplicate_key')
+            result[key] = value
+        return result
+    try: return json.loads(data, object_pairs_hook=unique)
+    except (ValueError, UnicodeError, RecursionError): raise Blocked('notices_json') from None
+
+
+def validate_notice_gaps(gaps):
+    if not isinstance(gaps, list) or len(gaps) > 4096: raise Blocked('notices_gaps_schema')
+    seen = set()
+    for item in gaps:
+        if not isinstance(item, dict) or set(item) != {'scope', 'reason', 'category', 'required_distribution_notice_missing'}:
+            raise Blocked('notices_gaps_schema')
+        scope, reason, category = item['scope'], item['reason'], item['category']
+        if (not isinstance(scope, str) or not re.fullmatch(r'[A-Za-z0-9_.+/-]{1,256}', scope)
+                or not isinstance(reason, str) or not re.fullmatch(r'[a-z0-9_]{1,160}', reason)
+                or category not in NOTICE_GAP_CATEGORIES
+                or type(item['required_distribution_notice_missing']) is not bool
+                or item['required_distribution_notice_missing'] != (category == 'required_distribution_notice_missing')):
+            raise Blocked('notices_gaps_schema')
+        identity = (scope, reason, category)
+        if identity in seen: raise Blocked('notices_gaps_duplicate')
+        seen.add(identity)
+
+
+def _package_notices_inventory(directory, licenses, source_pins):
+    directory = pathlib.Path(directory)
+    if not stat.S_ISDIR(inventory_node(directory).st_mode): raise Blocked('notices_directory')
+    index_bytes = inventory_file(directory, 'index.json', MAX_NOTICES_INDEX)
+    gaps_bytes = inventory_file(directory, 'gaps.json', MAX_NOTICES_GAPS)
+    index, gaps_document = inventory_json(index_bytes), inventory_json(gaps_bytes)
+    if (not isinstance(index, dict) or type(index.get('schema')) is not int or index['schema'] != 1
+            or index.get('product_notices_cleared') is not False
+            or not isinstance(gaps_document, dict) or set(gaps_document) != {'product_notices_cleared', 'gaps'}
+            or gaps_document['product_notices_cleared'] is not False):
+        raise Blocked('notices_inventory_schema')
+    gaps = index.get('pending_gaps')
+    validate_notice_gaps(gaps)
+    validate_notice_gaps(gaps_document['gaps'])
+    if gaps != gaps_document['gaps']: raise Blocked('notices_gaps_mismatch')
+    expected_repos = {p['repository']: p for p in source_pins['repositories']}
+    archives = index.get('repository_archives')
+    if not isinstance(archives, list) or len(archives) != len(expected_repos): raise Blocked('notices_source_pins')
+    seen_repos = set()
+    for item in archives:
+        if not isinstance(item, dict): raise Blocked('notices_source_pins')
+        pin = expected_repos.get(item.get('repository'))
+        if (not pin or item['repository'] in seen_repos or item.get('commit') != pin['commit']
+                or not re.fullmatch('[0-9a-f]{40}', pin['commit'])
+                or not re.fullmatch('[0-9a-f]{64}', pin['archive_sha256'])
+                or item.get('sha256') != pin['archive_sha256'] or item.get('reviewed') is not True
+                or item.get('complete_source_archive') is not True
+                or type(item.get('bytes')) is not int or not 0 < item['bytes'] <= 64 * 1024 * 1024):
+            raise Blocked('notices_source_pins')
+        seen_repos.add(item['repository'])
+    entries = index.get('files')
+    if not isinstance(entries, list) or not 0 < len(entries) <= 8192: raise Blocked('notices_files_schema')
+    selected, names = {}, set()
+    for entry in entries:
+        if not isinstance(entry, dict) or set(entry) != {'filename', 'bytes', 'sha256', 'source_url', 'verification'}:
+            raise Blocked('notices_files_schema')
+        name = inventory_relative(entry['filename']).as_posix()
+        if name.casefold() in names: raise Blocked('notices_path_collision')
+        names.add(name.casefold())
+        if (type(entry['bytes']) is not int or not 0 <= entry['bytes'] <= 1024 * 1024 * 1024
+                or not isinstance(entry['sha256'], str) or not re.fullmatch('[0-9a-f]{64}', entry['sha256'])
+                or not isinstance(entry['verification'], str) or not re.fullmatch('[a-z0-9_]{1,160}', entry['verification'])
+                or not isinstance(entry['source_url'], str) or len(entry['source_url']) > 2048):
+            raise Blocked('notices_files_schema')
+        url = urllib.parse.urlsplit(entry['source_url'])
+        if url.scheme != 'https' or not url.hostname or url.username or url.password:
+            raise Blocked('notices_source_url')
+        if name.startswith('notices/'):
+            if entry['bytes'] > MAX_LICENSE: raise Blocked('notices_file_bound')
+            if name[len('notices/'):].casefold() in ('source-index.json', 'pending-gaps.json'):
+                raise Blocked('notices_reserved_output')
+            selected[name] = entry
+    total = sum(item['bytes'] for item in selected.values())
+    if not 0 < len(selected) <= 4096 or total > MAX_TRANSITIVE_NOTICES or type(index.get('notices_bytes')) is not int or index['notices_bytes'] != total:
+        raise Blocked('notices_total_bound')
+    # Closed plain notice tree only. No source archive is opened, hashed or read.
+    actual = set()
+    notice_root = directory / 'notices'
+    if not stat.S_ISDIR(inventory_node(notice_root).st_mode): raise Blocked('notices_directory')
+    pending = [notice_root]
+    scanned = 0
+    while pending:
+        parent = pending.pop()
+        for path in parent.iterdir():
+            scanned += 1
+            if scanned > 8192: raise Blocked('notices_tree_bound')
+            info = inventory_node(path)
+            relative = path.relative_to(directory).as_posix()
+            if stat.S_ISDIR(info.st_mode):
+                if not any(name.startswith(relative + '/') for name in selected): raise Blocked('notices_unknown_file')
+                pending.append(path)
+            elif stat.S_ISREG(info.st_mode): actual.add(relative)
+            else: raise Blocked('notices_special_file')
+    if actual != set(selected): raise Blocked('notices_file_closure')
+    # Read/hash every notice before creating destination. A failure cannot leave
+    # a seemingly valid transitive directory in the pending product bundle.
+    copied = []
+    for name, entry in sorted(selected.items()):
+        data = inventory_file(directory, name, MAX_LICENSE)
+        if len(data) != entry['bytes'] or hashlib.sha256(data).hexdigest() != entry['sha256']:
+            raise Blocked('notices_hash')
+        if b'\x00' in data or data.startswith((b'MZ', b'\x7fELF', b'PK\x03\x04', b'\x1f\x8b', b'%PDF-')):
+            raise Blocked('notices_not_plain_file')
+        copied.append((name[len('notices/'):], data))
+    destination = licenses / 'transitive'
+    destination.mkdir()
+    for name, data in copied:
+        path = destination / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        path.chmod(0o644)
+    (destination / 'source-index.json').write_bytes(index_bytes)
+    (destination / 'pending-gaps.json').write_bytes(gaps_bytes)
+    return dict(index_filename='licenses/transitive/source-index.json', index_sha256=hashlib.sha256(index_bytes).hexdigest(),
+                gaps_filename='licenses/transitive/pending-gaps.json', gaps_sha256=hashlib.sha256(gaps_bytes).hexdigest(),
+                notice_root='licenses/transitive', indexed_notice_prefix='notices/', notice_files=len(selected), notice_bytes=total,
+                zero_length_file_count=sum(item['bytes'] == 0 for item in selected.values()),
+                pending_gap_count=len(gaps), required_missing_count=sum(item['required_distribution_notice_missing'] for item in gaps),
+                source_archive_contents_not_read_here=True, closed_notice_tree_verified=True,
+                product_notices_cleared=False, review_state='collected_superset_pending_distribution_review')
+
+
+def package_notices_inventory(directory, licenses, source_pins):
+    try: return _package_notices_inventory(directory, licenses, source_pins)
+    except Blocked: raise
+    except (OSError, ValueError, KeyError, TypeError, RecursionError):
+        raise Blocked('notices_inventory_io_or_schema') from None
+
+
 def package(args):
     if bool(args.extractor_only) == bool(args.muxer_package):
         raise Blocked('muxer_package_required_or_extractor_only')
+    if not args.extractor_only and not args.notices_inventory:
+        raise Blocked('notices_inventory_required')
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise Blocked('github_actions_required')
     native = 'windows-x64' if os.name == 'nt' else 'linux-x64' if platform.system() == 'Linux' else None
@@ -458,6 +643,10 @@ def package(args):
         bundle.mkdir()
         licenses = bundle / 'licenses'
         licenses.mkdir()
+        transitive = None
+        if not args.extractor_only:
+            source_pins = inventory_json((root / 'docs' / 'YOUTUBE-SOURCE-PINS.json').read_bytes())
+            transitive = package_notices_inventory(args.notices_inventory, licenses, source_pins)
         records = {}
         for name in ('yt-dlp', 'deno'):
             pin = selected[name]
@@ -496,7 +685,11 @@ def package(args):
                         redistribution_review='pending_deno_transitive_notice_inventory',
                         deno_v8_crate='150.4.0',
                         deno_v8_revision='ac1e23989121713ca642f6650b34deff7b686896')
-        (bundle / 'components.json').write_text(json.dumps(metadata, indent=2) + '\n')
+        if transitive is not None:
+            metadata['transitive_notices'] = transitive
+        encoded_metadata = (json.dumps(metadata, indent=2) + '\n').encode()
+        if len(encoded_metadata) > MAX_COMPONENT_MANIFEST: raise Blocked('component_manifest_bound')
+        (bundle / 'components.json').write_bytes(encoded_metadata)
         replace_directory(bundle, output)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
@@ -600,6 +793,66 @@ def minimal_muxer_self_tests(root):
         write(record);assert validate_muxer_package(directory,pin,platform_name)['files']==files
 
 
+def notices_self_tests(root):
+    content = b'Permission is hereby granted, free of charge, to any person obtaining a copy of this software.\n'
+    source_pins = dict(repositories=[dict(repository='owner/project', commit='a' * 40, archive_sha256='b' * 64)])
+    gap = dict(scope='demo-1.0', reason='unknown_linkage_fixture', category='unknown_linkage_notice_coverage', required_distribution_notice_missing=False)
+
+    def fixture(label):
+        directory = root / ('notices-' + label); directory.mkdir()
+        file = directory / 'notices' / 'demo' / 'LICENSE'
+        file.parent.mkdir(parents=True); file.write_bytes(content)
+        index = dict(schema=1, product_notices_cleared=False, notices_bytes=len(content), pending_gaps=[dict(gap)],
+                     repository_archives=[dict(repository='owner/project', commit='a' * 40, sha256='b' * 64,
+                                               reviewed=True, complete_source_archive=True, bytes=123)],
+                     files=[dict(filename='notices/demo/LICENSE', bytes=len(content), sha256=hashlib.sha256(content).hexdigest(),
+                                 source_url='https://raw.githubusercontent.com/owner/project/' + 'a' * 40 + '/LICENSE', verification='fixture_verified'),
+                            dict(filename='sources/not-present-never-read.tar.gz', bytes=123, sha256='b' * 64,
+                                 source_url='https://codeload.github.com/owner/project/tar.gz/' + 'a' * 40, verification='reviewed_archive_sha256')])
+        gaps = dict(product_notices_cleared=False, gaps=[dict(gap)])
+        output = root / ('notices-output-' + label); output.mkdir()
+        return directory, file, index, gaps, output
+
+    def persist(directory, index, gaps):
+        (directory / 'index.json').write_text(json.dumps(index))
+        (directory / 'gaps.json').write_text(json.dumps(gaps))
+
+    directory, file, index, gaps, output = fixture('valid')
+    persist(directory, index, gaps)
+    record = package_notices_inventory(directory, output, source_pins)
+    assert (output / 'transitive/demo/LICENSE').read_bytes() == content
+    assert (output / 'transitive/source-index.json').read_bytes() == (directory / 'index.json').read_bytes()
+    assert record['notice_files'] == 1 and record['product_notices_cleared'] is False
+    assert len(json.dumps(record)) < 2048 and 'files' not in record
+    assert not (output / 'transitive/sources').exists()
+
+    for label, expected in [('hash', 'notices_hash'), ('extra', 'notices_file_closure'),
+                            ('symlink', 'notices_symlink'), ('traversal', 'notices_path'),
+                            ('gaps', 'notices_gaps_mismatch'), ('pin', 'notices_source_pins'),
+                            ('binary', 'notices_not_plain_file'), ('gap-type', 'notices_gaps_schema')]:
+        directory, file, index, gaps, output = fixture(label)
+        if label == 'hash': file.write_bytes(b'not original')
+        elif label == 'extra': (file.parent / 'unknown').write_bytes(b'extra')
+        elif label == 'symlink':
+            file.unlink(); file.symlink_to(root / 'outside-never-opened')
+        elif label == 'traversal': index['files'][0]['filename'] = 'notices/../escape'
+        elif label == 'gaps': gaps['gaps'][0]['scope'] = 'different'
+        elif label == 'pin': index['repository_archives'][0]['sha256'] = 'c' * 64
+        elif label == 'binary':
+            payload = b'\x7fELF\x00binary'; file.write_bytes(payload)
+            index['files'][0].update(bytes=len(payload), sha256=hashlib.sha256(payload).hexdigest())
+            index['notices_bytes'] = len(payload)
+        elif label == 'gap-type':
+            index['pending_gaps'][0]['required_distribution_notice_missing'] = 'false'
+        persist(directory, index, gaps)
+        try:
+            package_notices_inventory(directory, output, source_pins)
+            raise AssertionError('invalid notices inventory accepted')
+        except Blocked as error:
+            assert str(error) == expected, (label, str(error))
+        assert not (output / 'transitive').exists()
+
+
 def self_test():
     # Tiny offline fixtures only. No urllib, binaries or environment mutation.
     with tempfile.TemporaryDirectory() as directory:
@@ -665,6 +918,7 @@ def self_test():
         assert (old / 'proof').read_text() == 'new'
         ffmpeg_self_tests(root)
         minimal_muxer_self_tests(root)
+        notices_self_tests(root)
     print(json.dumps({'self_test': True, 'network': False, 'executed_components': False}))
 
 
@@ -673,6 +927,7 @@ if __name__ == '__main__':
     parser.add_argument('--platform', choices=('windows-x64', 'linux-x64'))
     parser.add_argument('--self-test', action='store_true')
     parser.add_argument('--muxer-package', type=pathlib.Path, help='Trusted same-run minimal muxer artifact package directory; required for desktop')
+    parser.add_argument('--notices-inventory', type=pathlib.Path, help='Trusted same-run C3 source/notices inventory artifact directory; required for desktop')
     parser.add_argument('--extractor-only', action='store_true', help='Isolated extractor probe only; desktop bundles always include the muxer')
     args = parser.parse_args()
     try:

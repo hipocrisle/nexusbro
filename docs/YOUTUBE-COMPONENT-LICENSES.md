@@ -90,3 +90,46 @@ Windows evidence from run45459592456 proves stream-copy VP9+Opus and compiled-ou
 HTTP for that candidate. It does not clear Deno/yt-dlp transitive notices or
 publish a release. Root owns final matching-source/notice artifact preservation.
 No user media URLs or credentials are used by packaging verification.
+
+## Collected transitive notices in desktop bundles
+
+Full desktop packaging requires `--notices-inventory DIR` from the same run's C3
+`youtube-source-inventory` artifact. The extractor-only diagnostic keeps its
+existing interface and does not require this argument. No source archive from
+that inventory is opened or imported into the product.
+
+The offline packager verifies index schema, every indexed notice's size/SHA256,
+the exact closed notice subtree, and the four reviewed source-archive commit/SHA
+records against `docs/YOUTUBE-SOURCE-PINS.json`. It validates the complete typed
+pending-gap list and its equality in index and gaps documents. Symlinks/reparse
+points, traversal/case collisions, unknown or missing notice files, binary
+payloads and hash mismatches refuse packaging. Archive records are provenance
+checks only: archive contents are not re-read here; same-run artifact identity is
+provided by the caller workflow.
+
+Only indexed `notices/**` plain bytes are copied to
+`licenses/transitive/**`, removing the leading `notices/` component. The exact
+source index and gap document become `licenses/transitive/source-index.json` and
+`pending-gaps.json`. Limits: 16MiB notice bytes, 8MiB index, 1MiB gaps, 4096 notice
+files. The index retains per-file hashes and original source URLs; the sealed
+`components.json` has only their document hashes, counts, mapping and review
+state. Its existing 128KiB hard cap is preserved and enforced by the packager.
+The roughly329MB corresponding-source inventory is retained separately by CI,
+not copied into the browser bundle.
+
+C3 run45470494915 collected1916 notice/metadata files (10,249,202bytes), including
+56 empty test fixtures and source-related metadata. These are preserved for
+inventory fidelity; neither empty files, SPDX identifiers nor metadata are
+represented as licensing grants. `product_notices_cleared` remains false.
+Unknown coverage across all Cargo.lock entries is not automatically a missing
+requirement for the distributed Windows/Linux runtime: that inventory includes
+other platforms, development tools, tests and compile-time macros. Explicit
+required missing notices, optional superset entries and unknown linkage remain
+distinct review categories.
+
+The exact pinned yt-dlp aggregate THIRD_PARTY_LICENSES.txt is already collected
+and shipped, including its Python/native dependency notices. A remaining gap in
+matching an exact executable's bundled dependency versions to source provenance
+is not a claim that all those notices are missing. Root's release review still
+owns the actual distribution/matching-source decision; this packaging step does
+not issue blanket clearance or publish a release.
