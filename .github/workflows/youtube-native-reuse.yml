@@ -8,6 +8,9 @@ on:
       source:
         type: string
         required: true
+      platform:
+        type: string
+        default: both
       layout_only:
         type: boolean
         default: false
@@ -16,7 +19,7 @@ permissions:
   actions: read
 jobs:
   diagnostic:
-    if: ${{ !inputs.layout_only }}
+    if: ${{ !inputs.layout_only && inputs.platform != 'linux' }}
     runs-on: windows-latest
     timeout-minutes: 55
     steps:
@@ -303,6 +306,7 @@ jobs:
           if-no-files-found: warn
           retention-days: 7
   linux-layout:
+    if: ${{ inputs.platform != 'windows' }}
     name: Inspect immutable Linux package layout DIAGNOSTIC ONLY
     runs-on: ubuntu-24.04
     timeout-minutes: 55
