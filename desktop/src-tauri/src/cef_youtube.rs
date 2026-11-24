@@ -399,7 +399,7 @@ pub fn poll_probes() {
         probes.borrow_mut().retain_mut(|(tab,browser,sender,probe)|{
             let Some(result)=probe.poll() else{return true;};
             let data=match result {
-                Ok(state)=>serde_json::json!({"tip":"youtube-state","id":tab,"state":state}),
+                Ok(state)=>serde_json::json!({"tip":"youtube-state","id":tab,"state":state,"resources":resource_counts(*browser)}),
                 Err(code)=>serde_json::json!({"tip":"youtube-state","id":tab,"error":"Состояние плеера недоступно","code":code,"resources":resource_counts(*browser)}),
             };
             let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(data));
