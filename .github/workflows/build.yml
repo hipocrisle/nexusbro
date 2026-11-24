@@ -79,6 +79,21 @@ on:
         default: false
 
 jobs:
+  process-ownership:
+    if: >-
+      !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Prove profile exclusion and actual owned descendant exit
+        run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
   security:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&
@@ -96,7 +111,6 @@ jobs:
           cargo test --manifest-path tests/tab_route_contracts/Cargo.toml
           cargo test --manifest-path tests/super_lifecycle_harness/Cargo.toml
           cargo test --manifest-path tests/super_cookie_harness/Cargo.toml
-          cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
           cargo test --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml --example live_acceptance
