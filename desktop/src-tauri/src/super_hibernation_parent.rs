@@ -313,6 +313,12 @@ fn parent_eligible(
         && !v.zapusk_idet
         && v.proc.is_some()
         && v.kanal.is_some()
+        && v.obychnye.as_ref().is_some_and(|session| {
+            session
+                .vkladki
+                .iter()
+                .all(|tab| matches!(tab.route, crate::tab_routes::RouteChoice::Inherit))
+        })
 }
 fn snapshot_valid(node: &Node, snapshot: &Snapshot, session: Option<&sessiya::Sessiya>) -> bool {
     let Some(scope) = node.scope.as_ref() else {
