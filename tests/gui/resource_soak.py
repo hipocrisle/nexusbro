@@ -96,7 +96,9 @@ def lifecycle(value):
         require(row.get('phase') in PHASES, 'Lifecycle phase invalid')
         for key in ('generation', 'attempt', 'tab_count', 'live_count'):
             require(type(row.get(key)) is int and row[key] >= 0, 'Lifecycle numeric field invalid')
-        cold = row['phase']=='Sleeping' and row['generation']==0 and row['attempt']==0
+        cold = (row['phase']=='Sleeping' and row.get('reason')=='cold' and row['attempt']==0
+                and row.get('pid') is None and row.get('profile_reserved') is False and row.get('lease_confirmed') is False
+                and row.get('owned')==[] and row.get('owned_complete') is True)
         require((row['tab_count']==125 or cold and row['tab_count']==0) and row['live_count']<=3, 'Lifecycle tab counts outside workload')
         require(type(row.get('profile_reserved')) is bool and type(row.get('lease_confirmed')) is bool,
                 'Lifecycle lease fields invalid')
