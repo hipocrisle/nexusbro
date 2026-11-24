@@ -642,7 +642,7 @@ async fn podgotovit_dvizhok(
         let s: State<Sostoyanie> = h.state();
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(&id_fon)
-            .filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet)
+            .filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet && vk.proc.is_some())
         else { return };
         vk.zapusk_idet = false;
         if let Some(okno) = okno {
