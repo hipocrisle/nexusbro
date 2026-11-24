@@ -74,6 +74,9 @@ fn decode(bytes: &[u8]) -> Reply {
         "hidden",
         "video_paused",
         "audio_paused",
+        "volume",
+        "muted",
+        "default_sink",
         "active_control",
         "quality_index",
         "quality_count",
@@ -87,12 +90,14 @@ fn decode(bytes: &[u8]) -> Reply {
         return Err(FAILED);
     }
     let mut clean = serde_json::Map::new();
-    for field in ["configured", "disposed", "playing", "separate", "hidden", "video_paused", "audio_paused", "caption_showing", "fullscreen"] {
+    for field in ["configured", "disposed", "playing", "separate", "hidden", "video_paused", "audio_paused", "caption_showing", "fullscreen", "muted", "default_sink"] {
         clean.insert(
             field.into(),
             Value::Bool(source.get(field).and_then(Value::as_bool).ok_or(FAILED)?),
         );
     }
+    let volume=source.get("volume").and_then(Value::as_f64).filter(|n|n.is_finite()&&(0.0..=1.0).contains(n)).ok_or(FAILED)?;
+    clean.insert("volume".into(),json!(volume));
     let focus=source.get("active_control").and_then(Value::as_u64).filter(|n|*n<=11).ok_or(FAILED)?;
     let quality=source.get("quality_index").and_then(Value::as_i64).filter(|n|(-1..=1023).contains(n)).ok_or(FAILED)?;
     let count=source.get("quality_count").and_then(Value::as_u64).filter(|n|*n<=1024).ok_or(FAILED)?;
@@ -182,6 +187,9 @@ fn diagnose(bytes: &[u8]) -> &'static str {
         "hidden",
         "video_paused",
         "audio_paused",
+        "volume",
+        "muted",
+        "default_sink",
         "active_control",
         "quality_index",
         "quality_count",
@@ -340,7 +348,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn data() -> Value {
-        json!({"configured":true,"disposed":false,"active_control":1,"quality_index":0,"quality_count":2,"caption_selected":-1,"caption_cues":0,"caption_active":0,"caption_showing":false,"fullscreen":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
+        json!({"configured":true,"disposed":false,"volume":1.0,"muted":false,"default_sink":true,"active_control":1,"quality_index":0,"quality_count":2,"caption_selected":-1,"caption_cues":0,"caption_active":0,"caption_showing":false,"fullscreen":false,"hidden":false,"video_paused":false,"audio_paused":false,"playing":true,"separate":true,"position":2.25,"duration":600,"skew":0.02,"decoded":66,"dropped":1,"audio_position":2.23,"video_width":1920,"video_height":1080})
     }
     fn envelope(value: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":value}})).unwrap()
@@ -349,7 +357,7 @@ mod tests {
     fn reconstructs_only_bounded_native_player_fields() {
         let bytes = envelope(data());
         let value = decode(&bytes).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 23);
+        assert_eq!(value.as_object().unwrap().len(), 26);
         assert_eq!(value["decoded"], 66);
         assert_eq!(value["playing"], true);
         let mut result: Value = serde_json::from_slice(&bytes).unwrap();
@@ -366,6 +374,8 @@ mod tests {
         for (field, value) in [
             ("playing", json!(1)),
             ("active_control", json!(12)),
+            ("volume", json!(1.1)),
+            ("muted", json!(0)),
             ("quality_index", json!(1024)),
             ("quality_count", json!(1025)),
             ("configured", json!("true")),

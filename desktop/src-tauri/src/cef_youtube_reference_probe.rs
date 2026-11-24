@@ -38,7 +38,7 @@ impl Drop for Clear {
         wipe(&mut self.0)
     }
 }
-const SCRIPT: &str = "(()=>{const list=document.querySelectorAll('video');if(list.length!==1)return null;const player=document.querySelector('#movie_player.html5-video-player');if(!player||player.classList.contains('ad-showing')||player.classList.contains('ad-interrupting'))return null;const data=typeof player.getVideoData==='function'?player.getVideoData():null;if(!data||data.video_id!==new URL(location.href).searchParams.get('v'))return null;const v=list[0],q=v.getVideoPlaybackQuality();return {playing:!v.paused&&!v.ended,paused:v.paused,ended:v.ended,seeking:v.seeking,ready_state:v.readyState,position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,video_width:v.videoWidth,video_height:v.videoHeight,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,playback_rate:v.playbackRate,video_count:list.length};})()";
+const SCRIPT: &str = "(()=>{const list=document.querySelectorAll('video');if(list.length!==1)return null;const player=document.querySelector('#movie_player.html5-video-player');if(!player||player.classList.contains('ad-showing')||player.classList.contains('ad-interrupting'))return null;const data=typeof player.getVideoData==='function'?player.getVideoData():null;if(!data||data.video_id!==new URL(location.href).searchParams.get('v'))return null;const v=list[0],q=v.getVideoPlaybackQuality();return {volume:v.volume,muted:v.muted,default_sink:v.sinkId==='',playing:!v.paused&&!v.ended,paused:v.paused,ended:v.ended,seeking:v.seeking,ready_state:v.readyState,position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,video_width:v.videoWidth,video_height:v.videoHeight,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,playback_rate:v.playbackRate,video_count:list.length};})()";
 fn watch_id(document: &str) -> Option<crate::youtube_light::VideoId> {
     if document.len() > crate::youtube_light::MAX_INPUT_URL_BYTES {
         return None;
@@ -71,6 +71,9 @@ fn decode(bytes: &[u8]) -> Reply {
         .and_then(Value::as_object)
         .ok_or(FAILED)?;
     const FIELDS: &[&str] = &[
+        "volume",
+        "muted",
+        "default_sink",
         "playing",
         "paused",
         "ended",
@@ -89,10 +92,11 @@ fn decode(bytes: &[u8]) -> Reply {
         return Err(FAILED);
     }
     let mut clean = serde_json::Map::new();
-    for field in ["playing", "paused", "ended", "seeking"] {
+    for field in ["playing", "paused", "ended", "seeking", "muted", "default_sink"] {
         clean.insert(field.into(), json!(source[field].as_bool().ok_or(FAILED)?));
     }
     for (field, maximum) in [
+        ("volume", 1.0),
         ("position", MAX_SECONDS),
         ("duration", MAX_SECONDS),
         ("playback_rate", 16.0),
@@ -289,7 +293,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn sample() -> Value {
-        json!({"playing":true,"paused":false,"ended":false,"seeking":false,"ready_state":4,"position":30.5,"duration":600,"video_width":1280,"video_height":720,"decoded":900,"dropped":2,"playback_rate":1,"video_count":1})
+        json!({"volume":1.0,"muted":false,"default_sink":true,"playing":true,"paused":false,"ended":false,"seeking":false,"ready_state":4,"position":30.5,"duration":600,"video_width":1280,"video_height":720,"decoded":900,"dropped":2,"playback_rate":1,"video_count":1})
     }
     fn wire(value: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":value}})).unwrap()
@@ -297,7 +301,7 @@ mod tests {
     #[test]
     fn returns_exact_numeric_public_player_schema() {
         let clean = decode(&wire(sample())).unwrap();
-        assert_eq!(clean.as_object().unwrap().len(), 13);
+        assert_eq!(clean.as_object().unwrap().len(), 16);
         assert_eq!(clean["decoded"], 900);
     }
     #[test]
