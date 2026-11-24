@@ -785,7 +785,8 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
     let resursy = {
         let mut v = s.vkladki.lock().unwrap();
         let Some(vk) = v.get_mut(id) else { return };
-        vk.zapusk_idet = false;
+        vk.hibernate.explicit_stop();
+        vk.zapusk_idet = true;
         vk.kanal = None;
         vk.okno = None;
         vk.zapas_pid = None;
@@ -795,7 +796,7 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
         ostanovit_resursy(resursy.0, resursy.1, resursy.2);
     }).await;
     release_route_resources(s, id, resursy.3);
-    if let Some(v)=s.vkladki.lock().unwrap().get_mut(id).filter(|v|v.zapusk_id==resursy.3){v.hibernate=Default::default();}
+    if let Some(v)=s.vkladki.lock().unwrap().get_mut(id).filter(|v|v.zapusk_id==resursy.3){v.hibernate=Default::default();v.zapusk_idet=false;}
 }
 
 /// Правка настроек супер-вкладки после создания. Работающую перезапускаем
@@ -1394,6 +1395,7 @@ pub fn run() {
                             let vpn_umer = matches!(vk.tunnel.as_mut().map(|p| p.try_wait()), Some(Ok(Some(_))));
                             if !umer && !vpn_umer { return None }
                             let active = vk.obychnye.as_ref().map(|s| s.aktivnaya);
+                            vk.hibernate.explicit_stop();
                             vk.okno = None;
                             vk.kanal = None;
                             vk.zapas_pid = None;

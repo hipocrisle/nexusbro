@@ -118,6 +118,17 @@ impl Node {
         });
         self.reason = Some("profile_busy");
     }
+    /// Explicit/crash teardown is not hibernation success. The worker retains
+    /// the actual guard; observations report unknown membership until exit.
+    pub fn explicit_stop(&mut self) {
+        if self.machine.phase() == Phase::Starting {
+            let stamp = self.machine.stamp();
+            self.machine.apply(Event::StartFailed { stamp });
+        } else {
+            self.machine.apply(Event::IntentRequested(Intent::Close));
+        }
+        self.reason = Some("explicit_stop");
+    }
     pub fn no_child_start_failed(&mut self, generation: u64) {
         let stamp = Stamp {
             generation,
