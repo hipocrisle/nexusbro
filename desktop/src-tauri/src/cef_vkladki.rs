@@ -47,7 +47,7 @@ wrap_display_handler! {
         fn on_fullscreen_mode_change(&self,browser:Option<&mut Browser>,fullscreen:i32){if let Some(browser)=browser{if let Some((operation,document,_))=crate::cef_youtube::media(browser){let _=self.tx.send(Sobytie::YoutubeFullscreen{browser:browser.identifier(),tab:self.id,operation,document,fullscreen:fullscreen!=0});}}}
         fn on_media_access_change(&self,browser:Option<&mut Browser>,has_video_access:i32,has_audio_access:i32){if let Some(b)=browser{crate::memory_guard::capture(b.identifier(),has_video_access!=0||has_audio_access!=0);}}
         fn on_console_message(&self,browser:Option<&mut Browser>,_level:LogSeverity,message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{
-            if let Some(value)=message.map(|m|m.to_string()).and_then(|m|m.strip_prefix("__NEXUSBRO_LIGHT_DOWNLOAD__:").map(str::to_owned)).filter(|s|s.len()<=80){if let Some(browser)=browser.as_ref(){if crate::cef_youtube::media(browser).is_some(){if value=="cancel" {let _=self.tx.send(Sobytie::YoutubeDownloadCancel{browser:browser.identifier()});}else if value=="audio"||value.starts_with("video:"){let _=self.tx.send(Sobytie::YoutubeDownloadRequest{browser:browser.identifier(),audio:value=="audio",format:value.strip_prefix("video:").unwrap_or("").to_owned()});}}}return 1;}
+            if let Some(value)=message.map(|m|m.to_string()).and_then(|m|m.strip_prefix("__NEXUSBRO_LIGHT_DOWNLOAD__:").map(str::to_owned)).filter(|s|s.len()<=80){if let Some(browser)=browser.as_ref(){crate::youtube_download_diagnostics::child(&self.tx,self.id,crate::youtube_download_diagnostics::Stage::MarkerObserved,crate::youtube_download_diagnostics::Reason::None);if crate::cef_youtube::media(browser).is_some(){crate::youtube_download_diagnostics::child(&self.tx,self.id,crate::youtube_download_diagnostics::Stage::MarkerAdmitted,crate::youtube_download_diagnostics::Reason::None);if value=="cancel" {let _=self.tx.send(Sobytie::YoutubeDownloadCancel{browser:browser.identifier()});}else if value=="audio"||value.starts_with("video:"){let _=self.tx.send(Sobytie::YoutubeDownloadRequest{browser:browser.identifier(),audio:value=="audio",format:value.strip_prefix("video:").unwrap_or("").to_owned()});}}}return 1;}
             if let Some(index)=message.and_then(|m|m.to_string().strip_prefix("__NEXUSBRO_LIGHT_CAPTION__:").filter(|s|s.len()<=4).and_then(|s|s.parse::<i32>().ok())) {if let Some(browser)=browser.as_ref(){crate::cef_youtube_captions::select(browser,index,self.tx.clone());}return 1;}
             if message.is_some_and(|m|matches!(m.to_string().as_str(),"__NEXUSBRO_LIGHT_READY__"|"__NEXUSBRO_LIGHT_TICK__")){
                 if let Some(browser)=browser.as_ref(){crate::cef_youtube_resume::on_tick(browser,message.is_some_and(|m|m.to_string()=="__NEXUSBRO_LIGHT_READY__"));}return 1;
@@ -1164,7 +1164,17 @@ impl Rabota {
                 }
                 Sobytie::YoutubeFullscreen{browser,tab,operation,document,fullscreen}=>{if crate::cef_youtube::documents().document_matches(browser,operation,&document){if let Some(current)=brauzery.get(&tab).filter(|b|b.identifier()==browser){crate::cef_youtube_fullscreen::changed(current,tab,tab==s.aktivnaya&&!*browser_locked&&!*closing,fullscreen,tx);}}continue;}
                 Sobytie::YoutubeDownloadRequest{browser,audio,format}=>{
-                    if !*browser_locked&&! *closing {if let Some(tab)=s.vkladki.iter().find(|v|v.id==s.aktivnaya&&!v.route_pending&&brauzery.get(&v.id).is_some_and(|b|b.identifier()==browser)){if let(Some(browser),Some(route))=(brauzery.get(&tab.id),k.routes.borrow().descriptor(&tab.route)){crate::cef_youtube_download::request(browser,tab.id,tab.route_generation,route,audio,format,tx);}}}continue;
+                    use crate::youtube_download_diagnostics::{child,Stage,Reason};
+                    let tab_id=s.vkladki.iter().find(|v|brauzery.get(&v.id).is_some_and(|b|b.identifier()==browser)).map(|v|v.id);
+                    if let Some(id)=tab_id {child(tx,id,Stage::RequestReceived,Reason::None);}
+                    if !*browser_locked&&! *closing {
+                        if let Some(tab)=s.vkladki.iter().find(|v|v.id==s.aktivnaya&&!v.route_pending&&brauzery.get(&v.id).is_some_and(|b|b.identifier()==browser)){
+                            if let(Some(browser),Some(route))=(brauzery.get(&tab.id),k.routes.borrow().descriptor(&tab.route)){
+                                crate::cef_youtube_download::request(browser,tab.id,tab.route_generation,route,audio,format,tx);
+                            } else {child(tx,tab.id,Stage::RequestReceived,Reason::RouteMissing);}
+                        } else if let Some(id)=tab_id {child(tx,id,Stage::RequestReceived,Reason::NotSelected);}
+                    } else if let Some(id)=tab_id {child(tx,id,Stage::RequestReceived,Reason::LockedOrClosing);}
+                    continue;
                 }
                 Sobytie::YoutubeDownloadCancel{browser}=>{crate::cef_youtube_download::cancel_user(browser);continue;}
                 Sobytie::Komanda(Komanda::YoutubeDownloadTarget{id,request,path})=>{if let Some(tab)=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending){if let Some(browser)=brauzery.get(&id){crate::cef_youtube_download::target(browser,tab.route_generation,&request,path);}}continue;}

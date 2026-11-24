@@ -42,6 +42,7 @@ mod cef_youtube_download;
 mod cef_youtube_fullscreen;
 mod youtube_fullscreen_parent;
 mod youtube_download_parent;
+mod youtube_download_diagnostics;
 mod cef_youtube_probe;
 mod cef_youtube_reference_probe;
 mod cef_youtube_decode_probe;
