@@ -11,10 +11,10 @@
   const status = document.getElementById('status');
   const clock = document.getElementById('clock');
   let configured = false, disposed = false, intended = false, separate = false;
-  let epoch = 0, syncing = false, duration = 0;
+  let epoch = 0, syncing = false, duration = 0, timer = null;
   const setStatus = text => { status.textContent = text; };
   const media = () => separate ? [video, audio] : [video];
-  function pause() { ++epoch; intended = false; syncing = false; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; }
+  function pause() { ++epoch; intended = false; syncing = false; clearInterval(timer); timer = null; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; updateView(); }
   function error() { pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
   function align() {
     if (!separate || syncing || !Number.isFinite(video.currentTime)) return;
@@ -24,6 +24,7 @@
   async function play() {
     if (!configured || disposed) return;
     intended = true; const run = ++epoch;
+    if (timer === null) timer = setInterval(updateView, 250);
     if (media().every(m => m.readyState >= 3)) syncing = false;
     for (const m of media()) m.preload = 'auto';
     try {
@@ -64,14 +65,15 @@
       }
     });
   }
-  const timer = setInterval(() => {
+  function updateView() {
     if (disposed || !configured) return;
     duration = Number.isFinite(video.duration) ? video.duration : 0;
     if (separate && Number.isFinite(audio.duration)) duration = Math.min(duration, audio.duration);
     seek.max = String(duration); seek.value = String(video.currentTime || 0);
     clock.textContent = `${Math.floor(video.currentTime || 0)} / ${Math.floor(duration)} с`;
     if (intended && !syncing) align();
-  }, 250);
+  }
+  for (const m of [video, audio]) { m.addEventListener('loadedmetadata', updateView); m.addEventListener('seeked', updateView); }
   window.addEventListener('pagehide', dispose, {once: true});
   // Called only by the native document controller after route/generation checks.
   // This object grants NO native privileges; a web page cannot obtain a proxy.
