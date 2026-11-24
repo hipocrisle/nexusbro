@@ -26,6 +26,7 @@ import urllib.parse
 from security_native import Device, call, js_wait, painted, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
 from resource_soak import foreground
+from hibernation_cookie_probe import WindowsFixtureTrust, tls_proxy_preflight
 
 HOST = 'fixture.googlevideo.com'
 
@@ -44,11 +45,15 @@ def certificates(root):
         return (x509.CertificateBuilder().subject_name(subject).issuer_name(name).public_key(public)
                 .serial_number(x509.random_serial_number()).not_valid_before(now-datetime.timedelta(minutes=2))
                 .not_valid_after(now+datetime.timedelta(days=1)))
-    ca = builder(name, key.public_key()).add_extension(x509.BasicConstraints(ca=True, path_length=0), True).sign(key, hashes.SHA256())
+    ca = (builder(name, key.public_key()).add_extension(x509.BasicConstraints(ca=True, path_length=0), True)
+          .add_extension(x509.KeyUsage(False,False,False,False,False,True,True,False,False),True)
+          .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()),False).sign(key, hashes.SHA256()))
     leaf = (builder(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST)]), leafkey.public_key())
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
             .add_extension(x509.SubjectAlternativeName([x509.DNSName(HOST)]), False)
-            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), False).sign(key, hashes.SHA256()))
+            .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), False)
+            .add_extension(x509.KeyUsage(True,False,True,False,False,False,False,False,False),True)
+            .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()),False).sign(key, hashes.SHA256()))
     for filename, data in [('ca.crt', ca.public_bytes(serialization.Encoding.PEM)),
                            ('server.crt', leaf.public_bytes(serialization.Encoding.PEM)),
                            ('server.key', leafkey.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))]:
@@ -61,16 +66,11 @@ def certificates(root):
 class Trust:
     def __init__(self, root, cert, thumb):
         self.root, self.cert, self.thumb = root, cert, thumb
-        self.oldhome = os.environ.get('HOME'); self.installed = False
-    def powershell(self, text):
-        script = self.root / 'trust-operation.ps1'; script.write_text(text)
-        subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script),
-                        '-Certificate', str(self.cert), '-Thumb', self.thumb], check=True,
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+        self.oldhome = os.environ.get('HOME'); self.installed = False; self.windows = None
     def install(self):
         if sys.platform == 'win32':
-            self.installed = True  # cleanup even if import postcondition fails
-            self.powershell("param($Certificate,$Thumb)\nImport-Certificate -FilePath $Certificate -CertStoreLocation 'Cert:\\LocalMachine\\Root' -ErrorAction Stop | Out-Null\nif (!(Test-Path ('Cert:\\LocalMachine\\Root\\'+$Thumb))) {throw 'missing'}\n")
+            self.windows = WindowsFixtureTrust(self.root,self.cert,self.cert.parent/'server.crt')
+            self.windows.install()
         else:
             home = self.root / 'home'; database = home / '.pki' / 'nssdb'; database.mkdir(parents=True)
             for args in (['-N','--empty-password'], ['-A','-n','Disposable player CA','-t','C,,','-i',str(self.cert)]):
@@ -78,8 +78,8 @@ class Trust:
             os.environ['HOME'] = str(home)
         self.installed = True
     def close(self):
-        if sys.platform == 'win32' and self.installed:
-            self.powershell("param($Certificate,$Thumb)\n$p='Cert:\\LocalMachine\\Root\\'+$Thumb; if(Test-Path $p){Remove-Item -LiteralPath $p -Force -ErrorAction Stop}; if(Test-Path $p){throw 'retained'}\n")
+        if self.windows:
+            self.windows.close()
         elif self.oldhome is None: os.environ.pop('HOME',None)
         else: os.environ['HOME'] = self.oldhome
 
@@ -122,7 +122,7 @@ class Fixture:
                 except (OSError,ssl.SSLError):pass
         origin = http.server.ThreadingHTTPServer(('127.0.0.1',0),Origin); origin.daemon_threads=True
         tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER); tls.load_cert_chain(cert,key)
-        origin.socket=tls.wrap_socket(origin.socket,server_side=True); self.start(origin)
+        origin.socket=tls.wrap_socket(origin.socket,server_side=True); self.origin_port=origin.server_port; self.start(origin)
         self.proxies={}
         for lane in ('A','B'):
             class Proxy(socketserver.StreamRequestHandler):
@@ -169,18 +169,23 @@ class Fixture:
         for thread in self.threads:thread.join(timeout=3)
 
 
-def observe(client, identifier, tab, *, admitting=False):
+def observe(client, identifier, tab, *, admitting=False, diagnostics=None):
     client.js('window.__playerObserved=[];true')
     call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_snapshot','id':tab})
     expression='window.__playerObserved.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'
     value=wait_for(lambda:client.js(expression),'Native player observation missing',10)
+    if diagnostics is not None:diagnostics['native_probe_unavailable']='state' not in value.get('data',{})
     if admitting and isinstance(value.get('data',{}).get('error'),str) and 'state' not in value['data']:
         return {}  # only pre-admission: old document may still be navigating
     require(isinstance(value.get('data',{}).get('state'),dict),'Native observation refused')
-    return value['data']['state']
+    state=value['data']['state']
+    if diagnostics is not None:
+        fields={'configured','disposed','playing','separate','position','audio_position','duration','skew','decoded','dropped','video_width','video_height'}
+        diagnostics['last_snapshot']={key:v for key,v in state.items() if key in fields and type(v) in (bool,int,float)}
+    return state
 
 
-def physical(client, device, kind):
+def physical(client, device, kind, diagnostics):
     foreground(device);painted(client)
     # Actual CEF controls are laid out by shipped CSS: main16px padding,
     # final24px status +12px gap +button-height39px. No DOM CEF mutation.
@@ -195,12 +200,19 @@ def physical(client, device, kind):
     # Read the button's left padding (away from text), at the same row as
     # the one physical click. Shell RAF alone is not CEF compositor proof.
     pixel=(round(origin['x']+(point['x']+23)*scale),round(origin['y']+y*scale))
+    diagnostics['control']={'kind':kind,'viewport_width':round(point['w']),'viewport_height':round(point['h']),
+                            'relative_click_x':round(x-point['x']),'relative_click_y':round(y-point['y']),
+                            'scale':scale,'pixel_in_screen':False,'pixel_matches':False,'clicked':False}
     def controls_painted():
         with ImageGrab.grab(**({'xdisplay':device.display} if sys.platform!='win32' else {})) as image:
-            return (0<=pixel[0]<image.width and 0<=pixel[1]<image.height
-                    and image.getpixel(pixel)[:3] in ((41,43,59),(54,56,77)))
+            inside=0<=pixel[0]<image.width and 0<=pixel[1]<image.height
+            rgb=list(image.getpixel(pixel)[:3]) if inside else []
+            matches=tuple(rgb) in ((41,43,59),(54,56,77))
+            diagnostics['control'].update(pixel_in_screen=inside,pixel_rgb=rgb,pixel_matches=matches)
+            return inside and matches
     wait_for(controls_painted,'Native player controls not physically painted',15)
     client.mouse(x,y)
+    diagnostics['control']['clicked']=True
 
 
 def video_paint(client, device):
@@ -218,7 +230,7 @@ def video_paint(client, device):
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS')=='true','Disposable GHA runner required')
     out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=False)
-    report={'schema':1,'completed':False,'extractor_acceptance':False,'checks':[],'stage':'setup'}
+    report={'schema':1,'completed':False,'extractor_acceptance':False,'checks':[],'stage':'setup','player_diagnostics':{}}
     code=1;device=fixture=trust=None;private_root=None
     old=os.environ.get('NEXUSBRO_TEST_YOUTUBE_DNS_GUARD')
     try:
@@ -227,6 +239,7 @@ def run(args):
             root=private_root;thumb=certificates(root/'tls')
             trust=Trust(root,root/'tls'/'ca.crt',thumb);trust.install()
             fixture=Fixture(root/'tls'/'server.crt',root/'tls'/'server.key',pathlib.Path(args.video_webm),pathlib.Path(args.audio_webm))
+            report['tls_handshake_preflight']=tls_proxy_preflight(fixture.proxies['A'],HOST,443,root/'tls'/'ca.crt',root/'tls'/'server.crt')
             exe,cef=pathlib.Path(args.exe).resolve(),pathlib.Path(args.cef).resolve()
             device=WindowsDevice(root/'device',exe,cef) if sys.platform=='win32' else Device('player',root/'device',exe,cef)
             definitions=[]
@@ -247,18 +260,18 @@ def run(args):
                 session=wait_for(lambda:rows(client,identifier) if any(r.get('browser_id',0)>0 and not r.get('zagruzka') for r in rows(client,identifier)['vkladki']) else None,'Actual native browser not loaded',40)
                 tab=session['aktivnaya']
                 call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
-                initial=wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,identifier,tab,admitting=True)),'Player was not configured',30)
-                report['stage']='physical-play-'+lane;physical(client,device,'play')
-                first=wait_for(lambda:(lambda s:s if s.get('playing') and s.get('decoded',0)>=3 else None)(observe(client,identifier,tab)),'Physical play did not decode actual media',25)
+                initial=wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,identifier,tab,admitting=True,diagnostics=report['player_diagnostics'])),'Player was not configured',30)
+                report['stage']='physical-play-'+lane;physical(client,device,'play',report['player_diagnostics'])
+                first=wait_for(lambda:(lambda s:s if s.get('playing') and s.get('decoded',0)>=3 else None)(observe(client,identifier,tab,diagnostics=report['player_diagnostics'])),'Physical play did not decode actual media',25)
                 require(first['video_width']==320 and first['video_height']==180 and first['separate'],'Actual VP9/Opus geometry differs')
                 paint_before=video_paint(client,device)
-                time.sleep(3);second=observe(client,identifier,tab)
+                time.sleep(3);second=observe(client,identifier,tab,diagnostics=report['player_diagnostics'])
                 paint_after=video_paint(client,device)
                 require(sum(a!=b for a,b in zip(paint_before,paint_after))>30,'Actual OS video paint did not change')
                 require(second['position']>first['position']+1 and second['audio_position']>first['audio_position']+1 and second['skew']<1,'Dual media clocks failed')
-                report['stage']='physical-pause-'+lane;physical(client,device,'play');time.sleep(.5);paused=observe(client,identifier,tab);time.sleep(1);still=observe(client,identifier,tab)
+                report['stage']='physical-pause-'+lane;physical(client,device,'play',report['player_diagnostics']);time.sleep(.5);paused=observe(client,identifier,tab,diagnostics=report['player_diagnostics']);time.sleep(1);still=observe(client,identifier,tab,diagnostics=report['player_diagnostics'])
                 require(not paused['playing'] and abs(still['position']-paused['position'])<.35,'Physical pause failed')
-                report['stage']='physical-seek-'+lane;physical(client,device,'seek');time.sleep(1);seek=observe(client,identifier,tab)
+                report['stage']='physical-seek-'+lane;physical(client,device,'seek',report['player_diagnostics']);time.sleep(1);seek=observe(client,identifier,tab,diagnostics=report['player_diagnostics'])
                 require(abs(seek['position']-still['position'])>5,'Physical seek did not move actual native media')
                 with fixture.lock:
                     tracks={r['track'] for r in fixture.receipts if r['lane']==lane};direct=fixture.direct
@@ -268,7 +281,17 @@ def run(args):
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
+        codes={'Native player controls not physically painted':'controls_not_painted',
+               'Physical play did not decode actual media':'playback_not_decoding',
+               'Native player observation missing':'snapshot_missing','Native observation refused':'snapshot_refused',
+               'Player was not configured':'not_configured','Dual media clocks failed':'clocks_not_advancing',
+               'Physical pause failed':'pause_failed','Physical seek did not move actual native media':'seek_failed',
+               'Actual VP9/Opus geometry differs':'media_geometry','Actual OS video paint did not change':'video_paint_static',
+               'Media bypassed actual selected route':'route_witness_missing','Native player viewport too small':'viewport_too_small',
+               'windows_fixture_chain_not_trusted':'windows_chain_untrusted'}
+        report['failure_code']=codes.get(str(error),'unclassified')
     finally:
+        if trust and trust.windows:report['windows_chain_preflight']=trust.windows.receipts
         cleanup_ok=True
         for owned in (device,fixture,trust):
             if owned:

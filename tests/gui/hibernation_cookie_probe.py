@@ -158,11 +158,112 @@ class CookieFixture:
         self.routes.close()
 
 
+class WindowsFixtureTrust:
+    """Real app-user and machine anchors, with strict local chain receipts.
+
+    NoCheck applies ONLY to disposable local X509Chain diagnostics (the fixture
+    certificates contain no AIA/CDP URLs). CEF verification is never modified.
+    """
+    def __init__(self, root, ca, leaf):
+        self.root, self.ca, self.leaf = root, ca, leaf
+        certificate = x509.load_pem_x509_certificate(ca.read_bytes())
+        server = x509.load_pem_x509_certificate(leaf.read_bytes())
+        self.thumb = certificate.fingerprint(hashes.SHA1()).hex().upper()
+        self.leaf_sha = server.fingerprint(hashes.SHA256()).hex()
+        self.attempted = False
+        self.receipts = []
+        from cryptography.hazmat.primitives import serialization
+        self.ca_der = root / 'trust-ca.der'; self.ca_der.write_bytes(certificate.public_bytes(serialization.Encoding.DER))
+        self.leaf_der = root / 'trust-leaf.der'; self.leaf_der.write_bytes(server.public_bytes(serialization.Encoding.DER))
+
+    def execute(self, operation):
+        require(os.environ.get('GITHUB_ACTIONS') == 'true' and sys.platform == 'win32', 'windows_trust_scope_refused')
+        script = self.root / 'fixture-trust.ps1'
+        script.write_text(r'''param([string]$Certificate,[string]$Leaf,[string]$Thumb,[string]$Operation)
+$ErrorActionPreference='Stop'
+$ca=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Certificate)
+$leafCert=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Leaf)
+if($ca.Thumbprint -cne $Thumb){throw 'Fixture anchor mismatch'}
+$locations=@('Cert:\LocalMachine\Root','Cert:\CurrentUser\Root')
+function ExactAnchor($location){
+ $p=Join-Path $location $Thumb
+ if(!(Test-Path -LiteralPath $p)){return $false}
+ return [Convert]::ToBase64String((Get-Item -LiteralPath $p).RawData) -ceq [Convert]::ToBase64String($ca.RawData)
+}
+if($Operation -eq 'machine' -or $Operation -eq 'user'){
+ $location=if($Operation -eq 'machine'){$locations[0]}else{$locations[1]}
+ Import-Certificate -FilePath $Certificate -CertStoreLocation $location -Confirm:$false -ErrorAction Stop | Out-Null
+ if(!(ExactAnchor $location)){throw 'Fixture anchor bytes differ'}
+}
+if($Operation -eq 'remove'){
+ foreach($location in $locations){
+  $p=Join-Path $location $Thumb
+  if(Test-Path -LiteralPath $p){if(!(ExactAnchor $location)){throw 'Refuse different anchor'};Remove-Item -LiteralPath $p -Force -ErrorAction Stop}
+  if(Test-Path -LiteralPath $p){throw 'Fixture anchor remains'}
+ }
+ @{machine_present=$false;user_present=$false}|ConvertTo-Json -Compress;exit 0
+}
+$chain=New-Object System.Security.Cryptography.X509Certificates.X509Chain
+$chain.ChainPolicy.RevocationMode=[System.Security.Cryptography.X509Certificates.X509RevocationMode]::NoCheck
+$chain.ChainPolicy.VerificationFlags=[System.Security.Cryptography.X509Certificates.X509VerificationFlags]::NoFlag
+$chain.ChainPolicy.UrlRetrievalTimeout=[TimeSpan]::Zero
+$built=$chain.Build($leafCert)
+$anchor=$false
+if($chain.ChainElements.Count -gt 0){$anchor=[Convert]::ToBase64String($chain.ChainElements[$chain.ChainElements.Count-1].Certificate.RawData) -ceq [Convert]::ToBase64String($ca.RawData)}
+@{build=[bool]$built;anchor_matches=[bool]$anchor;statuses=@($chain.ChainStatus|ForEach-Object{[int64]$_.Status});machine_present=[bool](ExactAnchor $locations[0]);user_present=[bool](ExactAnchor $locations[1])}|ConvertTo-Json -Compress
+$chain.Dispose();$leafCert.Dispose();$ca.Dispose()
+''')
+        result = subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script),
+                                 '-Certificate', str(self.ca_der), '-Leaf', str(self.leaf_der),
+                                 '-Thumb', self.thumb, '-Operation', operation], check=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, timeout=20)
+        require(len(result.stdout) <= 4096, 'windows_chain_receipt_oversized')
+        receipt = json.loads(result.stdout.decode('utf-8-sig'))
+        expected = {'machine_present','user_present'} if operation == 'remove' else {'build','anchor_matches','statuses','machine_present','user_present'}
+        require(isinstance(receipt,dict) and set(receipt)==expected,'windows_chain_receipt_shape')
+        require(all(type(receipt[k]) is bool for k in expected-{'statuses'}),'windows_chain_receipt_shape')
+        if 'statuses' in receipt:
+            require(isinstance(receipt['statuses'],list) and len(receipt['statuses'])<=32
+                    and all(type(n) is int and 0<=n<2**32 for n in receipt['statuses']),'windows_chain_receipt_shape')
+        return receipt
+
+    def install(self):
+        before = self.execute('observe'); self.receipts.append({'phase':'before',**before})
+        require(not before['machine_present'] and not before['user_present'],'fixture_anchor_preexisting')
+        self.attempted = True  # cleanup both locations even on partial import
+        machine = self.execute('machine'); self.receipts.append({'phase':'after_machine',**machine})
+        user = self.execute('user'); self.receipts.append({'phase':'after_user',**user})
+        require(user['machine_present'] and user['user_present'] and user['build'] and user['anchor_matches']
+                and not user['statuses'],'windows_fixture_chain_not_trusted')
+
+    def close(self):
+        if self.attempted:
+            removed=self.execute('remove');self.receipts.append({'phase':'cleanup',**removed});self.attempted=False
+
+
+def tls_proxy_preflight(proxy_port, host, port, ca, leaf):
+    """CONNECT + verified TLS only: never sends HTTP or a probe admission."""
+    certificate=x509.load_pem_x509_certificate(leaf.read_bytes())
+    expected=certificate.fingerprint(hashes.SHA256()).hex()
+    context=ssl.create_default_context(cafile=str(ca))
+    with socket.create_connection(('127.0.0.1',proxy_port),5) as stream:
+        stream.settimeout(5);stream.sendall(('CONNECT '+host+':'+str(port)+' HTTP/1.1\r\nHost: '+host+':'+str(port)+'\r\n\r\n').encode('ascii'))
+        response=bytearray()
+        while not response.endswith(b'\r\n\r\n'):
+            block=stream.recv(1);require(bool(block) and len(response)<4096,'tls_preflight_proxy_response');response.extend(block)
+        require(response.startswith(b'HTTP/1.1 200 '),'tls_preflight_proxy_refused')
+        with context.wrap_socket(stream,server_hostname=host) as secured:
+            actual=hashlib.sha256(secured.getpeercert(binary_form=True)).hexdigest()
+            require(actual==expected,'tls_preflight_leaf_mismatch')
+    return {'verified':True,'leaf_sha256':actual,'expected_leaf_sha256':expected,'leaf_matches':True,'http_sent':False}
+
+
 class NativeRunner:
     def __init__(self, exe, cef, root, fixture):
         self.exe, self.cef, self.root, self.fixture = exe, cef, root, fixture
         self.x = None
         self.trusted_thumb = None
+        self.windows_trust = None
         self.env = {**os.environ, 'CEF_PATH': str(cef), 'NEXUSBRO_TEST_DATA': str(root / 'data'), 'NEXUSBRO_PROBA': '0'}
         self.exit_receipts = []
         self.last_probe = {}
@@ -184,13 +285,8 @@ class NativeRunner:
 
     def trust(self, ca):
         if sys.platform == 'win32':
-            self.trusted_thumb = x509.load_pem_x509_certificate(ca.read_bytes()).fingerprint(hashes.SHA1()).hex().upper()
-            script = self.root / 'trust.ps1'
-            script.write_text("param([string]$Certificate,[string]$ExpectedThumbprint)\n" +
-                r"$location='Cert:\LocalMachine\Root'; Import-Certificate -FilePath $Certificate -CertStoreLocation $location -Confirm:$false -ErrorAction Stop | Out-Null" + "\n" +
-                r"$target=Join-Path $location $ExpectedThumbprint; if (!(Test-Path -LiteralPath $target)) { throw 'Fixture CA not present after import' }" + "\n")
-            subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script), '-Certificate', str(ca),
-                            '-ExpectedThumbprint', self.trusted_thumb], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+            self.windows_trust = WindowsFixtureTrust(self.root,ca,ca.parent/'server.crt')
+            self.windows_trust.install()
         else:
             database = self.root / 'home' / '.pki' / 'nssdb'; database.mkdir(parents=True)
             subprocess.run(['certutil', '-N', '-d', 'sql:' + str(database), '--empty-password'], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10)
@@ -333,12 +429,8 @@ class NativeRunner:
             reader.join(timeout=3)
 
     def close(self):
-        if self.trusted_thumb:
-            script = self.root / 'untrust.ps1'
-            script.write_text("param([string]$Thumbprint)\n" +
-                r"$target=Join-Path 'Cert:\LocalMachine\Root' $Thumbprint; if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $target -Force -ErrorAction Stop }; if (Test-Path -LiteralPath $target) { throw 'Fixture CA still installed after cleanup' }" + "\n")
-            subprocess.run(['powershell', '-NoProfile', '-NonInteractive', '-File', str(script), '-Thumbprint', self.trusted_thumb], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
-            self.trusted_thumb = None
+        if self.windows_trust:
+            self.windows_trust.close()
         if self.x:
             self.x.terminate(); self.x.wait(timeout=5)
 
@@ -374,6 +466,8 @@ def main():
         fixture = CookieFixture(certs / 'server.crt', certs / 'server.key')
         runner = NativeRunner(exe, cef, root, fixture); runner.trust(certs / 'ca.crt')
         report['tls_fixture_trust_verified'] = True
+        if runner.windows_trust: report['windows_chain_preflight'] = runner.windows_trust.receipts
+        report['tls_handshake_preflight'] = tls_proxy_preflight(fixture.routes.proxies['A'],'127.0.0.1',fixture.server.server_port,certs/'ca.crt',certs/'server.crt')
         keys = {name: base64.b64encode(secrets.token_bytes(32)).decode() for name in ('a', 'b', 'empty', 'bad')}
         context_keys = {name: secrets.token_hex(32) for name in keys}
         scopes = {name: {'profile_key': secrets.token_hex(32), 'context_key': context_keys[name], 'generation': 1, 'attempt': 1} for name in keys}
@@ -429,10 +523,12 @@ def main():
                    'origin_before_admission_or_proxy_bypass','native_storage_or_httponly_visibility_failed','native_cookie_header_roundtrip_failed',
                    'expired_cookie_resurrected','other_context_or_empty_jar_received_auth','native_progress_stage_invalid',
                    'native_progress_count_exceeded','duplicate_native_diagnostic','native_diagnostic_schema_invalid',
-                   'native_diagnostic_counts_invalid','native_diagnostic_boolean_invalid','native_diagnostic_fields_invalid'}
+                   'native_diagnostic_counts_invalid','native_diagnostic_boolean_invalid','native_diagnostic_fields_invalid',
+                   'windows_fixture_chain_not_trusted','tls_preflight_leaf_mismatch','tls_preflight_proxy_refused'}
         report['failure_code'] = str(error) if type(error) is AssertionError and str(error) in allowed else 'unclassified'
         if runner: report['last_native_probe'] = runner.last_probe
     finally:
+        if runner and runner.windows_trust:report['windows_chain_preflight']=runner.windows_trust.receipts
         for name, obj in [('native', runner), ('fixture', fixture)]:
             if obj:
                 try: obj.close()
