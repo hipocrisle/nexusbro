@@ -52,7 +52,17 @@ def dialogs(device):
     for pid in owned:
         result=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(pid)],env={**os.environ,'DISPLAY':device.display},capture_output=True,text=True,timeout=4)
         if result.returncode==0:found.update(int(x) for x in result.stdout.splitlines() if x.isdecimal())
-    return found
+    # GTK maps owned child/tooltip windows while entering a filename. They are
+    # not native file dialogs: accepting the first new arbitrary XID selected
+    # a transient 1021x48 non-dialog in the real no-overwrite checkpoint.
+    require(len(found)<=64,'Native dialog observation bound exceeded')
+    actual=set()
+    for window in found:
+        properties=subprocess.run(['xprop','-id',str(window),'_NET_WM_WINDOW_TYPE'],
+            env={**os.environ,'DISPLAY':device.display},capture_output=True,text=True,timeout=3)
+        if properties.returncode==0 and len(properties.stdout)<=4096 and '_NET_WM_WINDOW_TYPE_DIALOG' in properties.stdout:
+            actual.add(window)
+    return actual
 
 
 def backtabs(*,busy=False,audio=False):
