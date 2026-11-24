@@ -889,6 +889,10 @@ def run(args):
     old_sentinel=os.environ.get('NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL')
     try:
         private_root=pathlib.Path(tempfile.mkdtemp(prefix='nb-player-'))
+        original_root=private_root
+        private_root=private_root.resolve(strict=True)
+        report['privacy_sandbox']={'canonical_equal':private_root.resolve(strict=True)==private_root,
+                                   'original_diff':original_root!=private_root}
         if private_root:
             root=private_root;thumb=certificates(root/'tls')
             trust=Trust(root,root/'tls'/'ca.crt',thumb);trust.install()
@@ -998,8 +1002,16 @@ def run(args):
             profile_root=device.data/'profili'
             require(profile_root.is_dir() and all((profile_root/('player-'+lane.lower())).is_dir() for lane in ('A','B')),
                     'Privacy actual CEF profile missing')
-            scans=[{'lane':lane,**scan_profile(root,profile_root/('player-'+lane.lower()),media_sentinel,positive_sentinel,
-                    max_files=4096,max_bytes=256*1024*1024,max_seconds=15)} for lane in ('A','B')]
+            try:
+                scans=[{'lane':lane,**scan_profile(root,profile_root/('player-'+lane.lower()),media_sentinel,positive_sentinel,
+                        max_files=4096,max_bytes=256*1024*1024,max_seconds=15)} for lane in ('A','B')]
+            except ValueError as error:
+                allowed={'privacy_marker_invalid','privacy_markers_overlap','privacy_scan_bounds_invalid',
+                         'privacy_scan_not_disposable','privacy_scan_scope_invalid'}
+                code=str(error)
+                report['privacy_scan_error']=code if code in allowed else 'privacy_scan_unknown_error'
+                report['privacy_sandbox']['canonical_equal']=root.resolve(strict=True)==root
+                raise
             report['disk_privacy']={'schema':1,'complete':all(row['complete'] for row in scans),
                     'accepted':all(row['accepted'] for row in scans),'profiles':scans,
                     'media_files':sum(row['media_files'] for row in scans),
@@ -1050,6 +1062,8 @@ def run(args):
                'Privacy owned native processes did not exit':'privacy_owned_exit_failed',
                'Privacy actual CEF profile missing':'privacy_profile_missing',
                'Actual cache privacy scan not accepted':'privacy_scan_not_accepted',
+               **{code:code for code in ('privacy_marker_invalid','privacy_markers_overlap','privacy_scan_bounds_invalid',
+                                         'privacy_scan_not_disposable','privacy_scan_scope_invalid')},
                'Synthetic fixture vault not unlocked':'fixture_vault_failed',
                'Native stop listener missing':'stop_listener_missing',
                'Lock fixture did not start actual media':'lock_start_failed',
