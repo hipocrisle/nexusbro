@@ -1044,6 +1044,29 @@ impl Rabota {
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
                 Sobytie::Komanda(Komanda::HibernatePrepare{request})=>{
+                    // Fixed diagnostic vocabulary only; never forward native
+                    // messages, addresses or document-provided error strings.
+                    let blocked=s.vkladki.iter().filter(|tab|brauzery.contains_key(&tab.id))
+                        .find_map(|tab|memory_blocked_scoped(tab.id,true,s,brauzery,devtools_pending,*force_private,true));
+                    if let Some(reason)=blocked{
+                        let reason=match reason{
+                            "Сохраняем внутреннюю историю переходов вкладки"=>"native_history",
+                            "Дождитесь загрузки страницы"=>"native_loading",
+                            "Приватная вкладка остаётся в памяти"=>"native_private",
+                            "Сначала открепите вкладку"=>"native_pinned",
+                            "Вкладка содержит вложенные документы и остаётся в памяти"=>"native_frames",
+                            "Страница получена отправкой формы и не выгружается"=>"native_post",
+                            "Сначала закройте инструменты разработчика"=>"native_devtools",
+                            "Вкладка выполняет загрузку файла"=>"native_download",
+                            "Вкладка использует камеру, микрофон или захват экрана"=>"native_capture",
+                            "Во вкладке был ввод; перезагрузите страницу после сохранения данных"=>"native_edited",
+                            "Состояние документа ещё неизвестно"|"История текущего документа ещё неизвестна"|"Адрес документа ещё не подтверждён"|"Вкладка уже закрыта"|"Вкладка уже выгружена"|"Вкладка меняет сетевой путь"=>"native_document_unknown",
+                            _=>"native_document_unknown",
+                        };
+                        let token=crate::super_hibernation_protocol::Token{generation:request.scope.generation,attempt:request.scope.attempt,revision:request.revision};
+                        let frame=crate::super_hibernation_protocol::Frame::Refused{token,reason:reason.into()};
+                        println!("NB-HIBERNATE {}",serde_json::to_string(&frame)?);std::io::stdout().flush()?;continue;
+                    }
                     let safe=label.is_empty()&&extras.is_empty()&&!*force_private&&!*browser_locked&&!*closing
                         &&route_attempts.is_empty()&&sleep_requests.is_empty()&&pending_downloads.is_empty()&&devtools.is_empty()&&devtools_pending.is_empty()&&perevody.is_empty()&&data_requests.is_empty()&&deferred_actions.is_empty()
                         &&s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
