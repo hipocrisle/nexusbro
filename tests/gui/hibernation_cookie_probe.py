@@ -147,6 +147,7 @@ class NativeRunner:
         self.trusted_thumb = None
         self.env = {**os.environ, 'CEF_PATH': str(cef), 'NEXUSBRO_TEST_DATA': str(root / 'data'), 'NEXUSBRO_PROBA': '0'}
         self.exit_receipts = []
+        self.last_probe = {}
         if sys.platform == 'win32':
             self.env['PATH'] = str(cef) + os.pathsep + os.environ.get('PATH', '')
         else:
@@ -182,6 +183,7 @@ class NativeRunner:
         plan = {'key': key, 'scope': scope, 'sealed': sealed, 'url': url}
         process = subprocess.Popen([str(self.exe), '--nb-dvizhok', '--nb-cookie-probe', '--user-data-dir=' + str(profile), '--nb-route-bootstrap=' + str(bootstrap)], env=self.env, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         owned = {(process.pid, psutil.Process(process.pid).create_time())}
+        self.last_probe = {'ordinal': int(cycle), 'restore_requested': sealed is not None, 'frames_received': 0, 'readback': False, 'final': False, 'shutdown': False}
         frames = queue.Queue()
         stopped = threading.Event()
 
@@ -222,20 +224,24 @@ class NativeRunner:
                 except queue.Empty: continue
                 require(kind != 'failure', 'native_output_frame_invalid')
                 if kind == 'eof': eof = True; continue
+                self.last_probe['frames_received'] += 1
                 if value.get('readback_before_navigation') is True:
                     require(sealed is not None and not readback, 'unexpected_or_duplicate_readback')
                     self.fixture.admit(cycle)
                     process.stdin.write(b'ADMIT\n'); process.stdin.flush()
                     readback = True
+                    self.last_probe['readback'] = True
                 elif 'sealed' in value:
                     require(final is None and value.get('all_browsers_closed') is True and value.get('cookie_flush_completed') is True,
                             'native_final_close_flush_missing')
                     require(sealed is None or readback, 'native_restore_skipped_readback')
                     require(isinstance(value['sealed'], dict), 'native_sealed_frame_invalid')
                     final = value['sealed']
+                    self.last_probe['final'] = True
                 elif value.get('cef_shutdown_completed') is True:
                     require(final is not None and not shutdown, 'native_shutdown_before_final_or_duplicate')
                     shutdown = True
+                    self.last_probe['shutdown'] = True
                 else: raise AssertionError('unknown_native_frame')
             require(eof and process.wait(timeout=10) is not None, 'native_exit_deadline')
             reader.join(timeout=3)
@@ -260,6 +266,21 @@ class NativeRunner:
                 require(process.returncode == 0 and final is not None and shutdown, 'native_probe_failed')
             return final, self.fixture.result(cycle)
         finally:
+            self.last_probe['native_exit_code'] = process.poll()
+            actual_receipts = self.fixture.result(cycle)
+            self.last_probe['origin_requests'] = len(actual_receipts)
+            self.last_probe['origin_proofs'] = sum(bool(r['proof']) for r in actual_receipts)
+            with self.fixture.routes.lock:
+                self.last_probe['proxy_connect_count'] = len(self.fixture.routes.tunnels)
+            logfile = profile / 'cef.log'
+            if logfile.is_file():
+                raw = logfile.read_text(errors='replace')
+                self.last_probe['native_log_flags'] = {
+                    'initialized': 'cef: initialized' in raw,
+                    'probe_failed': 'Native cookie prerequisite failed' in raw,
+                    'missing_parent': 'нет --nb-roditel' in raw,
+                    'bootstrap_refused': 'безопасный маршрут не подготовлен' in raw,
+                    'proxy_preference_refused': 'proxy preference was rejected' in raw}
             if process.poll() is None:
                 # A failed test may clean up a whole owned tree. This can never
                 # create a success receipt or authorize a replacement writer.
@@ -355,6 +376,17 @@ def main():
         fixture.close(); fixture = None
     except Exception as error:
         report.update(failure_stage=stage, failure_class=type(error).__name__)
+        # All AssertionError codes are fixed literals owned by this harness.
+        # Never serialize subprocess errors/native frames or arbitrary strings.
+        allowed = {'native_probe_failed','native_output_frame_invalid','native_frame_invalid','unexpected_or_duplicate_readback',
+                   'native_final_close_flush_missing','native_restore_skipped_readback','native_sealed_frame_invalid',
+                   'native_shutdown_before_final_or_duplicate','unknown_native_frame','native_exit_deadline',
+                   'native_pipe_reader_did_not_exit','owned_native_tree_survived_exit','unsupported_cookie_schema_falsely_accepted',
+                   'origin_requested_before_native_readback_admission','admission_cycle_changed','native_origin_or_blocking_storage_proof_missing',
+                   'origin_before_admission_or_proxy_bypass','native_storage_or_httponly_visibility_failed','native_cookie_header_roundtrip_failed',
+                   'expired_cookie_resurrected','other_context_or_empty_jar_received_auth'}
+        report['failure_code'] = str(error) if type(error) is AssertionError and str(error) in allowed else 'unclassified'
+        if runner: report['last_native_probe'] = runner.last_probe
     finally:
         for name, obj in [('native', runner), ('fixture', fixture)]:
             if obj:
