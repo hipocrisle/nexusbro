@@ -171,23 +171,54 @@ def minimize_actual(device, minimized):
 
 
 def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostics):
+    import math
+    cases=diagnostics.setdefault('background_cases',[])
+    require(len(cases)<6,'Background diagnostic case bound exceeded')
+    case={'name':kind,'snapshots':[],'hide_complete':False,'restore_complete':False}
+    cases.append(case);started=time.monotonic()
+    fields={'configured','disposed','playing','separate','position','audio_position','duration','skew',
+            'decoded','dropped','video_width','video_height'}
+    def snapshot_record(phase,state):
+        require(len(case['snapshots'])<8,'Background diagnostic snapshot bound exceeded')
+        safe={key:value for key,value in state.items() if key in fields and
+              (type(value) is bool or type(value) in (int,float) and math.isfinite(value))}
+        case['snapshots'].append({'phase':phase,'elapsed_ms':round((time.monotonic()-started)*1000),'state':safe})
     before=observe(client,identifier,tab,diagnostics=diagnostics)
-    require(before.get('playing'),'Background test requires actual playback')
+    snapshot_record('before',before)
     row_before=next(r for r in rows(client,identifier)['vkladki'] if r['id']==tab)
-    hide()
+    def row_record():
+        session=rows(client,identifier);native=session['vkladki']
+        target=next((row for row in native if row['id']==tab),None)
+        return {'tab_count':len(native),'live_tab_count':sum(row.get('browser_id',0)>0 for row in native),
+                'target_present':target is not None,'active_is_target':session['aktivnaya']==tab,
+                'target_browser_same':bool(target and target.get('browser_id')==row_before['browser_id']),
+                'target_loading':bool(target and target.get('zagruzka')),
+                'target_deferred':bool(target and target.get('otlozhena')),
+                'selected_super_is_owner':call(client,'aktivnaya')==identifier}
+    case['rows_before']=row_record()
+    require(before.get('playing'),'Background test requires actual playback')
     samples=[]
     try:
+        hide();case['hide_complete']=True
+        case['rows_hidden']=row_record()
         previous=before['audio_position']
         for _ in range(6):
             time.sleep(2)
             current=observe(client,identifier,tab,diagnostics=diagnostics)
+            snapshot_record('hidden',current)  # Retained even when this assertion fails.
+            case['snapshots'][-1]['rows']=row_record()
+            case['last_audio_delta']=round(current['audio_position']-previous,6)
             require(not current.get('disposed') and current['audio_position']>previous+.5,
                     'Background audio froze or paused')
             # Chromium may suspend hidden video decoding. No hidden video-growth assertion.
             samples.append(current['audio_position']);previous=current['audio_position']
-    finally:restore()
+    finally:
+        restore();case['restore_complete']=True
+        case['rows_restored']=row_record()
+        restored=observe(client,identifier,tab,diagnostics=diagnostics)
+        snapshot_record('after_restore',restored)
     foreground(device)
-    first=observe(client,identifier,tab,diagnostics=diagnostics)
+    first=restored
     paint_before=video_paint(client,device);time.sleep(2)
     after=observe(client,identifier,tab,diagnostics=diagnostics)
     paint_after=video_paint(client,device)
@@ -895,6 +926,8 @@ def run(args):
                'Native owner observation outside bounds':'native_owner_bound',
                'Native minimize receipt missing':'minimize_receipt_missing',
                'Background audio froze or paused':'background_audio_freeze',
+               'Background diagnostic case bound exceeded':'background_diagnostic_case_bound',
+               'Background diagnostic snapshot bound exceeded':'background_diagnostic_snapshot_bound',
                'Background return did not automatically resume synchronized decode':'background_return_failed',
                'Background playback browser changed':'background_browser_changed',
                'Background test requires actual playback':'background_not_playing',
