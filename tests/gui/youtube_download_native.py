@@ -98,7 +98,34 @@ def start_chooser(client,device,diagnostics,*,audio=False):
     return next(iter(appeared))
 
 
-def choose(device,dialog,path=None,*,replace=False):
+def linux_modal_observation(device,original,candidate):
+    """Bounded read-only X11 metadata; never return titles, XIDs or paths."""
+    env={**os.environ,'DISPLAY':device.display}
+    def properties(window):
+        result=subprocess.run(['xprop','-id',str(window),'_NET_WM_WINDOW_TYPE','_NET_WM_STATE','WM_TRANSIENT_FOR'],env=env,capture_output=True,text=True,timeout=3)
+        text=result.stdout if len(result.stdout)<=8192 else ''
+        transient=None
+        import re
+        match=re.search(r'WM_TRANSIENT_FOR[^\n]*?(0x[0-9a-fA-F]+)',text)
+        if match:transient=int(match[1],16)
+        geometry=subprocess.run(['xdotool','getwindowgeometry','--shell',str(window)],env=env,capture_output=True,text=True,timeout=3)
+        numbers={}
+        for line in geometry.stdout.splitlines()[:8]:
+            key,_,value=line.partition('=')
+            if key in {'WIDTH','HEIGHT'} and value.isdecimal():numbers[key.lower()]=int(value)
+        return {'properties_read':result.returncode==0,'type_dialog':'_NET_WM_WINDOW_TYPE_DIALOG' in text,
+                'modal':'_NET_WM_STATE_MODAL' in text,'hidden':'_NET_WM_STATE_HIDDEN' in text,
+                'transient_matches_original':transient==original,**numbers}
+    focused=subprocess.run(['xdotool','getwindowfocus'],env=env,capture_output=True,text=True,timeout=3)
+    focus=focused.stdout.strip()
+    visible=dialogs(device)
+    return {'owned_visible_count':len(visible),'original_visible':original in visible,
+            'candidate_visible':candidate in visible,'focus_read':focused.returncode==0 and focus.isdecimal(),
+            'focus_is_original':focus==str(original),'focus_is_candidate':focus==str(candidate),
+            'original':properties(original),'candidate':properties(candidate)}
+
+
+def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
     # A replacement confirmation is a distinct native modal. Do not send its
     # acceptance key before it exists or to the underlying file chooser.
     before_confirmation=dialogs(device) if replace else set()
@@ -142,7 +169,13 @@ def choose(device,dialog,path=None,*,replace=False):
             buttons[0].click_input()
         else:
             # GTK's actual overwrite dialog exposes the _Replace mnemonic.
+            if diagnostics is not None:
+                try:diagnostics['replacement_before']=linux_modal_observation(device,dialog,confirmation)
+                except Exception:diagnostics['replacement_before']={'observation_incomplete':True}
             keys(device,'alt+r')
+            if diagnostics is not None:
+                try:diagnostics['replacement_after']=linux_modal_observation(device,dialog,confirmation)
+                except Exception:diagnostics['replacement_after']={'observation_incomplete':True}
     wait_for(lambda:dialog not in dialogs(device),'Native SaveAs did not close',15)
 
 
@@ -239,18 +272,18 @@ def run(args):
         call(client,'obychnaya_komanda',id=SUPER,komanda={'deystvie':'youtube_fixture','id':tab})
         wait_for(lambda:(lambda s:s if s.get('configured') and not s.get('disposed') else None)(observe(client,SUPER,tab,admitting=True)),'Native player not configured',30)
         output=root/'downloads';output.mkdir();diagnostics={};report['player_diagnostics']=diagnostics
-        report['stage']='save-dialog-cancel';clear_states(client);dialog=start_chooser(client,device,diagnostics);choose(device,dialog)
+        report['stage']='save-dialog-cancel';clear_states(client);dialog=start_chooser(client,device,diagnostics);choose(device,dialog,diagnostics=diagnostics)
         terminal(client,tab,'cancelled',20)
         require(not list(output.iterdir()),'Save cancel created output')
         report['checks'].append({'name':'physical-save-cancel','no_output':True})
-        report['stage']='download-success';clear_states(client);dialog=start_chooser(client,device,diagnostics);target=output/'complete.webm';choose(device,dialog,target)
+        report['stage']='download-success';clear_states(client);dialog=start_chooser(client,device,diagnostics);target=output/'complete.webm';choose(device,dialog,target,diagnostics=diagnostics)
         done=terminal(client,tab,'done');require(target.is_file() and target.stat().st_size==done.get('bytes'),'Native completed file missing')
         require(any(isinstance(s.get('progress'),dict) and s['progress'].get('phase') in ('downloading','muxing','verifying','publishing') and type(s['progress'].get('bytes')) is int and s['progress']['bytes']>0 for s in states(client,tab)),'Actual nonzero worker progress missing')
         require(native and all(r['lane']=='A' and r['ranged'] for r in native),'Native download route witness missing')
         report['checks'].append(dict(name='actual-dual-stream-download',**ffprobe(args,target),native_route_requests=len(native)))
         report['stage']='audio-only-download';clear_states(client)
         with fixture.lock:audio_start=len(native)
-        audio_target=output/'audio-only.webm';dialog=start_chooser(client,device,diagnostics,audio=True);choose(device,dialog,audio_target)
+        audio_target=output/'audio-only.webm';dialog=start_chooser(client,device,diagnostics,audio=True);choose(device,dialog,audio_target,diagnostics=diagnostics)
         audio_done=terminal(client,tab,'done')
         require(audio_target.is_file() and audio_target.stat().st_size==audio_done.get('bytes'),'Native audio file missing')
         with fixture.lock:audio_requests=list(native[audio_start:])
@@ -259,7 +292,7 @@ def run(args):
         for attempt in range(2):
             report['stage']='cancel-'+str(attempt);clear_states(client)
             policy=fixture.stall_policy('A','video');policy['gate'].clear()
-            dialog=start_chooser(client,device,diagnostics);cancelled=output/('cancel-'+str(attempt)+'.webm');choose(device,dialog,cancelled)
+            dialog=start_chooser(client,device,diagnostics);cancelled=output/('cancel-'+str(attempt)+'.webm');choose(device,dialog,cancelled,diagnostics=diagnostics)
             wait_for(lambda:any(isinstance(s.get('progress'),dict) for s in states(client,tab)),'Native cancellation progress missing',15)
             physical(client,device,'play',diagnostics);backtabs(busy=True)
             focus_download(client,device,tab,9,diagnostics);keys(device,'space')
@@ -267,12 +300,12 @@ def run(args):
             require(not cancelled.exists() and clean_output(output),'Cancellation left files')
             report['checks'].append({'name':'physical-cancel-'+str(attempt),'bounded_terminal':True,'no_output':True})
         report['stage']='no-overwrite';immutable=output/'existing.webm';immutable.write_bytes(b'owned immutable fixture');before=immutable.read_bytes();clear_states(client)
-        dialog=start_chooser(client,device,diagnostics);choose(device,dialog,immutable,replace=True);refused=terminal(client,tab,'error',20)
+        dialog=start_chooser(client,device,diagnostics);choose(device,dialog,immutable,replace=True,diagnostics=diagnostics);refused=terminal(client,tab,'error',20)
         require(refused.get('error')=='Файл назначения уже существует','Overwrite refusal not specific')
         require(immutable.read_bytes()==before and clean_output(output),'Existing target changed')
         report['checks'].append({'name':'no-overwrite','unchanged':True})
         report['stage']='route-error';direct_before=fixture.direct;fixture.fail_proxies();clear_states(client)
-        failed=output/'failed.webm';dialog=start_chooser(client,device,diagnostics);choose(device,dialog,failed);terminal(client,tab,'error',60)
+        failed=output/'failed.webm';dialog=start_chooser(client,device,diagnostics);choose(device,dialog,failed,diagnostics=diagnostics);terminal(client,tab,'error',60)
         require(not failed.exists() and clean_output(output),'Failed download left files')
         require(fixture.direct==direct_before==0,'Native download attempted a direct route fallback')
         report['checks'].append({'name':'bounded-route-error','no_output':True,'direct_connections':fixture.direct})
@@ -283,6 +316,14 @@ def run(args):
         report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
         report['failure_class']=type(error).__name__
+        report['failure_code']={
+            'Native replacement confirmation did not appear':'replacement_confirmation_missing',
+            'Native replacement confirmation ambiguous':'replacement_confirmation_ambiguous',
+            'Native replacement accept button ambiguous':'replacement_accept_ambiguous',
+            'Native SaveAs did not close':'save_dialog_did_not_close',
+            'Native SaveAs did not appear':'save_dialog_did_not_appear',
+            'Native SaveAs ambiguous':'save_dialog_ambiguous',
+        }.get(str(error),'unclassified')
         if device is not None and 'client' in locals() and 'tab' in locals():
             try:
                 recent=states(client,tab)[-8:]
