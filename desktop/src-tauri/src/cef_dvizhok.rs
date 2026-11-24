@@ -189,7 +189,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         let result=crate::cef_hibernation_probe::run(std::path::Path::new(&profil),bootstrap);
         if result.is_ok(){
             shutdown();
-            println!("NB-PROBE {\"cef_shutdown_completed\":true}");
+            println!("NB-PROBE {{\"cef_shutdown_completed\":true}}");
             let _=std::io::stdout().flush();
             return 0;
         }
