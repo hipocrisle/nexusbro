@@ -22,9 +22,24 @@ from hibernation_cookie_probe import tls_proxy_preflight
 OWNERS = ('resume-a', 'resume-b')
 
 
-def position(snapshot):
+def clocks(snapshot):
     values = [snapshot.get('position'), snapshot.get('audio_position')]
-    return min(values) if all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 120 for v in values) else None
+    skew = snapshot.get('skew')
+    if not all(type(v) in (int, float) and math.isfinite(v) and 0 <= v <= 120 for v in values):
+        return None
+    if type(skew) not in (int, float) or not math.isfinite(skew) or not 0 <= skew <= .5:
+        return None
+    return values if abs(values[0] - values[1]) <= .5 else None
+
+
+def position(snapshot):
+    values = clocks(snapshot)
+    return min(values) if values is not None else None
+
+
+def clocks_in_interval(snapshot, low, high):
+    values = clocks(snapshot)
+    return values is not None and all(low <= value <= high for value in values)
 
 
 def paused(snapshot):
@@ -62,13 +77,12 @@ def admit(client, owner, tab, low, high, diagnostics):
         if not configured(snapshot): return None
         # Never hide an early autoplay by waiting for it to become paused later.
         require(paused(snapshot), 'Resume fixture unexpectedly played during admission')
-        value = position(snapshot)
-        return snapshot if value is not None and low <= value <= high else None
+        return snapshot if clocks_in_interval(snapshot, low, high) else None
     snapshot = wait_for(admitted, 'Resume position outside expected native interval', 30)
     time.sleep(1.2)
     stable = observe(client, owner, tab, diagnostics=diagnostics)
     require(configured(stable) and paused(stable), 'Resume fixture did not remain paused')
-    require(position(stable) is not None and abs(position(stable) - position(snapshot)) <= .4,
+    require(clocks_in_interval(stable, low, high) and abs(position(stable) - position(snapshot)) <= .4,
             'Paused resume position advanced')
     return stable
 
@@ -190,11 +204,20 @@ def run(args):
 
 
 def self_test():
-    snapshot = dict(configured=True, disposed=False, separate=True, playing=False, video_paused=True, audio_paused=True, position=9., audio_position=8.9)
+    snapshot = dict(configured=True, disposed=False, separate=True, playing=False, video_paused=True, audio_paused=True, position=9., audio_position=8.9, skew=.1)
     assert configured(snapshot) and paused(snapshot) and position(snapshot) == 8.9
     assert not paused(dict(snapshot, playing=True))
     assert position(dict(snapshot, audio_position=float('nan'))) is None
     assert position(dict(snapshot, position=True)) is None
+    assert clocks_in_interval(snapshot, 5, 10)
+    for video, audio in ((0, 12), (12, 0), (10, 95), (95, 10)):
+        wrong = dict(snapshot, position=video, audio_position=audio, skew=0)
+        assert not clocks_in_interval(wrong, 0, 1)
+        assert not clocks_in_interval(wrong, 5, 14)
+        assert position(wrong) is None
+    assert not clocks_in_interval(dict(snapshot, position=9.9, audio_position=10.1, skew=.2), 5, 10)
+    assert not clocks_in_interval(dict(snapshot, skew=.51), 5, 10)
+    assert not clocks_in_interval(dict(snapshot, skew=float('nan')), 5, 10)
     print(json.dumps(dict(self_test=True, native_execution=False, durable_persistence_proven=False)))
 
 
