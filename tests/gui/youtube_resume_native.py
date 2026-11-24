@@ -66,21 +66,88 @@ def activate(client, device, owner):
     return wait_for(ready, 'Native resume browser unavailable', 40)
 
 
+PROBE_CODES = {
+    'probe_wrong_thread', 'probe_browser_invalid', 'probe_frame_absent',
+    'probe_document_not_admitted', 'probe_message_capacity', 'probe_observer_unavailable',
+    'probe_dispatch_failed', 'probe_timeout', 'probe_document_changed',
+    'cdp_method_failed', 'cdp_result_absent', 'snapshot_value_unavailable', 'cdp_agent_detached',
+    'snapshot_undefined', 'snapshot_exception', 'snapshot_result_absent', 'snapshot_not_object',
+    'snapshot_value_absent', 'snapshot_schema_mismatch', 'snapshot_field_invalid',
+    'snapshot_invalid_json', 'snapshot_oversized',
+}
+
+
+def fixture_ack_class(error):
+    if error is None: return 'accepted'
+    return {'Подготовка позиции видео недоступна': 'resume_preparation_refused',
+            'Позиция видео сейчас недоступна': 'resume_setup_refused',
+            'Вкладка недоступна': 'tab_unavailable',
+            'Путь вкладки недоступен': 'route_unavailable',
+            'Путь вкладки изменился': 'route_changed',
+            'Диагностика доступна только в CI': 'ci_only',
+            'Не удалось подготовить внутренний плеер': 'scheme_install_failed',
+            'Не удалось открыть внутренний плеер': 'grant_failed',
+            'Не удалось подготовить видео': 'config_failed'}.get(error, 'unknown_native_error') if isinstance(error, str) else 'invalid_native_error'
+
+
+def admission_probe(client, owner, tab, diagnostics, receipt, *, admitting):
+    snapshot = observe(client, owner, tab, admitting=admitting, diagnostics=diagnostics)
+    expression = '(window.__playerObserved.find(x=>x.super_id===' + json.dumps(owner) + '&&x.data?.id===' + str(tab) + ')?.data?.code)??null'
+    code = client.js(expression)
+    receipt['probe_attempts'] += 1
+    if code is not None:
+        safe = code if isinstance(code, str) and code in PROBE_CODES else 'unknown_probe_code'
+        diagnostics['native_probe_code'] = safe
+        receipt['probe_codes'][safe] = receipt['probe_codes'].get(safe, 0) + 1
+    if configured(snapshot):
+        receipt['configured_snapshots'] += 1
+        receipt['last_configured_clocks'] = {
+            key: value for key, value in snapshot.items()
+            if key in ('position', 'audio_position', 'skew') and type(value) in (int, float) and math.isfinite(value)}
+    return snapshot
+
+
 def admit(client, owner, tab, low, high, diagnostics):
+    # Per-document fields must not retain a previous Super's successful sample.
+    for key in ('last_snapshot', 'resources', 'resources_valid', 'native_probe_code',
+                'native_probe_unavailable', 'extended_state_available'):
+        diagnostics.pop(key, None)
+    receipt = dict(scope_a=owner == OWNERS[0], scope_b=owner == OWNERS[1], initial_ack_seen=False,
+                   terminal_ack_seen=False, terminal_code='not_received', terminal_codes={},
+                   probe_attempts=0, configured_snapshots=0, probe_codes={})
+    history = diagnostics.setdefault('resume_admissions', [])
+    require(len(history) < 8, 'Resume admission diagnostic bound exceeded')
+    history.append(receipt)
+    session = rows(client, owner)
+    selected = next((item for item in session.get('vkladki', []) if item.get('id') == tab), {})
+    receipt['tab_ready_before'] = dict(selected=session.get('aktivnaya') == tab,
+        native_browser=type(selected.get('browser_id')) is int and selected['browser_id'] > 0,
+        loading=selected.get('zagruzka') is True, deferred=selected.get('otlozhena') is True,
+        ordinary_blank=selected.get('adres') == 'about:blank')
     client.js('window.__resumeResults=[];true')
     call(client, 'obychnaya_komanda', id=owner, komanda={'deystvie': 'youtube_resume_fixture', 'id': tab})
-    expression = 'window.__resumeResults.find(x=>x.super_id===' + json.dumps(owner) + '&&x.data?.id===' + str(tab) + ')'
-    acknowledgement = wait_for(lambda: client.js(expression), 'Resume fixture acknowledgement missing', 30)
-    require(acknowledgement.get('data', {}).get('error') is None, 'Resume fixture admission refused')
+    expression = 'window.__resumeResults.filter(x=>x.super_id===' + json.dumps(owner) + '&&x.data?.id===' + str(tab) + ').slice(-8).map(x=>({start:x.data?.start,error:x.data?.error??null}))'
+    def terminal():
+        events = client.js(expression)
+        if not isinstance(events, list): return None
+        receipt['initial_ack_seen'] |= any(event.get('start') is True for event in events if isinstance(event, dict))
+        result = next((event for event in events if isinstance(event, dict) and event.get('start') is False), None)
+        if result is not None:
+            receipt['terminal_ack_seen'] = True
+            receipt['terminal_code'] = fixture_ack_class(result.get('error'))
+            receipt['terminal_codes'] = {receipt['terminal_code']: 1}
+        return result
+    acknowledgement = wait_for(terminal, 'Resume fixture terminal acknowledgement missing', 30)
+    require(acknowledgement.get('error') is None, 'Resume fixture admission refused')
     def admitted():
-        snapshot = observe(client, owner, tab, admitting=True, diagnostics=diagnostics)
+        snapshot = admission_probe(client, owner, tab, diagnostics, receipt, admitting=True)
         if not configured(snapshot): return None
         # Never hide an early autoplay by waiting for it to become paused later.
         require(paused(snapshot), 'Resume fixture unexpectedly played during admission')
         return snapshot if clocks_in_interval(snapshot, low, high) else None
     snapshot = wait_for(admitted, 'Resume position outside expected native interval', 30)
     time.sleep(1.2)
-    stable = observe(client, owner, tab, diagnostics=diagnostics)
+    stable = admission_probe(client, owner, tab, diagnostics, receipt, admitting=False)
     require(configured(stable) and paused(stable), 'Resume fixture did not remain paused')
     require(clocks_in_interval(stable, low, high) and abs(position(stable) - position(snapshot)) <= .4,
             'Paused resume position advanced')
@@ -261,6 +328,8 @@ def run(args):
             'Native resume listener missing': 'native_listener_missing',
             'Native resume browser unavailable': 'native_browser_unavailable',
             'Resume fixture acknowledgement missing': 'resume_ack_missing',
+            'Resume fixture terminal acknowledgement missing': 'resume_terminal_ack_missing',
+            'Resume admission diagnostic bound exceeded': 'resume_diagnostic_bound',
             'Resume fixture admission refused': 'resume_admission_refused',
             'Resume fixture unexpectedly played during admission': 'admission_autoplay',
             'Resume position outside expected native interval': 'resume_position_interval',
@@ -296,6 +365,11 @@ def run(args):
 
 
 def self_test():
+    assert fixture_ack_class(None) == 'accepted'
+    assert fixture_ack_class('Подготовка позиции видео недоступна') == 'resume_preparation_refused'
+    private = 'https://private.invalid/path secret'
+    assert private not in fixture_ack_class(private)
+    assert 'probe_document_not_admitted' in PROBE_CODES and 'probe_timeout' in PROBE_CODES
     assert different_process_identity((1, '10'), (2, '11'))
     assert different_process_identity((1, '10'), (1, '11'))  # PID reuse is a new OS identity.
     assert not different_process_identity((1, '10'), (1, '10'))
