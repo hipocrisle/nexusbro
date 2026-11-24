@@ -18,6 +18,19 @@
         "archive": true,
         "entry": "deno.exe",
         "source_url": "https://github.com/denoland/deno/tree/v2.9.8"
+      },
+      "ffmpeg": {
+        "version": "n8.1.3-41-ga8029b6528",
+        "url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-11-24-12-41/ffmpeg-n8.1.3-41-ga8029b6528-win64-lgpl-shared-8.1.zip",
+        "sha256": "dbed3e64d68de76472bf2cd0b0f3250384fb96bac14b635a708e998f6e1d6996",
+        "archive": true,
+        "format": "zip",
+        "root": "ffmpeg-n8.1.3-41-ga8029b6528-win64-lgpl-shared-8.1",
+        "source_url": "https://github.com/FFmpeg/FFmpeg/tree/a8029b6528fecbcb5d99b331cfc76e6467b9bc77",
+        "source_archive_url": "https://github.com/FFmpeg/FFmpeg/archive/a8029b6528fecbcb5d99b331cfc76e6467b9bc77.tar.gz",
+        "recipe_url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/tree/b9ebe81995b58cd4e3177a6c0ad5dc2392f7f7fd",
+        "license": "LGPL-3.0-or-later",
+        "upstream_retention": "daily_14_days_preserve_verified_ci_artifact"
       }
     },
     "linux-x64": {
@@ -37,6 +50,19 @@
         "archive": true,
         "entry": "deno",
         "source_url": "https://github.com/denoland/deno/tree/v2.9.8"
+      },
+      "ffmpeg": {
+        "version": "n8.1.3-41-ga8029b6528",
+        "url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/releases/download/autobuild-2026-11-24-12-41/ffmpeg-n8.1.3-41-ga8029b6528-linux64-lgpl-shared-8.1.tar.xz",
+        "sha256": "8d6114c1a6dfd92e0eb383c1a3064b6ef062a53cd9c0fc286f3ee44845192775",
+        "archive": true,
+        "format": "tar.xz",
+        "root": "ffmpeg-n8.1.3-41-ga8029b6528-linux64-lgpl-shared-8.1",
+        "source_url": "https://github.com/FFmpeg/FFmpeg/tree/a8029b6528fecbcb5d99b331cfc76e6467b9bc77",
+        "source_archive_url": "https://github.com/FFmpeg/FFmpeg/archive/a8029b6528fecbcb5d99b331cfc76e6467b9bc77.tar.gz",
+        "recipe_url": "https://github.com/FFmpeg-Builds/FFmpeg-Builds/tree/b9ebe81995b58cd4e3177a6c0ad5dc2392f7f7fd",
+        "license": "LGPL-3.0-or-later",
+        "upstream_retention": "daily_14_days_preserve_verified_ci_artifact"
       }
     }
   },
@@ -70,6 +96,24 @@
       "url": "https://raw.githubusercontent.com/denoland/v8/ac1e23989121713ca642f6650b34deff7b686896/LICENSE",
       "sha256": "6ab33af8774a0f396ee3aeeb761e3229057682d6f9fa7f572e390c2cb3a6e509",
       "scope": "V8 native code; exact rusty_v8 v150.4.0 gitlink ac1e23989121713ca642f6650b34deff7b686896; external libraries have separate licenses"
+    },
+    {
+      "filename": "FFMPEG-COPYING.LGPLv3",
+      "url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/a8029b6528fecbcb5d99b331cfc76e6467b9bc77/COPYING.LGPLv3",
+      "sha256": "da7eabb7bafdf7d3ae5e9f223aa5bdc1eece45ac569dc21b3b037520b4464768",
+      "scope": "exact FFmpeg source; shared recipe enables version3; other dependency notices require review"
+    },
+    {
+      "filename": "FFMPEG-COPYING.GPLv3",
+      "url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/a8029b6528fecbcb5d99b331cfc76e6467b9bc77/COPYING.GPLv3",
+      "sha256": "8ceb4b9ee5adedde47b31e975c1d90c73ad27b6b165a1dcd80c7c545eb65b903",
+      "scope": "exact FFmpeg source; shared recipe enables version3; other dependency notices require review"
+    },
+    {
+      "filename": "FFMPEG-LICENSE.md",
+      "url": "https://raw.githubusercontent.com/FFmpeg/FFmpeg/a8029b6528fecbcb5d99b331cfc76e6467b9bc77/LICENSE.md",
+      "sha256": "2e1d16c72fd74e12063776371da757322f8b77589386532f4fd8634bde7de1af",
+      "scope": "exact FFmpeg source; shared recipe enables version3; other dependency notices require review"
     }
   ],
   "source_inventory": [

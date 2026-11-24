@@ -13,6 +13,8 @@ import platform
 import re
 import shutil
 import stat
+import tarfile
+import posixpath
 import subprocess
 import tempfile
 import threading
@@ -115,11 +117,13 @@ def extract_verified_zip(archive, expected, entry, output):
             raise Blocked('zip_truncated')
 
 
-def offline_command(executable, args, directory, limit):
+def offline_command(executable, args, directory, limit, extra_env=None, merge_stderr=False):
     # Only the verified executable; no network arguments, inherited proxy,
     # credentials, package-manager variables or user Deno configuration.
     env = {k: os.environ[k] for k in ('SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'TMPDIR') if k in os.environ}
     env.update(DENO_NO_UPDATE_CHECK='1', DENO_NO_PROMPT='1', NO_COLOR='1')
+    if extra_env:
+        env.update(extra_env)
     process = subprocess.Popen([str(executable), *args], cwd=directory, env=env,
                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     chunks, failed = [], threading.Event()
@@ -142,7 +146,7 @@ def offline_command(executable, args, directory, limit):
         finally:
             pipe.close()
     workers = [threading.Thread(target=reader, args=(process.stdout, True, limit)),
-               threading.Thread(target=reader, args=(process.stderr, False, 65536))]
+               threading.Thread(target=reader, args=(process.stderr, merge_stderr, limit if merge_stderr else 65536))]
     for worker in workers:
         worker.start()
     try:
@@ -178,6 +182,136 @@ def replace_directory(staged, output):
         shutil.rmtree(backup)
 
 
+def extract_ffmpeg(archive, pin, output, native_platform):
+    """Verify the whole archive before parsing; materialize a closed file graph."""
+    if sha256(archive) != pin['sha256']:
+        raise Blocked('ffmpeg_sha256')
+    expected_root = pin['root']
+    source = zipfile.ZipFile(archive) if pin['format'] == 'zip' else tarfile.open(archive, mode='r:xz')
+    try:
+        if pin['format'] == 'zip':
+            entries = source.infolist()
+        else:
+            entries = []
+            for info in source:
+                if len(entries) >= 4096:
+                    raise Blocked('ffmpeg_entries')
+                entries.append(info)
+        if len(entries) > 4096:
+            raise Blocked('ffmpeg_entries')
+        files, links, seen, expanded = {}, {}, set(), 0
+        for info in entries:
+            name = info.filename if pin['format'] == 'zip' else info.name
+            path = pathlib.PurePosixPath(name)
+            if ('\\' in name or ':' in name or any(ord(c) < 32 or ord(c) == 127 for c in name) or path.is_absolute() or '..' in path.parts
+                    or not path.parts or path.parts[0] != expected_root or len(name) > 512):
+                raise Blocked('ffmpeg_path')
+            relative = pathlib.PurePosixPath(*path.parts[1:]).as_posix()
+            identity = relative.casefold()
+            if identity in seen:
+                raise Blocked('ffmpeg_duplicate')
+            seen.add(identity)
+            directory = info.is_dir() if pin['format'] == 'zip' else info.isdir()
+            if directory:
+                continue
+            size = info.file_size if pin['format'] == 'zip' else info.size
+            expanded += size
+            if size < 0 or size > MAX_EXE or expanded > 512 * 1024 * 1024:
+                raise Blocked('ffmpeg_expanded_size')
+            if pin['format'] == 'zip':
+                mode = info.external_attr >> 16
+                if stat.S_ISLNK(mode) or info.flag_bits & 1:
+                    raise Blocked('ffmpeg_zip_link')
+                files[relative] = info
+            elif info.issym():
+                target = info.linkname
+                if '\\' in target or ':' in target or len(target) > 512 or pathlib.PurePosixPath(target).is_absolute():
+                    raise Blocked('ffmpeg_link')
+                resolved = posixpath.normpath(posixpath.join(posixpath.dirname(relative), target))
+                if not relative.startswith('lib/') or not resolved.startswith('lib/') or '..' in pathlib.PurePosixPath(resolved).parts:
+                    raise Blocked('ffmpeg_link_escape')
+                links[relative] = resolved
+            elif info.isfile():
+                files[relative] = info
+            else:
+                raise Blocked('ffmpeg_special_entry')
+        def selected(name):
+            path = pathlib.PurePosixPath(name)
+            if name == 'LICENSE.txt':
+                return True
+            if native_platform == 'windows-x64':
+                return len(path.parts) == 2 and path.parts[0] == 'bin' and (path.name.lower() in ('ffmpeg.exe', 'ffprobe.exe') or path.suffix.lower() == '.dll')
+            return name in ('bin/ffmpeg', 'bin/ffprobe') or (len(path.parts) == 2 and path.parts[0] == 'lib' and re.fullmatch(r'[A-Za-z0-9_+.-]+\.so(?:\.[0-9]+)*', path.name))
+        targets = [name for name in [*files, *links] if selected(name)]
+        expected = {'LICENSE.txt', 'bin/ffmpeg.exe', 'bin/ffprobe.exe'} if native_platform == 'windows-x64' else {'LICENSE.txt', 'bin/ffmpeg', 'bin/ffprobe'}
+        if not expected.issubset(targets) or len(targets) > 256:
+            raise Blocked('ffmpeg_required_files')
+        has_shared = (any(name.lower().endswith('.dll') for name in targets) if native_platform == 'windows-x64'
+                      else any(name.startswith('lib/') for name in targets))
+        if not has_shared:
+            raise Blocked('ffmpeg_missing_shared_libraries')
+        output.mkdir()
+        records, written = [], 0
+        for name in sorted(targets):
+            origin, visited = name, set()
+            while origin in links:
+                if origin in visited or len(visited) >= 16:
+                    raise Blocked('ffmpeg_link_cycle')
+                visited.add(origin)
+                origin = links[origin]
+            if origin not in files or not selected(origin):
+                raise Blocked('ffmpeg_link_target')
+            destination = output / pathlib.PurePosixPath(name)
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            info = files[origin]
+            stream = source.open(info) if pin['format'] == 'zip' else source.extractfile(info)
+            if stream is None:
+                raise Blocked('ffmpeg_stream')
+            count = 0
+            with stream, destination.open('xb') as target:
+                for block in iter(lambda: stream.read(1024 * 1024), b''):
+                    count += len(block)
+                    written += len(block)
+                    if count > MAX_EXE or written > 512 * 1024 * 1024:
+                        raise Blocked('ffmpeg_materialized_size')
+                    target.write(block)
+                target.flush()
+                os.fsync(target.fileno())
+            expected_size = info.file_size if pin['format'] == 'zip' else info.size
+            if count != expected_size:
+                raise Blocked('ffmpeg_truncated')
+            destination.chmod(0o755 if name.startswith('bin/') else 0o644)
+            records.append(dict(filename='ffmpeg/' + name, sha256=sha256(destination), bytes=count,
+                                materialized_from=origin if origin != name else None))
+        return records
+    finally:
+        source.close()
+
+
+def verify_ffmpeg(output, pin, native_platform, staging):
+    exe = output / 'bin' / ('ffmpeg.exe' if native_platform == 'windows-x64' else 'ffmpeg')
+    probe = output / 'bin' / ('ffprobe.exe' if native_platform == 'windows-x64' else 'ffprobe')
+    private_env = {'PATH': str(output / 'bin')} if native_platform == 'windows-x64' else {'LD_LIBRARY_PATH': str(output / 'lib')}
+    # All invocations are offline metadata checks after whole archive hashing.
+    version = offline_command(exe, ['-version'], staging, 1024 * 1024, private_env, merge_stderr=True)
+    probe_version = offline_command(probe, ['-version'], staging, 1024 * 1024, private_env, merge_stderr=True)
+    config = offline_command(exe, ['-buildconf'], staging, 1024 * 1024, private_env, merge_stderr=True)
+    license_text = offline_command(exe, ['-L'], staging, 1024 * 1024, private_env, merge_stderr=True)
+    if not all((version, probe_version, config, license_text)):
+        raise Blocked('ffmpeg_verification_failed')
+    expected = pin['version'].encode()
+    if expected not in version or expected not in probe_version:
+        raise Blocked('ffmpeg_version_mismatch')
+    if (b'--enable-shared' not in config or b'--enable-version3' not in config
+            or any(flag in config for flag in (b'--enable-gpl', b'--enable-nonfree', b'--enable-libx264', b'--enable-libx265', b'--enable-libfdk-aac'))):
+        raise Blocked('ffmpeg_license_configuration')
+    if b'GNU Lesser General Public License' not in license_text or not (b'version 3' in license_text.lower() or b'version 3' in license_text):
+        raise Blocked('ffmpeg_license_mismatch')
+    for label, contents in [('version', version), ('probe-version', probe_version), ('buildconf', config), ('license', license_text)]:
+        (output / ('verified-' + label + '.txt')).write_bytes(contents)
+    return dict(shared=True, enable_version3=True, enable_gpl=False, enable_nonfree=False,
+                actual_license='LGPL-3.0-or-later', dependency_closure='bundled_bin_dll_or_lib_so_native_startup_verified_os_dependencies_not_certified')
+
 def package(args):
     if os.environ.get('GITHUB_ACTIONS') != 'true':
         raise Blocked('github_actions_required')
@@ -211,6 +345,36 @@ def package(args):
             destination.chmod(0o755)
             records[name] = dict(version=pin['version'], filename=pin['filename'], sha256=sha256(destination),
                                  asset_sha256=pin['sha256'], upstream_url=pin['url'], source_url=pin['source_url'])
+        ffmpeg_pin = selected['ffmpeg']
+        ffmpeg_asset = staging / 'ffmpeg.asset'
+        fetch_verified(ffmpeg_pin['url'], ffmpeg_pin['sha256'], ffmpeg_asset, MAX_ASSET)
+        # Daily upstream assets expire. Preserve the verified archive separately
+        # from installer resources for the existing private GHA artifact upload.
+        archive_directory = root / '.dev-check' / 'youtube-component-upstream'
+        archive_directory.mkdir(parents=True, exist_ok=True)
+        archive_name = ffmpeg_pin['sha256'][:16] + '-' + pathlib.PurePosixPath(urllib.parse.urlsplit(ffmpeg_pin['url']).path).name
+        preserved = archive_directory / archive_name
+        temporary_archive = archive_directory / ('.copy-' + uuid.uuid4().hex)
+        try:
+            shutil.copyfile(ffmpeg_asset, temporary_archive)
+            if sha256(temporary_archive) != ffmpeg_pin['sha256']:
+                raise Blocked('ffmpeg_preserved_sha256')
+            os.replace(temporary_archive, preserved)
+        finally:
+            temporary_archive.unlink(missing_ok=True)
+        ffmpeg_directory = bundle / 'ffmpeg'
+        ffmpeg_files = extract_ffmpeg(ffmpeg_asset, ffmpeg_pin, ffmpeg_directory, args.platform)
+        ffmpeg_verified = verify_ffmpeg(ffmpeg_directory, ffmpeg_pin, args.platform, staging)
+        for path in sorted(ffmpeg_directory.glob('verified-*.txt')):
+            ffmpeg_files.append(dict(filename='ffmpeg/' + path.name, sha256=sha256(path), bytes=path.stat().st_size, materialized_from=None))
+        records['ffmpeg'] = dict(version=ffmpeg_pin['version'], filename='ffmpeg/bin/' + ('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg'),
+            sha256=sha256(ffmpeg_directory/'bin'/('ffmpeg.exe' if args.platform == 'windows-x64' else 'ffmpeg')),
+            ffprobe_filename='ffmpeg/bin/' + ('ffprobe.exe' if args.platform == 'windows-x64' else 'ffprobe'),
+            asset_sha256=ffmpeg_pin['sha256'], upstream_url=ffmpeg_pin['url'], source_url=ffmpeg_pin['source_url'],
+            source_archive_url=ffmpeg_pin['source_archive_url'], recipe_url=ffmpeg_pin['recipe_url'],
+            ci_archive_artifact=preserved.relative_to(root).as_posix(),
+            files=ffmpeg_files, verification=ffmpeg_verified, upstream_retention=ffmpeg_pin['upstream_retention'],
+            redistribution_review='pending_external_library_notices_and_matching_source_archive_preservation')
         license_records = []
         for pin in pins['licenses'] + pins.get('source_inventory', []):
             destination = licenses / pin['filename']
@@ -238,6 +402,57 @@ def package(args):
         replace_directory(bundle, output)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def ffmpeg_self_tests(root):
+    import io
+    pin = dict(root='fixture', format='zip')
+    archive = root / 'ffmpeg.zip'
+    with zipfile.ZipFile(archive, 'w') as z:
+        for name, data in [('bin/ffmpeg.exe', b'ffmpeg'), ('bin/ffprobe.exe', b'ffprobe'), ('bin/avcodec.dll', b'dll'), ('LICENSE.txt', b'license')]:
+            z.writestr('fixture/' + name, data)
+    pin['sha256'] = sha256(archive)
+    output = root / 'ffmpeg-windows'
+    records = extract_ffmpeg(archive, pin, output, 'windows-x64')
+    assert len(records) == 4 and (output / 'bin/avcodec.dll').read_bytes() == b'dll'
+    archive = root / 'ffmpeg.tar.xz'
+    with tarfile.open(archive, 'w:xz') as source:
+        for name, data in [('bin/ffmpeg', b'ffmpeg'), ('bin/ffprobe', b'ffprobe'), ('lib/libavcodec.so.1', b'library'), ('LICENSE.txt', b'license')]:
+            info = tarfile.TarInfo('fixture/' + name); info.size = len(data)
+            source.addfile(info, io.BytesIO(data))
+        info = tarfile.TarInfo('fixture/lib/libavcodec.so'); info.type = tarfile.SYMTYPE; info.linkname = 'libavcodec.so.1'
+        source.addfile(info)
+    pin = dict(root='fixture', format='tar.xz', sha256=sha256(archive))
+    output = root / 'ffmpeg-linux'
+    records = extract_ffmpeg(archive, pin, output, 'linux-x64')
+    assert len(records) == 5 and not (output / 'lib/libavcodec.so').is_symlink()
+    assert (output / 'lib/libavcodec.so').read_bytes() == (output / 'lib/libavcodec.so.1').read_bytes()
+    assert any(r['materialized_from'] == 'lib/libavcodec.so.1' for r in records)
+    for case in ('traversal', 'escape', 'cycle', 'hardlink'):
+        bad = root / ('ffmpeg-' + case + '.tar.xz')
+        with tarfile.open(bad, 'w:xz') as source:
+            for name in ['bin/ffmpeg', 'bin/ffprobe', 'LICENSE.txt', 'lib/ok.so']:
+                info = tarfile.TarInfo('fixture/' + name); info.size = 1
+                source.addfile(info, io.BytesIO(b'x'))
+            if case == 'traversal':
+                info = tarfile.TarInfo('fixture/../outside'); info.size = 1; source.addfile(info, io.BytesIO(b'x'))
+            else:
+                info = tarfile.TarInfo('fixture/lib/evil.so')
+                info.type = tarfile.LNKTYPE if case == 'hardlink' else tarfile.SYMTYPE
+                info.linkname = '../../outside' if case == 'escape' else 'evil.so'
+                source.addfile(info)
+        bad_pin = dict(root='fixture', format='tar.xz', sha256=sha256(bad))
+        try:
+            extract_ffmpeg(bad, bad_pin, root / ('reject-' + case), 'linux-x64')
+            raise AssertionError('unsafe FFmpeg TAR accepted')
+        except Blocked:
+            pass
+    corrupt = root / 'not-ffmpeg.tar.xz'; corrupt.write_bytes(b'not an archive')
+    try:
+        extract_ffmpeg(corrupt, dict(root='fixture', format='tar.xz', sha256='0'*64), root/'never', 'linux-x64')
+        raise AssertionError('unverified TAR parsed')
+    except Blocked as error:
+        assert str(error) == 'ffmpeg_sha256'
 
 
 def self_test():
@@ -303,6 +518,7 @@ def self_test():
         finally:
             os.replace = original_replace
         assert (old / 'proof').read_text() == 'new'
+        ffmpeg_self_tests(root)
     print(json.dumps({'self_test': True, 'network': False, 'executed_components': False}))
 
 
