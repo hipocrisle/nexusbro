@@ -121,4 +121,5 @@ jobs:
             tools/build_youtube_muxer.py
             .github/workflows/youtube-muxer.yml
           retention-days: 14
+          include-hidden-files: true
           if-no-files-found: error

@@ -26,4 +26,5 @@ jobs:
           name: youtube-source-inventory
           path: .dev-check/youtube-source-inventory/
           retention-days: 14
+          include-hidden-files: true
           if-no-files-found: error
