@@ -1,5 +1,8 @@
 //! GHA fixture-only observation after player authority revocation.
 //! Tokens never confer media access or authority to an arbitrary document.
+//! Chromium156 SelectMediaResource keeps historical currentSrc on no-source
+//! load. Verify detached player/NETWORK_EMPTY/HAVE_NOTHING, never that URL.
+//! https://html.spec.whatwg.org/multipage/media.html#concept-media-load-algorithm
 use cef::*;
 use serde_json::{json, Value};
 use std::{
@@ -62,25 +65,29 @@ fn decode(bytes: &[u8]) -> Reply {
         .and_then(Value::as_object)
         .ok_or(FAILED)?;
     const FIELDS: &[&str] = &[
-        "disposed",
-        "video_paused",
-        "audio_paused",
-        "video_source_empty",
-        "audio_source_empty",
-        "position",
-        "audio_position",
+        "disposed","video_paused","audio_paused",
+        "video_source_attribute_absent","audio_source_attribute_absent",
+        "video_source_object_absent","audio_source_object_absent",
+        "video_source_children_absent","audio_source_children_absent",
+        "video_network_state","audio_network_state","video_ready_state","audio_ready_state",
+        "position","audio_position",
     ];
     if source.len() != FIELDS.len() || source.keys().any(|k| !FIELDS.contains(&k.as_str())) {
         return Err(FAILED);
     }
     let mut clean = serde_json::Map::new();
-    for field in &FIELDS[..5] {
+    for field in &FIELDS[..9] {
         clean.insert(
             (*field).into(),
             Value::Bool(source.get(*field).and_then(Value::as_bool).ok_or(FAILED)?),
         );
     }
-    for field in &FIELDS[5..] {
+    for field in &FIELDS[9..13] {
+        let maximum=if field.contains("network"){3}else{4};
+        let n=source.get(*field).and_then(Value::as_u64).filter(|n|*n<=maximum).ok_or(FAILED)?;
+        clean.insert((*field).into(),json!(n));
+    }
+    for field in &FIELDS[13..] {
         let n = source
             .get(*field)
             .and_then(Value::as_f64)
@@ -226,7 +233,7 @@ impl Probe {
             browser,
             message,
             "Runtime.evaluate",
-            json!({"expression":"(()=>{const v=document.getElementById('video'),a=document.getElementById('audio');if(!window.NB_LIGHT||!v||!a)return null;return {disposed:window.NB_LIGHT.snapshot().disposed,video_paused:v.paused,audio_paused:a.paused,video_source_empty:!v.hasAttribute('src')&&!v.currentSrc,audio_source_empty:!a.hasAttribute('src')&&!a.currentSrc,position:v.currentTime||0,audio_position:a.currentTime||0};})()","returnByValue":true,"silent":true}),
+            json!({"expression":"(()=>{const v=document.getElementById('video'),a=document.getElementById('audio');if(!window.NB_LIGHT||!v||!a)return null;return {disposed:window.NB_LIGHT.snapshot().disposed,video_paused:v.paused,audio_paused:a.paused,video_source_attribute_absent:!v.hasAttribute('src'),audio_source_attribute_absent:!a.hasAttribute('src'),video_source_object_absent:v.srcObject===null,audio_source_object_absent:a.srcObject===null,video_source_children_absent:!v.querySelector('source'),audio_source_children_absent:!a.querySelector('source'),video_network_state:v.networkState,audio_network_state:a.networkState,video_ready_state:v.readyState,audio_ready_state:a.readyState,position:v.currentTime||0,audio_position:a.currentTime||0};})()","returnByValue":true,"silent":true}),
         ) {
             return Err("probe_dispatch_failed");
         }
@@ -281,7 +288,7 @@ impl Drop for Probe {
 mod tests {
     use super::*;
     fn data() -> Value {
-        json!({"disposed":true,"video_paused":true,"audio_paused":true,"video_source_empty":true,"audio_source_empty":true,"position":0,"audio_position":0})
+        json!({"disposed":true,"video_paused":true,"audio_paused":true,"video_source_attribute_absent":true,"audio_source_attribute_absent":true,"video_source_object_absent":true,"audio_source_object_absent":true,"video_source_children_absent":true,"audio_source_children_absent":true,"video_network_state":0,"audio_network_state":0,"video_ready_state":0,"audio_ready_state":0,"position":0,"audio_position":0})
     }
     fn frame(v: Value) -> Vec<u8> {
         serde_json::to_vec(&json!({"result":{"type":"object","value":v}})).unwrap()
@@ -289,7 +296,7 @@ mod tests {
     #[test]
     fn bounded_stop_fields_only() {
         let value = decode(&frame(data())).unwrap();
-        assert_eq!(value.as_object().unwrap().len(), 7);
+        assert_eq!(value.as_object().unwrap().len(), 15);
         for (key, value) in [
             ("disposed", json!(1)),
             ("position", json!(-1)),

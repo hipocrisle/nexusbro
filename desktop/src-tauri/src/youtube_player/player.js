@@ -24,6 +24,13 @@
   const captions = document.getElementById('captions');
   const captionStatus = document.getElementById('caption-status');
   let textTrack = null;
+  let restoreMetadata = null;
+  function restoreClear() {
+    if (!restoreMetadata) return;
+    video.removeEventListener('loadedmetadata', restoreMetadata);
+    audio.removeEventListener('loadedmetadata', restoreMetadata);
+    restoreMetadata = null;
+  }
   function captionsClear() {
     if (!textTrack) return;
     textTrack.mode = 'disabled';
@@ -64,7 +71,7 @@
   function sourcesClear() {
     for (const m of [video, audio]) { m.pause(); m.removeAttribute('src'); m.load(); }
   }
-  function dispose() { captionsClear(); disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); button.disabled = true; quality.disabled = true; captions.disabled = true; downloadVideo.disabled = true; downloadAudio.disabled = true; downloadCancel.hidden = true; setStatus('Плеер остановлен. Обновите вкладку, чтобы продолжить просмотр.'); }
+  function dispose() { captionsClear(); restoreClear(); qualities.clear(); segments = []; disposed = true; ++epoch; pause(); sourcesClear(); clearInterval(timer); button.disabled = true; quality.disabled = true; captions.disabled = true; downloadVideo.disabled = true; downloadAudio.disabled = true; downloadCancel.hidden = true; setStatus('Плеер остановлен. Обновите вкладку, чтобы продолжить просмотр.'); }
   button.addEventListener('click', () => intended ? pause() : void play());
   seek.addEventListener('input', () => {
     if (!duration || !configured) return;
@@ -159,13 +166,15 @@
       document.getElementById('title').textContent = config.title.slice(0, 512);
       document.title = config.title.slice(0, 512) + ' — Лёгкий YouTube';
       let restored = false;
+      const savedPosition = typeof config.position === 'number' && Number.isFinite(config.position) ? config.position : 0;
       const restore = () => {
-        if (restored || video.readyState < 1 || (separate && audio.readyState < 1)) return;
-        restored = true;
-        const position = typeof config.position === 'number' && Number.isFinite(config.position) && config.position > 0 && config.position < video.duration - 5 ? config.position : 0;
+        if (disposed || restored || video.readyState < 1 || (separate && audio.readyState < 1)) return;
+        restored = true; restoreClear();
+        const position = savedPosition > 0 && savedPosition < video.duration - 5 ? savedPosition : 0;
         video.currentTime = position; if (separate) audio.currentTime = position;
         updateView(); tick(true);
       };
+      restoreMetadata = restore;
       video.addEventListener('loadedmetadata', restore);
       audio.addEventListener('loadedmetadata', restore);
       video.muted = separate; video.src = config.video;

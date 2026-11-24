@@ -381,7 +381,7 @@ pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::c
         }
     }
     if let Some(token)=stop_token {
-        STOP_PROBES.with(|p|{let mut p=p.borrow_mut();if p.len()<16{p.push(StopObservation{browser:browser.clone(),identity,tab,sender:sender.clone(),token,started:std::time::Instant::now(),attempt:0,probe:None});}});
+        STOP_PROBES.with(|p|{let mut p=p.borrow_mut();if p.len()<16{p.push(StopObservation{browser:browser.clone(),identity,tab,sender:sender.clone(),token,started:std::time::Instant::now(),attempt:0,first_stopped:None,probe:None});}});
     }
 }
 
@@ -546,6 +546,7 @@ pub fn fixture_stop_identity(browser:i32,frame:&str,document:&str)->Option<u64>{
 struct StopObservation{
     browser:Browser,identity:i32,tab:u64,sender:std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,
     token:crate::cef_youtube_stop_probe::FixtureStopToken,started:std::time::Instant,attempt:usize,
+    first_stopped:Option<(std::time::Instant,f64,f64)>,
     probe:Option<crate::cef_youtube_stop_probe::Probe>,
 }
 thread_local!{static STOP_EPOCH:std::cell::Cell<u64>=const{std::cell::Cell::new(0)};static STOP_PROBES:std::cell::RefCell<Vec<StopObservation>>=const{std::cell::RefCell::new(Vec::new())};}
@@ -556,21 +557,37 @@ fn poll_stop_probes(){
     pending.retain_mut(|v|{
         if STOP_EPOCH.with(|e|e.get())!=epoch{return false;}
         let elapsed=v.started.elapsed();
-        let sender=v.sender.clone();let tab=v.tab;
-        let emit=|complete:bool,state:Option<serde_json::Value>,code:&str|{if STOP_EPOCH.with(|e|e.get())!=epoch{return;}let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-stop-state","id":tab,"complete":complete,"state":state,"code":code})));};
-        if elapsed>=std::time::Duration::from_secs(5){emit(false,None,"stop_observation_timeout");return false;}
+        let sender=v.sender.clone();let tab=v.tab;let observations=v.attempt;
+        let emit=|complete:bool,state:Option<serde_json::Value>,code:&str,stable_ms:u64|{
+            if STOP_EPOCH.with(|e|e.get())!=epoch{return;}
+            let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-stop-state","id":tab,"complete":complete,"state":state,"code":code,"observations":observations,"stable_ms":stable_ms})));
+        };
+        if elapsed>=std::time::Duration::from_secs(5){emit(false,None,"stop_observation_timeout",0);return false;}
         if let Some(probe)=v.probe.as_mut(){
             let Some(result)=probe.poll() else{return true;};
             v.probe=None;
             match result{
-                Ok(state)=>{let complete=["disposed","video_paused","audio_paused","video_source_empty","audio_source_empty"].iter().all(|key|state[*key].as_bool()==Some(true));if complete||v.attempt>=4{emit(complete,Some(state),if complete{"stopped"}else{"stop_incomplete"});return false;}},
-                Err(code)=>{emit(false,None,code);return false;}
+                Ok(state)=>{
+                    let empty=["disposed","video_paused","audio_paused","video_source_attribute_absent","audio_source_attribute_absent","video_source_object_absent","audio_source_object_absent","video_source_children_absent","audio_source_children_absent"].iter().all(|key|state[*key].as_bool()==Some(true))
+                        &&["video_network_state","audio_network_state","video_ready_state","audio_ready_state"].iter().all(|key|state[*key].as_u64()==Some(0));
+                    let position=state["position"].as_f64().unwrap_or(f64::NAN);let audio=state["audio_position"].as_f64().unwrap_or(f64::NAN);
+                    if empty{
+                        if let Some((first,old_position,old_audio))=v.first_stopped{
+                            let stable_ms=first.elapsed().as_millis() as u64;
+                            if (position-old_position).abs()<=0.15&&(audio-old_audio).abs()<=0.15{
+                                if stable_ms>=200{emit(true,Some(state),"stopped",stable_ms);return false;}
+                            }else{v.first_stopped=Some((std::time::Instant::now(),position,audio));}
+                        }else{v.first_stopped=Some((std::time::Instant::now(),position,audio));}
+                    }else{v.first_stopped=None;}
+                    if v.attempt>=4{emit(false,Some(state),if empty{"stop_unstable"}else{"stop_incomplete"},0);return false;}
+                },
+                Err(code)=>{emit(false,None,code,0);return false;}
             }
         }
         if STOP_EPOCH.with(|e|e.get())!=epoch{return false;}
         let delays=[0,250,1000,2000];
         if v.attempt<delays.len()&&elapsed.as_millis()>=delays[v.attempt]{
-            match crate::cef_youtube_stop_probe::Probe::start(&v.browser,&v.token){Ok(probe)=>{v.probe=Some(probe);v.attempt+=1;},Err(code)=>{emit(false,None,code);return false;}}
+            match crate::cef_youtube_stop_probe::Probe::start(&v.browser,&v.token){Ok(probe)=>{v.probe=Some(probe);v.attempt+=1;},Err(code)=>{emit(false,None,code,0);return false;}}
         }
         true
     });
