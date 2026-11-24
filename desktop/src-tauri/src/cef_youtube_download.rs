@@ -47,6 +47,9 @@ fn display(browser: &Browser, data: serde_json::Value) {
         );
     }
 }
+pub fn active(browser: i32) -> bool {
+    jobs().lock().map_or(true, |all| all.contains_key(&browser))
+}
 pub fn any_active() -> bool {
     jobs().lock().map_or(true, |all| !all.is_empty())
 }

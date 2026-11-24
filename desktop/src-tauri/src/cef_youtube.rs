@@ -18,6 +18,8 @@ struct ResourceCounts {html:u32,js:u32,css:u32,frame_refused:u32}
 struct Grant {
     generation: u64,
     resources:ResourceCounts,
+    resource_frame:Option<String>,
+    document_loaded:bool,
     document: String,
     config: Option<zeroize::Zeroizing<String>>,
     logical_url: Option<String>,
@@ -54,6 +56,8 @@ impl PlayerDocuments {
             Grant {
                 generation,
                 resources:ResourceCounts::default(),
+                resource_frame:None,
+                document_loaded:false,
                 document: document.clone(),
                 config: None,
                 logical_url: None,
@@ -79,18 +83,22 @@ impl PlayerDocuments {
     fn resource(
         &self,
         browser: i32,
+        frame_id: &str,
         frame: &str,
         request: &str,
     ) -> Option<(&'static [u8], &'static str)> {
         let mut grants = self.0.lock().ok()?;
         let grant = grants.get_mut(&browser)?;
+        if frame_id.is_empty()||frame_id.len()>256||frame_id.chars().any(char::is_control){return None;}
         let prefix = grant.document.strip_suffix("player.html")?;
         if request == grant.document {
+            if grant.resource_frame.as_deref().is_some_and(|id|id!=frame_id){return None;}
+            grant.resource_frame=Some(frame_id.to_owned());
             grant.resources.html=grant.resources.html.saturating_add(1);
             // Main document navigation can still report the previous frame URL.
             return Some((include_bytes!("youtube_player/player.html"), "text/html"));
         }
-        if frame != grant.document {
+        if grant.resource_frame.as_deref()!=Some(frame_id)||(frame!=grant.document&&grant.document_loaded) {
             grant.resources.frame_refused=grant.resources.frame_refused.saturating_add(1);
             return None;
         }
@@ -119,8 +127,9 @@ wrap_scheme_handler_factory! {
             let (Some(browser),Some(frame),Some(request))=(browser,frame,request) else {return None;};
             if frame.is_main()==0 || CefString::from(&request.method()).to_string()!="GET" {return None;}
             let frame_url=CefString::from(&frame.url()).to_string();
+            let frame_id=CefString::from(&frame.identifier()).to_string();
             let request_url=CefString::from(&request.url()).to_string();
-            let (bytes,mime)=self.documents.resource(browser.identifier(),&frame_url,&request_url)?;
+            let (bytes,mime)=self.documents.resource(browser.identifier(),&frame_id,&frame_url,&request_url)?;
             Some(PlayerResource::new(bytes,mime,Arc::new(Mutex::new(0))))
         }
     }
@@ -164,13 +173,18 @@ mod tests {
         assert!(docs.document_matches(7, 4, &url));
         assert!(!docs.document_matches(7, 3, &url));
         assert!(!docs.document_matches(8, 4, &url));
-        assert!(docs.resource(8, &url, &url).is_none());
+        assert!(docs.resource(8, "frame-1", &url, &url).is_none());
         let js = url.replace("player.html", "player.js");
-        assert!(docs.resource(7, "https://example.org/", &js).is_none());
-        assert!(docs.resource(7, &url, &js).is_some());
-        assert!(docs.resource(7, &url, &format!("{js}?x=1")).is_none());
+        assert!(docs.resource(7, "frame-1", "https://example.org/", &js).is_none());
+        assert!(docs.resource(7, "frame-1", "https://example.org/", &url).is_some());
+        assert!(docs.resource(7, "frame-2", &url, &js).is_none());
+        assert!(docs.resource(7, "frame-1", "https://example.org/", &js).is_some());
+        assert!(docs.resource(7, "frame-1", &url, &js).is_some());
+        docs.0.lock().unwrap().get_mut(&7).unwrap().document_loaded=true;
+        assert!(docs.resource(7,"frame-1","https://example.org/",&js).is_none());
+        assert!(docs.resource(7, "frame-1", &url, &format!("{js}?x=1")).is_none());
         docs.revoke(7);
-        assert!(docs.resource(7, &url, &url).is_none());
+        assert!(docs.resource(7, "frame-1", &url, &url).is_none());
     }
     #[test]
     fn replacement_revokes_the_old_document() {
@@ -178,7 +192,7 @@ mod tests {
         let old = docs.grant(7, 4).unwrap();
         let new = docs.grant(7, 5).unwrap();
         assert_ne!(old, new);
-        assert!(docs.resource(7, &old, &old).is_none());
+        assert!(docs.resource(7, "frame-1", &old, &old).is_none());
         assert!(docs.document_matches(7, 5, &new));
         docs.revoke_all();
         assert!(!docs.document_matches(7, 5, &new));
@@ -300,7 +314,7 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
         grants
             .get_mut(&browser.identifier())
             .filter(|g| g.document == url)
-            .and_then(|g| g.config.take())
+            .and_then(|g| {g.document_loaded=true;g.config.take()})
     };
     if let Some(config) = config {
         let auxiliary = {

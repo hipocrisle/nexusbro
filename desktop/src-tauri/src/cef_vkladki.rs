@@ -678,9 +678,9 @@ fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser
     memory_blocked_scoped(id,automatic,s,browsers,pending_tools,force_private,false)
 }
 fn memory_blocked_scoped(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser>,pending_tools:&HashMap<u64,std::time::Instant>,force_private:bool,allow_selected:bool)->Option<&'static str>{
-    if (crate::youtube_light_jobs::any_active()||crate::cef_youtube_download::any_active()){return Some("Подготовка видео ещё выполняется");}
     let Some(tab)=s.vkladki.iter().find(|v|v.id==id)else{return Some("Вкладка уже закрыта");};
     let Some(browser)=browsers.get(&id)else{return Some("Вкладка уже выгружена");};
+    if crate::youtube_light_jobs::active(browser.identifier())||crate::cef_youtube_download::active(browser.identifier()){return Some("Вкладка подготавливает или скачивает видео");}
     if allow_selected&&browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).as_deref()!=Some(tab.adres.as_str()){return Some("Адрес документа ещё не подтверждён");}
     if tab.route_pending{return Some("Вкладка меняет сетевой путь");}
     if s.aktivnaya==id&&!allow_selected{return Some("Активную вкладку нельзя выгрузить");}

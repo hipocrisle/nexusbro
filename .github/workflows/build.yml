@@ -448,6 +448,7 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_probe::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_resume::tests -- --test-threads=1
 
       - name: Сохранить сборочный кэш до runtime-проверки
