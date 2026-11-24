@@ -1404,6 +1404,165 @@ def run(args):
             require(b'Native captured credential' not in raw and b'Selected encrypted bookmark' not in raw,
                     'Server stored unencrypted browser record metadata')
         checkpoint('vault_main_backup_runtime_logs_server_database_have_no_plaintext_credentials')
+        # Destructive recovery acceptance is deliberately last: earlier account,
+        # sync, history and confidentiality assertions use the original vault.
+        phase = 'native-vault-reset-and-restore'
+        recovery_master = 'native-reset-master-' + secrets.token_hex(12)
+        sensitive.add(recovery_master)
+        credentials_before = call(ca, 'security_passwords', action='list')
+        require(credentials_before, 'Recovery fixture must contain existing saved credentials')
+        revealed_before = {row['id']: call(ca, 'security_passwords', action='reveal', data={'id': row['id']})
+                           for row in credentials_before}
+        sensitive.update(revealed_before.values())
+        account_before = call(ca, 'security_account', action='status')
+        require(account_before['logged_in'], 'Recovery fixture must have a local authenticated account')
+        security_root = a.data / 'security'
+        old_ciphertext = (security_root / 'browser-vault.v1').read_bytes()
+        metadata_before = {name: (a.data / name).read_bytes() for name in
+                           ('zakladki.json', 'sohranennye.json', 'nastrojki.json', 'vkladki.json')
+                           if (a.data / name).is_file()}
+        remote_before_reset = remote_saved_record()
+
+        def recovery_prepare(element_expression):
+            expression = ('(()=>{const e=(' + element_expression + ');'
+                          'if(!e||e.disabled||!e.getClientRects().length)return false;'
+                          'e.scrollIntoView({block:"center",inline:"nearest"});'
+                          'const r=e.getBoundingClientRect(),c=e.closest(".browser-lock-card,[role=listbox]")?.getBoundingClientRect();'
+                          'if(r.width<3||r.height<3||r.top<Math.max(0,c?.top??0)-1||'
+                          'r.bottom>Math.min(innerHeight,c?.bottom??innerHeight)+1||r.left<0||r.right>innerWidth)return false;'
+                          'return [r.x+r.width/2,r.y+r.height/2]})()')
+            js_wait(ca, expression, 'Recovery control is missing, disabled or clipped', 40)
+            painted(ca)
+            return js_wait(ca, expression, 'Recovery control did not remain visible', 5)
+
+        def recovery_click(selector):
+            point = recovery_prepare('document.querySelector(' + json.dumps(selector) + ')')
+            ca.mouse(*point)
+
+        def recovery_button(text):
+            point = recovery_prepare('[...document.querySelectorAll(".browser-lock-screen button")].find(e=>e.textContent.trim()==='
+                                     + json.dumps(text) + ')')
+            ca.mouse(*point)
+
+        def recovery_fill(selector, value):
+            recovery_prepare('document.querySelector(' + json.dumps(selector) + ')')
+            ca.fill(selector, value)
+
+        def protected_snapshot():
+            return {str(path.relative_to(security_root)): path.read_bytes()
+                    for path in security_root.rglob('*') if path.is_file()}
+
+        def wait_recovery_lock():
+            js_wait(ca, '!!document.querySelector(".browser-lock-screen")', 'Recovery operation lost the browser lock')
+            require(call(ca, 'browser_lock_status')['locked'], 'Recovery UI was visible without a native lock')
+            call(ca, 'security_passwords', action='list', error=True)
+
+        def choose_original_archive():
+            rows = call(ca, 'browser_vault_backups')
+            matches = [i for i, row in enumerate(rows)
+                       if (security_root / ('browser-vault.v1.recovery-' + row['id'])).read_bytes() == old_ciphertext]
+            require(matches, 'Exact original ciphertext archive is missing')
+            recovery_click('[aria-label="Копия хранилища"]')
+            options = '[role="listbox"][aria-label="Копия хранилища"] > [role="option"]'
+            js_wait(ca, 'document.querySelectorAll(' + json.dumps(options) + ').length===' + str(len(rows)),
+                    'Recovery copy chooser did not render the actual native archive list')
+            recovery_click(options + ':nth-child(' + str(matches[0] + 1) + ')')
+
+        call(ca, 'browser_lock')
+        wait_recovery_lock()
+        before_cancel = protected_snapshot()
+        recovery_button('Забыли мастер-пароль?')
+        recovery_fill('[aria-label="Новый мастер-пароль"]', recovery_master)
+        recovery_fill('[aria-label="Повторите новый мастер-пароль"]', recovery_master)
+        recovery_fill('[aria-label="Подтверждение сброса"]', 'НЕ СБРАСЫВАТЬ')
+        require(ca.js('[...document.querySelectorAll("button")].find(e=>e.textContent.trim()==="Сбросить хранилище")?.disabled===true'),
+                'Reset UI enabled destructive action without exact confirmation')
+        recovery_button('Назад')
+        wait_recovery_lock()
+        require(protected_snapshot() == before_cancel, 'Cancelled reset modified protected files')
+        recovery_button('Забыли мастер-пароль?')
+        recovery_fill('[aria-label="Новый мастер-пароль"]', recovery_master)
+        recovery_fill('[aria-label="Повторите новый мастер-пароль"]', recovery_master)
+        recovery_fill('[aria-label="Подтверждение сброса"]', 'СБРОСИТЬ')
+        recovery_button('Сбросить хранилище')
+        js_wait(ca, '!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
+                'Native reset did not unlock the new empty vault', 40)
+        require(call(ca, 'security_passwords', action='list') == [], 'Reset exposed old protected credentials')
+        require(not call(ca, 'security_account', action='status')['logged_in'], 'Reset retained the old local account login')
+        require(any(path.read_bytes() == old_ciphertext for path in security_root.glob('browser-vault.v1.recovery-*')),
+                'Reset did not preserve exact original encrypted bytes')
+        require((security_root / 'browser-vault.v1').read_bytes() != old_ciphertext, 'Reset reused old active ciphertext')
+        require(all((a.data / name).read_bytes() == raw for name, raw in metadata_before.items()),
+                'Reset deleted or changed ordinary browser metadata')
+        require(remote_saved_record() == remote_before_reset, 'Local vault reset modified the server record')
+        checkpoint('native_reset_requires_confirmation_cancel_preserves_files_and_archives_exact_old_ciphertext')
+        checkpoint('native_reset_opens_empty_vault_without_local_account_or_cloud_delete')
+
+        # A fresh process must require the NEW password before showing any site.
+        a.stop_app()
+        with probe_lock:
+            reset_restart_probes = len(probes)
+        ca = a.start()
+        wait_recovery_lock()
+        time.sleep(.4)
+        with probe_lock:
+            require(len(probes) == reset_restart_probes, 'Reset startup loaded a site before the new master password')
+        before_wrong_unlock = protected_snapshot()
+        recovery_fill('[aria-label="Мастер-пароль для разблокировки браузера"]', master_a)
+        recovery_button('Разблокировать браузер')
+        js_wait(ca, '!!document.querySelector(".browser-lock-error[role=alert]")', 'Old master unexpectedly unlocked the reset vault')
+        wait_recovery_lock()
+        require(protected_snapshot() == before_wrong_unlock, 'Wrong old master changed reset ciphertext')
+        recovery_fill('[aria-label="Мастер-пароль для разблокировки браузера"]', recovery_master)
+        recovery_button('Разблокировать браузер')
+        js_wait(ca, '!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
+                'New reset master did not unlock after restart', 40)
+        require(call(ca, 'security_passwords', action='list') == [], 'Restart revived old credentials after reset')
+        checkpoint('native_reset_restart_rejects_old_master_and_requires_new_master')
+
+        call(ca, 'browser_lock')
+        wait_recovery_lock()
+        current_ciphertext = (security_root / 'browser-vault.v1').read_bytes()
+        before_wrong_restore = protected_snapshot()
+        recovery_button('Восстановить из копии')
+        js_wait(ca, '!!document.querySelector(' + json.dumps('[aria-label="Копия хранилища"]') + ')', 'Native recovery chooser missing')
+        choose_original_archive()
+        recovery_fill('[aria-label="Мастер-пароль выбранной копии"]', recovery_master)
+        recovery_button('Восстановить хранилище')
+        js_wait(ca, '!!document.querySelector(".browser-lock-error[role=alert]")', 'Wrong archive password was not rejected', 40)
+        wait_recovery_lock()
+        require(protected_snapshot() == before_wrong_restore, 'Wrong restore password changed active or archived files')
+        recovery_button('Назад')
+        wait_recovery_lock()
+        require(protected_snapshot() == before_wrong_restore, 'Cancelling restore changed protected files')
+        checkpoint('native_wrong_restore_and_cancel_remain_locked_with_exact_files')
+
+        recovery_button('Восстановить из копии')
+        choose_original_archive()
+        recovery_fill('[aria-label="Мастер-пароль выбранной копии"]', master_a)
+        recovery_button('Восстановить хранилище')
+        js_wait(ca, '!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
+                'Original master did not restore the selected original archive', 40)
+        require(call(ca, 'security_passwords', action='list') == credentials_before, 'Restored vault lost original credentials')
+        require(all(call(ca, 'security_passwords', action='reveal', data={'id': ident}) == secret
+                    for ident, secret in revealed_before.items()), 'Restored credential plaintext differs from original')
+        restored_account = call(ca, 'security_account', action='status')
+        require(restored_account['logged_in'] and restored_account['user_id'] == account_before['user_id'],
+                'Restored vault did not return the original local account')
+        require(any(path.read_bytes() == current_ciphertext for path in security_root.glob('browser-vault.v1.recovery-*')),
+                'Restore did not archive the replaced new vault exactly')
+        require(remote_saved_record() == remote_before_reset, 'Local restore modified cloud records automatically')
+        check_encrypted(a)
+        for archive in security_root.glob('browser-vault.v1.recovery-*'):
+            raw = archive.read_bytes()
+            envelope = json.loads(raw)
+            payload = base64.b64decode(envelope['payload'])
+            require(envelope['header']['format'] == 'nexusbro-vault' and payload,
+                    'Recovery archive is not an encrypted vault envelope')
+            require(all(secret.encode() not in raw and secret.encode() not in payload for secret in sensitive),
+                    'Recovery archive contains a plaintext credential')
+            require(archive.stat().st_mode & 0o777 == 0o600, 'Recovery archive permissions are not private')
+        checkpoint('native_restore_old_master_returns_original_secrets_account_and_archives_new_vault')
         checkpoint('success')
     except Exception as error:
         if phase == 'whole-browser-lock-all-windows':
