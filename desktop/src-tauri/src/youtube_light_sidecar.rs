@@ -29,6 +29,12 @@ pub enum ExtractError {
     ReadFailed,
     WaitFailed,
     ProcessFailed,
+    UnsupportedInvocation,
+    HttpForbidden,
+    RateLimited,
+    TlsFailure,
+    ChallengeRequired,
+    VideoUnavailable,
     TimedOut,
     ReapFailed,
     EmptyOutput,
@@ -44,6 +50,16 @@ impl fmt::Display for ExtractError {
             Self::ReadFailed => "Не удалось получить ответ извлечения",
             Self::WaitFailed => "Не удалось дождаться извлечения",
             Self::ProcessFailed => "Видео недоступно для анонимного извлечения",
+            Self::UnsupportedInvocation => {
+                "Компонент извлечения не поддерживает необходимые параметры"
+            }
+            Self::HttpForbidden => "Источник отклонил запрос видео",
+            Self::RateLimited => "Источник временно ограничил частоту запросов",
+            Self::TlsFailure => "Не удалось проверить защищённое соединение с источником",
+            Self::ChallengeRequired => {
+                "Для этого видео требуется дополнительная проверка источника"
+            }
+            Self::VideoUnavailable => "Это видео недоступно для анонимного просмотра",
             Self::TimedOut => "Истекло время извлечения",
             Self::ReapFailed => "Завершение процесса извлечения не подтверждено",
             Self::EmptyOutput => "Извлечение не вернуло данные",
@@ -188,6 +204,87 @@ async fn cancelled(cancel: &mut watch::Receiver<bool>) {
         }
     }
 }
+/// Diagnostic hint only: remote text is not trusted authority, never returned.
+/// Whole bounded stderr is available so a pipe-read boundary cannot hide a
+/// phrase. No UTF-8 requirement and no additional lowercase/URL/string copies.
+fn classify_failure(stderr: &[u8]) -> ExtractError {
+    let contains = |pattern: &[u8]| {
+        stderr
+            .windows(pattern.len())
+            .any(|part| part.eq_ignore_ascii_case(pattern))
+    };
+    if [
+        b"no such option:".as_slice(),
+        b"unrecognized arguments:",
+        b"unrecognized option",
+        b"invalid js runtime format",
+        b"invalid proxy url",
+    ]
+    .iter()
+    .any(|p| contains(p))
+    {
+        return ExtractError::UnsupportedInvocation;
+    }
+    if [
+        b"certificate_verify_failed".as_slice(),
+        b"certificate verify failed",
+        b"ssl: certificate",
+        b"tls handshake",
+        b"unable to get local issuer certificate",
+        b"certificate has expired",
+    ]
+    .iter()
+    .any(|p| contains(p))
+    {
+        return ExtractError::TlsFailure;
+    }
+    if [
+        b"http error 429".as_slice(),
+        b"429: too many requests",
+        b"rate limit exceeded",
+        b"request rate limit",
+    ]
+    .iter()
+    .any(|p| contains(p))
+    {
+        return ExtractError::RateLimited;
+    }
+    if (contains(b"sign in to confirm you") && contains(b"not a bot"))
+        || [
+            b"sign in to confirm you're not a bot".as_slice(),
+            b"js challenge",
+            b"javascript challenge",
+            b"challenge solving failed",
+            b"po token is required",
+            b"requires a po token",
+        ]
+        .iter()
+        .any(|p| contains(p))
+    {
+        return ExtractError::ChallengeRequired;
+    }
+    if [b"http error 403".as_slice(), b"403: forbidden"]
+        .iter()
+        .any(|p| contains(p))
+    {
+        return ExtractError::HttpForbidden;
+    }
+    if [
+        b"video unavailable".as_slice(),
+        b"private video",
+        b"this video has been removed",
+        b"this video is not available",
+        b"sign in to confirm your age",
+        b"members-only content",
+        b"this video is only available",
+    ]
+    .iter()
+    .any(|p| contains(p))
+    {
+        return ExtractError::VideoUnavailable;
+    }
+    ExtractError::ProcessFailed
+}
 /// Await to completion and cancel through the watch channel, so direct-child
 /// exit is observed. Dropping this future uses kill_on_drop as a last resort;
 /// the parent process owner still must reap/contain the entire job/tree.
@@ -215,15 +312,15 @@ pub async fn extract(
     };
     let result = {
         let work = async {
-            // Both pipes are drained concurrently. Bounded stderr is discarded and
-            // zeroized in chunks; a raw extractor error never becomes an app error.
-            let (out, _) = tokio::try_join!(
+            // Both pipes are drained concurrently. Bounded stderr is retained
+            // only in zeroizing memory for fixed-class diagnostics; never logged.
+            let (out, diagnostic) = tokio::try_join!(
                 bounded(stdout, STDOUT_LIMIT, true),
-                bounded(stderr, STDERR_LIMIT, false)
+                bounded(stderr, STDERR_LIMIT, true)
             )?;
             let status = child.wait().await.map_err(|_| ExtractError::WaitFailed)?;
             if !status.success() {
-                return Err(ExtractError::ProcessFailed);
+                return Err(classify_failure(&diagnostic));
             }
             if out.is_empty() {
                 return Err(ExtractError::EmptyOutput);
@@ -262,6 +359,12 @@ mod tests {
             ExtractError::ReadFailed,
             ExtractError::WaitFailed,
             ExtractError::ProcessFailed,
+            ExtractError::UnsupportedInvocation,
+            ExtractError::HttpForbidden,
+            ExtractError::RateLimited,
+            ExtractError::TlsFailure,
+            ExtractError::ChallengeRequired,
+            ExtractError::VideoUnavailable,
             ExtractError::TimedOut,
             ExtractError::ReapFailed,
             ExtractError::EmptyOutput,
@@ -344,5 +447,57 @@ mod tests {
         let mut bad = route;
         bad.proxy = "socks5://secret@remote:1080".into();
         assert!(super::command(&components, &video, &bad).is_err());
+    }
+    #[test]
+    fn diagnostic_classification_never_reflects_remote_urls_or_secrets() {
+        for (text, expected) in [
+            (
+                "ERROR: no such option: --secret-option",
+                ExtractError::UnsupportedInvocation,
+            ),
+            ("HTTP Error 403: Forbidden", ExtractError::HttpForbidden),
+            (
+                "HTTP Error 429: Too Many Requests",
+                ExtractError::RateLimited,
+            ),
+            (
+                "[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed",
+                ExtractError::TlsFailure,
+            ),
+            (
+                "Sign in to confirm you're not a bot",
+                ExtractError::ChallengeRequired,
+            ),
+            (
+                "Video unavailable. This video has been removed",
+                ExtractError::VideoUnavailable,
+            ),
+            ("opaque upstream failure", ExtractError::ProcessFailed),
+        ] {
+            let bytes = Zeroizing::new(format!(
+                "{text} https://secret.invalid/path?cookie=TOKEN&auth=PASS"
+            ));
+            let actual = classify_failure(bytes.as_bytes());
+            assert_eq!(actual, expected);
+            let public = format!("{actual:?} {actual}");
+            for secret in ["secret.invalid", "TOKEN", "PASS", "cookie=", "https://"] {
+                assert!(!public.contains(secret));
+            }
+        }
+    }
+    #[test]
+    fn diagnostic_matching_handles_pipe_boundaries_non_utf8_and_specific_precedence() {
+        let mut bytes = Zeroizing::new(vec![0xff; 8190]);
+        bytes.extend_from_slice(b"HTTP Error 429: Too Many Requests");
+        assert_eq!(classify_failure(&bytes), ExtractError::RateLimited);
+        assert_eq!(
+            classify_failure(b"HTTP Error 403: Forbidden. Sign in to confirm you're not a bot"),
+            ExtractError::ChallengeRequired
+        );
+        assert_eq!(
+            classify_failure(b"Deno EJS https://example.invalid/deno/ejs"),
+            ExtractError::ProcessFailed
+        );
+        assert_eq!(classify_failure(b""), ExtractError::ProcessFailed);
     }
 }
