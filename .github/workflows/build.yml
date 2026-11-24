@@ -96,6 +96,7 @@ jobs:
           cargo test --manifest-path tests/tab_route_contracts/Cargo.toml
           cargo test --manifest-path tests/super_lifecycle_harness/Cargo.toml
           cargo test --manifest-path tests/super_cookie_harness/Cargo.toml
+          cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
           cargo test --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml
           cargo build --release --locked --manifest-path sync-server/Cargo.toml --example live_acceptance
@@ -465,6 +466,25 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Native cookie escrow shutdown and restore prerequisite (Windows)
+        if: matrix.os == 'windows-latest'
+        timeout-minutes: 8
+        shell: pwsh
+        run: |
+          python tests/gui/hibernation_cookie_probe.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/hibernation-cookie
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native cookie escrow shutdown and restore prerequisite (Linux)
+        if: matrix.os == 'ubuntu-24.04'
+        timeout-minutes: 8
+        run: |
+          python3 tests/gui/hibernation_cookie_probe.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/hibernation-cookie
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: hibernation-cookie-${{ matrix.os }}
+          path: .dev-check/hibernation-cookie/results.json
+          retention-days: 14
 
       - name: Native Windows per-tab routes and trusted HTTPS
         if: matrix.os == 'windows-latest'
