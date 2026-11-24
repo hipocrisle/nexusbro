@@ -323,6 +323,7 @@ jobs:
         run: npm ci
 
       - name: Собрать
+        id: app-build
         working-directory: desktop
         shell: bash
         env:
@@ -416,6 +417,7 @@ jobs:
           sha256sum -c SHA256SUMS
           chmod +x nexusbro-sync-server
       - name: Native per-tab routes, isolated profiles and trusted HTTPS
+        id: native-routes-linux
         if: matrix.os == 'ubuntu-24.04'
         timeout-minutes: 10
         run: |
@@ -439,6 +441,11 @@ jobs:
             .dev-check/native-routes/device/*.log
             .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14
+      - name: Actual whole-Super sleep, guarded media, isolated profiles and wake (Linux)
+        if: matrix.os == 'ubuntu-24.04' && steps.native-routes-linux.outcome == 'success'
+        timeout-minutes: 12
+        run: |
+          python3 tests/gui/super_hibernation_native.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/super-hibernation --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
       - name: Native encrypted vault, CEF credentials and two-device sync
         if: matrix.os == 'ubuntu-24.04'
         timeout-minutes: 10
@@ -483,14 +490,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Native cookie escrow shutdown and restore prerequisite (Windows)
-        if: matrix.os == 'windows-latest'
+        if: always() && steps.app-build.outcome == 'success' && matrix.os == 'windows-latest'
         timeout-minutes: 8
         shell: pwsh
         run: |
           python tests/gui/hibernation_cookie_probe.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/hibernation-cookie
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Native cookie escrow shutdown and restore prerequisite (Linux)
-        if: matrix.os == 'ubuntu-24.04'
+        if: always() && steps.app-build.outcome == 'success' && matrix.os == 'ubuntu-24.04'
         timeout-minutes: 8
         run: |
           python3 tests/gui/hibernation_cookie_probe.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/hibernation-cookie
@@ -502,6 +509,7 @@ jobs:
           retention-days: 14
 
       - name: Native Windows per-tab routes and trusted HTTPS
+        id: native-routes-windows
         if: matrix.os == 'windows-latest'
         timeout-minutes: 10
         shell: pwsh
@@ -528,6 +536,19 @@ jobs:
             .dev-check/native-routes/device/data/profili/*/obychnye.json
             .dev-check/native-routes/device/*.log
             .dev-check/native-routes/device/data/profili/*/cef*.log
+          retention-days: 14
+      - name: Actual whole-Super sleep, guarded media, isolated profiles and wake (Windows)
+        if: matrix.os == 'windows-latest' && steps.native-routes-windows.outcome == 'success'
+        timeout-minutes: 12
+        shell: pwsh
+        run: |
+          python tests/gui/super_hibernation_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/super-hibernation --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: super-hibernation-${{ matrix.os }}
+          path: .dev-check/super-hibernation/results.json
           retention-days: 14
       - name: Verify real background lifecycle and restored native input
         if: matrix.os == 'windows-latest'
