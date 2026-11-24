@@ -331,6 +331,7 @@ impl Engine {
     pub fn command(
         &mut self,
         command: &crate::sessiya::Komanda,
+        k: &Konteyner,
         b: &HashMap<u64, Browser>,
         safe: bool,
     ) -> anyhow::Result<()> {
@@ -344,6 +345,10 @@ impl Engine {
                 if same(t, &current) && self.phase == Phase::Prepared =>
             {
                 let valid = safe
+                    && self
+                        .workers
+                        .as_ref()
+                        .is_some_and(|w| w.workers() == Some(true))
                     && b.len() == self.pages.len()
                     && self.pages.iter().all(|(id, p)| {
                         b.get(id).is_some_and(|v| v.identifier() == p.identity)
@@ -352,6 +357,16 @@ impl Engine {
                     });
                 if !valid {
                     self.refuse(b, "commit_eligibility_changed");
+                    return Ok(());
+                }
+                // Irreversible admission gate: no thaw/abort is permitted after
+                // this succeeds. Remaining shutdown owns the profile lease.
+                if !k
+                    .routes
+                    .borrow()
+                    .quiesce_hibernation(&request.scope.context_key)
+                {
+                    self.refuse(b, "context_quiesce_refused");
                     return Ok(());
                 }
                 self.phase = Phase::Closing;
@@ -530,10 +545,11 @@ impl Engine {
                 return Ok(());
             }
         }
-        if self
-            .workers
-            .as_ref()
-            .is_some_and(|w| w.workers() == Some(false))
+        if self.phase != Phase::Thaw
+            && self
+                .workers
+                .as_ref()
+                .is_some_and(|w| w.workers() == Some(false))
         {
             self.refuse(b, "service_worker_present_or_unknown");
             return Ok(());

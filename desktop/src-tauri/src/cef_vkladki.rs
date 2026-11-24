@@ -508,6 +508,7 @@ pub fn rabotat(
     std::thread::spawn(move || {
         for l in std::io::stdin().lock().lines() {
             let Ok(l) = l else { break };
+            let l=zeroize::Zeroizing::new(l);
             if let Ok(komanda) = serde_json::from_str::<Komanda>(&l) {
                 if tx_stdin.send(Sobytie::Komanda(komanda)).is_err() {
                     break;
@@ -774,9 +775,9 @@ impl Rabota {
         if self.hibernate.stopped(){return Ok(());}
         let events=self.rx.try_iter().take(128).collect::<Vec<_>>();
         for event in events{
-            if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&event{self.browser_locked=*locked;self.browser_lock_generation=*generation;}
+            if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&event{if *generation>=self.browser_lock_generation{self.browser_locked=*locked;self.browser_lock_generation=*generation;}else{continue;}}
             if matches!(&event,Sobytie::Komanda(Komanda::GlavnoePokazat|Komanda::OknoNovoe{..})){self.hibernate.invalidate(&self.brauzery);}
-            if let Sobytie::Komanda(command)=&event{let safe=self.hibernate_safe();self.hibernate.command(command,&self.brauzery,safe)?;}
+            if let Sobytie::Komanda(command)=&event{let safe=self.hibernate_safe();self.hibernate.command(command,&self.k,&self.brauzery,safe)?;}
             if let Sobytie::Zakryta(_,Some(identity))=&event{self.k.routes.borrow_mut().forget_browser(*identity);}
             let safe=self.hibernate_safe();self.hibernate.event(&event,&self.k,&self.s,&mut self.brauzery,safe);
         }
@@ -964,9 +965,9 @@ impl Rabota {
         for sobytie in rx.try_iter().take(128) {
             handled_events += 1;
             if hibernate.active(){
-                if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&sobytie{*browser_locked=*locked;*browser_lock_generation=*generation;}
+                if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&sobytie{if *generation>=*browser_lock_generation{*browser_locked=*locked;*browser_lock_generation=*generation;}else{continue;}}
                 if matches!(&sobytie,Sobytie::Komanda(Komanda::GlavnoePokazat|Komanda::OknoNovoe{..})){hibernate.invalidate(brauzery);}
-                if let Sobytie::Komanda(command)=&sobytie{let safe=!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,brauzery,safe)?;}
+                if let Sobytie::Komanda(command)=&sobytie{let safe=!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,k,brauzery,safe)?;}
                 let safe=!*browser_locked&&!*closing&&extras.is_empty();
                 if hibernate.event(&sobytie,k,s,brauzery,safe){continue;}
                 // Normal address/loading/UI updates are not committed after freeze.
