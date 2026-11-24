@@ -268,3 +268,31 @@ jobs:
            if count>20000:raise SystemExit("member_bound")
            if m.name.removeprefix("./").startswith("usr/bin/") or m.name.endswith(("/libcef.so","/icudtl.dat","/components.json")):matches.append({"name":m.name,"mode":oct(m.mode),"bytes":m.size,"file":m.isfile(),"link":m.issym()})
           import json; print(json.dumps({"diagnostic_only":True,"acceptance_passed":False,"members":count,"selected":matches}))'
+      - name: Reproduce Linux extraction with exact stage diagnostics
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends rpm2cpio cpio
+          debs=(.dev-check/layout-package/*.deb .dev-check/layout-package/deb/*.deb)
+          rpms=(.dev-check/layout-package/*.rpm .dev-check/layout-package/rpm/*.rpm)
+          printf 'package_counts deb=%s rpm=%s\n' "${#debs[@]}" "${#rpms[@]}"
+          test "${#debs[@]}" -eq 1
+          test "${#rpms[@]}" -eq 1
+          echo stage_deb_extract
+          dpkg-deb -x "${debs[0]}" .dev-check/layout-deb
+          echo stage_rpm_extract
+          mkdir -p .dev-check/layout-rpm
+          set +e
+          rpm2cpio "${rpms[0]}" | (cd .dev-check/layout-rpm && cpio -id --quiet --no-absolute-filenames --no-preserve-owner)
+          statuses=("${PIPESTATUS[@]}")
+          set -e
+          printf 'rpm_pipe_codes %s %s\n' "${statuses[0]}" "${statuses[1]}"
+          test "${statuses[0]}" -eq 0
+          test "${statuses[1]}" -eq 0
+          echo stage_executable
+          stat -c '%a %s %n' .dev-check/layout-deb/usr/bin/nexusbro
+          test -x .dev-check/layout-deb/usr/bin/nexusbro
+          echo stage_libcef
+          stat -c '%a %s %n' .dev-check/layout-deb/usr/lib/NexusBro/libcef.so
+          test -s .dev-check/layout-deb/usr/lib/NexusBro/libcef.so
