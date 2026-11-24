@@ -155,6 +155,8 @@ fn command(
         "1",
         "--fragment-retries",
         "0",
+        "--extractor-retries",
+        "1",
     ])
     .arg("--")
     .arg(video.watch_url());
@@ -241,6 +243,16 @@ pub struct FailureFingerprint {
     pub extractor: bool,
     pub error_prefix: bool,
     pub warning_prefix: bool,
+    pub errno: Option<u32>,
+    pub win_error: Option<u32>,
+    pub file_missing: bool,
+    pub permission_denied: bool,
+    pub invalid_argument: bool,
+    pub home_unavailable: bool,
+    pub connection_reset: bool,
+    pub connection_closed: bool,
+    pub timeout: bool,
+    pub dns: bool,
 }
 #[derive(Debug)]
 pub struct ExtractFailure {
@@ -328,7 +340,56 @@ fn fingerprint(stderr: &[u8], exit_code: Option<i32>) -> FailureFingerprint {
         ]),
         error_prefix: has(b"error:"),
         warning_prefix: has(b"warning:"),
+        errno: diagnostic_number(stderr, b"[errno "),
+        win_error: diagnostic_number(stderr, b"[winerror "),
+        file_missing: any(&[
+            b"no such file or directory",
+            b"cannot find the file",
+            b"cannot find the path",
+            b"file not found",
+        ]),
+        permission_denied: any(&[b"permission denied", b"access is denied"]),
+        invalid_argument: has(b"invalid argument"),
+        home_unavailable: any(&[
+            b"home directory",
+            b"userprofile",
+            b"cannot expand",
+            b"could not determine home",
+            b"cache directory",
+        ]),
+        connection_reset: has(b"connection reset"),
+        connection_closed: any(&[
+            b"connection closed",
+            b"remote end closed",
+            b"unexpected eof",
+        ]),
+        timeout: any(&[b"timed out", b"timeout"]),
+        dns: any(&[
+            b"name resolution",
+            b"getaddrinfo failed",
+            b"nodename nor servname",
+        ]),
     }
+}
+// Return only a bounded OS error number, never neighboring path/message bytes.
+fn diagnostic_number(bytes: &[u8], prefix: &[u8]) -> Option<u32> {
+    for (index, part) in bytes.windows(prefix.len()).enumerate() {
+        if !part.eq_ignore_ascii_case(prefix) {
+            continue;
+        }
+        let rest = &bytes[index + prefix.len()..];
+        let digits = rest.iter().take_while(|b| b.is_ascii_digit()).count();
+        if digits == 0 || digits > 5 || rest.get(digits) != Some(&b']') {
+            continue;
+        }
+        let value = rest[..digits]
+            .iter()
+            .fold(0u32, |n, b| n * 10 + u32::from(*b - b'0'));
+        if value <= 65535 {
+            return Some(value);
+        }
+    }
+    None
 }
 /// Diagnostic hint only: remote text is not trusted authority, never returned.
 /// Whole bounded stderr is available so a pipe-read boundary cannot hide a
@@ -730,6 +791,33 @@ mod tests {
             assert!(diagnostic.error_prefix);
             assert!(!serialized.contains("SECRET"));
             assert!(!serialized.contains("private.invalid"));
+        }
+    }
+}
+
+#[cfg(test)]
+mod os_diagnostic_tests {
+    use super::*;
+    #[test]
+    fn preserves_only_bounded_numbers_not_neighboring_private_paths() {
+        assert_eq!(
+            diagnostic_number(
+                b"ERROR: [Errno 2] No such file: '/private/SECRET'",
+                b"[errno "
+            ),
+            Some(2)
+        );
+        assert_eq!(
+            diagnostic_number(b"[WinError 10054] private", b"[winerror "),
+            Some(10054)
+        );
+        for bad in [
+            b"[Errno 99999999]".as_slice(),
+            b"[Errno ]",
+            b"[Errno 2SECRET]",
+            b"[Errno -1]",
+        ] {
+            assert_eq!(diagnostic_number(bad, b"[errno "), None);
         }
     }
 }

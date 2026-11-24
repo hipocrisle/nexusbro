@@ -178,12 +178,14 @@ def safe_summary(raw):
         result['reason']=value['reason'] if isinstance(value['reason'],str) and value['reason'] in reasons else 'unclassified_native_reason'
     if 'diagnostic' in value:
         diagnostic=value['diagnostic']
-        flags={'usage','http_400','http_403','http_404','http_429','http_5xx','tls','network','runtime','solver','format_unavailable','ffmpeg_missing','extractor','error_prefix','warning_prefix'}
-        require(isinstance(diagnostic,dict) and set(diagnostic)==flags|{'exit_code','stderr_bytes'},'probe_summary_shape')
+        flags={'usage','http_400','http_403','http_404','http_429','http_5xx','tls','network','runtime','solver','format_unavailable','ffmpeg_missing','extractor','error_prefix','warning_prefix','file_missing','permission_denied','invalid_argument','home_unavailable','connection_reset','connection_closed','timeout','dns'}
+        require(isinstance(diagnostic,dict) and set(diagnostic)==flags|{'exit_code','stderr_bytes','errno','win_error'},'probe_summary_shape')
         require(all(type(diagnostic[k]) is bool for k in flags),'probe_summary_shape')
         require(type(diagnostic['stderr_bytes']) is int and 0<=diagnostic['stderr_bytes']<=65536,'probe_summary_counter')
         require(diagnostic['exit_code'] is None or (type(diagnostic['exit_code']) is int and -(1<<31)<=diagnostic['exit_code']<(1<<31)),'probe_summary_counter')
-        result['diagnostic']={k:diagnostic[k] for k in sorted(flags|{'exit_code','stderr_bytes'})}
+        for field in ('errno','win_error'):
+            require(diagnostic[field] is None or (type(diagnostic[field]) is int and 0<=diagnostic[field]<=65535),'probe_summary_counter')
+        result['diagnostic']={k:diagnostic[k] for k in sorted(flags|{'exit_code','stderr_bytes','errno','win_error'})}
     for key in ('formats','vp9','opus','rejected_formats'):
         if key in value:
             require(type(value[key]) is int and 0<=value[key]<=256,'probe_summary_counter')
