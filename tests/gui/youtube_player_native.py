@@ -678,7 +678,9 @@ def privacy_canary(client,device,fixture,lane,identifier,report):
     time.sleep(1)
     with fixture.lock:
         require(fixture.direct==0,'Media bypassed actual selected route')
-        require(any(row['lane']==lane and row.get('privacy_marked') for row in fixture.receipts),
+        media=[row for row in fixture.receipts if row['lane']==lane]
+        require(media and all(row.get('privacy_marked') is True for row in media)
+                and {row['track'] for row in media}=={'video','audio'},
                 'Native media privacy sentinel was not requested')
     return {'name':'cacheable-body-control-'+lane,'actual_routed_response':True,'native_loaded':True,'actual_os_paint':True,
             'media_sentinel_requested':True,'marker_in_control_url':False,'direct_connections':0}
