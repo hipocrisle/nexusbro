@@ -10,6 +10,7 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 
 pub(crate) enum Sobytie {
     Sluzhebnoe(serde_json::Value),
+    YoutubeReady(crate::youtube_light_jobs::Ready),
     PoiskVybratPervoe(u64,u64,String,bool),
     DownloadNachata(u64,String),
     DevtoolsGotovy(u64),
@@ -147,6 +148,7 @@ wrap_life_span_handler! {
         fn on_before_close(&self, browser: Option<&mut Browser>) {
             if let Some(browser)=browser{
                 let identity=browser.identifier();
+                crate::youtube_light_jobs::cancel(identity);
                 crate::cef_youtube::documents().revoke(identity);
                 self.bootstrap.close(identity);
                 SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&identity);});
@@ -658,6 +660,7 @@ fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser
     memory_blocked_scoped(id,automatic,s,browsers,pending_tools,force_private,false)
 }
 fn memory_blocked_scoped(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser>,pending_tools:&HashMap<u64,std::time::Instant>,force_private:bool,allow_selected:bool)->Option<&'static str>{
+    if crate::youtube_light_jobs::any_active(){return Some("Подготовка видео ещё выполняется");}
     let Some(tab)=s.vkladki.iter().find(|v|v.id==id)else{return Some("Вкладка уже закрыта");};
     let Some(browser)=browsers.get(&id)else{return Some("Вкладка уже выгружена");};
     if allow_selected&&browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).as_deref()!=Some(tab.adres.as_str()){return Some("Адрес документа ещё не подтверждён");}
@@ -771,6 +774,7 @@ impl Rabota {
         self.label.is_empty()&&self.extras.is_empty()&&!self.force_private&&!self.browser_locked&&!self.closing
         &&self.route_attempts.is_empty()&&self.sleep_requests.is_empty()&&self.pending_downloads.is_empty()&&self.devtools.is_empty()&&self.devtools_pending.is_empty()&&self.perevody.is_empty()&&self.data_requests.is_empty()&&self.deferred_actions.is_empty()
         &&self.s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
+        &&!crate::youtube_light_jobs::any_active()
         &&self.brauzery.keys().all(|id|memory_blocked_scoped(*id,true,&self.s,&self.brauzery,&self.devtools_pending,self.force_private,true).is_none())
     }
     fn hibernate_shag(&mut self)->anyhow::Result<()>{
@@ -969,8 +973,8 @@ impl Rabota {
             if hibernate.active(){
                 if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&sobytie{if *generation>=*browser_lock_generation{*browser_locked=*locked;*browser_lock_generation=*generation;}else{continue;}}
                 if matches!(&sobytie,Sobytie::Komanda(Komanda::GlavnoePokazat|Komanda::OknoNovoe{..})){hibernate.invalidate(brauzery);}
-                if let Sobytie::Komanda(command)=&sobytie{let safe=!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,k,brauzery,safe)?;}
-                let safe=!*browser_locked&&!*closing&&extras.is_empty();
+                if let Sobytie::Komanda(command)=&sobytie{let safe=!crate::youtube_light_jobs::any_active()&&!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,k,brauzery,safe)?;}
+                let safe=!crate::youtube_light_jobs::any_active()&&!*browser_locked&&!*closing&&extras.is_empty();
                 if hibernate.event(&sobytie,k,s,brauzery,safe){continue;}
                 // Normal address/loading/UI updates are not committed after freeze.
                 continue;
@@ -984,7 +988,7 @@ impl Rabota {
             // No input or navigation reaches a WebContents after close was
             // committed. Selecting it records intent; the replacement waits.
             let target=match &sobytie {
-                Sobytie::Komanda(Komanda::Vybrat{id}|Komanda::Pereyti{id,..}|Komanda::Obnovit{id}|Komanda::ObnovitBezKesha{id}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Instrumenty{id}|Komanda::Issledovat{id,..}|Komanda::Nayti{id,..}|Komanda::Perevesti{id}|Komanda::PasswordForm{id,..})=>Some(*id),
+                Sobytie::Komanda(Komanda::Vybrat{id}|Komanda::Pereyti{id,..}|Komanda::Obnovit{id}|Komanda::ObnovitBezKesha{id}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Instrumenty{id}|Komanda::Issledovat{id,..}|Komanda::Nayti{id,..}|Komanda::Perevesti{id}|Komanda::PasswordForm{id,..}|Komanda::YoutubeLight{id})=>Some(*id),
                 _=>None,
             };
             if let Some(id)=target {
@@ -1045,6 +1049,46 @@ impl Rabota {
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
+                Sobytie::Komanda(Komanda::YoutubeLight{id})=>{
+                    let result=(||->Result<(),&'static str>{
+                        let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("Вкладка занята")?;
+                        let browser=brauzery.get(&id).ok_or("Сначала откройте вкладку")?;
+                        let url=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).ok_or("Документ недоступен")?;
+                        if url!=tab.adres{return Err("Дождитесь завершения перехода");}
+                        let video=crate::youtube_light::VideoId::from_url(&url).map_err(|_|"Нужна ссылка на одно видео YouTube")?;
+                        let descriptor=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate()).ok_or("Путь вкладки недоступен")?;
+                        if k.routes.borrow().key_for_browser(browser.identifier()).as_deref()!=Some(descriptor.key.as_str()){return Err("Путь вкладки изменился");}
+                        let directory=std::env::args().find_map(|a|a.strip_prefix("--nb-youtube-components=").map(std::path::PathBuf::from)).ok_or("Компоненты YouTube недоступны")?;
+                        let sender=tx.clone();
+                        crate::youtube_light_jobs::spawn(browser.identifier(),url,tab.route_generation,
+                            move||crate::youtube_light_components::load(&directory),video,descriptor,
+                            move|ready|sender.send(Sobytie::YoutubeReady(ready)).is_ok())?;
+                        Ok(())
+                    })();
+                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":result.is_ok(),"error":result.err()})));
+                    continue;
+                }
+                Sobytie::YoutubeReady(ready)=>{
+                    let target=s.vkladki.iter().find(|v|v.route_generation==ready.route_generation&&!v.route_pending
+                        &&brauzery.get(&v.id).is_some_and(|b|b.identifier()==ready.browser));
+                    let current=crate::youtube_light_jobs::is_current(ready.browser,ready.operation);
+                    if !current {if let Some(tab)=target {
+                        let unknown=crate::youtube_light_jobs::status(ready.browser).is_some_and(|s|s.cleanup_unknown);
+                        let error=if unknown{"Завершение помощника не подтверждено. Подготовка остановлена; закройте супервкладку."}else{"Подготовка видео отменена"};
+                        let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":tab.id,"start":false,"error":error})));
+                    }}
+                    if let Some(tab)=target.filter(|_|current&&!*browser_locked&&!*closing){
+                        if let Some(browser)=brauzery.get(&tab.id){
+                            let actual=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
+                            if crate::youtube_light::VideoId::from_url(&actual).ok().map(|v|v.watch_url()).as_deref()==Some(ready.source_url.as_str()){
+                                let result=ready.result.as_ref().map_err(|e|*e).and_then(|data|crate::cef_youtube::open_webm(browser,ready.operation,data));
+                                let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":tab.id,"start":false,"error":result.err()})));
+                            }
+                        }
+                    }
+                    crate::youtube_light_jobs::finish(ready.browser,ready.operation);
+                    continue;
+                }
                 Sobytie::Komanda(Komanda::HibernatePrepare{request})=>{
                     // Fixed diagnostic vocabulary only; never forward native
                     // messages, addresses or document-provided error strings.
@@ -1069,7 +1113,7 @@ impl Rabota {
                         let frame=crate::super_hibernation_protocol::Frame::Refused{token,reason:reason.into()};
                         println!("NB-HIBERNATE {}",serde_json::to_string(&frame)?);std::io::stdout().flush()?;continue;
                     }
-                    let safe=label.is_empty()&&extras.is_empty()&&!*force_private&&!*browser_locked&&!*closing
+                    let safe=!crate::youtube_light_jobs::any_active()&&label.is_empty()&&extras.is_empty()&&!*force_private&&!*browser_locked&&!*closing
                         &&route_attempts.is_empty()&&sleep_requests.is_empty()&&pending_downloads.is_empty()&&devtools.is_empty()&&devtools_pending.is_empty()&&perevody.is_empty()&&data_requests.is_empty()&&deferred_actions.is_empty()
                         &&s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
                         &&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());

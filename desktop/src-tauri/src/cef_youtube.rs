@@ -241,6 +241,7 @@ pub fn open_webm(
 }
 
 pub fn on_navigation(browser: i32, target: &str) {
+    crate::youtube_light_jobs::cancel(browser);
     let Ok(mut grants) = documents().0.lock() else {
         return;
     };
@@ -272,6 +273,7 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
     }
 }
 pub fn stop(browser: &Browser) {
+    crate::youtube_light_jobs::cancel(browser.identifier());
     let active = documents()
         .0
         .lock()

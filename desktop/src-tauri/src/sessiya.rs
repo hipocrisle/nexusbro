@@ -57,6 +57,8 @@ pub enum Komanda {
     OknoKomanda { label:String, komanda:Box<Komanda> },
     OknoZakryt { label:String },
     ObnovitInterfeys,
+    #[serde(rename="youtube_light")]
+    YoutubeLight { id:u64 },
     HibernatePrepare { request:crate::super_hibernation_protocol::Prepare },
     HibernateCommit { token:crate::super_hibernation_protocol::Token },
     HibernateAbort { token:crate::super_hibernation_protocol::Token },

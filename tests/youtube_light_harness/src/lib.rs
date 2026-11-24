@@ -48,3 +48,6 @@ mod transport_tests {
             .unwrap();
     }
 }
+
+#[path = "../../../desktop/src-tauri/src/youtube_light_jobs.rs"]
+pub mod youtube_light_jobs;

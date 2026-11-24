@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      youtube_probe_only:
+        description: Verify real anonymous packaged YouTube extraction without publication
+        type: boolean
+        default: false
       linux_build_only:
         description: Build and verify Linux only while debugging native integration (no release)
         type: boolean
@@ -79,6 +83,9 @@ on:
         default: false
 
 jobs:
+  youtube-components-probe:
+    if: inputs.youtube_probe_only
+    uses: ./.github/workflows/youtube-probe.yml
   process-ownership:
     if: >-
       !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build &&

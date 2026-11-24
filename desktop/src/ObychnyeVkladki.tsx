@@ -32,6 +32,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [suggestionIndex,setSuggestionIndex]=useState(-1);
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
+  const [youtubeBusy,setYoutubeBusy]=useState(false);
   const [networkFailure,setNetworkFailure]=useState<{owner:string;tabId:number;generation:number;code:number}|null>(null);
   useEffect(()=>{setNetworkFailure(null);},[id]);
   const [routeDialog,setRouteDialog]=useState<{owner:string;tabId:number}|null>(null);
@@ -181,6 +182,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     });
     return () => { zhiv = false; };
   }, [id, aktivnaya?.id]);
+  function youtubeCandidate(v:Vkladka|undefined){if(!v||v.otlozhena||v.memory_pending||v.route_pending)return false;try{const u=new URL(v.adres);return u.protocol==='https:'&&['youtube.com','www.youtube.com','m.youtube.com','music.youtube.com','youtu.be'].includes(u.hostname);}catch{return false;}}
   function tabMenu(v:Vkladka,x:number,y:number){
     const action=(komanda:Komanda)=>()=>poslat(komanda);
     void popupMenu([
@@ -189,6 +191,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {text:"Вернуть закрытую вкладку",enabled:!!sessiya?.zakrytye?.length,action:action({deystvie:"vosstanovit_zakrytuyu"})},
       {text:"Обновить",action:action({deystvie:"obnovit",id:v.id})},
       {text:"Дублировать",action:action({deystvie:"novaya",adres:v.adres})},
+      ...(youtubeCandidate(v)?[{text:"Открыть в лёгком режиме YouTube",enabled:!youtubeBusy,action:action({deystvie:"youtube_light",id:v.id})}]:[]),
       {text:"Путь вкладки…",enabled:routeStateKnown(v)&&!v.memory_pending&&!v.route_pending,action:()=>openTabRoute(v)},
       {text:v.zakreplena?"Открепить":"Закрепить",action:action({deystvie:"zakrepit",id:v.id,zakreplena:!v.zakreplena})},
       {text:"Исходный код страницы",action:action({deystvie:"iskhodnik",id:v.id})},
@@ -251,11 +254,12 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     if (aktivnaya) void poslat({deystvie:"poisk_zakryt",id:aktivnaya.id});
   }
   useEffect(() => {
-    setTranslation(null);setToolsOpen(false);setFindOpen(false);setFindText("");setMatches({count:0,active:0});
+    setYoutubeBusy(false);setTranslation(null);setToolsOpen(false);setFindOpen(false);setFindText("");setMatches({count:0,active:0});
   }, [id,aktivnaya?.id,aktivnaya?.adres]);
   useEffect(() => {
     const off=listen<{super_id:string;data:{tip:string;id:number;open?:boolean;auto?:boolean;count?:number;active?:number;procent?:number;code?:number;route_generation?:number;start?:boolean;original?:boolean;done?:number;total?:number;error?:string|null}}>("stranica-ui",e=>{
       if(e.payload.super_id!==id||e.payload.data.id!==aktivnaya?.id)return;
+      if(e.payload.data.tip==="youtube-result"){setYoutubeBusy(!!e.payload.data.start);if(e.payload.data.error)setOshibka(e.payload.data.error);return;}
       if(e.payload.data.tip==="navigation-error"){const d=e.payload.data;setNetworkFailure({owner:id!,tabId:d.id,generation:d.route_generation??-1,code:d.code??-2});return;}
       if(e.payload.data.tip==="browser-tasks"){window.dispatchEvent(new Event("nexusbro-tasks"));return;}
       if(e.payload.data.tip==="tab-search"){window.dispatchEvent(new Event("nexusbro-tab-search"));return;}
@@ -353,6 +357,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
 
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
       <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/><SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
+       ...(youtubeCandidate(aktivnaya)?[{label:"Открыть в лёгком режиме YouTube",disabled:youtubeBusy,action:()=>poslat({deystvie:"youtube_light",id:aktivnaya!.id})},null]:[]),
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
        {label:"Резервные копии",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-backup"))},
        {label:"Диспетчер задач",shortcut:"Shift+Esc",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-tasks"))},
@@ -364,6 +369,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
        {label:"Пароли, аккаунт и синхронизация",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-security"))},
        {label:"Настройки NexusBro",keepsHidden:true,action:()=>{window.dispatchEvent(new Event('nexusbro-settings'));}}
       ]}><Icon name="menu" size={18}/></BrowserMenu>
+      {youtubeBusy&&<span role="status" className="youtube-preparing">Подготовка видео…</span>}
       {bookmarkMessage&&<span className="sr-only" role="status">{bookmarkMessage}</span>}
 
       {oshibka && <span className="oshibka-navigacii" role="alert" title={oshibka}>{oshibka}</span>}
