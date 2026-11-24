@@ -97,6 +97,25 @@ def run(args, env, timeout=30):
     return result.stdout + result.stderr
 
 
+def verify_license(data):
+    # FFmpeg wraps its fixed LGPL prose after "Public"; whitespace is layout,
+    # but the actual license family AND version must both remain explicit.
+    text = b' '.join(data.split())
+    if (b'GNU Lesser General Public License' not in text
+            or b'version 2.1 of the License' not in text):
+        raise ValueError('missing_lgpl_license')
+
+
+def self_test():
+    verify_license(b'GNU Lesser General Public\nLicense either\nversion 2.1 of the License')
+    for refused in (b'GNU General Public License version 2.1 of the License',
+                    b'GNU Lesser General Public License version 3 of the License', b''):
+        try: verify_license(refused)
+        except ValueError: pass
+        else: raise AssertionError('wrong_license_accepted')
+    assert '--enable-protocol=file,pipe' in shlex.split("--enable-protocol='file,pipe'")
+
+
 def package(platform, media):
     install = (ROOT / 'install').resolve()
     bundle = ROOT / 'package' / 'ffmpeg'
@@ -143,8 +162,8 @@ def package(platform, media):
             options = shlex.split(text)
             for required in CONFIGURE:
                 if required not in options: raise ValueError('missing_build_configuration')
-        if option == '-L' and b'GNU Lesser General Public License' not in data:
-            raise ValueError('missing_lgpl_license')
+        if option == '-L':
+            verify_license(data)
     # Same-run controlled media hashes, never user/YouTube media.
     hashes = {}
     for line in (media / 'SHA256SUMS').read_text().splitlines():
@@ -195,11 +214,12 @@ def package(platform, media):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('phase', choices=('fetch', 'package', 'print-configure'))
+    parser.add_argument('phase', choices=('fetch', 'package', 'print-configure', 'self-test'))
     parser.add_argument('--source-sha256', default='')
     parser.add_argument('--platform', choices=('windows-x64', 'linux-x64'))
     parser.add_argument('--media', type=Path, default=Path('.dev-check/youtube-media-fixture'))
     args = parser.parse_args()
+    if args.phase == 'self-test': self_test(); return
     if os.environ.get('GITHUB_ACTIONS') != 'true': raise SystemExit('ci_only')
     if args.source_sha256 and not re.fullmatch('[0-9a-f]{64}', args.source_sha256): raise SystemExit('invalid_source_sha256')
     if args.phase == 'fetch': fetch(args.source_sha256)
