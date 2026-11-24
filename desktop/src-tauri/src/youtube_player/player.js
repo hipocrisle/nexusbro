@@ -43,6 +43,13 @@
   let segments = [];
   let configured = false, disposed = false, intended = false, separate = false;
   let epoch = 0, syncing = false, duration = 0, timer = null;
+  // A real primary pointer gesture requests keyboard ownership only. Native
+  // admission rechecks the exact nonce-bearing document and selected browser.
+  document.addEventListener('pointerdown', event => {
+    if (event.isTrusted && event.isPrimary && event.button === 0 && configured && !disposed) {
+      console.debug('__NEXUSBRO_LIGHT_FOCUS__');
+    }
+  }, true);
   const setStatus = text => { status.textContent = text; };
   const tick = ready => console.debug(ready ? '__NEXUSBRO_LIGHT_READY__' : '__NEXUSBRO_LIGHT_TICK__');
   const media = () => separate ? [video, audio] : [video];
