@@ -28,6 +28,7 @@ import zipfile
 MAX_ASSET = 256 * 1024 * 1024
 MAX_EXE = 256 * 1024 * 1024
 MAX_LICENSE = 2 * 1024 * 1024
+MAX_FFMPEG_EXPANDED = 512 * 1024 * 1024
 HOSTS = {'github.com', 'raw.githubusercontent.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com'}
 
 
@@ -182,10 +183,12 @@ def replace_directory(staged, output):
         shutil.rmtree(backup)
 
 
-def extract_ffmpeg(archive, pin, output, native_platform):
+def extract_ffmpeg(archive, pin, output, native_platform, expanded_limit=MAX_FFMPEG_EXPANDED):
     """Verify the whole archive before parsing; materialize a closed file graph."""
     if sha256(archive) != pin['sha256']:
         raise Blocked('ffmpeg_sha256')
+    if not 0 < expanded_limit <= MAX_FFMPEG_EXPANDED:
+        raise Blocked('ffmpeg_expanded_size')
     expected_root = pin['root']
     source = zipfile.ZipFile(archive) if pin['format'] == 'zip' else tarfile.open(archive, mode='r:xz')
     try:
@@ -216,7 +219,7 @@ def extract_ffmpeg(archive, pin, output, native_platform):
                 continue
             size = info.file_size if pin['format'] == 'zip' else info.size
             expanded += size
-            if size < 0 or size > MAX_EXE or expanded > 512 * 1024 * 1024:
+            if size < 0 or size > MAX_EXE or expanded > expanded_limit:
                 raise Blocked('ffmpeg_expanded_size')
             if pin['format'] == 'zip':
                 mode = info.external_attr >> 16
@@ -235,14 +238,54 @@ def extract_ffmpeg(archive, pin, output, native_platform):
                 files[relative] = info
             else:
                 raise Blocked('ffmpeg_special_entry')
-        def selected(name):
+        def source_allowed(name):
             path = pathlib.PurePosixPath(name)
             if name == 'LICENSE.txt':
                 return True
             if native_platform == 'windows-x64':
                 return len(path.parts) == 2 and path.parts[0] == 'bin' and (path.name.lower() in ('ffmpeg.exe', 'ffprobe.exe') or path.suffix.lower() == '.dll')
             return name in ('bin/ffmpeg', 'bin/ffprobe') or (len(path.parts) == 2 and path.parts[0] == 'lib' and re.fullmatch(r'[A-Za-z0-9_+.-]+\.so(?:\.[0-9]+)*', path.name))
-        targets = [name for name in [*files, *links] if selected(name)]
+        def resolve(name):
+            origin, visited = name, set()
+            while origin in links:
+                if origin in visited or len(visited) >= 16:
+                    raise Blocked('ffmpeg_link_cycle')
+                visited.add(origin)
+                origin = links[origin]
+            if origin not in files or not source_allowed(origin):
+                raise Blocked('ffmpeg_link_target')
+            return origin
+        candidates = [name for name in [*files, *links] if source_allowed(name)]
+        # Validate aliases even when they will not be installed. Source nodes
+        # and runtime output names are deliberately different sets.
+        for name in links:
+            if not source_allowed(name):
+                raise Blocked('ffmpeg_link_target')
+            resolve(name)
+        targets = candidates
+        if native_platform == 'linux-x64':
+            families = {}
+            for name in candidates:
+                if not name.startswith('lib/'):
+                    continue
+                match = re.fullmatch(r'(lib/[A-Za-z0-9_+.-]+\.so)(?:\.([0-9]+)(?:\.[0-9]+)*)?', name)
+                if not match:
+                    raise Blocked('ffmpeg_library_name')
+                families.setdefault(match[1], []).append((name, match[2]))
+            selected_libraries = []
+            for family, members in families.items():
+                majors = {major for _, major in members if major is not None}
+                if len(majors) != 1:
+                    raise Blocked('ffmpeg_ambiguous_or_missing_soname')
+                major = next(iter(majors))
+                soname = family + '.' + major
+                if soname not in candidates:
+                    raise Blocked('ffmpeg_missing_soname_alias')
+                origin = resolve(soname)
+                if not re.fullmatch(re.escape(family) + r'\.' + re.escape(major) + r'(?:\.[0-9]+)*', origin):
+                    raise Blocked('ffmpeg_soname_target_family')
+                selected_libraries.append(soname)
+            targets = [name for name in candidates if not name.startswith('lib/')] + selected_libraries
         expected = {'LICENSE.txt', 'bin/ffmpeg.exe', 'bin/ffprobe.exe'} if native_platform == 'windows-x64' else {'LICENSE.txt', 'bin/ffmpeg', 'bin/ffprobe'}
         if not expected.issubset(targets) or len(targets) > 256:
             raise Blocked('ffmpeg_required_files')
@@ -253,14 +296,7 @@ def extract_ffmpeg(archive, pin, output, native_platform):
         output.mkdir()
         records, written = [], 0
         for name in sorted(targets):
-            origin, visited = name, set()
-            while origin in links:
-                if origin in visited or len(visited) >= 16:
-                    raise Blocked('ffmpeg_link_cycle')
-                visited.add(origin)
-                origin = links[origin]
-            if origin not in files or not selected(origin):
-                raise Blocked('ffmpeg_link_target')
+            origin = resolve(name)
             destination = output / pathlib.PurePosixPath(name)
             destination.parent.mkdir(parents=True, exist_ok=True)
             info = files[origin]
@@ -272,7 +308,7 @@ def extract_ffmpeg(archive, pin, output, native_platform):
                 for block in iter(lambda: stream.read(1024 * 1024), b''):
                     count += len(block)
                     written += len(block)
-                    if count > MAX_EXE or written > 512 * 1024 * 1024:
+                    if count > MAX_EXE or written > expanded_limit:
                         raise Blocked('ffmpeg_materialized_size')
                     target.write(block)
                 target.flush()
@@ -418,17 +454,36 @@ def ffmpeg_self_tests(root):
     assert len(records) == 4 and (output / 'bin/avcodec.dll').read_bytes() == b'dll'
     archive = root / 'ffmpeg.tar.xz'
     with tarfile.open(archive, 'w:xz') as source:
-        for name, data in [('bin/ffmpeg', b'ffmpeg'), ('bin/ffprobe', b'ffprobe'), ('lib/libavcodec.so.1', b'library'), ('LICENSE.txt', b'license')]:
+        for name, data in [('bin/ffmpeg', b'ffmpeg'), ('bin/ffprobe', b'ffprobe'), ('lib/libavcodec.so.1.2.3', b'x' * 20000), ('LICENSE.txt', b'license')]:
             info = tarfile.TarInfo('fixture/' + name); info.size = len(data)
             source.addfile(info, io.BytesIO(data))
+        info = tarfile.TarInfo('fixture/lib/libavcodec.so.1'); info.type = tarfile.SYMTYPE; info.linkname = 'libavcodec.so.1.2.3'
+        source.addfile(info)
         info = tarfile.TarInfo('fixture/lib/libavcodec.so'); info.type = tarfile.SYMTYPE; info.linkname = 'libavcodec.so.1'
         source.addfile(info)
     pin = dict(root='fixture', format='tar.xz', sha256=sha256(archive))
     output = root / 'ffmpeg-linux'
-    records = extract_ffmpeg(archive, pin, output, 'linux-x64')
-    assert len(records) == 5 and not (output / 'lib/libavcodec.so').is_symlink()
-    assert (output / 'lib/libavcodec.so').read_bytes() == (output / 'lib/libavcodec.so.1').read_bytes()
-    assert any(r['materialized_from'] == 'lib/libavcodec.so.1' for r in records)
+    # Source bytes fit 30KiB, but three physical alias copies would exceed it.
+    records = extract_ffmpeg(archive, pin, output, 'linux-x64', expanded_limit=30000)
+    assert len(records) == 4 and not (output / 'lib/libavcodec.so.1').is_symlink()
+    assert (output / 'lib/libavcodec.so.1').read_bytes() == b'x' * 20000
+    assert not (output / 'lib/libavcodec.so').exists()
+    assert not (output / 'lib/libavcodec.so.1.2.3').exists()
+    assert any(r['materialized_from'] == 'lib/libavcodec.so.1.2.3' for r in records)
+    assert sum(r['bytes'] for r in records) < 30000
+    for name, members in [('missing-major', ['lib/sample.so.1.2']),
+                          ('unversioned-only', ['lib/sample.so']),
+                          ('ambiguous', ['lib/sample.so.1', 'lib/sample.so.2'])]:
+        bad = root / ('ffmpeg-' + name + '.tar.xz')
+        with tarfile.open(bad, 'w:xz') as source:
+            for member in ['bin/ffmpeg', 'bin/ffprobe', 'LICENSE.txt', *members]:
+                info = tarfile.TarInfo('fixture/' + member); info.size = 1
+                source.addfile(info, io.BytesIO(b'x'))
+        try:
+            extract_ffmpeg(bad, dict(root='fixture', format='tar.xz', sha256=sha256(bad)), root / name, 'linux-x64')
+            raise AssertionError('missing/ambiguous ABI alias accepted')
+        except Blocked:
+            pass
     for case in ('traversal', 'escape', 'cycle', 'hardlink'):
         bad = root / ('ffmpeg-' + case + '.tar.xz')
         with tarfile.open(bad, 'w:xz') as source:
