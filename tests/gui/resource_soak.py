@@ -374,7 +374,21 @@ def run(args):
                     rss += process.memory_info().rss
                 except psutil.NoSuchProcess:
                     pass
-            require(len(processes) <= 128 and rss <= memory_cap, 'Warmup load guard exceeded')
+            report['warmup_load_measurement'] = {'owned_processes': len(processes), 'sum_owned_rss_bytes': rss,
+                'max_owned_rss_bytes': memory_cap, 'system_available_bytes': psutil.virtual_memory().available}
+            if len(processes) > 128 or rss > memory_cap:
+                private_sum = 0; private_complete = True
+                for process in processes:
+                    try:
+                        info = process.memory_info()
+                        value = getattr(info, 'private', None)
+                        private_sum += value if value is not None else process.memory_full_info().uss
+                    except psutil.NoSuchProcess: pass
+                    except psutil.AccessDenied: private_complete = False
+                report['warmup_load_measurement'].update(sum_owned_private_bytes=private_sum,
+                    private_complete=private_complete, process_limit_exceeded=len(processes)>128,
+                    sum_rss_limit_exceeded=rss>memory_cap)
+                require(False, 'Warmup load guard exceeded')
         require(not fixture.hits, 'Cold saved fixtures caused unsolicited navigation')
         if not args.baseline:
             lifecycle(call(client, 'super_lifecycle_snapshot'))
