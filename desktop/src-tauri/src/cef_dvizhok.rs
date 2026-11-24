@@ -108,7 +108,10 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     };
     let profil = znachenie("--user-data-dir=").unwrap_or_else(|| "nb-cefp".into());
     let url = znachenie("--nb-url=");
-    if roditel == 0 {
+    let cookie_probe=std::env::args().any(|a|a=="--nb-cookie-probe")
+        && std::env::var("GITHUB_ACTIONS").as_deref()==Ok("true")
+        && std::env::var_os("NEXUSBRO_TEST_DATA").is_some();
+    if roditel == 0 && !cookie_probe {
         eprintln!("dvizhok: нет --nb-roditel");
         return 1;
     }
@@ -140,6 +143,7 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     {
         nastrojki.external_message_pump = 0;
     }
+    if cookie_probe { nastrojki.external_message_pump=1; }
     nastrojki.log_file = CefString::from(
         std::path::Path::new(&profil)
             .join("cef-engine.log")
@@ -181,6 +185,17 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
         env!("CARGO_PKG_VERSION"),
         cfg!(target_os = "windows")
     );
+    if cookie_probe {
+        let result=crate::cef_hibernation_probe::run(std::path::Path::new(&profil),bootstrap);
+        if result.is_ok(){
+            shutdown();
+            println!("NB-PROBE {\"cef_shutdown_completed\":true}");
+            let _=std::io::stdout().flush();
+            return 0;
+        }
+        eprintln!("Native cookie prerequisite failed");
+        return 2;
+    }
     match crate::cef_vkladki::rabotat(
         roditel,
         crate::okna::Mesto {
