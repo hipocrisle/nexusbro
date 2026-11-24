@@ -35,6 +35,15 @@ pub enum ExtractError {
     TlsFailure,
     ChallengeRequired,
     VideoUnavailable,
+    HttpBadRequest,
+    HttpNotFound,
+    HttpServerError,
+    NetworkFailure,
+    RuntimeFailure,
+    ChallengeSolverUnavailable,
+    FormatUnavailable,
+    FfmpegUnavailable,
+    ExtractionFailure,
     TimedOut,
     ReapFailed,
     EmptyOutput,
@@ -60,6 +69,15 @@ impl fmt::Display for ExtractError {
                 "Для этого видео требуется дополнительная проверка источника"
             }
             Self::VideoUnavailable => "Это видео недоступно для анонимного просмотра",
+            Self::HttpBadRequest => "Источник отклонил параметры запроса",
+            Self::HttpNotFound => "Источник видео не найден",
+            Self::HttpServerError => "Ошибка сервера источника видео",
+            Self::NetworkFailure => "Сетевое соединение извлечения прервано",
+            Self::RuntimeFailure => "Не удалось выполнить JavaScript проверки видео",
+            Self::ChallengeSolverUnavailable => "Компонент проверки JavaScript недоступен",
+            Self::FormatUnavailable => "Запрошенный формат видео недоступен",
+            Self::FfmpegUnavailable => "Для запрошенной операции нужен компонент обработки медиа",
+            Self::ExtractionFailure => "Не удалось разобрать ответ источника видео",
             Self::TimedOut => "Истекло время извлечения",
             Self::ReapFailed => "Завершение процесса извлечения не подтверждено",
             Self::EmptyOutput => "Извлечение не вернуло данные",
@@ -115,7 +133,6 @@ fn command(
         "--no-playlist",
         "--skip-download",
         "--dump-single-json",
-        "--no-warnings",
         "--no-progress",
         "--no-cookies",
         "--no-cookies-from-browser",
@@ -204,6 +221,115 @@ async fn cancelled(cancel: &mut watch::Receiver<bool>) {
         }
     }
 }
+/// Fixed diagnostic vocabulary only. Flags are hints, never route authority.
+#[derive(Clone, Copy, Debug, Default, serde::Serialize)]
+pub struct FailureFingerprint {
+    pub exit_code: Option<i32>,
+    pub stderr_bytes: usize,
+    pub usage: bool,
+    pub http_400: bool,
+    pub http_403: bool,
+    pub http_404: bool,
+    pub http_429: bool,
+    pub http_5xx: bool,
+    pub tls: bool,
+    pub network: bool,
+    pub runtime: bool,
+    pub solver: bool,
+    pub format_unavailable: bool,
+    pub ffmpeg_missing: bool,
+    pub extractor: bool,
+    pub error_prefix: bool,
+    pub warning_prefix: bool,
+}
+#[derive(Debug)]
+pub struct ExtractFailure {
+    pub error: ExtractError,
+    pub diagnostic: FailureFingerprint,
+}
+impl fmt::Display for ExtractFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+impl std::error::Error for ExtractFailure {}
+fn fingerprint(stderr: &[u8], exit_code: Option<i32>) -> FailureFingerprint {
+    let has = |p: &[u8]| stderr.windows(p.len()).any(|w| w.eq_ignore_ascii_case(p));
+    let any = |patterns: &[&[u8]]| patterns.iter().any(|p| has(p));
+    FailureFingerprint {
+        exit_code,
+        stderr_bytes: stderr.len(),
+        usage: any(&[
+            b"usage:",
+            b"no such option:",
+            b"unrecognized arguments:",
+            b"invalid js runtime",
+        ]),
+        http_400: has(b"http error 400"),
+        http_403: has(b"http error 403"),
+        http_404: has(b"http error 404"),
+        http_429: has(b"http error 429"),
+        http_5xx: has(b"http error 5"),
+        tls: any(&[
+            b"certificate",
+            b"sslerror",
+            b"ssl:",
+            b"tls handshake",
+            b"ssl: unexpected_eof",
+            b"sslcertverificationerror",
+        ]),
+        network: any(&[
+            b"connection refused",
+            b"connection reset",
+            b"connection aborted",
+            b"connection closed",
+            b"remote end closed connection",
+            b"unexpected eof",
+            b"timed out",
+            b"timeout",
+            b"proxyerror",
+            b"proxy error",
+            b"tunnel connection failed",
+            b"name resolution",
+            b"getaddrinfo failed",
+            b"nodename nor servname",
+            b"network is unreachable",
+            b"incompleteread",
+        ]),
+        runtime: any(&[
+            b"error running deno process",
+            b"no supported javascript runtime",
+            b"javascript runtime could not",
+            b"javascript runtime was not found",
+            b"failed to get cache directory",
+            b"failed to determine cache directory",
+        ]),
+        solver: any(&[
+            b"ejs script",
+            b"yt-dlp-ejs",
+            b"challenge solver script",
+            b"challenge provider",
+        ]),
+        format_unavailable: any(&[
+            b"requested format is not available",
+            b"no video formats found",
+            b"no downloadable video formats",
+        ]),
+        ffmpeg_missing: any(&[
+            b"ffmpeg is not installed",
+            b"ffmpeg not found",
+            b"ffmpeg is not available",
+        ]),
+        extractor: any(&[
+            b"unable to extract",
+            b"unable to download webpage",
+            b"unable to download api",
+            b"failed to extract",
+        ]),
+        error_prefix: has(b"error:"),
+        warning_prefix: has(b"warning:"),
+    }
+}
 /// Diagnostic hint only: remote text is not trusted authority, never returned.
 /// Whole bounded stderr is available so a pipe-read boundary cannot hide a
 /// phrase. No UTF-8 requirement and no additional lowercase/URL/string copies.
@@ -283,16 +409,51 @@ fn classify_failure(stderr: &[u8]) -> ExtractError {
     {
         return ExtractError::VideoUnavailable;
     }
+    let flags = fingerprint(stderr, None);
+    if flags.usage {
+        return ExtractError::UnsupportedInvocation;
+    }
+    if flags.http_400 {
+        return ExtractError::HttpBadRequest;
+    }
+    if flags.http_404 {
+        return ExtractError::HttpNotFound;
+    }
+    if flags.http_5xx {
+        return ExtractError::HttpServerError;
+    }
+    if flags.runtime {
+        return ExtractError::RuntimeFailure;
+    }
+    if flags.solver {
+        return ExtractError::ChallengeSolverUnavailable;
+    }
+    if flags.tls {
+        return ExtractError::TlsFailure;
+    }
+    if flags.network {
+        return ExtractError::NetworkFailure;
+    }
+    if flags.format_unavailable {
+        return ExtractError::FormatUnavailable;
+    }
+    if flags.ffmpeg_missing {
+        return ExtractError::FfmpegUnavailable;
+    }
+    if flags.extractor {
+        return ExtractError::ExtractionFailure;
+    }
     ExtractError::ProcessFailed
 }
 /// Await to completion and cancel through the watch channel, so direct-child
 /// exit is observed. Dropping this future uses kill_on_drop as a last resort;
 /// the parent process owner still must reap/contain the entire job/tree.
-pub async fn extract(
+async fn extract_impl(
     components: &Components,
     video: &VideoId,
     route: &NativeRoute,
     mut cancel: watch::Receiver<bool>,
+    failure_fingerprint: &mut FailureFingerprint,
 ) -> Result<Zeroizing<Vec<u8>>, ExtractError> {
     if *cancel.borrow() || cancel.has_changed().is_err() {
         return Err(ExtractError::Cancelled);
@@ -320,6 +481,7 @@ pub async fn extract(
             )?;
             let status = child.wait().await.map_err(|_| ExtractError::WaitFailed)?;
             if !status.success() {
+                *failure_fingerprint = fingerprint(&diagnostic, status.code());
                 return Err(classify_failure(&diagnostic));
             }
             if out.is_empty() {
@@ -345,6 +507,28 @@ pub async fn extract(
     result
 }
 
+/// Existing sanitized API; direct callers do not need diagnostic metadata.
+pub async fn extract(
+    components: &Components,
+    video: &VideoId,
+    route: &NativeRoute,
+    cancel: watch::Receiver<bool>,
+) -> Result<Zeroizing<Vec<u8>>, ExtractError> {
+    let mut diagnostic = FailureFingerprint::default();
+    extract_impl(components, video, route, cancel, &mut diagnostic).await
+}
+/// Diagnostic API for controlled native probes. No raw stderr/URLs are exposed.
+pub async fn extract_diagnosed(
+    components: &Components,
+    video: &VideoId,
+    route: &NativeRoute,
+    cancel: watch::Receiver<bool>,
+) -> Result<Zeroizing<Vec<u8>>, ExtractFailure> {
+    let mut diagnostic = FailureFingerprint::default();
+    extract_impl(components, video, route, cancel, &mut diagnostic)
+        .await
+        .map_err(|error| ExtractFailure { error, diagnostic })
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -365,6 +549,15 @@ mod tests {
             ExtractError::TlsFailure,
             ExtractError::ChallengeRequired,
             ExtractError::VideoUnavailable,
+            ExtractError::HttpBadRequest,
+            ExtractError::HttpNotFound,
+            ExtractError::HttpServerError,
+            ExtractError::NetworkFailure,
+            ExtractError::RuntimeFailure,
+            ExtractError::ChallengeSolverUnavailable,
+            ExtractError::FormatUnavailable,
+            ExtractError::FfmpegUnavailable,
+            ExtractError::ExtractionFailure,
             ExtractError::TimedOut,
             ExtractError::ReapFailed,
             ExtractError::EmptyOutput,
@@ -471,6 +664,15 @@ mod tests {
             (
                 "Video unavailable. This video has been removed",
                 ExtractError::VideoUnavailable,
+                ExtractError::HttpBadRequest,
+                ExtractError::HttpNotFound,
+                ExtractError::HttpServerError,
+                ExtractError::NetworkFailure,
+                ExtractError::RuntimeFailure,
+                ExtractError::ChallengeSolverUnavailable,
+                ExtractError::FormatUnavailable,
+                ExtractError::FfmpegUnavailable,
+                ExtractError::ExtractionFailure,
             ),
             ("opaque upstream failure", ExtractError::ProcessFailed),
         ] {
@@ -499,5 +701,44 @@ mod tests {
             ExtractError::ProcessFailed
         );
         assert_eq!(classify_failure(b""), ExtractError::ProcessFailed);
+    }
+    #[test]
+    fn richer_diagnostics_cover_official_errors_without_exporting_payloads() {
+        for (source, expected) in [
+            ("HTTP Error 400: Bad Request", ExtractError::HttpBadRequest),
+            ("HTTP Error 404: Not Found", ExtractError::HttpNotFound),
+            (
+                "HTTP Error 503: Service Unavailable",
+                ExtractError::HttpServerError,
+            ),
+            (
+                "Remote end closed connection without response",
+                ExtractError::NetworkFailure,
+            ),
+            (
+                "Error running deno process (returncode: 1)",
+                ExtractError::RuntimeFailure,
+            ),
+            (
+                "Requested format is not available",
+                ExtractError::FormatUnavailable,
+            ),
+            ("ffmpeg is not installed", ExtractError::FfmpegUnavailable),
+            (
+                "Unable to extract initial player response",
+                ExtractError::ExtractionFailure,
+            ),
+        ] {
+            let bytes = Zeroizing::new(format!(
+                "ERROR: {source} https://private.invalid/path?auth=SECRET"
+            ));
+            assert_eq!(classify_failure(bytes.as_bytes()), expected);
+            let diagnostic = fingerprint(bytes.as_bytes(), Some(3));
+            let serialized = serde_json::to_string(&diagnostic).unwrap();
+            assert_eq!(diagnostic.exit_code, Some(3));
+            assert!(diagnostic.error_prefix);
+            assert!(!serialized.contains("SECRET"));
+            assert!(!serialized.contains("private.invalid"));
+        }
     }
 }
