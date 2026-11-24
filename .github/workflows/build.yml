@@ -157,7 +157,7 @@ jobs:
           python3 tests/memory_safety_browser.py
           python3 tests/memory_bootstrap_browser.py
   build:
-    needs: security
+    needs: [security, process-ownership]
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
@@ -345,6 +345,7 @@ jobs:
           export PATH="$CEF_PATH:$PATH"
           export LD_LIBRARY_PATH="$CEF_PATH:${LD_LIBRARY_PATH:-}"
           cargo test --release --target ${{ matrix.target }} --lib browser_backup::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib super_hibernation_parent::tests -- --test-threads=1
 
       - name: Сохранить сборочный кэш до runtime-проверки
         if: steps.rust_cache.outputs.cache-hit != 'true'
