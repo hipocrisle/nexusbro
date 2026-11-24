@@ -51,7 +51,6 @@ wrap_display_handler! {
             crate::cef_interfeys::ikonka(self.id, self.tx.clone(), browser, icon_urls);
         }
         fn on_title_change(&self, browser: Option<&mut Browser>, title: Option<&CefString>) {
-            if let (Some(browser),Some(frame))=(browser.as_ref(),frame.as_ref()){crate::cef_youtube::on_loaded(browser,frame);}
             if self.bootstrap.waiting_for_target(){return;}
             if let (Some(b),Some(t)) = (browser,title) { let _ = self.tx.send(Sobytie::Zagolovok(self.id, b.identifier(), t.to_string())); }
         }
@@ -74,6 +73,7 @@ wrap_load_handler! {
     struct ZagruzkaStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl LoadHandler {
         fn on_load_end(&self, browser: Option<&mut Browser>, frame: Option<&mut Frame>, _http_status_code: i32) {
+            if let (Some(browser),Some(frame))=(browser.as_ref(),frame.as_ref()){crate::cef_youtube::on_loaded(browser,frame);}
             if (200..600).contains(&_http_status_code)&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::memory_guard::load_succeeded(b.identifier());}}
             if self.bootstrap.waiting_for_target(){return;}
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier(),frame.as_ref().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default()));}}
