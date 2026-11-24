@@ -632,6 +632,23 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     expression='window.__playerStopped.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'
     receipt=wait_for(lambda:client.js(expression),'Native post-lock stop receipt missing',10)
     data=receipt.get('data',{});state=data.get('state')
+    import math
+    stop_codes={'stopped','stop_incomplete','stop_observation_timeout','stop_wrong_thread',
+                'stop_token_expired','stop_document_changed','stop_token_retired','probe_wrong_thread',
+                'probe_timeout','probe_document_changed','probe_message_capacity','probe_observer_unavailable',
+                'probe_dispatch_failed','cdp_method_failed','cdp_result_absent','cdp_agent_detached'}
+    safe_state={}
+    if isinstance(state,dict):
+        for key in ('disposed','video_paused','audio_paused','video_source_empty','audio_source_empty'):
+            if type(state.get(key)) is bool:safe_state[key]=state[key]
+        for key in ('position','audio_position'):
+            value=state.get(key)
+            if type(value) in (int,float) and math.isfinite(value) and 0<=value<=604800:safe_state[key]=value
+    diagnostics['stop_receipt']={'received':True,
+            'complete':data.get('complete') if type(data.get('complete')) is bool else None,
+            'code':data.get('code') if isinstance(data.get('code'),str) and data.get('code') in stop_codes else 'unknown_stop_code',
+            'state_present':isinstance(state,dict),'state_valid':isinstance(state,dict) and len(safe_state)==7 and set(state)==set(safe_state),
+            'state':safe_state}
     require(data.get('complete') is True and data.get('code')=='stopped' and isinstance(state,dict),
             'Native post-lock stop receipt incomplete')
     fields={'disposed','video_paused','audio_paused','video_source_empty','audio_source_empty','position','audio_position'}
