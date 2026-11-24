@@ -266,5 +266,5 @@ jobs:
           for m in t:
            count+=1
            if count>20000:raise SystemExit("member_bound")
-           if m.name.startswith("./usr/bin/") or m.name.endswith(("/libcef.so","/icudtl.dat","/components.json")):matches.append({"name":m.name,"mode":oct(m.mode),"bytes":m.size,"file":m.isfile(),"link":m.issym()})
+           if m.name.removeprefix("./").startswith("usr/bin/") or m.name.endswith(("/libcef.so","/icudtl.dat","/components.json")):matches.append({"name":m.name,"mode":oct(m.mode),"bytes":m.size,"file":m.isfile(),"link":m.issym()})
           import json; print(json.dumps({"diagnostic_only":True,"acceptance_passed":False,"members":count,"selected":matches}))'
