@@ -25,10 +25,124 @@ import urllib.parse
 
 from security_native import Device, call, js_wait, painted, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
-from resource_soak import foreground
+from resource_soak import foreground as bare_foreground
 from hibernation_cookie_probe import WindowsFixtureTrust, tls_proxy_preflight
 
 HOST = 'fixture.googlevideo.com'
+
+
+class OwnedWindowManager:
+    """Real WM only on this fixture's private Xvfb, never the owner desktop."""
+    def __init__(self, device, root):
+        require(sys.platform.startswith('linux') and device.x.poll() is None,
+                'Owned Xvfb required for native minimize')
+        require(bool(shutil.which('openbox')), 'Owned minimize window manager unavailable')
+        self.device = device
+        self.env = {**os.environ, 'DISPLAY': device.display,
+                    'HOME': str(root), 'XDG_CONFIG_HOME': str(root / 'config'),
+                    'XDG_CACHE_HOME': str(root / 'cache')}
+        root.mkdir(parents=True)
+        config = root / 'rc.xml'
+        config.write_text('<openbox_config xmlns="http://openbox.org/3.4/rc"><focus><focusNew>yes</focusNew></focus></openbox_config>')
+        self.process = subprocess.Popen(['openbox', '--config-file', str(config)], env=self.env,
+                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                       start_new_session=True)
+        def ready():
+            require(self.process.poll() is None, 'Owned minimize window manager exited')
+            r = subprocess.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], env=self.env,
+                               capture_output=True, text=True, timeout=3)
+            return r.returncode == 0 and 'window id #' in r.stdout
+        wait_for(ready, 'Owned minimize window manager not ready', 15)
+    def close(self):
+        if self.process.poll() is None:
+            self.process.terminate()
+            self.process.wait(timeout=5)
+
+
+def native_owner(device):
+    import psutil
+    client=device.client
+    title=call(client,'plugin:window|title',label='main')
+    owned={device.app.pid}|{p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}
+    if sys.platform=='win32':
+        from pywinauto import Desktop
+        windows=[w for w in Desktop(backend='uia').windows() if w.process_id() in owned and w.window_text()==title]
+        require(len(windows)==1,'Native minimize owner ambiguous')
+        return windows[0]
+    wm=device.player_wm
+    listing=subprocess.check_output(['xprop','-root','_NET_CLIENT_LIST'],env=wm.env,text=True,timeout=3)
+    import re
+    matches=[]
+    for xid in re.findall(r'0x[0-9a-fA-F]+',listing):
+        name=subprocess.check_output(['xdotool','getwindowname',xid],env=wm.env,text=True,timeout=3).strip()
+        if name!=title:continue
+        pid=int(subprocess.check_output(['xdotool','getwindowpid',xid],env=wm.env,text=True,timeout=3).strip())
+        if pid not in owned:continue
+        process=psutil.Process(pid);argv=process.cmdline()
+        if '--nb-dvizhok' in argv or any(a.startswith('--type=') for a in argv):continue
+        if pathlib.Path(process.exe()).resolve()!=device.exe.resolve():continue
+        matches.append(xid)
+    require(len(matches)==1,'Native minimize owner ambiguous')
+    return matches[0]
+
+
+def foreground(device):
+    if sys.platform=='win32' or not getattr(device,'player_wm',None):return bare_foreground(device)
+    owner=native_owner(device)
+    subprocess.run(['xdotool','windowactivate','--sync',owner],env=device.player_wm.env,check=True,timeout=5)
+    painted(device.client)
+
+
+def minimize_actual(device, minimized):
+    owner=native_owner(device)
+    if sys.platform=='win32':
+        import ctypes
+        if minimized:owner.minimize()
+        else:owner.restore();owner.set_focus()
+        wait_for(lambda:bool(ctypes.windll.user32.IsIconic(owner.handle))==minimized,
+                 'Native minimize receipt missing',5)
+    else:
+        env=device.player_wm.env
+        action=['windowminimize',owner] if minimized else ['windowmap',owner,'windowactivate','--sync',owner]
+        subprocess.run(['xdotool',*action],env=env,check=True,timeout=5)
+        def expected():
+            value=subprocess.check_output(['xprop','-id',owner,'WM_STATE'],env=env,text=True,timeout=3)
+            return ('Iconic' if minimized else 'Normal') in value
+        wait_for(expected,'Native minimize receipt missing',5)
+    return True
+
+
+def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostics):
+    before=observe(client,identifier,tab,diagnostics=diagnostics)
+    require(before.get('playing'),'Background test requires actual playback')
+    row_before=next(r for r in rows(client,identifier)['vkladki'] if r['id']==tab)
+    hide()
+    samples=[]
+    try:
+        previous=before['audio_position']
+        for _ in range(6):
+            time.sleep(2)
+            current=observe(client,identifier,tab,diagnostics=diagnostics)
+            require(current.get('playing') and current['audio_position']>previous+.5,
+                    'Background audio froze or paused')
+            # Chromium may suspend hidden video decoding. No hidden video-growth assertion.
+            samples.append(current['audio_position']);previous=current['audio_position']
+    finally:restore()
+    foreground(device)
+    first=observe(client,identifier,tab,diagnostics=diagnostics)
+    paint_before=video_paint(client,device);time.sleep(2)
+    after=observe(client,identifier,tab,diagnostics=diagnostics)
+    paint_after=video_paint(client,device)
+    require(after.get('playing') and after['decoded']>first['decoded'] and after['skew']<1,
+            'Background return did not automatically resume synchronized decode')
+    require(sum(a!=b for a,b in zip(paint_before,paint_after))>30,'Actual OS video paint did not change')
+    row_after=next(r for r in rows(client,identifier)['vkladki'] if r['id']==tab)
+    require(row_before['browser_id']==row_after['browser_id'],'Background playback browser changed')
+    return {'name':kind,'wall_seconds':12,'audio_samples':6,
+            'audio_advance':round(samples[-1]-before['audio_position'],3),
+            'return_decoded_advance':after['decoded']-first['decoded'],
+            'return_skew':after['skew'],'return_paint_changed':True,
+            'browser_unchanged':True,'hidden_decode_growth_required':False}
 
 
 def certificates(root):
@@ -288,7 +402,7 @@ def run(args):
     require(os.environ.get('GITHUB_ACTIONS')=='true','Disposable GHA runner required')
     out=pathlib.Path(args.out).resolve();out.mkdir(parents=True,exist_ok=False)
     report={'schema':1,'completed':False,'extractor_acceptance':False,'checks':[],'stage':'setup','player_diagnostics':{}}
-    code=1;device=fixture=trust=None;private_root=None
+    code=1;device=fixture=trust=wm=None;private_root=None
     old=os.environ.get('NEXUSBRO_TEST_YOUTUBE_DNS_GUARD')
     try:
         private_root=pathlib.Path(tempfile.mkdtemp(prefix='nb-player-'))
@@ -303,11 +417,14 @@ def run(args):
             for lane in ('A','B'):
                 identifier='player-'+lane.lower();item=super_record(identifier,'Player '+lane,'about:blank',proxy='http://127.0.0.1:'+str(fixture.proxies[lane]));item['poryadok']=len(definitions);definitions.append(item)
                 folder=device.data/'profili'/identifier;folder.mkdir(parents=True)
-                (folder/'obychnye.json').write_text(json.dumps({'vkladki':[{'id':1,'adres':'about:blank','zagolovok':'Fixture','otlozhena':True}],'aktivnaya':1,'sleduyushchaya':2}))
+                (folder/'obychnye.json').write_text(json.dumps({'vkladki':[{'id':1,'adres':'about:blank','zagolovok':'Fixture','otlozhena':True},{'id':2,'adres':'about:blank','zagolovok':'Neighbor','otlozhena':True}],'aktivnaya':1,'sleduyushchaya':3}))
             for filename in ('vkladki.json','sohranennye.json'):(device.data/filename).write_text(json.dumps(definitions))
             (device.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False}))
             os.environ['NEXUSBRO_TEST_YOUTUBE_DNS_GUARD']='1'
-            client=device.start();foreground(device)
+            client=device.start()
+            if sys.platform.startswith('linux'):
+                wm=OwnedWindowManager(device,root/'wm');device.player_wm=wm
+            foreground(device)
             client.js('window.__playerObserved=[];window.__playerListenerReady=false;window.__playerHandler=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__playerObserved.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:window.__playerHandler}).then(()=>window.__playerListenerReady=true);true')
             js_wait(client,'window.__playerListenerReady','Actual native event listener missing')
             if sys.platform.startswith('linux'):
@@ -339,6 +456,34 @@ def run(args):
                     tracks={r['track'] for r in fixture.receipts if r['lane']==lane};direct=fixture.direct
                     range_count=sum(r['range'] for r in fixture.receipts if r['lane']==lane)
                 require(tracks=={'video','audio'} and direct==0,'Media bypassed actual selected route')
+                report['stage']='background-rewind-'+lane
+                # The previous real seek leaves the native range focused. Home is
+                # a trusted keyboard action, never a scripted media mutation.
+                if sys.platform=='win32':
+                    import pyautogui
+                    pyautogui.press('home')
+                else:
+                    subprocess.run(['xdotool','key','Home'],env={**os.environ,'DISPLAY':device.display},check=True,timeout=5)
+                wait_for(lambda:observe(client,identifier,tab,diagnostics=report['player_diagnostics'])['position']<2,'Physical rewind failed',10)
+                report['stage']='background-resume-'+lane
+                physical(client,device,'play',report['player_diagnostics'])
+                wait_for(lambda:observe(client,identifier,tab,diagnostics=report['player_diagnostics']).get('playing'),'Background test requires actual playback',10)
+                report['stage']='background-tab-'+lane
+                report['checks'].append(background_receipt(client,device,identifier,tab,
+                    lambda:click_control(client,'.obychnaya[data-id="2"]',15),
+                    lambda:click_control(client,'.obychnaya[data-id="'+str(tab)+'"]',15),
+                    'background-ordinary-'+lane,report['player_diagnostics']))
+                other='player-b' if lane=='A' else 'player-a'
+                report['stage']='background-super-'+lane
+                report['checks'].append(background_receipt(client,device,identifier,tab,
+                    lambda:switch_super(client,other),lambda:switch_super(client,identifier),
+                    'background-super-'+lane,report['player_diagnostics']))
+                report['stage']='actual-minimize-'+lane
+                report['checks'].append(background_receipt(client,device,identifier,tab,
+                    lambda:minimize_actual(device,True),lambda:minimize_actual(device,False),
+                    'native-minimize-'+lane,report['player_diagnostics']))
+                physical(client,device,'play',report['player_diagnostics'])
+                require(not observe(client,identifier,tab,diagnostics=report['player_diagnostics']).get('playing'),'Physical pause failed')
                 report['checks'].append({'name':'actual-dual-webm-'+lane,'decoded':second['decoded'],'width':second['video_width'],'height':second['video_height'],'skew':second['skew'],'range_requests':range_count,'physical_pause':True,'physical_seek':True,'actual_os_paint_changed':True,'direct_connections':direct})
             report['completed']=True;report['stage']='complete';code=0
     except Exception as error:
@@ -353,13 +498,23 @@ def run(args):
                'Physical pause failed':'pause_failed','Physical seek did not move actual native media':'seek_failed',
                'Actual VP9/Opus geometry differs':'media_geometry','Actual OS video paint did not change':'video_paint_static',
                'Media bypassed actual selected route':'route_witness_missing','Native player viewport too small':'viewport_too_small',
+               'Owned minimize window manager unavailable':'window_manager_missing',
+               'Owned minimize window manager not ready':'window_manager_not_ready',
+               'Owned minimize window manager exited':'window_manager_exited',
+               'Native minimize owner ambiguous':'minimize_owner_ambiguous',
+               'Native minimize receipt missing':'minimize_receipt_missing',
+               'Background audio froze or paused':'background_audio_freeze',
+               'Background return did not automatically resume synchronized decode':'background_return_failed',
+               'Background playback browser changed':'background_browser_changed',
+               'Background test requires actual playback':'background_not_playing',
+               'Physical rewind failed':'rewind_failed',
                'windows_fixture_chain_not_trusted':'windows_chain_untrusted',
                'windows_chain_operation_failed':'windows_chain_operation_failed'}
         report['failure_code']=codes.get(str(error),'unclassified')
     finally:
         if trust and trust.windows:report['windows_chain_preflight']=trust.windows.receipts
         cleanup_ok=True
-        for owned in (device,fixture,trust):
+        for owned in (wm,device,fixture,trust):
             if owned:
                 try:owned.close()
                 except Exception:cleanup_ok=False
