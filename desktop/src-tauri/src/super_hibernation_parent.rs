@@ -34,6 +34,7 @@ pub(crate) struct Node {
     restored_received: bool,
     eligible: bool,
     pending_control: Option<(sessiya::Komanda, u8)>,
+    pending_commit_at: Option<Instant>,
 }
 impl Default for Node {
     fn default() -> Self {
@@ -60,6 +61,7 @@ impl Default for Node {
             restored_received: false,
             eligible: false,
             pending_control: None,
+            pending_commit_at: None,
         }
     }
 }
@@ -224,6 +226,7 @@ impl Node {
                     stamp,
                     eligibility_revision,
                 } => {
+                    self.pending_commit_at = None;
                     self.deadline = Some(Instant::now() + Duration::from_secs(40));
                     self.control(
                         channel,
@@ -283,6 +286,7 @@ impl Node {
         self.key = None;
         self.scope = None;
         self.pending_control = None;
+        self.pending_commit_at = None;
         self.operation_revision = None;
         self.final_received = false;
         self.restored_received = false;
@@ -302,6 +306,20 @@ fn protected_views(s: &crate::Sostoyanie) -> HashSet<String> {
         }
     }
     ids
+}
+// A disposable-runner probe can witness the final-cookie barrier without
+// forging an ACK or accelerating a clock. Production always commits normally.
+fn commit_probe_delay() -> Option<Duration> {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+    {
+        return None;
+    }
+    std::env::var("NEXUSBRO_TEST_HIB_COMMIT_DELAY_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|n| (1..=5000).contains(n))
+        .map(Duration::from_millis)
 }
 fn idle_period() -> Duration {
     let settings = crate::nastrojki::zagruzit();
@@ -492,11 +510,15 @@ pub fn receive(app: &tauri::AppHandle, id: &str, generation: u64, frame: Frame) 
             v.hibernate.effects(effects, channel.as_ref());
             if valid {
                 v.hibernate.snapshot = Some(snapshot);
-                let effects = v.hibernate.machine.apply(Event::Commit {
-                    stamp: st,
-                    eligibility_revision: revision,
-                });
-                v.hibernate.effects(effects, channel.as_ref());
+                if let Some(delay) = commit_probe_delay() {
+                    v.hibernate.pending_commit_at = Some(Instant::now() + delay);
+                } else {
+                    let effects = v.hibernate.machine.apply(Event::Commit {
+                        stamp: st,
+                        eligibility_revision: revision,
+                    });
+                    v.hibernate.effects(effects, channel.as_ref());
+                }
             }
         }
         Frame::FinalSnapshot { snapshot } => {
@@ -644,6 +666,24 @@ pub fn tick(app: &tauri::AppHandle) {
                 v.hibernate.effects(effects, channel.as_ref());
                 // No force kill, release or success on a timer. Avoid log/poll storms.
                 v.hibernate.deadline = Some(now + Duration::from_secs(60));
+            }
+            if v.hibernate
+                .pending_commit_at
+                .is_some_and(|deadline| deadline <= now)
+            {
+                v.hibernate.pending_commit_at = None;
+                if eligible && v.hibernate.machine.phase() == Phase::Preparing {
+                    let stamp = v.hibernate.machine.stamp();
+                    if let Some(revision) = v.hibernate.operation_revision {
+                        let effects = v.hibernate.machine.apply(Event::Commit {
+                            stamp,
+                            eligibility_revision: revision,
+                        });
+                        v.hibernate.effects(effects, channel.as_ref());
+                    }
+                } else {
+                    v.hibernate.invalidate(channel.as_ref());
+                }
             }
             if eligible
                 && v.hibernate.machine.phase() == Phase::Running
@@ -804,7 +844,7 @@ pub fn super_lifecycle_snapshot(
         let (members,complete)=match v.proc.as_mut(){Some(owner)=>match owner.members(){Ok(list)=>(list,true),Err(_)=>(Vec::new(),false)},None=>(Vec::new(),true)};
         let owned:Vec<_>=members.into_iter().map(|p|serde_json::json!({"pid":p.pid,"birth":p.created.to_string(),"clock":if cfg!(target_os="windows"){"windows_filetime"}else{"linux_ticks"}})).collect();
         let session=v.obychnye.as_ref();
-        serde_json::json!({"id":id,"phase":format!("{:?}",v.hibernate.machine.phase()),"generation":st.generation,"attempt":st.attempt,"profile_reserved":v.hibernate.machine.profile_reserved(),"lease_confirmed":v.hibernate.machine.lease_confirmed(),"pid":v.proc.as_ref().and_then(|p|p.pid()),"owned":owned,"owned_complete":complete,"reason":v.hibernate.reason,"tab_count":session.map_or(0,|s|s.vkladki.len()),"live_count":if v.proc.is_some(){session.map_or(0,|s|s.vkladki.iter().filter(|t|!t.otlozhena).count())}else{0}})
+        serde_json::json!({"id":id,"phase":format!("{:?}",v.hibernate.machine.phase()),"generation":st.generation,"attempt":st.attempt,"profile_reserved":v.hibernate.machine.profile_reserved(),"lease_confirmed":v.hibernate.machine.lease_confirmed(),"pid":v.proc.as_ref().and_then(|p|p.pid()),"owned":owned,"owned_complete":complete,"prepared_snapshot":v.hibernate.machine.phase()==Phase::Preparing&&v.hibernate.snapshot.is_some(),"reason":v.hibernate.reason,"tab_count":session.map_or(0,|s|s.vkladki.len()),"live_count":if v.proc.is_some(){session.map_or(0,|s|s.vkladki.iter().filter(|t|!t.otlozhena).count())}else{0}})
     }).collect();
     Ok(serde_json::json!({"schema":1,"engines":engines}))
 }
