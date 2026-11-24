@@ -2,7 +2,7 @@
 //! Never enumerate by image name or return process command lines or page URLs.
 #[path = "browser_tasks_model.rs"]
 mod model;
-use model::{Process, Root};
+use model::{NativeMember, Process, Root};
 use serde::Serialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -19,6 +19,7 @@ pub struct Snapshot {
     metrics: model::Groups,
     complete: bool,
     unavailable_processes: usize,
+    unavailable_memberships: usize,
     scope: &'static str,
     cpu_unit: &'static str,
     memory_note: &'static str,
@@ -27,46 +28,85 @@ pub struct Snapshot {
 pub async fn browser_tasks_snapshot(
     state: tauri::State<'_, crate::Sostoyanie>,
 ) -> Result<Snapshot, String> {
-    let roots: Vec<_> = {
-        let tabs = state.vkladki.lock().map_err(|_| "Супер-вкладки заняты")?;
-        tabs.values()
-            .flat_map(|tab| {
-                let mut roots = Vec::new();
-                let mut seen = BTreeSet::new();
-                for pid in [
-                    tab.proc.as_ref().and_then(|p|p.pid()),
-                    tab.zapas_pid,
-                    tab.tunnel.as_ref().map(std::process::Child::id),
-                ]
-                .into_iter()
-                .flatten()
-                {
-                    if seen.insert(pid) {
-                        roots.push(Root {
-                            pid,
-                            super_id: tab.nastrojki.id.clone(),
-                            name: tab.nastrojki.nazvanie.clone(),
-                        });
+    let (roots, native, membership_failures) = {
+        // Prevent observing the ownership guard while a cleanup transaction has
+        // moved it onto its stack but has not yet published LeaseReleased.
+        let _cleanup = crate::super_hibernation_parent::cleanup_observation()
+            .lock()
+            .map_err(|_| "Состояние процессов занято")?;
+        let mut tabs = state.vkladki.lock().map_err(|_| "Супер-вкладки заняты")?;
+        let mut roots = Vec::new();
+        let mut native = Vec::new();
+        let mut failures = 0;
+        for tab in tabs.values_mut() {
+            let mut native_ok = false;
+            if tab.zapusk_idet && tab.proc.is_none() {
+                failures += 1;
+            }
+            if let Some(owner) = tab.proc.as_mut() {
+                match owner.members() {
+                    Ok(members) => {
+                        native_ok = true;
+                        for identity in members {
+                            native.push(NativeMember {
+                                pid: identity.pid,
+                                created: identity.created,
+                                super_id: tab.nastrojki.id.clone(),
+                                name: tab.nastrojki.nazvanie.clone(),
+                            });
+                        }
                     }
+                    Err(_) => failures += 1,
                 }
-                roots
-            })
-            .collect()
+            }
+            // A successfully enumerated native tree supersedes its dead launcher
+            // root; an orphan Job/group member need not retain parent ancestry.
+            let mut seen = BTreeSet::new();
+            for pid in [
+                if native_ok {
+                    None
+                } else {
+                    tab.proc.as_ref().and_then(|p| p.pid())
+                },
+                if native_ok { None } else { tab.zapas_pid },
+                tab.tunnel.as_ref().map(std::process::Child::id),
+            ]
+            .into_iter()
+            .flatten()
+            {
+                if seen.insert(pid) {
+                    roots.push(Root {
+                        pid,
+                        super_id: tab.nastrojki.id.clone(),
+                        name: tab.nastrojki.nazvanie.clone(),
+                    });
+                }
+            }
+        }
+        (roots, native, failures)
     };
-    tauri::async_runtime::spawn_blocking(move || snapshot(roots))
+    // Only bounded membership is captured under the registry lock. All CPU,
+    // RSS/private-memory OS reads and aggregation happen outside that lock.
+    tauri::async_runtime::spawn_blocking(move || snapshot(roots, native, membership_failures))
         .await
         .map_err(|_| "Не удалось прочитать состояние процессов".to_string())?
 }
-fn snapshot(roots: Vec<Root>) -> Result<Snapshot, String> {
+fn snapshot(
+    roots: Vec<Root>,
+    native: Vec<NativeMember>,
+    membership_failures: usize,
+) -> Result<Snapshot, String> {
     static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
     let start = START.get_or_init(Instant::now);
     let app = std::process::id();
-    let (table, unavailable, truncated) = platform::read(app)?;
-    let metrics = model::aggregate(&table, app, &roots)?;
+    let (table, unavailable, truncated) = platform::read(app, &native)?;
+    let metrics = model::aggregate_with_verified(&table, app, &roots, &native)?;
     let complete = !truncated
         && unavailable == 0
         && metrics.excluded_unverified_roots == 0
-        && metrics.rejected_ancestry == 0;
+        && metrics.rejected_ancestry == 0
+        && metrics.rejected_native_members == 0
+        && membership_failures == 0;
     Ok(Snapshot {
         sampled_at_ms: SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -77,6 +117,7 @@ fn snapshot(roots: Vec<Root>) -> Result<Snapshot, String> {
         metrics,
         complete,
         unavailable_processes: unavailable,
+        unavailable_memberships: membership_failures,
         scope: "verified_descendants_of_this_instance",
         cpu_unit: "cumulative_process_ms; calculate deltas only for matching process identities",
         memory_note: if cfg!(target_os = "linux") {
@@ -104,6 +145,20 @@ fn candidate_pids(parents: &BTreeMap<u32, u32>, app: u32) -> (BTreeSet<u32>, boo
         .any(|(pid, parent)| !owned.contains(pid) && owned.contains(parent));
     (owned, truncated)
 }
+fn include_verified(owned: &mut BTreeSet<u32>, native: &[NativeMember]) -> bool {
+    let mut truncated = false;
+    for member in native {
+        if owned.contains(&member.pid) {
+            continue;
+        }
+        if owned.len() >= MAX_OWNED {
+            truncated = true;
+            continue;
+        }
+        owned.insert(member.pid);
+    }
+    truncated
+}
 #[cfg(target_os = "linux")]
 mod platform {
     use super::*;
@@ -125,7 +180,10 @@ mod platform {
         let text = bounded(format!("/proc/{pid}/smaps_rollup"), 16384)?;
         model::linux_private(&text)
     }
-    pub fn read(app: u32) -> Result<(BTreeMap<u32, Process>, usize, bool), String> {
+    pub fn read(
+        app: u32,
+        native: &[NativeMember],
+    ) -> Result<(BTreeMap<u32, Process>, usize, bool), String> {
         let ticks = unsafe { libc::sysconf(libc::_SC_CLK_TCK) };
         let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         if ticks <= 0 || page <= 0 {
@@ -135,7 +193,14 @@ mod platform {
         let mut truncated = false;
         let entries = std::fs::read_dir("/proc").map_err(|_| "Не удалось прочитать процессы")?;
         let mut count = 0;
-        for entry in entries.flatten() {
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(_) => {
+                    truncated = true;
+                    continue;
+                }
+            };
             let Some(pid) = entry
                 .file_name()
                 .to_str()
@@ -150,27 +215,46 @@ mod platform {
             }
             if let Some(record) = stat(pid, ticks as u64, page as u64) {
                 table.insert(pid, record);
+            } else {
+                truncated = true;
             }
         }
         let parents = table.iter().map(|(pid, p)| (*pid, p.parent)).collect();
-        let (owned, limit) = candidate_pids(&parents, app);
-        truncated |= limit;
-        table.retain(|pid, _| owned.contains(pid));
+        let (mut owned, limit) = candidate_pids(&parents, app);
+        truncated |= limit | include_verified(&mut owned, native);
+        let expected: BTreeMap<_, _> = native.iter().map(|p| (p.pid, p.created)).collect();
+        // Re-read every target explicitly, including members not present in the
+        // ancestry walk or a truncated global /proc enumeration.
+        table.clear();
         let mut unavailable = 0;
-        for process in table.values_mut() {
-            process.private_bytes = private(process.pid);
+        for pid in owned {
+            let Some(mut process) = stat(pid, ticks as u64, page as u64) else {
+                unavailable += 1;
+                continue;
+            };
+            if expected
+                .get(&pid)
+                .is_some_and(|birth| *birth != process.created)
+            {
+                unavailable += 1;
+                continue;
+            }
+            if process.private_bytes.is_none() {
+                process.private_bytes = private(pid);
+            }
             if process.private_bytes.is_none() {
                 unavailable += 1;
             }
-            // The PID could exit/recycle while smaps was read. Reject mixed identities.
-            if stat(process.pid, ticks as u64, page as u64)
-                .is_none_or(|p| p.created != process.created)
-            {
-                process.created = 0;
+            let after = stat(pid, ticks as u64, page as u64);
+            if after.as_ref().is_none_or(|p| {
+                p.created != process.created
+                    || expected.get(&pid).is_some_and(|birth| *birth != p.created)
+            }) {
                 unavailable += 1;
+                continue;
             }
+            table.insert(pid, process);
         }
-        table.retain(|_, p| p.created != 0);
         Ok((table, unavailable, truncated))
     }
 }
@@ -178,7 +262,7 @@ mod platform {
 mod platform {
     use super::*;
     use windows::Win32::{
-        Foundation::{CloseHandle, FILETIME, HANDLE},
+        Foundation::{CloseHandle, ERROR_NO_MORE_FILES, FILETIME, HANDLE},
         System::{
             Diagnostics::ToolHelp::{
                 CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -187,7 +271,10 @@ mod platform {
             ProcessStatus::{
                 K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
             },
-            Threading::{GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ},
+            Threading::{
+                GetProcessId, GetProcessTimes, OpenProcess, PROCESS_QUERY_INFORMATION,
+                PROCESS_VM_READ,
+            },
         },
     };
     struct OwnedHandle(HANDLE);
@@ -201,7 +288,7 @@ mod platform {
     fn ticks(value: FILETIME) -> u64 {
         (value.dwHighDateTime as u64) << 32 | value.dwLowDateTime as u64
     }
-    fn query(pid: u32, parent: u32) -> Option<Process> {
+    fn query(pid: u32, parent: u32, expected: Option<u64>) -> Option<Process> {
         let handle = OwnedHandle(
             unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, false, pid) }.ok()?,
         );
@@ -213,7 +300,11 @@ mod platform {
         );
         unsafe { GetProcessTimes(handle.0, &mut created, &mut exit, &mut kernel, &mut user) }
             .ok()?;
-        if ticks(exit) != 0 {
+        if ticks(exit) != 0
+            || ticks(created) == 0
+            || unsafe { GetProcessId(handle.0) } != pid
+            || expected.is_some_and(|birth| birth != ticks(created))
+        {
             return None;
         }
         let mut memory = PROCESS_MEMORY_COUNTERS_EX::default();
@@ -226,6 +317,29 @@ mod platform {
             )
         }
         .as_bool();
+        let (mut after_created, mut after_exit, mut after_kernel, mut after_user) = (
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+            FILETIME::default(),
+        );
+        unsafe {
+            GetProcessTimes(
+                handle.0,
+                &mut after_created,
+                &mut after_exit,
+                &mut after_kernel,
+                &mut after_user,
+            )
+        }
+        .ok()?;
+        if ticks(after_created) != ticks(created)
+            || ticks(after_exit) != 0
+            || unsafe { GetProcessId(handle.0) } != pid
+            || expected.is_some_and(|birth| birth != ticks(after_created))
+        {
+            return None;
+        }
         Some(Process {
             pid,
             parent,
@@ -235,7 +349,10 @@ mod platform {
             private_bytes: memory_ok.then_some(memory.PrivateUsage as u64),
         })
     }
-    pub fn read(app: u32) -> Result<(BTreeMap<u32, Process>, usize, bool), String> {
+    pub fn read(
+        app: u32,
+        native: &[NativeMember],
+    ) -> Result<(BTreeMap<u32, Process>, usize, bool), String> {
         let handle = OwnedHandle(
             unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) }
                 .map_err(|_| "Не удалось получить снимок процессов")?,
@@ -245,20 +362,36 @@ mod platform {
         let mut parents = BTreeMap::new();
         let mut truncated = false;
         let mut available = unsafe { Process32FirstW(handle.0, &mut entry) }.is_ok();
+        if !available {
+            truncated = true;
+        }
         while available {
             if parents.len() >= MAX_PROCESSES {
                 truncated = true;
                 break;
             }
             parents.insert(entry.th32ProcessID, entry.th32ParentProcessID);
-            available = unsafe { Process32NextW(handle.0, &mut entry) }.is_ok();
+            available = match unsafe { Process32NextW(handle.0, &mut entry) } {
+                Ok(()) => true,
+                Err(error) => {
+                    if error.code() != windows::core::HRESULT::from_win32(ERROR_NO_MORE_FILES.0) {
+                        truncated = true;
+                    }
+                    false
+                }
+            };
         }
-        let (owned, limit) = candidate_pids(&parents, app);
-        truncated |= limit;
+        let (mut owned, limit) = candidate_pids(&parents, app);
+        truncated |= limit | include_verified(&mut owned, native);
+        let expected: BTreeMap<_, _> = native.iter().map(|p| (p.pid, p.created)).collect();
         let mut table = BTreeMap::new();
         let mut unavailable = 0;
         for pid in owned {
-            match query(pid, parents.get(&pid).copied().unwrap_or(0)) {
+            match query(
+                pid,
+                parents.get(&pid).copied().unwrap_or(0),
+                expected.get(&pid).copied(),
+            ) {
                 Some(process) => {
                     if process.private_bytes.is_none() {
                         unavailable += 1;
@@ -274,7 +407,10 @@ mod platform {
 #[cfg(not(any(target_os = "linux", target_os = "windows")))]
 mod platform {
     use super::*;
-    pub fn read(_: u32) -> Result<(BTreeMap<u32, Process>, usize, bool), String> {
+    pub fn read(
+        _: u32,
+        _: &[NativeMember],
+    ) -> Result<(BTreeMap<u32, Process>, usize, bool), String> {
         Err("Диспетчер задач пока поддерживает Windows и Linux".into())
     }
 }

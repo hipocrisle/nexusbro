@@ -16,6 +16,14 @@ pub struct Root {
     pub super_id: String,
     pub name: String,
 }
+/// Separate authority produced ONLY by the native ProcessOwner, never by UI
+/// PID input or the legacy Root list. No Deserialize implementation is exposed.
+pub struct NativeMember {
+    pub pid: u32,
+    pub created: u64,
+    pub super_id: String,
+    pub name: String,
+}
 #[derive(Serialize)]
 pub struct ProcessSample {
     pub pid: u32,
@@ -41,6 +49,7 @@ pub struct Groups {
     pub totals: Group,
     pub excluded_unverified_roots: usize,
     pub rejected_ancestry: usize,
+    pub rejected_native_members: usize,
 }
 pub fn linux_stat(text: &str, pid: u32, ticks: u64, page: u64) -> Option<Process> {
     if ticks == 0 || page == 0 || text.split_whitespace().next()?.parse::<u32>().ok()? != pid {
@@ -60,7 +69,9 @@ pub fn linux_stat(text: &str, pid: u32, ticks: u64, page: u64) -> Option<Process
         created,
         cpu_time_ms: user.saturating_add(kernel).saturating_mul(1000) / ticks,
         working_set_bytes: Some((rss.max(0) as u64).saturating_mul(page)),
-        private_bytes: None,
+        // A zombie has no address space; smaps_rollup is unavailable, not a
+        // missing measurement of live memory. Preserve its CPU/creation record.
+        private_bytes: matches!(*fields.first()?, "Z" | "X" | "x").then_some(0),
     })
 }
 pub fn linux_private(text: &str) -> Option<u64> {
@@ -142,6 +153,14 @@ pub fn aggregate(
     app: u32,
     roots: &[Root],
 ) -> Result<Groups, String> {
+    aggregate_with_verified(table, app, roots, &[])
+}
+pub fn aggregate_with_verified(
+    table: &BTreeMap<u32, Process>,
+    app: u32,
+    roots: &[Root],
+    native: &[NativeMember],
+) -> Result<Groups, String> {
     if !table.contains_key(&app) {
         return Err("Не удалось получить состояние собственного процесса".into());
     }
@@ -154,25 +173,66 @@ pub fn aggregate(
         .iter()
         .filter(|r| !verified.contains_key(&r.pid))
         .count();
+    let mut native_verified = BTreeMap::<u32, &NativeMember>::new();
+    let mut conflicts = BTreeSet::new();
+    let mut rejected_native = 0;
+    for member in native {
+        if member.pid == app
+            || member.created == 0
+            || !table
+                .get(&member.pid)
+                .is_some_and(|p| p.created == member.created)
+        {
+            rejected_native += 1;
+            continue;
+        }
+        if conflicts.contains(&member.pid) {
+            rejected_native += 1;
+            continue;
+        }
+        if let Some(previous) = native_verified.get(&member.pid) {
+            if previous.created != member.created || previous.super_id != member.super_id {
+                native_verified.remove(&member.pid);
+                conflicts.insert(member.pid);
+                rejected_native += 1;
+            }
+        } else {
+            native_verified.insert(member.pid, member);
+        }
+    }
     let mut groups = BTreeMap::new();
     let mut totals = empty("all".into(), None, "Всего в этом экземпляре".into());
     let mut rejected = 0;
     for node in table.values() {
-        let Some(path) = chain(table, node.pid, app) else {
+        // Native proof grants exactly this PID+birth, not arbitrary descendants
+        // claiming it as parent. Other rows still require the old app ancestry.
+        let native_owner = native_verified.get(&node.pid);
+        let path = chain(table, node.pid, app);
+        if native_owner.is_none() && path.is_none() {
             rejected += 1;
             continue;
+        }
+        let root = path
+            .as_ref()
+            .and_then(|path| path.iter().find_map(|pid| verified.get(pid)));
+        let (id, super_id, name) = if let Some(member) = native_owner {
+            (
+                format!("super:{}", member.super_id),
+                Some(member.super_id.clone()),
+                member.name.clone(),
+            )
+        } else {
+            root.map_or_else(
+                || ("shell".into(), None, "Оболочка и общие процессы".into()),
+                |root| {
+                    (
+                        format!("super:{}", root.super_id),
+                        Some(root.super_id.clone()),
+                        root.name.clone(),
+                    )
+                },
+            )
         };
-        let root = path.iter().find_map(|pid| verified.get(pid));
-        let (id, super_id, name) = root.map_or_else(
-            || ("shell".into(), None, "Оболочка и общие процессы".into()),
-            |root| {
-                (
-                    format!("super:{}", root.super_id),
-                    Some(root.super_id.clone()),
-                    root.name.clone(),
-                )
-            },
-        );
         add(
             groups
                 .entry(id.clone())
@@ -186,6 +246,7 @@ pub fn aggregate(
         totals,
         excluded_unverified_roots: excluded,
         rejected_ancestry: rejected,
+        rejected_native_members: rejected_native,
     })
 }
 #[cfg(test)]
@@ -316,5 +377,99 @@ mod tests {
             "Private_Clean: 30 kB\nPrivate_Clean: 30 kB\nPrivate_Dirty: 70 kB\n"
         )
         .is_none());
+    }
+    fn native(pid: u32, created: u64, id: &str) -> NativeMember {
+        NativeMember {
+            pid,
+            created,
+            super_id: id.into(),
+            name: id.into(),
+        }
+    }
+    #[test]
+    fn exact_native_orphan_is_included_without_granting_ancestry_authority() {
+        let table = [p(1, 0, 1), p(20, 999, 200), p(21, 20, 201), p(99, 0, 1)]
+            .into_iter()
+            .map(|p| (p.pid, p))
+            .collect();
+        let plain = aggregate(&table, 1, &[root(20, "forged-root")]).unwrap();
+        assert_eq!(plain.totals.processes, 1);
+        let verified =
+            aggregate_with_verified(&table, 1, &[], &[native(20, 200, "owned")]).unwrap();
+        assert_eq!(verified.totals.processes, 2);
+        assert_eq!(verified.rejected_ancestry, 2);
+        assert_eq!(
+            verified
+                .groups
+                .iter()
+                .find(|g| g.id == "super:owned")
+                .unwrap()
+                .cpu_samples[0]
+                .identity,
+            "20:200"
+        );
+        assert!(!verified.totals.cpu_samples.iter().any(|p| p.pid == 21));
+    }
+    #[test]
+    fn recycled_or_missing_native_identity_is_rejected_not_pid_authority() {
+        let table = [p(1, 0, 1), p(20, 999, 201)]
+            .into_iter()
+            .map(|p| (p.pid, p))
+            .collect();
+        let result = aggregate_with_verified(
+            &table,
+            1,
+            &[],
+            &[native(20, 200, "stale"), native(77, 2, "missing")],
+        )
+        .unwrap();
+        assert_eq!(result.totals.processes, 1);
+        assert_eq!(result.rejected_native_members, 2);
+    }
+    #[test]
+    fn native_and_legacy_overlap_or_duplicates_count_pid_once() {
+        let table = [p(1, 0, 1), p(2, 1, 2), p(3, 2, 3)]
+            .into_iter()
+            .map(|p| (p.pid, p))
+            .collect();
+        let result = aggregate_with_verified(
+            &table,
+            1,
+            &[root(2, "owner")],
+            &[
+                native(2, 2, "owner"),
+                native(2, 2, "owner"),
+                native(3, 3, "owner"),
+            ],
+        )
+        .unwrap();
+        assert_eq!(result.totals.processes, 3);
+        assert_eq!(result.totals.cpu_time_ms, 30);
+        assert_eq!(result.rejected_native_members, 0);
+        assert_eq!(
+            result
+                .groups
+                .iter()
+                .find(|g| g.id == "super:owner")
+                .unwrap()
+                .processes,
+            2
+        );
+    }
+    #[test]
+    fn conflicting_native_owner_claim_does_not_authorize_foreign_pid() {
+        let table = [p(1, 0, 1), p(20, 999, 200)]
+            .into_iter()
+            .map(|p| (p.pid, p))
+            .collect();
+        let result = aggregate_with_verified(
+            &table,
+            1,
+            &[],
+            &[native(20, 200, "a"), native(20, 200, "b")],
+        )
+        .unwrap();
+        assert_eq!(result.totals.processes, 1);
+        assert_eq!(result.rejected_native_members, 1);
     }
 }
