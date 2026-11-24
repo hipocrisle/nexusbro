@@ -813,6 +813,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
     if staraya.privatnaya!=nastrojki.privatnaya{return Ok(net("Приватный режим задаётся при создании супер-вкладки"));}
     let nuzhen_restart=staraya.proxy!=nastrojki.proxy||staraya.proxy_uzel!=nastrojki.proxy_uzel||staraya.adres!=nastrojki.adres||staraya.rezat_reklamu!=nastrojki.rezat_reklamu||staraya.pustaya!=nastrojki.pustaya;
     let smena_seti = staraya.proxy != nastrojki.proxy || staraya.proxy_uzel != nastrojki.proxy_uzel;
+    if smena_seti && s.vkladki.lock().unwrap().get(&nastrojki.id).is_some_and(|v|v.proc.is_none()&&v.hibernate.snapshot.is_some()){return Ok(net("Сначала откройте эту супервкладку, затем смените её путь."));}
     if smena_seti && vpn::eto_podpiska(&nastrojki.proxy) {
         let proverka = vpn::proverit_podklyuchenie(&nastrojki.proxy, &nastrojki.proxy_uzel).await;
         if proverka.is_err() {
@@ -838,7 +839,6 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
     tauri::async_runtime::spawn_blocking(move || supervkladki::obnovit_sohranennye(|list| {
         if let Some(n) = list.iter_mut().find(|n| n.id == archive.id) { *n = archive; }
     })).await.map_err(|e| e.to_string())??;
-    if !rabotaet && nuzhen_restart {if let Some(v)=s.vkladki.lock().unwrap().get_mut(&nastrojki.id){v.hibernate=Default::default();}}
     if rabotaet && nuzhen_restart {
         ostanovit_vnutri(&s, &nastrojki.id).await;
         let result = zapustit_vnutri(&app, &s, &nastrojki.id).await;

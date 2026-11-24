@@ -262,6 +262,7 @@ impl Node {
         self.snapshot = None;
         self.key = None;
         self.scope = None;
+        self.pending_control = None;
         self.operation_revision = None;
         self.final_received = false;
         self.restored_received = false;
