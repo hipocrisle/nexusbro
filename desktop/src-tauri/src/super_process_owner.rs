@@ -320,6 +320,17 @@ impl ProcessOwner {
             .tracker
             .admission()
     }
+    /// Complete bounded OS membership, including orphans. No ancestry guess,
+    /// process arguments or paths. Err means the caller MUST mark its resource
+    /// sample incomplete, never interpret it as an empty tree. Observation
+    /// updates identities/held handles, but never idle timestamps or lifecycle.
+    pub fn members(&mut self) -> Result<Vec<ProcessIdentity>, UnknownReason> {
+        self.owned
+            .as_mut()
+            .ok_or(UnknownReason::ObservationFailed)?
+            .tracker
+            .members()
+    }
     pub fn probe(&mut self) -> ExitProbe {
         let Some(owned) = self.owned.as_mut() else {
             return ExitProbe::Unknown(UnknownReason::ObservationFailed);
@@ -680,6 +691,86 @@ mod platform {
             let _ = self.try_wait(child)?;
             Ok(())
         }
+        pub fn members(&mut self) -> Result<Vec<ProcessIdentity>, UnknownReason> {
+            self.admission()?;
+            if self.root_reaped {
+                // The numeric PGID is no longer reserved. Never attribute a
+                // recycled group to this owner, even if its members look valid.
+                if unsafe { libc::kill(-(self.group as i32), 0) } == -1
+                    && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+                {
+                    return Ok(Vec::new());
+                }
+                return Err(UnknownReason::IdentityUnavailable);
+            }
+            self.leader_reserved()
+                .map_err(|_| UnknownReason::IdentityUnavailable)?;
+            let entries =
+                std::fs::read_dir("/proc").map_err(|_| UnknownReason::ObservationFailed)?;
+            let mut found = Vec::new();
+            for (scanned, entry) in entries.enumerate() {
+                if scanned >= MAX_PROCESSES {
+                    return Err(UnknownReason::ObservationFailed);
+                }
+                let entry = entry.map_err(|_| UnknownReason::ObservationFailed)?;
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|s| s.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                // A disappearing entry makes this membership sample incomplete;
+                // it is not silently skipped, even when unrelated to this group.
+                let raw = std::fs::read_to_string(entry.path().join("stat"))
+                    .map_err(|_| UnknownReason::ObservationFailed)?;
+                let stat = parse_proc_stat(&raw)
+                    .filter(|s| s.identity.pid == pid)
+                    .ok_or(UnknownReason::IdentityUnavailable)?;
+                if stat.group != self.group {
+                    continue;
+                }
+                if self
+                    .known
+                    .get(&pid)
+                    .is_some_and(|birth| *birth != stat.identity.created)
+                {
+                    return Err(UnknownReason::IdentityUnavailable);
+                }
+                if found.len() >= MAX_OWNED {
+                    return Err(UnknownReason::ObservationFailed);
+                }
+                found.push(stat.identity);
+            }
+            self.leader_reserved()
+                .map_err(|_| UnknownReason::IdentityUnavailable)?;
+            if !found.iter().any(|p| Some(*p) == self.root) {
+                return Err(UnknownReason::IdentityUnavailable);
+            }
+            // Recheck every PID after collecting the set; never return an
+            // identity that already changed or left the owned group.
+            for identity in &found {
+                let raw = std::fs::read_to_string(format!("/proc/{}/stat", identity.pid))
+                    .map_err(|_| UnknownReason::ObservationFailed)?;
+                if parse_proc_stat(&raw)
+                    .is_none_or(|s| s.identity != *identity || s.group != self.group)
+                {
+                    return Err(UnknownReason::IdentityUnavailable);
+                }
+            }
+            let additional = found
+                .iter()
+                .filter(|identity| !self.known.contains_key(&identity.pid))
+                .count();
+            if self.known.len().saturating_add(additional) > MAX_OWNED {
+                return Err(UnknownReason::ObservationFailed);
+            }
+            for identity in &found {
+                self.known.insert(identity.pid, identity.created);
+            }
+            found.sort_by_key(|p| p.pid);
+            Ok(found)
+        }
         pub fn identity(&self) -> Option<ProcessIdentity> {
             self.root
         }
@@ -886,6 +977,7 @@ mod platform {
         thread: Option<OwnedHandle>,
         proven: bool,
         failure: Option<UnknownReason>,
+        member_handles: std::collections::BTreeMap<u32, (ProcessIdentity, OwnedHandle)>,
     }
     fn handle(value: &impl AsRawHandle) -> HANDLE {
         HANDLE(value.as_raw_handle())
@@ -909,6 +1001,68 @@ mod platform {
                 created: ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64,
             })
         }
+    }
+    fn process_identity(process: &OwnedHandle, pid: u32) -> Option<ProcessIdentity> {
+        unsafe {
+            if GetProcessId(handle(process)) != pid
+                || WaitForSingleObject(handle(process), 0) != WAIT_TIMEOUT
+            {
+                return None;
+            }
+            let mut created = FILETIME::default();
+            let mut exit = FILETIME::default();
+            let mut kernel = FILETIME::default();
+            let mut user = FILETIME::default();
+            GetProcessTimes(
+                handle(process),
+                &mut created,
+                &mut exit,
+                &mut kernel,
+                &mut user,
+            )
+            .ok()?;
+            let created = ((created.dwHighDateTime as u64) << 32) | created.dwLowDateTime as u64;
+            (created != 0).then_some(ProcessIdentity { pid, created })
+        }
+    }
+    fn job_pids(job: &OwnedHandle) -> Result<Vec<u32>, UnknownReason> {
+        #[repr(C)]
+        struct List {
+            assigned: u32,
+            count: u32,
+            pids: [usize; 1024],
+        }
+        let mut list = List {
+            assigned: 0,
+            count: 0,
+            pids: [0; 1024],
+        };
+        unsafe {
+            QueryInformationJobObject(
+                handle(job),
+                JobObjectBasicProcessIdList,
+                &mut list as *mut _ as *mut _,
+                std::mem::size_of_val(&list) as u32,
+                None,
+            )
+        }
+        .map_err(|_| UnknownReason::ObservationFailed)?;
+        if list.count > 1024 || list.assigned != list.count {
+            return Err(UnknownReason::ObservationFailed);
+        }
+        let mut pids = Vec::with_capacity(list.count as usize);
+        for &pid in &list.pids[..list.count as usize] {
+            let pid = u32::try_from(pid).map_err(|_| UnknownReason::IdentityUnavailable)?;
+            if pid == 0 {
+                return Err(UnknownReason::IdentityUnavailable);
+            }
+            pids.push(pid);
+        }
+        pids.sort_unstable();
+        if pids.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(UnknownReason::IdentityUnavailable);
+        }
+        Ok(pids)
     }
     fn job() -> Option<OwnedHandle> {
         unsafe {
@@ -936,6 +1090,7 @@ mod platform {
                 thread: None,
                 proven: false,
                 failure: Some(UnknownReason::IdentityUnavailable),
+                member_handles: Default::default(),
             };
             let Some(root) = tracker.root else {
                 return tracker;
@@ -1021,6 +1176,7 @@ mod platform {
                 thread: None,
                 proven: false,
                 failure: None,
+                member_handles: Default::default(),
             };
             if tracker.job.as_ref().is_none_or(|job| unsafe {
                 AssignProcessToJobObject(handle(job), handle(child)).is_err()
@@ -1036,6 +1192,7 @@ mod platform {
                 thread: Some(thread),
                 proven: false,
                 failure: None,
+                member_handles: Default::default(),
             };
             let correct = unsafe { GetProcessIdOfThread(handle(tracker.thread.as_ref().unwrap())) }
                 == child.id();
@@ -1057,6 +1214,55 @@ mod platform {
             }
             tracker.proven = true;
             tracker
+        }
+        pub fn members(&mut self) -> Result<Vec<ProcessIdentity>, UnknownReason> {
+            self.admission()?;
+            let job = self.job.as_ref().ok_or(UnknownReason::ObservationFailed)?;
+            let pids = job_pids(job)?;
+            self.member_handles.retain(|pid, (_, process)| {
+                pids.binary_search(pid).is_ok()
+                    && unsafe { WaitForSingleObject(handle(process), 0) } == WAIT_TIMEOUT
+            });
+            let mut result = Vec::with_capacity(pids.len());
+            for &pid in &pids {
+                if !self.member_handles.contains_key(&pid) {
+                    let raw = unsafe {
+                        OpenProcess(
+                            PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_SYNCHRONIZE,
+                            false,
+                            pid,
+                        )
+                    }
+                    .map_err(|_| UnknownReason::IdentityUnavailable)?;
+                    let process = unsafe { OwnedHandle::from_raw_handle(raw.0) };
+                    let identity = process_identity(&process, pid)
+                        .ok_or(UnknownReason::IdentityUnavailable)?;
+                    let mut inside = windows::Win32::Foundation::BOOL(0);
+                    unsafe { IsProcessInJob(handle(&process), handle(job), &mut inside) }
+                        .map_err(|_| UnknownReason::ObservationFailed)?;
+                    if !inside.as_bool() {
+                        return Err(UnknownReason::IdentityUnavailable);
+                    }
+                    self.member_handles.insert(pid, (identity, process));
+                }
+                let (identity, process) = self.member_handles.get(&pid).unwrap();
+                if process_identity(process, pid) != Some(*identity) {
+                    return Err(UnknownReason::IdentityUnavailable);
+                }
+                let mut inside = windows::Win32::Foundation::BOOL(0);
+                unsafe { IsProcessInJob(handle(process), handle(job), &mut inside) }
+                    .map_err(|_| UnknownReason::ObservationFailed)?;
+                if !inside.as_bool() {
+                    return Err(UnknownReason::IdentityUnavailable);
+                }
+                result.push(*identity);
+            }
+            // Churn is an incomplete sample, not a partial success. The Job is
+            // retained and verified process handles stay pinned across reads.
+            if job_pids(job)? != pids {
+                return Err(UnknownReason::ObservationFailed);
+            }
+            Ok(result)
         }
         pub fn identity(&self) -> Option<ProcessIdentity> {
             self.root
@@ -1133,6 +1339,9 @@ mod platform {
                 io::ErrorKind::Unsupported,
                 "process owner unsupported",
             ))
+        }
+        pub fn members(&mut self) -> Result<Vec<ProcessIdentity>, UnknownReason> {
+            Err(UnknownReason::Unsupported)
         }
         pub fn identity(&self) -> Option<ProcessIdentity> {
             None

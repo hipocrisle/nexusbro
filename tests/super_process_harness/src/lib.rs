@@ -181,7 +181,10 @@ mod native_linux_tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             match owner.probe() {
-                ExitProbe::Exited => return,
+                ExitProbe::Exited => {
+                    assert!(owner.members().unwrap().is_empty());
+                    return;
+                }
                 ExitProbe::Unknown(reason) => panic!("owned tree probe unavailable: {reason:?}"),
                 ExitProbe::Alive { .. } => {}
             }
@@ -384,7 +387,27 @@ mod native_linux_tests {
             assert_eq!(stat.group, root.pid);
             assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
         }
-        assert!(std::path::Path::new(&format!("/proc/{grandchild}/stat")).exists());
+        let grand_stat =
+            parse_proc_stat(&std::fs::read_to_string(format!("/proc/{grandchild}/stat")).unwrap())
+                .unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let members = loop {
+            match owner.members() {
+                Ok(members) => break members,
+                Err(_) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "complete orphan member observation unavailable"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        assert!(members.contains(&root), "WNOWAIT leader identity missing");
+        assert!(
+            members.contains(&grand_stat.identity),
+            "actual orphan grandchild PID/birth missing after root exit"
+        );
         assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
         assert!(ProfileLease::acquire(&dir).is_err());
         owner = owner.complete().unwrap_err();
@@ -451,7 +474,10 @@ mod native_windows_tests {
         let deadline = Instant::now() + Duration::from_secs(15);
         loop {
             match owner.probe() {
-                ExitProbe::Exited => return,
+                ExitProbe::Exited => {
+                    assert!(owner.members().unwrap().is_empty());
+                    return;
+                }
                 ExitProbe::Unknown(reason) => panic!("job ownership unavailable: {reason:?}"),
                 ExitProbe::Alive { .. } => {}
             }
@@ -459,7 +485,7 @@ mod native_windows_tests {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
-    fn leaf_started(owner: &mut ProcessOwner) {
+    fn leaf_started(owner: &mut ProcessOwner) -> u32 {
         let mut output = BufReader::new(owner.take_stdout().unwrap());
         let mut line = String::new();
         loop {
@@ -470,6 +496,34 @@ mod native_windows_tests {
             }
         }
         assert!(line.contains("BREAKAWAY_DENIED"));
+        let words = line.split_whitespace().collect::<Vec<_>>();
+        let at = words.iter().position(|s| *s == "LEAF_STARTED").unwrap();
+        words[at + 1].parse().unwrap()
+    }
+    fn assert_orphan_member(owner: &mut ProcessOwner, leaf: u32) {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let members = loop {
+            match owner.members() {
+                Ok(members) => break members,
+                Err(_) => {
+                    assert!(
+                        Instant::now() < deadline,
+                        "complete Job member observation unavailable"
+                    );
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+        };
+        let identity = *members
+            .iter()
+            .find(|p| p.pid == leaf)
+            .expect("actual leaf PID missing after launcher exit");
+        assert!(identity.created > 0);
+        assert_ne!(Some(identity.pid), owner.pid());
+        assert!(
+            owner.members().unwrap().contains(&identity),
+            "pinned Job member creation identity changed"
+        );
     }
     #[test]
     fn job_fixture() {
@@ -526,8 +580,9 @@ mod native_windows_tests {
         let root = owner.identity().unwrap();
         assert_eq!(owner.id(), root.pid);
         let input = owner.take_stdin().unwrap();
-        leaf_started(&mut owner);
+        let leaf = leaf_started(&mut owner);
         launcher_exited(&mut owner);
+        assert_orphan_member(&mut owner, leaf);
         assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
         assert!(ProfileLease::acquire(&dir).is_err());
         owner = owner.complete().unwrap_err();
@@ -545,8 +600,9 @@ mod native_windows_tests {
         let mut owner = ProcessOwner::spawn_owned(command(), lease).unwrap();
         assert_eq!(owner.hibernation_admission(), Ok(()));
         let input = owner.take_stdin().unwrap();
-        leaf_started(&mut owner);
+        let leaf = leaf_started(&mut owner);
         launcher_exited(&mut owner);
+        assert_orphan_member(&mut owner, leaf);
         assert!(matches!(owner.probe(), ExitProbe::Alive { .. }));
         assert!(ProfileLease::acquire(&dir).is_err());
         match owner.terminate_explicit() {
