@@ -39,3 +39,55 @@ jobs:
           path: .dev-check/deno-cache-probe/result.json
           if-no-files-found: error
           retention-days: 7
+
+  windows-cache-probe:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Verify exact pinned upstream Windows Deno package
+        run: python tools/package_youtube_components.py --platform windows-x64 --extractor-only
+      - name: Prove static stdin execution with a file as Deno cache destination
+        shell: python
+        run: |
+          import hashlib, json, os, pathlib, shutil, subprocess, tempfile
+          directory=pathlib.Path('desktop/src-tauri/binaries/youtube-light').resolve()
+          record=json.loads((directory/'components.json').read_text())['components']['deno']
+          deno=directory/record['filename']
+          digest=lambda:hashlib.sha256(deno.read_bytes()).hexdigest()
+          assert record['version']=='2.9.8' and digest()==record['sha256']
+          root=pathlib.Path(tempfile.mkdtemp(prefix='nb-deno-win-'))
+          report={'schema':1,'completed':False,'filesystem_sandbox':False,'cases':[]}
+          flags=['run','--ext=js','--no-code-cache','--no-prompt','--no-remote','--no-lock','--node-modules-dir=none','--no-config','--no-npm','--cached-only','-']
+          try:
+              for case in ['writable','runtime_file']:
+                  base=root/case; base.mkdir()
+                  home=base/'home'; home.mkdir()
+                  temporary=base/'tmp'; temporary.mkdir()
+                  cache=base/'cache'
+                  if case=='writable':cache.mkdir()
+                  else:cache=deno
+                  env={k:os.environ[k] for k in ['SystemRoot','WINDIR'] if k in os.environ}
+                  env.update(HOME=str(home),USERPROFILE=str(home),APPDATA=str(home),LOCALAPPDATA=str(home),TMP=str(temporary),TEMP=str(temporary),DENO_DIR=str(cache),DENO_NO_UPDATE_CHECK='1',DENO_NO_PROMPT='1')
+                  for attempt in range(2):
+                      result=subprocess.run([str(deno),*flags],input=b'console.log("NB_DENO_WIN_OK");',stdout=subprocess.PIPE,stderr=subprocess.PIPE,env=env,cwd=base,timeout=20)
+                      assert len(result.stdout)+len(result.stderr)<=65536
+                      observed={'case':case,'attempt':attempt+1,'exit_code':result.returncode,'marker':result.stdout==b'NB_DENO_WIN_OK\n','stderr_bytes':len(result.stderr),'runtime_unchanged':digest()==record['sha256']}
+                      report['cases'].append(observed)
+                      assert observed['exit_code']==0 and observed['marker'] and observed['runtime_unchanged']
+              report['completed']=True
+          finally:
+              shutil.rmtree(root)
+              output=pathlib.Path('.dev-check/deno-cache-probe/windows-result.json');output.parent.mkdir(parents=True,exist_ok=True)
+              output.write_text(json.dumps(report,indent=2)+'\n')
+      - name: Preserve safe Windows execution observations only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: deno-cache-probe-windows-safe
+          path: .dev-check/deno-cache-probe/windows-result.json
+          if-no-files-found: error
+          retention-days: 7
