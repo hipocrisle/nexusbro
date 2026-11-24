@@ -19,6 +19,7 @@ struct Grant {
     config: Option<zeroize::Zeroizing<String>>,
     logical_url: Option<String>,
     auxiliary: Option<serde_json::Value>,
+    media: Option<Arc<crate::youtube_light_extract::ExtractedVideo>>,
 }
 #[derive(Clone, Default)]
 pub struct PlayerDocuments(Arc<Mutex<HashMap<i32, Grant>>>);
@@ -53,6 +54,7 @@ impl PlayerDocuments {
                 config: None,
                 logical_url: None,
                 auxiliary: None,
+                media: None,
             },
         );
         Some(document)
@@ -191,7 +193,7 @@ pub fn documents() -> &'static PlayerDocuments {
 pub fn open_webm(
     browser: &Browser,
     generation: u64,
-    data: &crate::youtube_light_extract::ExtractedVideo,
+    data: Arc<crate::youtube_light_extract::ExtractedVideo>,
     resume: Option<(
         crate::youtube_light_resume::ResumeScope,
         Option<std::path::PathBuf>,
@@ -232,6 +234,7 @@ pub fn open_webm(
             .get_mut(&browser.identifier())
             .ok_or("Плеер закрыт")?
             .logical_url = Some(data.metadata.id().watch_url());
+        if let Some(grant)=grants.get_mut(&browser.identifier()) {grant.media=Some(data.clone());}
     }
     let restored = if let Some((scope, root)) = resume {
         crate::cef_youtube_resume::attach(
@@ -393,7 +396,7 @@ pub fn poll_probes() {
             let Some(result)=probe.poll() else{return true;};
             let data=match result {
                 Ok(state)=>serde_json::json!({"tip":"youtube-state","id":tab,"state":state}),
-                Err(_)=>serde_json::json!({"tip":"youtube-state","id":tab,"error":"Состояние плеера недоступно"}),
+                Err(code)=>serde_json::json!({"tip":"youtube-state","id":tab,"error":"Состояние плеера недоступно","code":code}),
             };
             let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(data));
             false
@@ -423,7 +426,7 @@ pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
     let bytes = serde_json::to_vec(&json).map_err(|_| "Диагностика недоступна")?;
     let parsed = crate::youtube_light_extract::parse(&bytes, &id)
         .map_err(|_| "Диагностические дорожки отклонены")?;
-    open_webm(browser, 1, &parsed, None)
+    open_webm(browser, 1, Arc::new(parsed), None)
 }
 
 pub fn current_document(browser: i32) -> Option<String> {
@@ -469,4 +472,12 @@ pub fn apply_aux(browser: &Browser, ready: crate::youtube_light_aux::Ready) {
             0,
         );
     }
+}
+
+/// Native-only retained extractor result. No signed URL crosses parent IPC.
+pub fn media(browser:&Browser)->Option<(u64,String,Arc<crate::youtube_light_extract::ExtractedVideo>)> {
+    let actual=browser.main_frame().map(|f|CefString::from(&f.url()).to_string())?;
+    let grants=documents().0.lock().ok()?;
+    let grant=grants.get(&browser.identifier()).filter(|g|g.document==actual)?;
+    Some((grant.generation,grant.document.clone(),grant.media.clone()?))
 }

@@ -1067,7 +1067,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::YoutubeSnapshot{id})=>{
                     let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(|b|crate::cef_youtube::request_probe(b,id,tx.clone()));
-                    if result.is_err(){let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-state","id":id,"error":"Состояние плеера недоступно"})));}
+                    if let Err(code)=result{let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-state","id":id,"error":"Состояние плеера недоступно","code":code})));}
                     continue;
                 }
                 Sobytie::Komanda(Komanda::YoutubeLight{id})=>{
@@ -1113,10 +1113,11 @@ impl Rabota {
                             let actual=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
                             let actual=crate::cef_youtube::logical_url(browser.identifier(),&actual).unwrap_or(actual);
                             if crate::youtube_light::VideoId::from_url(&actual).ok().map(|v|v.watch_url()).as_deref()==Some(ready.source_url.as_str()){
-                                let result=ready.result.as_ref().map_err(|e|*e).and_then(|data|{
+                                let result=ready.result.and_then(|data|{
+                                    let data=std::sync::Arc::new(data);
                                     let key=k.routes.borrow().key_for_browser(browser.identifier()).ok_or("Путь вкладки недоступен")?;
                                     let resume=crate::cef_youtube_resume::setup(browser,&key,tab.privatnaya||*force_private).ok();
-                                    crate::cef_youtube::open_webm(browser,ready.operation,data,resume)?;
+                                    crate::cef_youtube::open_webm(browser,ready.operation,data.clone(),resume)?;
                                     if let (Some(document),Some(route))=(crate::cef_youtube::current_document(browser.identifier()),k.routes.borrow().descriptor(&tab.route)){crate::cef_youtube_captions::attach(browser.identifier(),ready.operation,document,data.captions.clone(),route);}
 
                                     if let (Some(document),Some(duration),Some(route))=(crate::cef_youtube::current_document(browser.identifier()),data.metadata.duration_seconds(),k.routes.borrow().descriptor(&tab.route)){

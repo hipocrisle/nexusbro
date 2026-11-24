@@ -131,11 +131,11 @@ wrap_dev_tools_message_observer! {
    if message_id!=self.message{return;}
    let Ok(mut state)=self.state.lock()else{return;};if state.done{return;}
    state.done=true;
-   state.reply=Some(if success==0||!browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err(FAILED)}else{result.ok_or(FAILED).and_then(decode)});
+   state.reply=Some(if success==0{Err("cdp_method_failed")}else if !browser.is_some_and(|b|document_matches(b,self.identity,&self.frame_id,&self.document)){Err("probe_document_changed")}else{result.ok_or("cdp_result_absent").and_then(|v|decode(v).map_err(|_|"snapshot_value_unavailable"))});
   }
   fn on_dev_tools_agent_detached(&self,browser:Option<&mut Browser>){
    if browser.is_some_and(|b|b.identifier()!=self.identity){return;}
-   if let Ok(mut state)=self.state.lock(){if !state.done{state.done=true;state.reply=Some(Err(FAILED));}}
+   if let Ok(mut state)=self.state.lock(){if !state.done{state.done=true;state.reply=Some(Err("cdp_agent_detached"));}}
   }
  }
 }
@@ -153,17 +153,20 @@ pub struct Probe {
 }
 impl Probe {
     pub fn start(browser: &Browser) -> Result<Self, &'static str> {
-        if currently_on(ThreadId::UI) == 0 || browser.is_valid() == 0 {
-            return Err(FAILED);
+        if currently_on(ThreadId::UI) == 0 {
+            return Err("probe_wrong_thread");
+        }
+        if browser.is_valid() == 0 {
+            return Err("probe_browser_invalid");
         }
         let identity = browser.identifier();
-        let frame = browser.main_frame().ok_or(FAILED)?;
+        let frame = browser.main_frame().ok_or("probe_frame_absent")?;
         let document = CefString::from(&frame.url()).to_string();
         let frame_id = CefString::from(&frame.identifier()).to_string();
         if !document_matches(browser, identity, &frame_id, &document) {
-            return Err(FAILED);
+            return Err("probe_document_not_admitted");
         }
-        let message = crate::cdp::reserve(1).ok_or(FAILED)?;
+        let message = crate::cdp::reserve(1).ok_or("probe_message_capacity")?;
         let state = Arc::new(Mutex::new(Completion {
             done: false,
             reply: None,
@@ -179,7 +182,7 @@ impl Probe {
                     state.clone(),
                 )))
             })
-            .ok_or(FAILED)?;
+            .ok_or("probe_observer_unavailable")?;
         let pending = Self {
             registration: Some(registration),
             browser: browser.clone(),
@@ -197,7 +200,7 @@ impl Probe {
             "Runtime.evaluate",
             json!({"expression":"window.NB_LIGHT && window.NB_LIGHT.snapshot()","returnByValue":true,"silent":true}),
         ) {
-            return Err(FAILED);
+            return Err("probe_dispatch_failed");
         }
         Ok(pending)
     }
@@ -205,11 +208,14 @@ impl Probe {
         if self.consumed {
             return None;
         }
-        if currently_on(ThreadId::UI) == 0
-            || self.started.elapsed() >= TIMEOUT
-            || !document_matches(&self.browser, self.identity, &self.frame_id, &self.document)
-        {
-            return self.fail();
+        if currently_on(ThreadId::UI) == 0 {
+            return self.fail("probe_wrong_thread");
+        }
+        if self.started.elapsed() >= TIMEOUT {
+            return self.fail("probe_timeout");
+        }
+        if !document_matches(&self.browser, self.identity, &self.frame_id, &self.document) {
+            return self.fail("probe_document_changed");
         }
         let reply = match self.state.lock() {
             Ok(mut state) => state.reply.take(),
@@ -221,14 +227,14 @@ impl Probe {
         }
         reply
     }
-    fn fail(&mut self) -> Option<Reply> {
+    fn fail(&mut self, code: &'static str) -> Option<Reply> {
         self.consumed = true;
         self.registration.take();
         if let Ok(mut state) = self.state.lock() {
             state.done = true;
             state.reply.take();
         }
-        Some(Err(FAILED))
+        Some(Err(code))
     }
 }
 impl Drop for Probe {
