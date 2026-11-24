@@ -349,23 +349,24 @@ pub fn on_loaded(browser: &Browser, frame: &Frame) {
     }
 }
 pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>) {
-    retire_stop_probe(browser.identifier());
+    let identity=browser.identifier();
+    retire_stop_probe(identity);
     let stop_token=crate::cef_youtube_stop_probe::mint(browser).ok();
-    crate::youtube_light_jobs::cancel(browser.identifier());
-    crate::youtube_light_aux::cancel(browser.identifier());
-    crate::cef_youtube_resume::closed(browser.identifier());
-    crate::cef_youtube_captions::closed(browser.identifier());
-    crate::cef_youtube_download::cancel(browser.identifier());
+    crate::youtube_light_jobs::cancel(identity);
+    crate::youtube_light_aux::cancel(identity);
+    crate::cef_youtube_resume::closed(identity);
+    crate::cef_youtube_captions::closed(identity);
+    crate::cef_youtube_download::cancel(identity);
     let (active,hint) = documents().0.lock().ok().map(|grants| {
-        let grant=grants.get(&browser.identifier());
+        let grant=grants.get(&identity);
         let hint=grant.and_then(|grant| {
             let video=grant.logical_url.as_deref().and_then(|url|crate::youtube_light::VideoId::from_url(url).ok())?;
             Some((grant.document.clone(),video))
         });
         (grant.is_some(),hint)
     }).unwrap_or((false,None));
-    if let Some((document,video))=hint {if let Ok(mut hints)=reload_hints().lock(){hints.remember(browser.identifier(),&document,video);}}
-    documents().revoke(browser.identifier());
+    if let Some((document,video))=hint {if let Ok(mut hints)=reload_hints().lock(){hints.remember(identity,&document,video);}}
+    documents().revoke(identity);
     if active {
         if let Some(frame) = browser.main_frame() {
             frame.execute_java_script(
@@ -378,7 +379,7 @@ pub fn stop(browser: &Browser, tab:u64, sender:&std::sync::mpsc::Sender<crate::c
         }
     }
     if let Some(token)=stop_token {
-        STOP_PROBES.with(|p|{let mut p=p.borrow_mut();if p.len()<16{p.push(StopObservation{browser:browser.clone(),tab,sender:sender.clone(),token,started:std::time::Instant::now(),attempt:0,probe:None});}});
+        STOP_PROBES.with(|p|{let mut p=p.borrow_mut();if p.len()<16{p.push(StopObservation{browser:browser.clone(),identity,tab,sender:sender.clone(),token,started:std::time::Instant::now(),attempt:0,probe:None});}});
     }
 }
 
@@ -438,6 +439,7 @@ pub fn poll_probes() {
     });
 }
 pub fn clear_probes() {
+    STOP_EPOCH.with(|e|e.set(e.get().wrapping_add(1)));
     STOP_PROBES.with(|p|p.borrow_mut().clear());
     PROBES.with(|p| p.borrow_mut().clear());
     crate::cef_youtube_resume::clear();
@@ -462,7 +464,8 @@ pub fn open_fixture(browser: &Browser) -> Result<(), &'static str> {
     let parsed = crate::youtube_light_extract::parse(&bytes, &id)
         .map_err(|_| "Диагностические дорожки отклонены")?;
     open_webm(browser, 1, Arc::new(parsed), None)?;
-    if let Ok(mut grants)=documents().0.lock(){if let Some(g)=grants.get_mut(&browser.identifier()){g.fixture=true;}}
+    let identity=browser.identifier();
+    if let Ok(mut grants)=documents().0.lock(){if let Some(g)=grants.get_mut(&identity){g.fixture=true;}}
     Ok(())
 }
 
@@ -531,14 +534,16 @@ pub fn fixture_stop_identity(browser:i32,frame:&str,document:&str)->Option<u64>{
     documents().0.lock().ok()?.get(&browser).filter(|g|g.fixture&&g.document==document&&g.document_frame.as_deref()==Some(frame)).map(|g|g.generation)
 }
 struct StopObservation{
-    browser:Browser,tab:u64,sender:std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,
+    browser:Browser,identity:i32,tab:u64,sender:std::sync::mpsc::Sender<crate::cef_vkladki::Sobytie>,
     token:crate::cef_youtube_stop_probe::FixtureStopToken,started:std::time::Instant,attempt:usize,
     probe:Option<crate::cef_youtube_stop_probe::Probe>,
 }
-thread_local!{static STOP_PROBES:std::cell::RefCell<Vec<StopObservation>>=const{std::cell::RefCell::new(Vec::new())};}
-fn retire_stop_probe(browser:i32){STOP_PROBES.with(|p|p.borrow_mut().retain(|v|v.browser.identifier()!=browser));}
+thread_local!{static STOP_EPOCH:std::cell::Cell<u64>=const{std::cell::Cell::new(0)};static STOP_PROBES:std::cell::RefCell<Vec<StopObservation>>=const{std::cell::RefCell::new(Vec::new())};}
+fn retire_stop_probe(browser:i32){STOP_EPOCH.with(|e|e.set(e.get().wrapping_add(1)));STOP_PROBES.with(|p|p.borrow_mut().retain(|v|v.identity!=browser));}
 fn poll_stop_probes(){
-    STOP_PROBES.with(|p|p.borrow_mut().retain_mut(|v|{
+    let epoch=STOP_EPOCH.with(|e|e.get());
+    let mut pending=STOP_PROBES.with(|p|std::mem::take(&mut *p.borrow_mut()));
+    pending.retain_mut(|v|{
         let elapsed=v.started.elapsed();
         let sender=v.sender.clone();let tab=v.tab;
         let emit=|complete:bool,state:Option<serde_json::Value>,code:&str|{let _=sender.send(crate::cef_vkladki::Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-stop-state","id":tab,"complete":complete,"state":state,"code":code})));};
@@ -556,7 +561,8 @@ fn poll_stop_probes(){
             match crate::cef_youtube_stop_probe::Probe::start(&v.browser,&v.token){Ok(probe)=>{v.probe=Some(probe);v.attempt+=1;},Err(code)=>{emit(false,None,code);return false;}}
         }
         true
-    }));
+    });
+    if STOP_EPOCH.with(|e|e.get())==epoch{STOP_PROBES.with(|p|p.borrow_mut().extend(pending));}
 }
 
 /// Immutable committed native binding. Callers read CEF identities BEFORE
