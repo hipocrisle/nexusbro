@@ -15,7 +15,7 @@ pub(crate) enum Sobytie {
     YoutubeCaptionReady(crate::cef_youtube_captions::Ready),
     YoutubeDownloadRequest{browser:i32,audio:bool,format:String},
     YoutubeDownloadCancel{browser:i32},
-    YoutubeFullscreen{browser:i32,tab:u64,fullscreen:bool},
+    YoutubeFullscreen{browser:i32,tab:u64,operation:u64,document:String,fullscreen:bool},
     PoiskVybratPervoe(u64,u64,String,bool),
     DownloadNachata(u64,String),
     DevtoolsGotovy(u64),
@@ -43,7 +43,7 @@ pub(crate) enum Sobytie {
 wrap_display_handler! {
     struct VidStranicy { id: u64, tx: Sender<Sobytie>, privatnaya:bool, bootstrap:std::sync::Arc<crate::memory_bootstrap::Bootstrap> }
     impl DisplayHandler {
-        fn on_fullscreen_mode_change(&self,browser:Option<&mut Browser>,fullscreen:i32){if let Some(browser)=browser{let _=self.tx.send(Sobytie::YoutubeFullscreen{browser:browser.identifier(),tab:self.id,fullscreen:fullscreen!=0});}}
+        fn on_fullscreen_mode_change(&self,browser:Option<&mut Browser>,fullscreen:i32){if let Some(browser)=browser{if let Some((operation,document,_))=crate::cef_youtube::media(browser){let _=self.tx.send(Sobytie::YoutubeFullscreen{browser:browser.identifier(),tab:self.id,operation,document,fullscreen:fullscreen!=0});}}}
         fn on_media_access_change(&self,browser:Option<&mut Browser>,has_video_access:i32,has_audio_access:i32){if let Some(b)=browser{crate::memory_guard::capture(b.identifier(),has_video_access!=0||has_audio_access!=0);}}
         fn on_console_message(&self,browser:Option<&mut Browser>,_level:LogSeverity,message:Option<&CefString>,_source:Option<&CefString>,_line:i32)->i32{
             if let Some(value)=message.map(|m|m.to_string()).and_then(|m|m.strip_prefix("__NEXUSBRO_LIGHT_DOWNLOAD__:").map(str::to_owned)).filter(|s|s.len()<=80){if let Some(browser)=browser.as_ref(){if crate::cef_youtube::media(browser).is_some(){if value=="cancel" {let _=self.tx.send(Sobytie::YoutubeDownloadCancel{browser:browser.identifier()});}else if value=="audio"||value.starts_with("video:"){let _=self.tx.send(Sobytie::YoutubeDownloadRequest{browser:browser.identifier(),audio:value=="audio",format:value.strip_prefix("video:").unwrap_or("").to_owned()});}}}return 1;}
@@ -218,7 +218,7 @@ wrap_request_handler! {
     impl RequestHandler {
         fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
-                if let Some(request)=request.as_ref(){let url=CefString::from(&request.url()).to_string();if crate::cef_youtube::current_document(browser.identifier()).as_deref()!=Some(url.as_str()){crate::cef_youtube_fullscreen::leaving(browser.identifier(),self.id,&self.tx);}crate::cef_youtube::on_navigation(browser.identifier(),&url);if self.bootstrap.allow_initial_blank(&url){return 0;}if self.bootstrap.defer(&url){return 1;}}
+                if let Some(request)=request.as_ref(){let url=CefString::from(&request.url()).to_string();if crate::cef_youtube::current_document(browser.identifier()).as_deref()!=Some(url.as_str()){crate::cef_youtube_fullscreen::leave_browser(&browser,self.id,&self.tx);}crate::cef_youtube::on_navigation(browser.identifier(),&url);if self.bootstrap.allow_initial_blank(&url){return 0;}if self.bootstrap.defer(&url){return 1;}}
                 crate::cef_interfeys::cancel_context(browser.identifier());
                 let url=request.as_ref().map(|r|CefString::from(&r.url()).to_string()).unwrap_or_default();
                 let method=request.as_ref().map(|r|CefString::from(&r.method()).to_string()).unwrap_or_default();
@@ -921,7 +921,7 @@ impl Rabota {
         for extra in self.extras.values_mut(){extra.set_browser_locked(locked,generation);}
         if locked{
             if cancel_routes_for_lock(&mut self.s,&mut self.route_attempts,&self.brauzery,&self.tx){let _=self.route_publish();}
-            for (tab,browser) in &self.brauzery{crate::cef_youtube_fullscreen::leaving(browser.identifier(),*tab,&self.tx);crate::cef_youtube::stop(browser);crate::cef_interfeys::cancel_context(browser.identifier());}
+            for (tab,browser) in &self.brauzery{crate::cef_youtube_fullscreen::leave_browser(browser,*tab,&self.tx);crate::cef_youtube::stop(browser);crate::cef_interfeys::cancel_context(browser.identifier());}
             for browser in self.brauzery.values(){
                 if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}
                 let _=sistema::pokazat(handle(browser),false);
@@ -1004,7 +1004,7 @@ impl Rabota {
             // still complete, while no key, popup or stale command can reopen a page.
             if *browser_locked && matches!(&sobytie,Sobytie::Komanda(command) if !matches!(command,
                 Komanda::BrowserLocked{..}|Komanda::RouteApply{..}|Komanda::RouteFailed{..}|Komanda::PasswordsEnabled{..}|Komanda::MemorySettings{..}|Komanda::OknoKomanda{..}|
-                Komanda::OknoZakryt{..}|Komanda::GlavnoeSkryto|Komanda::GlavnoePokazat)) {continue;}
+                Komanda::YoutubeExitFullscreen|Komanda::OknoZakryt{..}|Komanda::GlavnoeSkryto|Komanda::GlavnoePokazat)) {continue;}
 
             // No input or navigation reaches a WebContents after close was
             // committed. Selecting it records intent; the replacement waits.
@@ -1101,7 +1101,7 @@ impl Rabota {
                     let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":result.is_ok(),"error":result.err()})));
                     continue;
                 }
-                Sobytie::YoutubeFullscreen{browser,tab,fullscreen}=>{if let Some(current)=brauzery.get(&tab).filter(|b|b.identifier()==browser){crate::cef_youtube_fullscreen::changed(current,tab,tab==s.aktivnaya&&!*browser_locked&&!*closing,fullscreen,tx);}continue;}
+                Sobytie::YoutubeFullscreen{browser,tab,operation,document,fullscreen}=>{if crate::cef_youtube::documents().document_matches(browser,operation,&document){if let Some(current)=brauzery.get(&tab).filter(|b|b.identifier()==browser){crate::cef_youtube_fullscreen::changed(current,tab,tab==s.aktivnaya&&!*browser_locked&&!*closing,fullscreen,tx);}}continue;}
                 Sobytie::YoutubeDownloadRequest{browser,audio,format}=>{
                     if !*browser_locked&&! *closing {if let Some(tab)=s.vkladki.iter().find(|v|v.id==s.aktivnaya&&!v.route_pending&&brauzery.get(&v.id).is_some_and(|b|b.identifier()==browser)){if let(Some(browser),Some(route))=(brauzery.get(&tab.id),k.routes.borrow().descriptor(&tab.route)){crate::cef_youtube_download::request(browser,tab.id,tab.route_generation,route,audio,format,tx);}}}continue;
                 }
@@ -1257,7 +1257,9 @@ impl Rabota {
                     continue;
                 }
                 Sobytie::Komanda(Komanda::GlavnoePokazat)=>{if label.is_empty(){*closing=false;}}
+                Sobytie::Komanda(Komanda::YoutubeExitFullscreen)=>{for(tab,browser)in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);}continue;}
                 Sobytie::Komanda(Komanda::GlavnoeSkryto)=>{
+                    for(tab,browser)in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);}
                     if label.is_empty(){
                         *closing=true; // Не создаём скрытую приватную blank-вкладку.
                         for tab in s.vkladki.iter().filter(|v|v.privatnaya){
@@ -1312,7 +1314,7 @@ impl Rabota {
                 }
                 Sobytie::Komanda(Komanda::Vybrat { id }) => {
                     if s.vkladki.iter().any(|v| v.id == id) {
-                        if s.aktivnaya!=id {if let Some(old)=brauzery.get(&s.aktivnaya){crate::cef_youtube_fullscreen::leaving(old.identifier(),s.aktivnaya,tx);}}
+                        if s.aktivnaya!=id {if let Some(old)=brauzery.get(&s.aktivnaya){crate::cef_youtube_fullscreen::leave_browser(old,s.aktivnaya,tx);}}
                         s.aktivnaya = id;
                         fokus = true;
                         fokus_klaviatury = true;
@@ -1633,7 +1635,7 @@ impl Rabota {
                     for extra in extras.values_mut(){extra.set_browser_locked(locked,generation);}
                     if locked{
                         izmeneno|=cancel_routes_for_lock(s,route_attempts,brauzery,tx);
-                        for (tab,browser) in brauzery.iter(){crate::cef_youtube_fullscreen::leaving(browser.identifier(),*tab,tx);crate::cef_youtube::stop(browser);crate::cef_interfeys::cancel_context(browser.identifier());}
+                        for (tab,browser) in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);crate::cef_youtube::stop(browser);crate::cef_interfeys::cancel_context(browser.identifier());}
                         for browser in brauzery.values(){if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}let _=sistema::pokazat(handle(browser),false);}
                         for hwnd in devtools.values(){let _=sistema::pokazat(*hwnd,false);}
                         devtools_pending.clear();devtools.clear();

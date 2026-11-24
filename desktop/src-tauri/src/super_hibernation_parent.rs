@@ -778,7 +778,7 @@ pub fn tick(app: &tauri::AppHandle) {
             let _ = tunnel.kill();
             let _ = tunnel.wait();
         }
-        crate::release_route_resources(&s, &id, generation);
+        crate::release_route_resources(app,&s, &id, generation);
         match owner.complete() {
             Ok(()) => {
                 let wake = {

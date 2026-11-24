@@ -684,7 +684,7 @@ async fn podgotovit_dvizhok(
             let resursy = (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take());
             drop(v);
             ostanovit_resursy(resursy.0, resursy.1, resursy.2);
-            release_route_resources(&s, &id_fon, zapusk_id);
+            release_route_resources(&h,&s, &id_fon, zapusk_id);
             if let Some(v)=s.vkladki.lock().unwrap().get_mut(&id_fon).filter(|v|v.zapusk_id==zapusk_id&&v.proc.is_none()){v.hibernate.no_child_start_failed(zapusk_id);}
             zapisat_v_zhurnal(format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
             let _ = h.emit("oshibka-dvizhka", format!("{id_fon}: движок не ответил за 25 с (см. cef.log)"));
@@ -777,16 +777,19 @@ fn primenit_vidimost(s: &State<Sostoyanie>) {
 }
 
 fn pereklyuchit_vnutri(app:&tauri::AppHandle,s: &State<Sostoyanie>, id: &str) {
+    let previous=s.aktivnaya.lock().unwrap().clone();
     let _okna = s.izmenenie_okon.lock().unwrap();
     if !s.vkladki.lock().unwrap().contains_key(id) { return }
     *s.aktivnaya.lock().unwrap() = Some(id.to_string());
     primenit_vidimost(s);
     sohranit_aktivnuyu(id);
     drop(_okna);
+    if let Some(old)=previous.filter(|old|old!=id){let channel=s.vkladki.lock().unwrap().get(&old).and_then(|v|v.kanal.clone());if let Some(channel)=channel{let _=channel.try_send(sessiya::Komanda::YoutubeExitFullscreen);}}
     youtube_fullscreen_parent::reconcile(app);
 }
 
-fn release_route_resources(s: &Sostoyanie, id: &str, engine: u64) {
+fn release_route_resources(app:&tauri::AppHandle,s: &Sostoyanie, id: &str, engine: u64) {
+    youtube_fullscreen_parent::release_super(app,id,engine);
     perevod::otmenit_super(id);
     tab_route_parent::release_engine(id, engine);
     s.routes.release_engine(id, engine);
@@ -807,7 +810,7 @@ fn ostanovit_resursy(
     }
 }
 
-async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
+async fn ostanovit_vnutri(app:&tauri::AppHandle,s: &State<'_, Sostoyanie>, id: &str) {
     perevod::otmenit_super(id);
     let resursy = {
         let mut v = s.vkladki.lock().unwrap();
@@ -822,7 +825,7 @@ async fn ostanovit_vnutri(s: &State<'_, Sostoyanie>, id: &str) {
     let _ = tauri::async_runtime::spawn_blocking(move || {
         ostanovit_resursy(resursy.0, resursy.1, resursy.2);
     }).await;
-    release_route_resources(s, id, resursy.3);
+    release_route_resources(app,s, id, resursy.3);
     if let Some(v)=s.vkladki.lock().unwrap().get_mut(id).filter(|v|v.zapusk_id==resursy.3){v.hibernate=Default::default();v.zapusk_idet=false;}
 }
 
@@ -868,7 +871,7 @@ async fn izmenit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, nastrojki: Nas
         if let Some(n) = list.iter_mut().find(|n| n.id == archive.id) { *n = archive; }
     })).await.map_err(|e| e.to_string())??;
     if rabotaet && nuzhen_restart {
-        ostanovit_vnutri(&s, &nastrojki.id).await;
+        ostanovit_vnutri(&app,&s, &nastrojki.id).await;
         let result = zapustit_vnutri(&app, &s, &nastrojki.id).await;
         if result.ok {
             let id = if nastrojki.pustaya { Some(1) } else { aktivnaya_stranica };
@@ -946,6 +949,7 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
         if let Some(settings)=settings{browser_sync::archive_super(&app.state::<std::sync::Arc<secure_vault::VaultState>>(),&settings,"local_delete")?;}
     }
     okna_app::zakryt_super(&app,&s,&id);
+    {let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id);if let Some(engine)=engine{youtube_fullscreen_parent::release_super(&app,&id,engine);}}
     perevod::otmenit_super(&id);
     let udalena = {
         let mut v = s.vkladki.lock().unwrap();
@@ -1056,7 +1060,7 @@ async fn perezagruzit(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: Strin
     if !s.vkladki.lock().unwrap().contains_key(&id) {
         return Ok(net("такой супер-вкладки нет"));
     }
-    ostanovit_vnutri(&s, &id).await;
+    ostanovit_vnutri(&app,&s, &id).await;
     Ok(zapustit_vnutri(&app, &s, &id).await)
 }
 
@@ -1434,7 +1438,7 @@ pub fn run() {
                     for (id, proc, proxy, tunnel, vpn_umer, active, engine) in mertvye {
                         youtube_fullscreen_parent::release_super(&h,&id,engine);
                         ostanovit_resursy(proc, proxy, tunnel);
-                        release_route_resources(&s, &id, engine);
+                        release_route_resources(&h,&s, &id, engine);
                         if let Some(v)=s.vkladki.lock().unwrap().get_mut(&id).filter(|v|v.zapusk_id==engine){v.hibernate=Default::default();}
                         {
                             let _okna = s.izmenenie_okon.lock().unwrap();

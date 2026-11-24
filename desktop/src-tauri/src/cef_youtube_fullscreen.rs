@@ -77,3 +77,28 @@ pub fn clear(tx: &Sender<Sobytie>) {
         emit(browser, tab, false, tx);
     }
 }
+
+/// Fixed native action, admitted current player only. No renderer script input.
+pub fn leave_browser(browser: &Browser, tab: u64, tx: &Sender<Sobytie>) {
+    if currently_on(ThreadId::UI) == 0 {
+        return;
+    }
+    let identity = browser.identifier();
+    let entered = ENTERED.with(|set| set.borrow().contains_key(&identity));
+    if !entered {
+        return;
+    }
+    if let Some(frame) = browser.main_frame() {
+        let document = CefString::from(&frame.url()).to_string();
+        if crate::cef_youtube::logical_url(identity, &document).is_some() {
+            frame.execute_java_script(
+                Some(&CefString::from(
+                    "if(document.fullscreenElement){document.exitFullscreen().catch(()=>{});}",
+                )),
+                None,
+                0,
+            );
+        }
+    }
+    leaving(identity, tab, tx);
+}
