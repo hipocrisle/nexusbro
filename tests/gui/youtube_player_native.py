@@ -181,11 +181,13 @@ def minimize_actual(device, minimized):
 RESTORE_OBSERVER_JS = r"""(expected=>{
  const internal=window.__TAURI_INTERNALS__,original=internal?.invoke;
  if(typeof original!=="function"||window.__nbRestoreObservation)return false;
+ const descriptor=Object.getOwnPropertyDescriptor(internal,"invoke");
+ const invoke_descriptor={present:!!descriptor,writable:descriptor?.writable===true,configurable:descriptor?.configurable===true,getter:typeof descriptor?.get==="function",setter:typeof descriptor?.set==="function"};
  const bounded=x=>Math.min(32,x+1),event={};
  for(const type of ["pointerdown","pointerup","click"])event[type]={total:0,trusted:0,owner_match:0,trusted_owner_match:0};
  const ipc={pereklyuchit:{called:0,expected:0,resolved:0,rejected:0,ok_true:0,ok_false:0,ok_unknown:0,string_error:0,object_error:0,other_error:0},fokus_obolochke:{called:0,expected:0,resolved:0,rejected:0,ok_true:0,ok_false:0,ok_unknown:0,string_error:0,object_error:0,other_error:0}};
  let attached_failed=0,synchronous_error=0;
- const listener=e=>{const v=event[e.type],owner=e.target?.closest?.('.vkladka[data-super-id]');const match=owner?.dataset.superId===expected;v.total=bounded(v.total);if(e.isTrusted)v.trusted=bounded(v.trusted);if(match)v.owner_match=bounded(v.owner_match);if(match&&e.isTrusted)v.trusted_owner_match=bounded(v.trusted_owner_match);};
+ const listener=e=>{const v=event[e.type],owner=e.target?.closest?.('.vkladka[data-super-id]');const match=owner?.dataset.superId===expected;v.total=bounded(v.total);if(Number.isFinite(e.clientX)&&Number.isFinite(e.clientY)){v.last_client_x=Math.round(e.clientX);v.last_client_y=Math.round(e.clientY);}if(e.isTrusted)v.trusted=bounded(v.trusted);if(match)v.owner_match=bounded(v.owner_match);if(match&&e.isTrusted)v.trusted_owner_match=bounded(v.trusted_owner_match);};
  const error=(v,e)=>{v.rejected=bounded(v.rejected);const k=typeof e==="string"?"string_error":e!==null&&typeof e==="object"?"object_error":"other_error";v[k]=bounded(v[k]);};
  function wrapped(){
   const name=arguments[0],v=name==="pereklyuchit"||name==="fokus_obolochke"?ipc[name]:null;
@@ -195,9 +197,9 @@ RESTORE_OBSERVER_JS = r"""(expected=>{
   return promise;
  }
  for(const type of Object.keys(event))document.addEventListener(type,listener,true);
- internal.invoke=wrapped;
- window.__nbRestoreObservation={finish:()=>{internal.invoke=original;for(const type of Object.keys(event))document.removeEventListener(type,listener,true);delete window.__nbRestoreObservation;return {events:event,ipc,attached_failed,synchronous_error,invoke_restored:internal.invoke===original,listeners_removed:true};}};
- return internal.invoke===wrapped;
+ let invoke_wrapped=false,assignment_threw=false;try{internal.invoke=wrapped;invoke_wrapped=internal.invoke===wrapped;}catch(_){assignment_threw=true;}
+ window.__nbRestoreObservation={finish:()=>{try{if(invoke_wrapped)internal.invoke=original;}catch(_){}for(const type of Object.keys(event))document.removeEventListener(type,listener,true);delete window.__nbRestoreObservation;return {events:event,ipc,attached_failed,synchronous_error,pointer_listeners_installed:true,invoke_wrapped,invoke_descriptor,assignment_threw,invoke_restored:internal.invoke===original,listeners_removed:true};}};
+ return {pointer_listeners_installed:true,invoke_wrapped,invoke_descriptor,assignment_threw};
 })"""
 
 
@@ -208,30 +210,93 @@ def restore_observer_self_test():
     global.window={__TAURI_INTERNALS__:{invoke:original}};
     global.document={addEventListener:(k,f)=>handlers.set(k,f),removeEventListener:(k,f)=>{assert.equal(handlers.get(k),f);handlers.delete(k);}};
     const install="""+RESTORE_OBSERVER_JS+""";
-    assert.equal(install(owner),true);const wrapped=window.__TAURI_INTERNALS__.invoke,args={id:owner};
+    const setup=install(owner);assert.equal(setup.invoke_wrapped,true);assert.equal(setup.pointer_listeners_installed,true);const wrapped=window.__TAURI_INTERNALS__.invoke,args={id:owner};
     const actual=wrapped.call(receiver,'pereklyuchit',args);assert.equal(actual,result);assert.equal(seen.receiver,receiver);assert.equal(seen.args[1],args);
     handlers.get('click')({type:'click',isTrusted:true,target:{closest:()=>({dataset:{superId:owner}})}});
     await actual;result=Promise.reject('PRIVATE https://secret.invalid/token');const rejected=wrapped.call(receiver,'fokus_obolochke');assert.equal(rejected,result);await rejected.catch(()=>{});
     const value=window.__nbRestoreObservation.finish();assert.equal(window.__TAURI_INTERNALS__.invoke,original);assert.equal(handlers.size,0);assert.equal(window.__nbRestoreObservation,undefined);
     assert.equal(value.events.click.trusted_owner_match,1);assert.equal(value.ipc.pereklyuchit.resolved,1);assert.equal(value.ipc.pereklyuchit.ok_true,1);assert.equal(value.ipc.fokus_obolochke.rejected,1);
-    assert.equal(JSON.stringify(value).includes('PRIVATE'),false);console.log(JSON.stringify({self_test:true,native_execution:false}));
+    assert.equal(JSON.stringify(value).includes('PRIVATE'),false);
+    const frozen={};Object.defineProperty(frozen,'invoke',{value:original,writable:false,configurable:false});window.__TAURI_INTERNALS__=frozen;
+    const unavailable=install(owner);assert.equal(unavailable.invoke_wrapped,false);assert.equal(unavailable.pointer_listeners_installed,true);
+    handlers.get('pointerdown')({type:'pointerdown',isTrusted:true,target:{closest:()=>({dataset:{superId:owner}})}});
+    const independent=window.__nbRestoreObservation.finish();assert.equal(independent.events.pointerdown.trusted_owner_match,1);assert.equal(handlers.size,0);assert.equal(frozen.invoke,original);
+    console.log(JSON.stringify({self_test:true,native_execution:false}));
     })().catch(()=>{process.stderr.write('restore_observer_self_test_failed\\n');process.exitCode=1;});"""
     result=subprocess.run(['node','-e',script],capture_output=True,text=True,timeout=10)
     require(result.returncode==0,'Restore observer promise/cleanup self-test failed')
     return {'self_test':True,'native_execution':False}
 
 
-def restore_observer_begin(client,identifier,case):
-    try:case['restore_event_observer_installed']=client.js(RESTORE_OBSERVER_JS+'('+json.dumps(identifier)+')') is True
+def xwin_geometry(text):
+    import re
+    def number(label):
+        value=re.search(r'^\s*'+re.escape(label)+r':\s*(-?\d+)',text,re.M)
+        return int(value[1]) if value else None
+    return {'x':number('Absolute upper-left X'),'y':number('Absolute upper-left Y'),
+            'width':number('Width'),'height':number('Height')}
+
+
+def input_geometry(client,device,selector):
+    """Read-only bounded private-X11 receipt; no activation or coordinate fix."""
+    if not sys.platform.startswith('linux') or not getattr(device,'player_wm',None):return {'available':False}
+    import re,psutil
+    result={'available':False,'webview_origin_proven':False}
+    try:
+        env=device.player_wm.env
+        def read(*args):
+            value=subprocess.run(args,env=env,capture_output=True,text=True,timeout=3)
+            require(value.returncode==0 and len(value.stdout)<=65536,'Read-only X11 geometry unavailable')
+            return value.stdout
+        dom=client.js('(()=>{const e=document.querySelector('+json.dumps(selector)+'),r=e?.getBoundingClientRect();return r?{x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2),scale:devicePixelRatio||1}:null})()')
+        require(isinstance(dom,dict) and all(type(dom.get(k))in(int,float) for k in ('x','y','scale')),'Geometry target unavailable')
+        origin=call(client,'plugin:window|inner_position',label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label'))
+        expected=(round(origin['x']+dom['x']*dom['scale']),round(origin['y']+dom['y']*dom['scale']))
+        owner=str(native_owner(device));tree=read('xwininfo','-id',owner,'-stats','-tree');outer=xwin_geometry(tree)
+        require(all(type(v)is int for v in outer.values()),'X11 owner geometry unavailable')
+        children=[]
+        for line in tree.splitlines():
+            match=re.search(r'(\d+)x(\d+)([+-]\d+)([+-]\d+)\s+([+-]\d+)([+-]\d+)\s*$',line)
+            if match and len(children)<16:
+                w,h,_,_,x,y=map(int,match.groups());children.append({'x_offset':x-outer['x'],'y_offset':y-outer['y'],'width':w,'height':h,'contains_expected_click':x<=expected[0]<x+w and y<=expected[1]<y+h})
+        result.update(available=True,dom_center=dom,inner_origin={'x':origin['x'],'y':origin['y']},outer=outer,
+                      expected_click={'x':expected[0],'y':expected[1]},inner_minus_outer={'x':origin['x']-outer['x'],'y':origin['y']-outer['y']},native_children=children)
+        mouse=dict(line.split('=',1) for line in read('xdotool','getmouselocation','--shell').splitlines() if '=' in line)
+        root_pid=int(read('xdotool','getwindowpid',owner).strip())
+        owned={p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}|{device.app.pid}
+        def role(window):
+            try:
+                pid=int(read('xdotool','getwindowpid',window).strip())
+                if pid==root_pid:return 'root'
+                if pid not in owned:return 'other'
+                args=psutil.Process(pid).cmdline()
+                return 'cef' if any(a=='--nb-dvizhok' or a.startswith('--type=') for a in args) else 'owned_other'
+            except Exception:return 'unavailable'
+        pointer=mouse.get('WINDOW','0');pointer_rect=xwin_geometry(read('xwininfo','-id',pointer,'-stats'))
+        result.update(available=True,dom_center=dom,inner_origin={'x':origin['x'],'y':origin['y']},outer=outer,
+                      expected_click={'x':expected[0],'y':expected[1]},inner_minus_outer={'x':origin['x']-outer['x'],'y':origin['y']-outer['y']},
+                      native_children=children,pointer={'x':int(mouse['X']),'y':int(mouse['Y']),'window_role':role(pointer),'window_geometry':pointer_rect},
+                      focus_role=role(read('xdotool','getwindowfocus').strip()))
+    except Exception:result['read_incomplete']=True
+    return result
+
+
+def restore_observer_begin(client,identifier,case,device=None):
+    try:
+        setup=client.js(RESTORE_OBSERVER_JS+'('+json.dumps(identifier)+')')
+        case['restore_event_observer_installed']=isinstance(setup,dict) and setup.get('invoke_wrapped') is True
+        if isinstance(setup,dict):case['restore_observer_setup']=setup
     except Exception:case['restore_event_observer_installed']=False
+    if device is not None:case['restore_geometry_before']=input_geometry(client,device,'.vkladka[data-super-id="'+identifier+'"]')
 
 
-def restore_observer_finish(client,case):
+def restore_observer_finish(client,case,device=None,identifier=None):
     try:
         value=client.js('window.__nbRestoreObservation?.finish()??null')
         if isinstance(value,dict):case['restore_input_observation']=value
         else:case['restore_event_observer_incomplete']=True
     except Exception:case['restore_event_observer_incomplete']=True
+    if device is not None:case['restore_geometry_after']=input_geometry(client,device,'.vkladka[data-super-id="'+identifier+'"]')
 
 
 def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostics):
@@ -293,7 +358,7 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
     finally:
         case['restore_callback_entered']=True
         observe_restore=kind.startswith('background-super-')
-        if observe_restore:restore_observer_begin(client,identifier,case)
+        if observe_restore:restore_observer_begin(client,identifier,case,device)
         try:
             restore();case['restore_complete']=True
         except Exception:
@@ -310,7 +375,7 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
                 case['restore_diagnostic_incomplete']=True
             raise
         finally:
-            if observe_restore:restore_observer_finish(client,case)
+            if observe_restore:restore_observer_finish(client,case,device,identifier)
         case['rows_restored']=row_record()
         restored=observe(client,identifier,tab,diagnostics=diagnostics)
         snapshot_record('after_restore',restored)
