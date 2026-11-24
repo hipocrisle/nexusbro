@@ -523,6 +523,7 @@ jobs:
         run: |
           sha256sum -c .dev-check/youtube-media-fixture/SHA256SUMS
           python -m pip install Pillow psutil websocket-client cryptography
+          python tests/gui/youtube_privacy_scan.py
           if [ "${{ matrix.os }}" = "windows-latest" ]; then
             python -m pip install pyautogui pywinauto
           fi
