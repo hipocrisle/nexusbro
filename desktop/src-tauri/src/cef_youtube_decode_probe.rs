@@ -3,7 +3,8 @@
 //! media/base/decoder.{h,cc}, core/inspector/inspector_media_agent.cc, and
 //! content/renderer/media/inspector_media_event_handler.cc at 156.0.8078.88.
 //! Owns this native CDP session's Media domain; do not overlap another native
-//! Media consumer. No generic JS, playback changes, network or private log output.
+//! Media consumer. Final current-video backend-node revalidation is point-in-time,
+//! not continuous pipeline identity. No playback changes, network or private log output.
 use crate::youtube_light::VideoId;
 use cef::*;
 use serde::Serialize;
@@ -154,6 +155,10 @@ struct State {
     object: Option<Zeroizing<String>>,
     described: bool,
     node: Option<i64>,
+    final_started: bool,
+    final_object: Option<Zeroizing<String>>,
+    final_described: bool,
+    final_node: Option<i64>,
     players: Vec<Player>,
 }
 impl State {
@@ -258,6 +263,15 @@ impl State {
         }
         Ok(())
     }
+    fn verified_evidence(&self) -> Result<Option<Value>, &'static str> {
+        let Some(final_node) = self.final_node else {
+            return Ok(None);
+        };
+        if self.node != Some(final_node) {
+            return Err("decode_video_node_changed");
+        }
+        self.evidence()
+    }
     fn evidence(&self) -> Result<Option<Value>, &'static str> {
         if !self.enabled {
             return Ok(None);
@@ -340,17 +354,17 @@ wrap_dev_tools_message_observer! {
  struct Observer{identity:i32,frame_id:String,document:String,expected:VideoId,base:i32,state:Arc<Mutex<State>>}
  impl DevToolsMessageObserver{
   fn on_dev_tools_method_result(&self,browser:Option<&mut Browser>,message_id:i32,success:i32,result:Option<&[u8]>){
-   if !(self.base..=self.base+2).contains(&message_id){return;}
+   if ![self.base,self.base+1,self.base+2,self.base+5,self.base+6].contains(&message_id){return;}
    let valid=browser.is_some_and(|b|admitted(b,self.identity,&self.frame_id,&self.document,&self.expected));
    let Ok(mut state)=self.state.lock()else{return};if state.done{return;}
    if !valid{state.error=Some("decode_document_changed");return;}if success==0{state.error=Some("decode_cdp_method_failed");return;}
    if message_id==self.base{state.enabled=true;return;} // Successful void methods may have no JSON result.
    let parsed=(||->Result<(),&'static str>{let tree=parse(result.ok_or("decode_cdp_result_absent")?)?;
-    if message_id==self.base+1{
+    if message_id==self.base+1||message_id==self.base+5{
      let value=&tree.0["result"];
      if tree.0.get("exceptionDetails").is_some()||value["type"]!="object"||value["subtype"]!="node"||value["className"]!="HTMLVideoElement"{return Err("decode_video_node_missing");}
-     let object=value["objectId"].as_str().filter(|v|!v.is_empty()&&v.len()<=512).ok_or("decode_object_invalid")?;state.object=Some(Zeroizing::new(object.to_owned()));
-    }else{let node=&tree.0["node"];if node["nodeName"]!="VIDEO"{return Err("decode_video_node_missing");}state.node=Some(node["backendNodeId"].as_i64().filter(|n|*n>0&&*n<=i32::MAX as i64).ok_or("decode_node_invalid")?);}Ok(())})();
+     let object=value["objectId"].as_str().filter(|v|!v.is_empty()&&v.len()<=512).ok_or("decode_object_invalid")?;if message_id==self.base+1{state.object=Some(Zeroizing::new(object.to_owned()));}else{state.final_object=Some(Zeroizing::new(object.to_owned()));}
+    }else{let node=&tree.0["node"];if node["nodeName"]!="VIDEO"{return Err("decode_video_node_missing");}let id=node["backendNodeId"].as_i64().filter(|n|*n>0&&*n<=i32::MAX as i64).ok_or("decode_node_invalid")?;if message_id==self.base+2{state.node=Some(id);}else{if state.node!=Some(id){return Err("decode_video_node_changed");}state.final_node=Some(id);}}Ok(())})();
    if let Err(code)=parsed{state.error=Some(code);}
   }
   fn on_dev_tools_event(&self,browser:Option<&mut Browser>,method:Option<&CefString>,params:Option<&[u8]>){
@@ -403,7 +417,7 @@ impl Probe {
             return Err("decode_document_not_admitted");
         }
         let lease = Lease::take(identity)?;
-        let base = crate::cdp::reserve(5).ok_or("decode_message_bound")?;
+        let base = crate::cdp::reserve(7).ok_or("decode_message_bound")?;
         let state = Arc::new(Mutex::new(State::default()));
         let registration = browser
             .host()
@@ -470,6 +484,8 @@ impl Probe {
             return self.finish(Err("decode_timeout"));
         }
         let mut object = None;
+        let mut final_evaluate = false;
+        let mut final_object = None;
         let result = match self.state.lock() {
             Ok(mut state) => {
                 if let Some(error) = state.error {
@@ -481,8 +497,24 @@ impl Probe {
                             state.described = true;
                         }
                     }
+                    if !state.final_described {
+                        if let Some(id) = state.final_object.as_ref() {
+                            final_object = Some(id.clone());
+                            state.final_described = true;
+                        }
+                    }
                     match state.evidence() {
-                        Ok(value) => value.map(Ok),
+                        Ok(Some(_)) => {
+                            if !state.final_started {
+                                state.final_started = true;
+                                final_evaluate = true;
+                            }
+                            match state.verified_evidence() {
+                                Ok(value) => value.map(Ok),
+                                Err(error) => Some(Err(error)),
+                            }
+                        }
+                        Ok(None) => None,
                         Err(error) => Some(Err(error)),
                     }
                 }
@@ -491,6 +523,28 @@ impl Probe {
         };
         if let Some(result) = result {
             return self.finish(result);
+        }
+        // Re-query the one CURRENT video element, then bind its backend node
+        // immediately before emitting. All CEF sends happen after guard drop.
+        if final_evaluate
+            && !crate::cdp::send(
+                &self.browser,
+                self.base + 5,
+                "Runtime.evaluate",
+                json!({"expression":SCRIPT,"objectGroup":self.group,"silent":true,"returnByValue":false}),
+            )
+        {
+            return self.finish(Err("decode_dispatch_failed"));
+        }
+        if let Some(final_object) = final_object {
+            if !crate::cdp::send(
+                &self.browser,
+                self.base + 6,
+                "DOM.describeNode",
+                json!({"objectId":final_object.as_str(),"depth":0,"pierce":false}),
+            ) {
+                return self.finish(Err("decode_dispatch_failed"));
+            }
         }
         if let Some(object) = object {
             if !crate::cdp::send(
@@ -513,6 +567,7 @@ impl Probe {
         if let Ok(mut state) = self.state.lock() {
             state.done = true;
             state.object.take();
+            state.final_object.take();
         }
         // Never call CEF under state/grant mutexes. This session is exclusively ours.
         if currently_on(ThreadId::UI) != 0 {
@@ -567,6 +622,21 @@ mod tests {
         assert_eq!(result["hardware_activity_proven"], false);
         assert!(!result.to_string().contains("private"));
         assert_eq!(result.as_object().unwrap().len(), 6);
+    }
+    #[test]
+    fn final_current_video_binding_is_required_and_changed_node_refuses() {
+        let mut state = software();
+        assert!(state.evidence().unwrap().is_some());
+        assert!(state.verified_evidence().unwrap().is_none());
+        state.final_node = Some(5);
+        assert!(state.verified_evidence().unwrap().is_some());
+        state.final_node = Some(6);
+        assert_eq!(
+            state.verified_evidence().unwrap_err(),
+            "decode_video_node_changed"
+        );
+        state.final_node = None;
+        assert!(state.verified_evidence().unwrap().is_none());
     }
     #[test]
     fn absent_or_mismatched_nodes_and_unknown_properties_never_pass() {
