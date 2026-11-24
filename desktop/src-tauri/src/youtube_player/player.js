@@ -114,6 +114,10 @@
       for (const item of config.qualities || []) {
         if (!item || typeof item.id !== 'string' || item.id.length > 128 || typeof item.label !== 'string' || !valid(item.url)) return false;
       }
+      if (typeof config.source === 'string' && /^https:\/\/www\.youtube\.com\/watch\?v=[A-Za-z0-9_-]{11}$/.test(config.source)) {
+        const ordinary = document.getElementById('ordinary');
+        ordinary.href = config.source; ordinary.hidden = false;
+      }
       configured = true; separate = Boolean(config.audio);
       for (const item of config.qualities || []) {
         if (qualities.has(item.id)) continue;

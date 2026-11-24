@@ -258,7 +258,7 @@ pub fn open_webm(
         .collect();
     qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
     let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
-    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"position":position});
+    let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"position":position,"source":data.metadata.id().watch_url()});
     let json = zeroize::Zeroizing::new(
         serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
     );
