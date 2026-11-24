@@ -1,0 +1,144 @@
+name: Native two-hour resource soak (explicit experiment)
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Existing build artifact run (never rebuild)
+        required: true
+        default: '45371512784'
+      source:
+        description: Exact 40-character application source SHA
+        required: true
+        default: '35ee6500c134d7bcec42bfca9b3f6127a8208a1b'
+      baseline:
+        description: Explicit published 0.2.26 baseline; does NOT accept hibernation
+        type: boolean
+        default: true
+      diagnostic_pilot:
+        description: Short diagnostic ONLY; acceptance_passed remains false
+        type: boolean
+        default: true
+      pilot_seconds:
+        description: Diagnostic pilot duration120..900; full acceptance always7200
+        default: '120'
+        required: true
+      platform:
+        description: Native desktop runner
+        type: choice
+        options: [both, windows, linux]
+        default: both
+permissions:
+  contents: read
+  actions: read
+jobs:
+  soak:
+    name: Native resource experiment (${{ matrix.platform }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(inputs.platform == 'windows' && '[{"platform":"windows","os":"windows-latest","artifact":"nexusbro-windows"}]' || inputs.platform == 'linux' && '[{"platform":"linux","os":"ubuntu-24.04","artifact":"nexusbro-linux-runtime"}]' || '[{"platform":"windows","os":"windows-latest","artifact":"nexusbro-windows"},{"platform":"linux","os":"ubuntu-24.04","artifact":"nexusbro-linux-runtime"}]') }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 160
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate immutable build provenance (no native build)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOAK_BUILD_RUN: ${{ inputs.build_run }}
+          SOAK_SOURCE: ${{ inputs.source }}
+          SOAK_BASELINE: ${{ inputs.baseline }}
+        run: |
+          python - <<'PY'
+          import json,os,re,subprocess
+          run=os.environ['SOAK_BUILD_RUN'];source=os.environ['SOAK_SOURCE']
+          assert re.fullmatch(r'[0-9]+',run) and re.fullmatch(r'[0-9a-f]{40}',source)
+          record=json.loads(subprocess.check_output(['gh','api',f'repos/{os.environ["GITHUB_REPOSITORY"]}/actions/runs/{run}']))
+          assert record['head_sha']==source, 'Requested build source differs from actual producer'
+          assert record['status']=='completed', 'Build producer must have finished; overall failure is not hidden'
+          subprocess.run(['git','fetch','--no-tags','origin',source],check=True)
+          if os.environ['SOAK_BASELINE']=='true':
+              assert run=='45371512784' and source=='35ee6500c134d7bcec42bfca9b3f6127a8208a1b'
+          else:
+              subprocess.run(['git','diff','--exit-code',source,'HEAD','--','desktop'],check=True)
+          # Deliberately no raw run API/environment dump enters public artifacts.
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: .dev-check/soak-package
+          run-id: ${{ inputs.build_run }}
+          github-token: ${{ github.token }}
+      - name: Extract existing Windows installer
+        if: matrix.platform == 'windows'
+        shell: pwsh
+        run: |
+          $items = @(Get-ChildItem .dev-check/soak-package -Recurse -Filter *.exe)
+          if ($items.Count -ne 1) { throw 'Expected exactly one existing installer' }
+          $packageDigest = (Get-FileHash -Algorithm SHA256 $items[0].FullName).Hash.ToLower()
+          "SOAK_PACKAGE_SHA256=$packageDigest" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+          7z x -y $items[0].FullName '-o.dev-check/soak-installed'
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python -m pip install Pillow pyautogui pywinauto psutil websocket-client cryptography
+      - name: Cache pinned runtime CEF (not SDK/build)
+        if: matrix.platform == 'linux'
+        id: cef-cache
+        uses: actions/cache@v4
+        with:
+          path: .dev-check/soak-cef
+          key: linux-soak-cef-156.0.26-cacfbb7d7261fea682fb67c108de7e4347519ff7
+      - name: Prepare existing Linux runtime dependencies
+        if: matrix.platform == 'linux'
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 update
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 xvfb xdotool libnss3-tools
+          python -m pip install websocket-client psutil Pillow cryptography
+          if [ ! -f .dev-check/soak-cef/libcef.so ]; then
+            curl -fSL --connect-timeout 20 --max-time 180 --retry 3 --retry-max-time 240 -o /tmp/soak-cef.tar.bz2 'https://cef-builds.spotifycdn.com/cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88_linux64_minimal.tar.bz2'
+            echo 'cacfbb7d7261fea682fb67c108de7e4347519ff7 /tmp/soak-cef.tar.bz2' | sha1sum -c -
+            mkdir -p .dev-check/soak-cef
+            tar -xjf /tmp/soak-cef.tar.bz2 -C .dev-check/soak-cef --strip-components=1
+            mv .dev-check/soak-cef/Release/* .dev-check/soak-cef/
+            mv .dev-check/soak-cef/Resources/* .dev-check/soak-cef/
+          fi
+          chmod +x .dev-check/soak-package/nexusbro
+          echo "SOAK_PACKAGE_SHA256=$(sha256sum .dev-check/soak-package/nexusbro | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      - name: Real native experiment (no clock acceleration, no forced sleep)
+        shell: bash
+        env:
+          SOAK_BASELINE: ${{ inputs.baseline }}
+          SOAK_PILOT: ${{ inputs.diagnostic_pilot }}
+          SOAK_PILOT_SECONDS: ${{ inputs.pilot_seconds }}
+          SOAK_SOURCE: ${{ inputs.source }}
+          SOAK_BUILD_RUN: ${{ inputs.build_run }}
+          SOAK_PLATFORM: ${{ matrix.platform }}
+        run: |
+          python - <<'PY'
+          import os,subprocess
+          assert os.environ['SOAK_PILOT_SECONDS'].isdigit()
+          windows=os.environ['SOAK_PLATFORM']=='windows'
+          args=['python','tests/gui/resource_soak.py','--exe', '.dev-check/soak-installed/nexusbro.exe' if windows else '.dev-check/soak-package/nexusbro',
+            '--cef','.dev-check/soak-installed' if windows else '.dev-check/soak-cef','--out','.dev-check/resource-soak',
+            '--source',os.environ['SOAK_SOURCE'],'--test-source',os.environ['GITHUB_SHA'],
+            '--build-run',os.environ['SOAK_BUILD_RUN'],'--package-sha256',os.environ['SOAK_PACKAGE_SHA256']]
+          if os.environ['SOAK_BASELINE']=='true':args+=['--baseline']
+          if os.environ['SOAK_PILOT']=='true':args+=['--diagnostic-pilot','--seconds',os.environ['SOAK_PILOT_SECONDS']]
+          subprocess.run(args,check=True,timeout=8400)
+          PY
+      - name: Preserve small sanitized receipts only
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: resource-soak-${{ matrix.platform }}-${{ inputs.diagnostic_pilot && 'diagnostic-not-acceptance' || 'two-hours' }}
+          path: |
+            .dev-check/resource-soak/results.json
+            .dev-check/resource-soak/samples.jsonl
+          if-no-files-found: warn
+          retention-days: 14
