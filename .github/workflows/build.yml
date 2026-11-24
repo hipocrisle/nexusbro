@@ -319,6 +319,16 @@ jobs:
           ls -lh binaries
           python ../../tests/xray_assets.py --bin "binaries/$BIN"
 
+      - name: Package verified YouTube helpers and notices
+        shell: bash
+        run: |
+          case "${{ matrix.target }}" in
+            x86_64-pc-windows-msvc) PLATFORM=windows-x64;;
+            x86_64-unknown-linux-gnu) PLATFORM=linux-x64;;
+            *) exit 1;;
+          esac
+          python tools/package_youtube_components.py --platform "$PLATFORM"
+
       - name: Поставить зависимости
         working-directory: desktop
         run: npm ci

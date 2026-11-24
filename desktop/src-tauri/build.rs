@@ -1,4 +1,10 @@
 fn main() {
+    let component_manifest = std::path::Path::new("binaries/youtube-light/components.json");
+    println!("cargo:rerun-if-changed={}",component_manifest.display());
+    let manifest = std::fs::read_to_string(component_manifest).unwrap_or_default();
+    assert!(manifest.len() <= 128*1024, "YouTube component manifest exceeds limit");
+    let out = std::path::PathBuf::from(std::env::var_os("OUT_DIR").expect("OUT_DIR"));
+    std::fs::write(out.join("youtube-component-pins.rs"),format!("pub const SEALED_YOUTUBE_MANIFEST: &str = {:?};\n",manifest)).expect("YouTube component pins");
     // ⛔ Дочерние процессы движка перезапускают наш exe и должны найти
     // libcef.so рядом с ним без LD_LIBRARY_PATH (Linux). $ORIGIN в rpath
     // решает это для установленной копии и для target/*/release.

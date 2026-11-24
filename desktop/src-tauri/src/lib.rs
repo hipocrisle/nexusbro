@@ -23,6 +23,7 @@ mod youtube_light;
 mod youtube_light_http;
 mod youtube_light_sidecar;
 mod youtube_light_extract;
+mod youtube_light_components;
 mod cef_youtube;
 mod tab_route_parent;
 mod route_network;
