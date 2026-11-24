@@ -146,6 +146,33 @@ def gone(owners):
     return True
 
 
+class WriterWatch:
+    """Bounded real OS sampling; paths/argv remain solely in local memory."""
+    def __init__(self,device,writer_pid):
+        arguments=psutil.Process(writer_pid).cmdline()
+        profile=next((a for a in arguments if a.startswith('--user-data-dir=')),None)
+        require(profile is not None,'Native writer profile argument unavailable')
+        self.profile=profile;self.parent=psutil.Process(foreground(device))
+        self.stop=threading.Event();self.peak=0;self.samples=0;self.error=None
+        self.thread=threading.Thread(target=self.run,daemon=True)
+    def run(self):
+        try:
+            while not self.stop.is_set():
+                count=0
+                for process in self.parent.children(recursive=True):
+                    try:
+                        arguments=process.cmdline()
+                        if '--nb-dvizhok' in arguments and self.profile in arguments:count+=1
+                    except psutil.NoSuchProcess:pass
+                self.peak=max(self.peak,count);self.samples+=1
+                self.stop.wait(.02)
+        except Exception as error:self.error=type(error).__name__
+    def finish(self):
+        self.stop.set();self.thread.join(timeout=5)
+        require(not self.thread.is_alive() and self.error is None and self.samples>0,'Native profile writer observation incomplete')
+        require(self.peak<=1,'Two OS writers held the same native profile during rapid wake')
+
+
 def navigate(device,url):
     foreground(device);client=device.client
     selector='[aria-label="Адрес страницы"]'
@@ -243,7 +270,9 @@ def run(args):
             wait_for(lambda:any(abs(p['scroll']-scroll)<=64 for p in latest_proof('roundtrip')[receipts_before:]),'Whole-engine wake lost physical scroll',20)
         report['checks'].append('three_actual_whole_engine_exit_new_generation_session_httponly_secure_persistent_headers_storage_scroll_roundtrips')
         stage='rapid-wake-before-shutdown-exit'
-        before=running('hb-a');owners=identities(before['pid']);activate('hb-b')
+        before=running('hb-a');owners=identities(before['pid'])
+        observer=WriterWatch(device,before['pid'])
+        activate('hb-b')
         transition=None;until=time.monotonic()+20
         while time.monotonic()<until:
             state=snapshot(client)['hb-a']
@@ -251,9 +280,13 @@ def run(args):
             require(state['phase']!='Sleeping','Preparing/stopping interval finished before observation')
             time.sleep(.02)
         require(transition is not None,'No actual preparing/stopping interval observed')
-        activate('hb-a');after=running('hb-a')
-        if after['generation']>before['generation']:require(gone(owners),'Rapid wake started replacement before old tree exit')
-        else:require(after['pid']==before['pid'],'Cancelled prepare changed writer without generation')
+        observer.thread.start()
+        try:
+            activate('hb-a');after=running('hb-a')
+            if after['generation']>before['generation']:require(gone(owners),'Rapid wake started replacement before old tree exit')
+            else:require(after['pid']==before['pid'],'Cancelled prepare changed writer without generation')
+        finally:observer.finish()
+        report['rapid_wake_writer_observation']={'samples':observer.samples,'peak_same_profile_writers':observer.peak,'period_seconds':.02}
         report['checks'].append('physical_wake_during_observed_prepare_or_stopping_keeps_single_native_writer')
         stage='private-native-refusal'
         activate('hb-private');refuse('hb-private');report['checks'].append('private_super_native_profile_never_hibernates')
