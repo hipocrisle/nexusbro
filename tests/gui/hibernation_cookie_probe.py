@@ -183,14 +183,21 @@ class WindowsFixtureTrust:
         script = self.root / 'fixture-trust.ps1'
         script.write_text(r'''param([string]$Certificate,[string]$Leaf,[string]$Thumb,[string]$Operation,[string]$RemoveMachine,[string]$RemoveUser)
 $ErrorActionPreference='Stop'
-$stage='parse_ca'
+$stage='import_security_module'
 function SafeType($exception){
  if($null -eq $exception){return 'None'}
  $name=$exception.GetType().Name
- $known=@('CryptographicException','InvalidOperationException','ArgumentException','ArgumentNullException','ItemNotFoundException','DriveNotFoundException','ProviderInvocationException','PSInvalidOperationException','RuntimeException','MethodInvocationException','NotSupportedException','UnauthorizedAccessException','SecurityException')
+ $known=@('CryptographicException','InvalidOperationException','ArgumentException','ArgumentNullException','ItemNotFoundException','DriveNotFoundException','ProviderInvocationException','PSInvalidOperationException','RuntimeException','MethodInvocationException','NotSupportedException','UnauthorizedAccessException','SecurityException','FileNotFoundException')
  if($known -contains $name){return $name};return 'Unclassified'
 }
 try {
+ # Explicit trusted system module: fresh -NoProfile processes do not always
+ # autoload the Certificate provider from a drive-qualified path.
+ $securityModule=Join-Path $PSHOME 'Modules\Microsoft.PowerShell.Security\Microsoft.PowerShell.Security.psd1'
+ Import-Module -Name $securityModule -ErrorAction Stop
+ $stage='certificate_drive'
+ Get-PSDrive -Name Cert -PSProvider Certificate -ErrorAction Stop | Out-Null
+ $stage='parse_ca'
  $ca=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Certificate)
  $stage='parse_leaf'
  $leafCert=New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($Leaf)
@@ -253,12 +260,12 @@ try {
         receipt = json.loads(result.stdout.decode('utf-8-sig'))
         if result.returncode:
             fields={'failed','operation','stage','error_type','hresult','inner_error_type','inner_hresult','category'}
-            stages={'parse_ca','parse_leaf','anchor_identity','import_anchor','import_postcondition','cleanup',
+            stages={'import_security_module','certificate_drive','parse_ca','parse_leaf','anchor_identity','import_anchor','import_postcondition','cleanup',
                     'cleanup_postcondition','chain_policy','chain_build','chain_observation'}
             types={'None','Unclassified','CryptographicException','InvalidOperationException','ArgumentException',
                    'ArgumentNullException','ItemNotFoundException','DriveNotFoundException','ProviderInvocationException',
                    'PSInvalidOperationException','RuntimeException','MethodInvocationException','NotSupportedException',
-                   'UnauthorizedAccessException','SecurityException'}
+                   'UnauthorizedAccessException','SecurityException','FileNotFoundException'}
             require(result.returncode==2 and isinstance(receipt,dict) and set(receipt)==fields
                     and receipt['failed'] is True and receipt['operation']==operation
                     and receipt['stage'] in stages and receipt['error_type'] in types
