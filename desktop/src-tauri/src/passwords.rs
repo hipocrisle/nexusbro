@@ -91,8 +91,7 @@ struct Draft {
     credential: Credential,
 }
 static DRAFTS: OnceLock<Mutex<HashMap<String, Draft>>> = OnceLock::new();
-fn draft(vault: &VaultState, super_id: &str, origin: String, value: &Value) -> Result<Value, String> {
-    let generation = crate::browser_lock::generation();
+fn draft(vault: &VaultState, super_id: &str, origin: String, value: &Value, generation: u64) -> Result<Value, String> {
     let username = field(value, "username", 512)?;
     let password = field(value, "password", 4096)?;
     if password.is_empty() {
@@ -159,6 +158,7 @@ pub fn receive(app: &tauri::AppHandle, super_id: &str, data: &Value) -> bool {
             true
         }
         Some("credential-offer") => {
+            let generation = crate::browser_lock::generation();
             if crate::browser_lock::locked_global() || !ENABLED.load(Ordering::SeqCst) { return true; }
             let vault = app.state::<Arc<VaultState>>();
             if !vault.status().unlocked {
@@ -179,7 +179,7 @@ pub fn receive(app: &tauri::AppHandle, super_id: &str, data: &Value) -> bool {
             }
             if let Ok(origin) = expected {
                 if data["origin"].as_str() == Some(origin.as_str()) {
-                    if let Ok(offer) = draft(&vault, super_id, origin, &data["value"]) {
+                    if let Ok(offer) = draft(&vault, super_id, origin, &data["value"], generation) {
                         let _=app.emit_to(label,"stranica-ui",json!({"super_id":super_id,"data":{"tip":"password-offer","id":id,"draft_id":offer["draft_id"],"origin":offer["origin"],"username":offer["username"]}}));
                     }
                 }
@@ -437,7 +437,7 @@ pub async fn security_passwords(
             let id = data["tab_id"].as_u64().ok_or("Не выбрана вкладка")?;
             let result = site(&window, &state, &super_id, id, None).await?;
             let origin = secure_origin(result["origin"].as_str().ok_or("Неизвестный сайт")?)?;
-            draft(&vault, &super_id, origin, &result["value"])
+            draft(&vault, &super_id, origin, &result["value"], generation)
         }
         "save_draft" => {
             let id = field(&data, "draft_id", 128)?;
