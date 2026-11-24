@@ -40,6 +40,7 @@ impl PlayerDocuments {
     }
     /// The caller supplies the actual browser generation, never renderer input.
     pub fn grant(&self, browser: i32, generation: u64) -> Option<String> {
+        forget_reload(browser);
         if generation == 0 {
             return None;
         }
@@ -284,6 +285,7 @@ pub fn open_webm(
 }
 
 pub fn on_navigation(browser: i32, target: &str) {
+    if let Ok(mut hints)=reload_hints().lock(){hints.navigated(browser,target);}
     crate::youtube_light_jobs::cancel(browser);
     let leaving = {
         let Ok(mut grants) = documents().0.lock() else {
@@ -345,11 +347,15 @@ pub fn stop(browser: &Browser) {
     crate::cef_youtube_resume::closed(browser.identifier());
     crate::cef_youtube_captions::closed(browser.identifier());
     crate::cef_youtube_download::cancel(browser.identifier());
-    let active = documents()
-        .0
-        .lock()
-        .ok()
-        .is_some_and(|g| g.contains_key(&browser.identifier()));
+    let (active,hint) = documents().0.lock().ok().map(|grants| {
+        let grant=grants.get(&browser.identifier());
+        let hint=grant.and_then(|grant| {
+            let video=grant.logical_url.as_deref().and_then(|url|crate::youtube_light::VideoId::from_url(url).ok())?;
+            Some((grant.document.clone(),video))
+        });
+        (grant.is_some(),hint)
+    }).unwrap_or((false,None));
+    if let Some((document,video))=hint {if let Ok(mut hints)=reload_hints().lock(){hints.remember(browser.identifier(),&document,video);}}
     documents().revoke(browser.identifier());
     if active {
         if let Some(frame) = browser.main_frame() {
@@ -362,6 +368,17 @@ pub fn stop(browser: &Browser) {
             );
         }
     }
+}
+
+fn reload_hints()->&'static std::sync::Mutex<crate::youtube_light_reload::ReloadHints>{
+    static HINTS:std::sync::OnceLock<std::sync::Mutex<crate::youtube_light_reload::ReloadHints>>=std::sync::OnceLock::new();
+    HINTS.get_or_init(Default::default)
+}
+/// Clear on native browser close. This does not grant any document authority.
+pub fn forget_reload(browser:i32){if let Ok(mut hints)=reload_hints().lock(){hints.forget(browser);}}
+/// ONLY for canonical reload/extractor URL normalization, never admission.
+pub fn reload_url(browser:i32,document:&str)->Option<String>{
+    logical_url(browser,document).or_else(||reload_hints().lock().ok()?.video(browser,document).map(|video|video.watch_url()))
 }
 
 pub fn logical_url(browser: i32, document: &str) -> Option<String> {

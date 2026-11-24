@@ -166,6 +166,7 @@ wrap_life_span_handler! {
                 crate::cef_youtube_captions::closed(identity);
                 crate::cef_youtube_download::cancel(identity);
                 crate::cef_youtube::documents().revoke(identity);
+                crate::cef_youtube::forget_reload(identity);
                 self.bootstrap.close(identity);
                 SLEEP_CLOSES.with(|m|{m.borrow_mut().remove(&identity);});
                 ROUTE_CLOSES.with(|m|{m.borrow_mut().remove(&identity);});
@@ -1085,7 +1086,7 @@ impl Rabota {
                         let tab=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending&&!v.memory_pending).ok_or("Вкладка занята")?;
                         let browser=brauzery.get(&id).ok_or("Сначала откройте вкладку")?;
                         let url=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).ok_or("Документ недоступен")?;
-                        let url=crate::cef_youtube::logical_url(browser.identifier(),&url).unwrap_or(url);
+                        let url=crate::cef_youtube::reload_url(browser.identifier(),&url).unwrap_or(url);
                         if url!=tab.adres{return Err("Дождитесь завершения перехода");}
                         let video=crate::youtube_light::VideoId::from_url(&url).map_err(|_|"Нужна ссылка на одно видео YouTube")?;
                         let descriptor=k.routes.borrow().descriptor(&tab.route).filter(|r|r.validate()).ok_or("Путь вкладки недоступен")?;
@@ -1127,7 +1128,7 @@ impl Rabota {
                     if let Some(tab)=target.filter(|_|current&&!*browser_locked&&!*closing){
                         if let Some(browser)=brauzery.get(&tab.id){
                             let actual=browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
-                            let actual=crate::cef_youtube::logical_url(browser.identifier(),&actual).unwrap_or(actual);
+                            let actual=crate::cef_youtube::reload_url(browser.identifier(),&actual).unwrap_or(actual);
                             if crate::youtube_light::VideoId::from_url(&actual).ok().map(|v|v.watch_url()).as_deref()==Some(ready.source_url.as_str()){
                                 let result=ready.result.and_then(|data|{
                                     let data=std::sync::Arc::new(data);
@@ -1749,14 +1750,14 @@ impl Rabota {
                 Sobytie::Komanda(Komanda::Obnovit { id }) => {
                     if let Some(b) = brauzery.get(&id) {
                         let current=b.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
-                        if crate::cef_youtube::logical_url(b.identifier(),&current).is_some(){let _=tx.send(Sobytie::Komanda(Komanda::YoutubeLight{id}));continue;}
+                        if crate::cef_youtube::reload_url(b.identifier(),&current).is_some(){let _=tx.send(Sobytie::Komanda(Komanda::YoutubeLight{id}));continue;}
                         b.reload();
                     }
                 }
                 Sobytie::Komanda(Komanda::ObnovitBezKesha { id }) => {
                     if let Some(b) = brauzery.get(&id) {
                         let current=b.main_frame().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default();
-                        if crate::cef_youtube::logical_url(b.identifier(),&current).is_some(){let _=tx.send(Sobytie::Komanda(Komanda::YoutubeLight{id}));continue;}
+                        if crate::cef_youtube::reload_url(b.identifier(),&current).is_some(){let _=tx.send(Sobytie::Komanda(Komanda::YoutubeLight{id}));continue;}
                         b.reload_ignore_cache();
                     }
                 }
