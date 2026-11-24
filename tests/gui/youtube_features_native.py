@@ -48,7 +48,7 @@ def focus_steps(target):
             if a.get('id') in {'captions','download-video','download-audio','sponsor','play','seek','quality','volume','fullscreen'}:self.order.append(a['id'])
             elif tag=='a' and a.get('href') in ('https://sponsor.ajay.app/','https://returnyoutubedislike.com/'):
                 self.order.append('sponsor-link' if 'sponsor.ajay' in a['href'] else 'ratings-link')
-    parser=Focus();parser.feed((Path(__file__).resolve().parents[2]/'desktop/src-tauri/src/youtube_player/player.html').read_text())
+    parser=Focus();parser.feed((Path(__file__).resolve().parents[2]/'desktop/src-tauri/src/youtube_player/player.html').read_text(encoding='utf-8'))
     expected=['captions','download-video','download-audio','sponsor','sponsor-link','ratings-link','play','seek','quality','volume','fullscreen']
     require(parser.order==expected,'Shipped feature focus order changed')
     delta=parser.order.index(target)-parser.order.index('play')

@@ -65,7 +65,7 @@ def backtabs(*,busy=False,audio=False):
             if identifier in {'download-video','download-audio','download-cancel','sponsor','play'}:self.order.append(identifier)
             elif tag=='a' and attrs.get('href') in ('https://sponsor.ajay.app/','https://returnyoutubedislike.com/'):
                 self.order.append('sponsor-link' if 'sponsor.ajay' in attrs['href'] else 'ratings-link')
-    parser=Focus();parser.feed((Path(__file__).resolve().parents[2]/'desktop/src-tauri/src/youtube_player/player.html').read_text())
+    parser=Focus();parser.feed((Path(__file__).resolve().parents[2]/'desktop/src-tauri/src/youtube_player/player.html').read_text(encoding='utf-8'))
     require(parser.order==['download-video','download-audio','download-cancel','sponsor','sponsor-link','ratings-link','play'],'Shipped player focus order changed')
     active=[name for name in parser.order if name not in ({'download-video','download-audio'} if busy else {'download-cancel'})]
     target='download-cancel' if busy else 'download-audio' if audio else 'download-video'
@@ -131,7 +131,7 @@ def clear_states(client):client.js('window.__downloadObserved=[];true')
 
 
 def ffprobe(args,output,*,audio_only=False):
-    directory=Path(args.components).resolve();manifest=json.loads((directory/'components.json').read_text());record=manifest['components']['ffmpeg']
+    directory=Path(args.components).resolve();manifest=json.loads((directory/'components.json').read_text(encoding='utf-8'));record=manifest['components']['ffmpeg']
     for item in record['files']:
         relative=Path(item['filename']);require(not relative.is_absolute() and '..' not in relative.parts,'Component path invalid')
         path=directory/relative
