@@ -31,6 +31,7 @@ from youtube_privacy_scan import scan_profile
 from hibernation_cookie_probe import WindowsFixtureTrust, tls_proxy_preflight
 
 HOST = 'fixture.googlevideo.com'
+CAPTION_HOST = 'www.youtube.com'
 
 
 class OwnedWindowManager:
@@ -249,11 +250,14 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
             'browser_unchanged':True,'hidden_decode_growth_required':False}
 
 
-def certificates(root):
+def certificates(root, hosts=None):
     from cryptography import x509
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     from cryptography.x509.oid import NameOID, ExtendedKeyUsageOID
+    names=[HOST] if hosts is None else list(hosts)
+    require(0<len(names)<=2 and len(set(names))==len(names) and all(host in (HOST,CAPTION_HOST) for host in names),
+            'Fixture certificate host invalid')
     root.mkdir()
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     leafkey = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -268,7 +272,7 @@ def certificates(root):
           .add_extension(x509.SubjectKeyIdentifier.from_public_key(key.public_key()),False).sign(key, hashes.SHA256()))
     leaf = (builder(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, HOST)]), leafkey.public_key())
             .add_extension(x509.BasicConstraints(ca=False, path_length=None), True)
-            .add_extension(x509.SubjectAlternativeName([x509.DNSName(HOST)]), False)
+            .add_extension(x509.SubjectAlternativeName([x509.DNSName(host) for host in names]), False)
             .add_extension(x509.ExtendedKeyUsage([ExtendedKeyUsageOID.SERVER_AUTH]), False)
             .add_extension(x509.KeyUsage(True,False,True,False,False,False,False,False,False),True)
             .add_extension(x509.AuthorityKeyIdentifier.from_issuer_public_key(key.public_key()),False).sign(key, hashes.SHA256()))
@@ -308,18 +312,41 @@ class Server(socketserver.ThreadingTCPServer):
 
 
 class Fixture:
-    def __init__(self, cert, key, video, audio, media_sentinel, positive_sentinel):
+    def __init__(self, cert, key, video, audio, media_sentinel=None, positive_sentinel=None, *, video_high=None, caption_body=None):
         self.lock = threading.Lock(); self.peers = {}; self.receipts = []; self.connects = []; self.direct = 0
         self.servers = []; self.sockets = set(); self.threads = []
         self.stalls = {}; self.closing = threading.Event()
-        self.media_sentinel=media_sentinel;self.positive_sentinel=positive_sentinel;self.canary_receipts=[]
+        self.media_sentinel=media_sentinel if media_sentinel is not None else secrets.token_hex(24)
+        self.positive_sentinel=positive_sentinel if positive_sentinel is not None else secrets.token_hex(24)
+        self.canary_receipts=[]
+        if caption_body is not None:
+            require(type(caption_body) is bytes and 0<len(caption_body)<=65536 and caption_body.startswith(b'WEBVTT'),
+                    'Caption fixture body invalid')
+            caption_body.decode('utf-8')
+        self.caption_body=caption_body
         self.payload = {'video': video.read_bytes(), 'audio': audio.read_bytes()}
+        if video_high is not None:self.payload['video_high']=video_high.read_bytes()
         require(all(0 < len(v) <= 32*1024*1024 for v in self.payload.values()), 'Media fixture size invalid')
         owner = self
         class Origin(http.server.BaseHTTPRequestHandler):
             def log_message(self,*_): pass
             def do_GET(self):
-                path = urllib.parse.urlsplit(self.path); track = urllib.parse.parse_qs(path.query).get('track',[''])[0]
+                path = urllib.parse.urlsplit(self.path); params=urllib.parse.parse_qs(path.query,keep_blank_values=True)
+                track = params.get('track',[''])[0]
+                request_host=self.headers.get('Host','').split(':',1)[0].strip().lower()
+                if request_host==CAPTION_HOST:
+                    if (owner.caption_body is None or path.path!='/api/timedtext'
+                            or params!={'v':['BaW_jenozKc'],'fmt':['vtt'],'lang':['de']}):
+                        self.send_error(404);return
+                    with owner.lock:
+                        owner.receipts.append({'kind':'caption','lane':owner.peers.get(self.client_address[1],'Direct'),'host':'youtube'})
+                    self.send_response(200);self.send_header('Content-Type','text/vtt; charset=utf-8')
+                    self.send_header('Cache-Control','no-store');self.send_header('Access-Control-Allow-Origin','*')
+                    self.send_header('Content-Length',str(len(owner.caption_body)));self.end_headers()
+                    try:self.wfile.write(owner.caption_body);self.wfile.flush()
+                    except (OSError,ssl.SSLError):pass
+                    return
+                if request_host!=HOST:self.send_error(404);return
                 if path.path=='/cache-canary' and not path.query:
                     # BODY-only high entropy marker: it is never in history/URL.
                     body=('<!doctype html><title>Cache canary</title><style>html,body{margin:0;background:rgb(28,112,80)}</style><main>'+owner.positive_sentinel+'</main>').encode()
@@ -330,9 +357,14 @@ class Fixture:
                     try:self.wfile.write(body);self.wfile.flush()
                     except (OSError,ssl.SSLError):pass
                     return
-                if path.path != '/videoplayback' or track not in owner.payload:
+                if path.path != '/videoplayback' or track not in ('video','audio') or params.get('track')!=[track]:
                     self.send_error(404); return
-                body = owner.payload[track]; start = 0; end = len(body)-1; ranged = False
+                quality=params.get('quality',['low'])
+                if len(quality)!=1 or quality[0] not in ('low','high') or track=='audio' and 'quality' in params:
+                    self.send_error(404);return
+                payload_key='video_high' if track=='video' and quality[0]=='high' else track
+                if payload_key not in owner.payload:self.send_error(404);return
+                body = owner.payload[payload_key]; start = 0; end = len(body)-1; ranged = False
                 header = self.headers.get('Range')
                 if header:
                     import re
@@ -343,7 +375,10 @@ class Fixture:
                 with owner.lock:
                     lane=owner.peers.get(self.client_address[1],'Direct')
                     policy=owner.stalls.get((lane,track))
-                    owner.receipts.append({'lane':owner.peers.get(self.client_address[1],'Direct'),'track':track,'range':ranged,'bytes':end-start+1,'privacy_marked':urllib.parse.parse_qs(path.query).get('nb_privacy')==[owner.media_sentinel]})
+                    receipt={'kind':'media','host':'googlevideo','lane':lane,'track':track,'range':ranged,
+                             'bytes':end-start+1,'privacy_marked':params.get('nb_privacy')==[owner.media_sentinel]}
+                    if track=='video':receipt['quality']=quality[0]
+                    owner.receipts.append(receipt)
                 self.send_response(206 if ranged else 200)
                 self.send_header('Content-Type','video/webm' if track=='video' else 'audio/webm')
                 self.send_header('Accept-Ranges','bytes')
@@ -388,7 +423,8 @@ class Fixture:
                     self.connection.settimeout(10)
                     try:
                         first=self.rfile.readline(1025)
-                        if first != ('CONNECT '+HOST+':443 HTTP/1.1\r\n').encode():return
+                        allowed=[HOST]+([CAPTION_HOST] if owner.caption_body is not None else [])
+                        if first not in [('CONNECT '+host+':443 HTTP/1.1\r\n').encode() for host in allowed]:return
                         total=0
                         while True:
                             line=self.rfile.readline(2049); total+=len(line)
