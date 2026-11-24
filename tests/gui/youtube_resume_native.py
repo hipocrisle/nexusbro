@@ -16,7 +16,7 @@ import time
 
 from security_native import Device, call, js_wait, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
-from youtube_player_native import Fixture, Trust, certificates, observe, physical, foreground, HOST, close_for_privacy, kernel_birth, trusted_fill
+from youtube_player_native import Fixture, Trust, certificates, observe, physical, foreground, HOST, close_for_privacy, kernel_birth, trusted_fill, OwnedWindowManager
 from hibernation_cookie_probe import tls_proxy_preflight
 
 OWNERS = ('resume-a', 'resume-b')
@@ -200,7 +200,7 @@ def run(args):
     report = dict(schema=1, completed=False, extractor_acceptance=False, durable_persistence_proven=False,
                   resume_book_injected=False, checks=[], stage='setup', player_diagnostics={})
     root = Path(tempfile.mkdtemp(prefix='nb-resume-'))
-    device = fixture = trust = None
+    device = fixture = trust = wm = None
     names = ('NEXUSBRO_TEST_YOUTUBE_DNS_GUARD', 'NEXUSBRO_TEST_YOUTUBE_RESUME')
     previous = {name: os.environ.get(name) for name in names}
     code = 1
@@ -219,7 +219,10 @@ def run(args):
         for filename in ('vkladki.json', 'sohranennye.json'): (device.data / filename).write_text(json.dumps(definitions))
         (device.data / 'nastrojki.json').write_text(json.dumps(dict(avtoobnovleniya=False, apparatnoe_uskorenie=False)))
         for name in names: os.environ[name] = '1'
-        client = device.start(); foreground(device)
+        client = device.start()
+        if sys.platform != 'win32' and wm is None:
+            wm = OwnedWindowManager(device, root / 'wm'); device.player_wm = wm
+        foreground(device)
         master = 'nb-resume-' + secrets.token_hex(16)
         require(call(client, 'security_vault', action='create', password=master).get('unlocked') is True, 'Fixture vault unavailable')
         install_listeners(client)
@@ -350,7 +353,7 @@ def run(args):
 
     finally:
         cleanup = True
-        for owned in (device, fixture, trust):
+        for owned in (wm, device, fixture, trust):
             if owned:
                 try: owned.close()
                 except Exception: cleanup = False
