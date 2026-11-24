@@ -39,6 +39,7 @@ mod cef_files;
 mod cef_youtube;
 mod cef_youtube_captions;
 mod cef_youtube_download;
+mod cef_youtube_focus;
 mod cef_focus_diagnostics;
 mod cef_youtube_fullscreen;
 mod youtube_fullscreen_parent;
