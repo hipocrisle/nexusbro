@@ -865,9 +865,10 @@ mod tests {
     use super::*;
     #[test]
     fn successful_global_unlock_can_start_cold_locked_machine_without_waiting_for_tick() {
-        if crate::browser_lock::locked_global() {
-            return;
-        }
+        assert!(
+            !crate::browser_lock::locked_global(),
+            "Fixture requires an isolated unlocked process"
+        );
         let mut node = Node::default();
         node.machine.apply(Event::IntentRequested(Intent::Lock));
         assert!(node.machine.locked());
