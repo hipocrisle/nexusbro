@@ -9,6 +9,7 @@ import os
 from pathlib import Path, PurePosixPath
 import re
 import shutil
+import shlex
 import subprocess
 import tarfile
 import urllib.request
@@ -139,8 +140,9 @@ def package(platform, media):
             text = data.decode('utf-8', 'replace')
             if any(x in text for x in ('--enable-gpl', '--enable-nonfree', '--enable-version3')):
                 raise ValueError('forbidden_build_configuration')
+            options = shlex.split(text)
             for required in CONFIGURE:
-                if required not in text: raise ValueError('missing_build_configuration')
+                if required not in options: raise ValueError('missing_build_configuration')
         if option == '-L' and b'GNU Lesser General Public License' not in data:
             raise ValueError('missing_lgpl_license')
     # Same-run controlled media hashes, never user/YouTube media.

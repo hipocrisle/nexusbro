@@ -68,7 +68,12 @@ jobs:
           # Avoid MSYS coreutils link.exe shadowing the MSVC linker.
           msvc_link="$(cygpath -u "$VCToolsInstallDir")/bin/Hostx64/x64/link.exe"
           test -f "$msvc_link"
-          ./configure $flags --toolchain=msvc --ld="$msvc_link" --prefix="$(pwd)/../../install" > ../../configure.log 2>&1
+          # FFmpeg invokes $ld as a command; an absolute path containing
+          # Program Files splits at spaces. Resolve fixed link.exe by a trusted
+          # prepended MSVC directory instead, before MSYS coreutils link.exe.
+          export PATH="$(dirname "$msvc_link"):$PATH"
+          test "$(cygpath -am "$(command -v link.exe)")" = "$(cygpath -am "$msvc_link")"
+          ./configure $flags --toolchain=msvc --ld=link.exe --prefix="$(pwd)/../../install" > ../../configure.log 2>&1
           make -j2 > ../../make.log 2>&1
           make install > ../../install.log 2>&1
       - name: Native Linux shared build, no assembly or external libraries
