@@ -638,7 +638,7 @@ def tooltip_input_is_empty(hit):
 
 
 def route_tooltip_hover_point(tab, target_x):
-    """Interior hover point for the tab-row title tooltip (CSS px).
+    """Interior hover point for a real titled element (CSS px).
 
     Contract (run 45585742892): hovering the tab's bottom EDGE (top+height-2)
     produced zero mapped GTK tooltips across all 50 observations. Boundary
@@ -681,12 +681,12 @@ def _natural_route_tooltip_hover(client):
     device=client.route_trace_device
     require(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform!='win32'
             and device.x is not None and device.x.poll() is None,'Route tooltip requires private Linux fixture')
-    geometry=client.js('(()=>{const b=document.querySelector(".tab-route-button"),t=document.querySelector(".obychnaya[data-id="+JSON.stringify("13")+"]"),r=b?.getBoundingClientRect(),q=t?.getBoundingClientRect();return r&&q?{point:[Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)],tab:[q.x,q.y,q.width,q.height],title:!!t.getAttribute("title"),scale:devicePixelRatio||1,viewport:[innerWidth,innerHeight]}:null})()')
+    geometry=client.js('(()=>{const b=document.querySelector(".tab-route-button"),r=b?.getBoundingClientRect();if(!r)return null;const n=[Math.round(r.right+12),Math.round(r.y+r.height/2)];return n[0]<innerWidth&&!document.elementFromPoint(...n)?.closest(".tab-route-button")?{point:[Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)],element:[r.x,r.y,r.width,r.height],neutral:n,title:!!b.getAttribute("title"),scale:devicePixelRatio||1,viewport:[innerWidth,innerHeight]}:null})()')
     label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
     require(label=='main' and geometry and geometry['title'],'Route tooltip natural title unavailable')
     origin=client.command('plugin:window|inner_position',label=label)
     expected,_=route_toolbar_geometry(geometry['point'],origin,geometry['scale'],geometry['viewport'])
-    left,top,width,height=geometry['tab']
+    left,top,width,height=geometry['element']
     require(width>8 and height>8 and left>=0 and top>=0 and left+width<=geometry['viewport'][0]
             and top+height<=geometry['viewport'][1],'Route tooltip tab outside viewport')
     env={**os.environ,'DISPLAY':device.display}
@@ -698,13 +698,12 @@ def _natural_route_tooltip_hover(client):
         if key in ('X','Y') and value.lstrip('-').isdecimal():cursor[key]=int(value)
     require(set(cursor)=={'X','Y'},'Route tooltip cursor unavailable')
     target_x = (expected[0] - origin['x']) / geometry['scale']
-    # Interior hover, biased toward the toolbar target: the row-centre hover
-    # put GTK's tooltip above the button (native failure dy=-43) and the
-    # bottom-edge hover gave zero tooltips at all (boundary enter/leave churn,
-    # run 45585742892). Keep one physical hover and require actual visual
-    # overlap below; never move/resize the tooltip or turn a non-overlap into
-    # a regression PASS.
-    hover_css_x, hover_css_y = route_tooltip_hover_point((left, top, width, height), target_x)
+    # The button itself already owns a real title. Exercise that natural
+    # tooltip instead of the tab-row title located above the toolbar. Placement
+    # remains an observed requirement: this geometry is not evidence of overlap.
+    hover_css_x, hover_css_y = route_tooltip_hover_point((left, top, width, height), target_x + 24)
+    neutral_point = (round(origin['x'] + geometry['neutral'][0] * geometry['scale']),
+                     round(origin['y'] + geometry['neutral'][1] * geometry['scale']))
     candidates = [(round(origin['x'] + (hover_css_x + offset) * geometry['scale']),
                    round(origin['y'] + hover_css_y * geometry['scale'])) for offset in (1, -1)]
     hover = next((point for point in candidates if max(abs(point[0] - cursor['X']), abs(point[1] - cursor['Y'])) > 1), None)
@@ -719,12 +718,12 @@ def _natural_route_tooltip_hover(client):
     block_unknown_route_screenshot(client,initial)
     require(initial.get('available') is True and initial.get('complete') is True
             and initial.get('nonowned_cover') is False,'Neutral pointer ownership unavailable')
-    subprocess.run(['xdotool','mousemove',str(expected[0]),str(expected[1])],env=env,check=True,
+    subprocess.run(['xdotool','mousemove',str(neutral_point[0]),str(neutral_point[1])],env=env,check=True,
                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
     receipt['neutral_move_count']=1
-    js_wait(client,"!document.querySelector('.obychnaya[data-id=\"13\"]').matches(':hover')",
-            'Pointer did not leave the clicked tab before tooltip hover',5)
-    neutral=route_native_hit(device,expected)
+    js_wait(client,"!document.querySelector('.tab-route-button').matches(':hover')",
+            'Pointer did not leave the route button before tooltip hover',5)
+    neutral=route_native_hit(device,neutral_point)
     block_unknown_route_screenshot(client,neutral)
     require(neutral.get('available') is True and neutral.get('complete') is True
             and neutral.get('nonowned_cover') is False and neutral.get('cursor_at_expected') is True,
