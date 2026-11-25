@@ -143,6 +143,19 @@ def run(args):
             for chunk in iter(lambda: stream.read(1024 * 1024), b''):
                 digest.update(chunk)
         require(digest.hexdigest() == args.exe_sha256, 'local_exe_sha256_mismatch')
+        # Native capability gate (PRIMARY SOURCE desktop/src-tauri/src/
+        # cef_youtube_benchmark.rs:65 gate()): today's sealed binary answers
+        # local normal/decode snapshot requests with "benchmark_fixture_only",
+        # because the benchmark gate requires GITHUB_ACTIONS=true +
+        # NEXUSBRO_TEST_DATA. Faking GHA is prohibited and the gate must not
+        # be weakened, so this entry refuses to run against a binary without
+        # an explicit future native capability declaration. No such capability
+        # exists in the current product; a legitimate one would require a new
+        # product build plus a repeat 2h resource acceptance — NOT implemented
+        # here and NOT claimed.
+        capability = root / 'native-capability' / 'paired-local-benchmark'
+        if not capability.is_file():
+            raise Blocked('local_native_benchmark_fixture_only')
         out = root / 'out' / ('paired-abba-' + str(int(time.time())))
         out.mkdir(parents=True, exist_ok=False)
         parent = out / 'arms'
@@ -158,34 +171,50 @@ def run(args):
         arm_args.memory_cap_mib = args.memory_cap_mib
         probe = make_state_probe(VIDEO)
         for index, mode in enumerate(ORDER):
-            arm_deadline = time.monotonic() + ARM_BUDGET_SECONDS
-            result = arm(arm_args, '', mode, index, out,
-                         device_factory=lambda device_root, e, c: SandboxedDevice('paired', device_root, e, c),
-                         close_owned=local_close,
-                         private_parent=str(parent),
-                         window_manager_factory=LocalWindowManager,
-                         state_probe=probe)
-            result['arm_wall_seconds'] = round(time.monotonic() - (arm_deadline - ARM_BUDGET_SECONDS), 3)
+            # Hard watchdog: arm() itself owns cleanup in its finally; the
+            # watchdog only bounds how long we WAIT and marks the arm blocked
+            # if it overruns. No invented completion markers.
+            box = {}
+            def work():
+                box['result'] = arm(arm_args, '', mode, index, out,
+                                    device_factory=lambda device_root, e, c: SandboxedDevice('paired', device_root, e, c),
+                                    close_owned=local_close,
+                                    private_parent=str(parent),
+                                    window_manager_factory=LocalWindowManager,
+                                    state_probe=probe)
+            import threading
+            thread = threading.Thread(target=work, daemon=True)
+            began = time.monotonic()
+            thread.start()
+            thread.join(ARM_BUDGET_SECONDS)
+            if thread.is_alive():
+                report['arms'].append({'index': index, 'mode': mode, 'stage': 'arm_deadline_exceeded',
+                                       'cleanup': 'owned_by_arm_finally'})
+                report['stage'] = 'arm-' + str(index) + '-deadline'
+                raise Blocked('paired_arm_' + str(index) + '_deadline')
+            result = box['result']
+            result['arm_wall_seconds'] = round(time.monotonic() - began, 3)
             report['arms'].append(result)
             if result.get('stage') != 'complete' or not result.get('metrics'):
                 report['stage'] = 'arm-' + str(index) + '-blocked'
                 raise Blocked('paired_arm_' + str(index) + '_blocked')
-        report['measurement_valid'] = all(a.get('metrics') for a in report['arms'])
-        observed = [a['metrics']['observed_fps'] for a in report['arms']]
-        report['comparison_valid'] = bool(report['measurement_valid']) and len(observed) == 4
+        report['measurement_valid'] = all(a.get('stage') == 'complete' and a.get('metrics') for a in report['arms']) and len(report['arms']) == 4
+        # comparison_valid stays false: the full shared cross-arm invariants
+        # (same decoder/audio/positions/fps guards as the GHA acceptance) are
+        # NOT re-verified here; len(arms)==4 is never a validity criterion.
+        report['comparison_valid'] = False
         report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
     except (NativeFailure, Exception):
         report['blocked_reason'] = 'paired_home_unavailable'
     finally:
-        cleanup = True
-        if parent is not None:
-            for index in range(4):
-                marker = parent / ('arm-' + str(index))
-                receipt = marker / 'done'
-                if marker.exists() and not receipt.exists():
-                    report['cleanup_warning'] = 'arm-' + str(index) + '_without_done_marker'
+        # Real cleanup evidence only: each arm() reports its own
+        # cleanup_completed from its finally; nothing is assumed True and no
+        # completion markers are invented.
+        cleanup = bool(report['arms']) and all(a.get('cleanup_completed') is True for a in report['arms'])
+        if not report['arms']:
+            cleanup = False
         report['cleanup_completed'] = cleanup
         report['wall_seconds'] = round(time.monotonic() - started, 3)
         if root:
@@ -206,9 +235,14 @@ def self_test():
     arm_src = inspect.getsource(__import__('youtube_paired_native').arm)
     assert 'device_factory=None' in arm_src and 'state_probe=None' in arm_src
     assert 'close_owned or close_for_privacy' in arm_src
+    run_src = inspect.getsource(run)
+    assert 'local_native_benchmark_fixture_only' in run_src
+    assert 'done' not in run_src or 'done_marker' not in run_src, 'no invented markers allowed'
+    assert "report['comparison_valid'] = False" in run_src
     report = initial_report()
     assert report['diagnostic_only'] is True and report['acceptance_passed'] is False
     assert report['full_playback_acceptance'] is False and report['paired_release_acceptance'] is False
+    assert report['comparison_valid'] is False and report['measurement_valid'] is False
     assert ORDER == ('light', 'normal', 'normal', 'light')
     return {'self_test': True, 'source_only': True, 'native_execution': False}
 
