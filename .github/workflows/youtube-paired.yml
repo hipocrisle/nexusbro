@@ -229,7 +229,7 @@ jobs:
           result={'schema':1,'release_acceptance_passed':False,'measurement_completed':not metadata_only and raw.get('completed') is True,'comparison_valid':not metadata_only and raw.get('comparison_valid') is True,'measurement_acceptance_passed':not metadata_only and raw.get('acceptance_passed') is True,'physical_audio_capture_proven':False,'arms':[]}
           if metadata_only:
               result['diagnostic_mode']='reference_metadata_only'
-              for key in ('metadata_observed','playback_observed','clock_advanced','cleanup_completed'):result[key]=raw.get(key) is True
+              for key in ('metadata_observed','snapshot_observed','playback_observed','clock_advanced','cleanup_completed','play_key_sent','ordinary_tab_focus_click_sent'):result[key]=raw.get(key) is True
               result['metadata_completed']=raw.get('completed') is True
               owned=raw.get('owned_exit',{})
               result['parent_normal_exit']=isinstance(owned,dict) and owned.get('parent_normal_exit') is True
