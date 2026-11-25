@@ -48,10 +48,6 @@ on:
         description: Build frontend and isolated security tests (no CEF)
         type: boolean
         default: false
-      linux_routes_core_only:
-        description: Diagnostic existing Linux binary routes without tooltip scenario; forbids publication
-        type: boolean
-        default: false
       linux_memory_diagnostic:
         description: Inspect native early-memory installation only (never security acceptance or publication)
         type: boolean
@@ -1370,12 +1366,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+      - name: Validate existing Linux binary request
+        id: producer_request
+        env:
+          REQUEST: ${{ inputs.linux_runtime_build }}
+          PUBLISH_TAG: ${{ inputs.publish_tag }}
+        run: |
+          python3 - <<'PYREQUEST'
+          import json,os,re
+          request=os.environ['REQUEST'];core=False
+          if request.startswith('{'):
+              value=json.loads(request)
+              assert isinstance(value,dict) and set(value)=={'run','core_only'}
+              assert value['core_only'] is True and not os.environ['PUBLISH_TAG']
+              request=value['run'];core=True
+          assert isinstance(request,str) and re.fullmatch(r'[1-9][0-9]{0,19}',request)
+          with open(os.environ['GITHUB_OUTPUT'],'a') as output:
+              output.write('run='+request+'\ncore_only='+str(core).lower()+'\n')
+          PYREQUEST
       - name: Install native acceptance QR decoder and TypeScript
         run: npm ci --prefix desktop && npm run build --prefix desktop
       - name: Verify app sources match the binary run
         env:
           GH_TOKEN: ${{ github.token }}
-          BUILD_RUN: ${{ inputs.linux_runtime_build }}
+          BUILD_RUN: ${{ steps.producer_request.outputs.run }}
         run: |
           set -euo pipefail
           SOURCE=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$BUILD_RUN" --jq .head_sha)
@@ -1386,13 +1400,13 @@ jobs:
         with:
           name: nexusbro-linux-runtime
           path: .dev-check/native-binary
-          run-id: ${{ inputs.linux_runtime_build }}
+          run-id: ${{ steps.producer_request.outputs.run }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v4
         with:
           name: nexusbro-sync-backend
           path: .dev-check/backend-package
-          run-id: ${{ inputs.linux_runtime_build }}
+          run-id: ${{ steps.producer_request.outputs.run }}
           github-token: ${{ github.token }}
       - name: Runtime dependencies and verified CEF
         timeout-minutes: 10
@@ -1443,7 +1457,7 @@ jobs:
         if: ${{ inputs.linux_memory_diagnostic }}
         timeout-minutes: 4
         run: |
-          test -z "${{ inputs.publish_tag }}"
+          test -z "$PUBLISH_TAG"
           python3 tests/gui/memory_bootstrap_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-memory-diagnostic --safe-unload
       - uses: actions/upload-artifact@v4
         if: always() && inputs.linux_memory_diagnostic
@@ -1454,6 +1468,9 @@ jobs:
       - name: Native per-tab routes, isolated profiles and trusted HTTPS
         if: ${{ !inputs.linux_memory_diagnostic }}
         timeout-minutes: 10
+        env:
+          ROUTE_CORE_ONLY: ${{ steps.producer_request.outputs.core_only }}
+          PUBLISH_TAG: ${{ inputs.publish_tag }}
         run: |
           python3 tests/gui/route_ca.py --out .dev-check/routes-ca
           printf '%s\n' '127.0.0.1 nexusbro-route-stun.test' | sudo tee -a /etc/hosts >/dev/null
@@ -1463,8 +1480,8 @@ jobs:
           if [ ! -f "$HOME/.pki/nssdb/cert9.db" ]; then certutil -N -d "sql:$HOME/.pki/nssdb" --empty-password; fi
           certutil -A -d "sql:$HOME/.pki/nssdb" -n nexusbro-route-fixture -t 'C,,' -i .dev-check/routes-ca/ca.crt
           ROUTE_DIAGNOSTIC_ARGS=()
-          if [ "${{ inputs.linux_routes_core_only }}" = "true" ]; then
-            test -z "${{ inputs.publish_tag }}"
+          if [ "$ROUTE_CORE_ONLY" = "true" ]; then
+            test -z "$PUBLISH_TAG"
             ROUTE_DIAGNOSTIC_ARGS+=(--core-routes-only)
           fi
           python3 tests/gui/tab_routes.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key "${ROUTE_DIAGNOSTIC_ARGS[@]}"
@@ -1525,7 +1542,7 @@ jobs:
     if: >-
       always() && github.event_name == 'workflow_dispatch' &&
       inputs.runtime_build != '' && inputs.publish_tag != '' && !inputs.linux_build_only &&
-      !inputs.runtime_memory_only && !inputs.linux_memory_diagnostic && !inputs.linux_routes_core_only &&
+      !inputs.runtime_memory_only && !inputs.linux_memory_diagnostic && !startsWith(inputs.linux_runtime_build, '{') &&
       needs.runtime.result == 'success' &&
       (inputs.linux_runtime_build == '' ||
        (inputs.linux_runtime_build == inputs.runtime_build && needs['linux-runtime'].result == 'success'))
