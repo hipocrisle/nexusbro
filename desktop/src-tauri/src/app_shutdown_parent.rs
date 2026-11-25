@@ -5,7 +5,7 @@ use crate::app_shutdown_protocol::{Ack, Request, ACK_TIP};
 use crate::super_process_owner::{ExitProbe, ProcessOwner};
 use serde::Serialize;
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs::File,
     io::{Seek, SeekFrom, Write},
     path::PathBuf,
@@ -93,6 +93,8 @@ struct Coordinator {
     preparation: Option<bool>,
     started: Option<Instant>,
     entries: BTreeMap<Key, Entry>,
+    // Absence after an in-flight start/stop is not a clean AppShutdown ACK.
+    unobserved_starts: BTreeSet<Key>,
     blocked: bool,
     exit_scheduled: bool,
 }
@@ -104,6 +106,10 @@ impl Coordinator {
         } else if !self.exit_requested {
             self.prepared_update = true;
         }
+    }
+    fn clean_for_preparation(&self) -> bool {
+        self.unobserved_starts.is_empty()
+            && self.entries.values().all(|entry| entry.done && entry.clean)
     }
     fn can_schedule_exit(&self) -> bool {
         self.exit_requested && self.preparation.is_some() && !self.blocked && !self.exit_scheduled
@@ -342,15 +348,17 @@ fn receipt(pending: usize, complete: bool) -> Option<Receipt> {
         schema: 1,
         prepared_update: state.prepared_update,
         parent_pid: std::process::id(),
-        owners: state.entries.len(),
+        owners: state.entries.len() + state.unobserved_starts.len(),
         clean: state.entries.values().filter(|e| e.done && e.clean).count(),
         forced: state.entries.values().filter(|e| e.forced).count(),
-        unacknowledged: state.entries.values().filter(|e| !e.acked).count(),
+        unacknowledged: state.entries.values().filter(|e| !e.acked).count()
+            + state.unobserved_starts.len(),
         unclean: state
             .entries
             .values()
             .filter(|e| e.done && !e.clean)
-            .count(),
+            .count()
+            + state.unobserved_starts.len(),
         pending_starts: pending,
         complete,
     })
@@ -437,6 +445,7 @@ fn discover(app: &tauri::AppHandle) -> usize {
     let mut pending = 0;
     for (id, engine, owned, starting, sleeping, residual_network) in observed {
         if owned {
+            state.unobserved_starts.remove(&(id.clone(), engine));
             if state
                 .entries
                 .get(&(id.clone(), engine))
@@ -455,6 +464,13 @@ fn discover(app: &tauri::AppHandle) -> usize {
                 state.entries.insert((id, engine), Entry::new(engine));
             }
         } else if starting || !sleeping || residual_network {
+            if !state.entries.contains_key(&(id.clone(), engine)) {
+                if state.entries.len() + state.unobserved_starts.len() >= MAX_OWNERS {
+                    state.blocked = true;
+                } else {
+                    state.unobserved_starts.insert((id, engine));
+                }
+            }
             pending += 1;
         }
     }
@@ -677,7 +693,7 @@ fn drain(app: tauri::AppHandle) {
             // Publish preparation ONLY after the final receipt is synced. A
             // concurrent begin() must not schedule exit ahead of that write.
             if let Ok(mut state) = coordinator().lock() {
-                state.preparation = Some(state.entries.values().all(|entry| entry.clean));
+                state.preparation = Some(state.clean_for_preparation());
             }
             schedule_exit(&app);
             return;
@@ -744,6 +760,23 @@ mod tests {
         assert!(pending.can_schedule_exit());
         pending.blocked = true;
         assert!(!pending.can_schedule_exit());
+    }
+    #[test]
+    fn unobserved_start_never_becomes_clean_by_disappearing() {
+        let mut state = Coordinator::default();
+        state.unobserved_starts.insert(("fixture".into(), 9));
+        assert!(!state.clean_for_preparation());
+        // Materialization replaces the conservative placeholder; an actual
+        // ACK and fresh owner completion are still both mandatory.
+        state.unobserved_starts.remove(&("fixture".into(), 9));
+        let mut entry = Entry::new(9);
+        state.entries.insert(("fixture".into(), 9), entry.clone());
+        assert!(!state.clean_for_preparation());
+        entry.acked = true;
+        entry.timely_ack = true;
+        entry.completed();
+        state.entries.insert(("fixture".into(), 9), entry);
+        assert!(state.clean_for_preparation());
     }
     #[test]
     fn ack_without_tree_exit_and_eof_without_ack_cannot_be_clean() {
