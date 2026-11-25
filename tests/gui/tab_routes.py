@@ -491,6 +491,13 @@ def route_native_hit(device,expected):
     x.XGetWindowProperty.argtypes=[Display,Window,c.c_ulong,c.c_long,c.c_long,c.c_int,c.c_ulong,c.POINTER(c.c_ulong),c.POINTER(c.c_int),c.POINTER(c.c_ulong),c.POINTER(c.c_ulong),c.POINTER(c.c_void_p)];x.XGetWindowProperty.restype=c.c_int
     x.XFree.argtypes=[c.c_void_p];x.XSync.argtypes=[Display,c.c_int]
     x.XSetErrorHandler.argtypes=[c.c_void_p];x.XSetErrorHandler.restype=c.c_void_p
+    shape_name=find_library('Xext');shape=c.CDLL(shape_name) if shape_name else None
+    class Rectangle(c.Structure):
+        _fields_=[('x',c.c_short),('y',c.c_short),('width',c.c_ushort),('height',c.c_ushort)]
+    if shape:
+        shape.XShapeQueryExtension.argtypes=[Display,c.POINTER(c.c_int),c.POINTER(c.c_int)];shape.XShapeQueryExtension.restype=c.c_int
+        shape.XShapeQueryVersion.argtypes=[Display,c.POINTER(c.c_int),c.POINTER(c.c_int)];shape.XShapeQueryVersion.restype=c.c_int
+        shape.XShapeGetRectangles.argtypes=[Display,Window,c.c_int,c.POINTER(c.c_int),c.POINTER(c.c_int)];shape.XShapeGetRectangles.restype=c.POINTER(Rectangle)
     display=x.XOpenDisplay(os.fsencode(device.display));require(bool(display),'Route observer display unavailable')
     failed=[False];handler_type=c.CFUNCTYPE(c.c_int,Display,c.c_void_p)
     @handler_type
@@ -498,6 +505,12 @@ def route_native_hit(device,expected):
     previous=x.XSetErrorHandler(c.cast(error_handler,c.c_void_p))
     try:
         root=x.XDefaultRootWindow(display)
+        shape_supported=False
+        if shape:
+            event_base=c.c_int();error_base=c.c_int();major=c.c_int();minor=c.c_int()
+            shape_supported=bool(shape.XShapeQueryExtension(display,c.byref(event_base),c.byref(error_base))
+                and shape.XShapeQueryVersion(display,c.byref(major),c.byref(minor))
+                and (major.value>1 or major.value==1 and minor.value>=1))
         types={}
         for name in ('NORMAL','DIALOG','TOOLTIP','POPUP_MENU','DROPDOWN_MENU','UTILITY','DOCK','DESKTOP'):
             atom=x.XInternAtom(display,('_NET_WM_WINDOW_TYPE_'+name).encode(),1)
@@ -536,8 +549,44 @@ def route_native_hit(device,expected):
         def info(window):
             attrs=Attributes();ok=x.XGetWindowAttributes(display,window,c.byref(attrs))
             values=property_values(window,type_atom,16)
-            return {'role':role(window),'window_type':next((types[v] for v in values if v in types),'other' if values else 'none'),
-                    'override_redirect':bool(attrs.override_redirect) if ok else False,'mapped':attrs.map_state==2 if ok else False}
+            item={'role':role(window),'window_type':next((types[v] for v in values if v in types),'other' if values else 'none'),
+                  'override_redirect':bool(attrs.override_redirect) if ok else False,'mapped':attrs.map_state==2 if ok else False}
+            if item['role']=='ownedApp' and item['window_type']=='tooltip':
+                item.update(input_shape_supported=shape_supported,input_shape_observed=False)
+                if shape_supported:
+                    count=c.c_int(-1);ordering=c.c_int();rectangles=shape.XShapeGetRectangles(display,window,2,c.byref(count),c.byref(ordering))
+                    try:
+                        x.XSync(display,0)
+                        if 0<=count.value<=256 and (count.value==0 or bool(rectangles)) and not failed[0]:
+                            item.update(input_shape_observed=True,input_rectangles=count.value,input_empty=count.value==0)
+                    finally:
+                        if rectangles:x.XFree(rectangles)
+            return item
+        # TranslateCoords checks ShapeInput in X server dispatch.c. Its hit
+        # chain intentionally skips empty-input tooltips. Independently observe
+        # mapped visual root children, in topmost-first stacking order.
+        native_root=Window();up=Window();children=c.POINTER(Window)();child_count=c.c_uint()
+        tree_ok=x.XQueryTree(display,root,c.byref(native_root),c.byref(up),c.byref(children),c.byref(child_count))
+        result.update(visual_scan_complete=bool(tree_ok and child_count.value<=256),mapped_owned_tooltips=[],nonowned_cover=False)
+        try:
+            top_found=False
+            if result['visual_scan_complete']:
+                for index in reversed(range(child_count.value)):
+                    window=children[index];attrs=Attributes()
+                    if not x.XGetWindowAttributes(display,window,c.byref(attrs)) or attrs.map_state!=2:continue
+                    covers=attrs.x<=expected[0]<attrs.x+attrs.width and attrs.y<=expected[1]<attrs.y+attrs.height
+                    native_role=role(window)
+                    if covers and not top_found:
+                        result['visual_top_role']=native_role;result['nonowned_cover']=native_role=='other';top_found=True
+                    # Read hint/input properties only after held-birth ownership.
+                    if native_role!='ownedApp':continue
+                    hints=property_values(window,type_atom,16)
+                    if not any(types.get(value)=='tooltip' for value in hints):continue
+                    if len(result['mapped_owned_tooltips'])>=8:result['visual_scan_complete']=False;break
+                    item=info(window);item.update(covers_expected=covers)
+                    result['mapped_owned_tooltips'].append(item)
+        finally:
+            if children:x.XFree(children)
         current=root;visited={root};complete=False
         for _ in range(16):
             dx=c.c_int();dy=c.c_int();child=Window()
@@ -555,6 +604,62 @@ def route_native_hit(device,expected):
         return result
     finally:
         x.XSync(display,0);x.XCloseDisplay(display);x.XSetErrorHandler(previous)
+
+
+def covering_native_tooltips(hit):
+    if not isinstance(hit,dict) or hit.get('available') is not True or hit.get('complete') is not True or hit.get('visual_scan_complete') is not True or hit.get('nonowned_cover') is not False:return []
+    values=hit.get('mapped_owned_tooltips',[])
+    if not isinstance(values,list) or len(values)>8:return []
+    return [v for v in values if isinstance(v,dict) and v.get('role')=='ownedApp'
+            and v.get('window_type')=='tooltip' and v.get('mapped') is True
+            and v.get('override_redirect') is True and v.get('covers_expected') is True]
+
+
+def tooltip_input_is_empty(hit):
+    values=covering_native_tooltips(hit)
+    return bool(values) and all(v.get('input_shape_supported') is True and v.get('input_shape_observed') is True
+        and type(v.get('input_rectangles')) is int and v['input_rectangles']==0 and v.get('input_empty') is True for v in values)
+
+
+def natural_route_tooltip_hover(client):
+    """One real hover, then read-only observation. No retries or synthetic tooltip."""
+    device=client.route_trace_device
+    require(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform!='win32'
+            and device.x is not None and device.x.poll() is None,'Route tooltip requires private Linux fixture')
+    geometry=client.js('(()=>{const b=document.querySelector(".tab-route-button"),t=document.querySelector(".obychnaya[data-id="+JSON.stringify("13")+"]"),r=b?.getBoundingClientRect(),q=t?.getBoundingClientRect();return r&&q?{point:[Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)],tab:[q.x,q.y,q.width,q.height],title:!!t.getAttribute("title"),scale:devicePixelRatio||1,viewport:[innerWidth,innerHeight]}:null})()')
+    label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    require(label=='main' and geometry and geometry['title'],'Route tooltip natural title unavailable')
+    origin=client.command('plugin:window|inner_position',label=label)
+    expected,_=route_toolbar_geometry(geometry['point'],origin,geometry['scale'],geometry['viewport'])
+    left,top,width,height=geometry['tab']
+    require(width>8 and height>8 and left>=0 and top>=0 and left+width<=geometry['viewport'][0]
+            and top+height<=geometry['viewport'][1],'Route tooltip tab outside viewport')
+    env={**os.environ,'DISPLAY':device.display}
+    current=subprocess.check_output(['xdotool','getmouselocation','--shell'],env=env,text=True,timeout=3)
+    require(len(current)<=512,'Route tooltip cursor unavailable')
+    cursor={}
+    for line in current.splitlines():
+        key,_,value=line.partition('=')
+        if key in ('X','Y') and value.lstrip('-').isdecimal():cursor[key]=int(value)
+    require(set(cursor)=={'X','Y'},'Route tooltip cursor unavailable')
+    center=(round(left+width/2),round(top+height/2))
+    candidates=[(round(origin['x']+(center[0]+offset)*geometry['scale']),
+                 round(origin['y']+center[1]*geometry['scale'])) for offset in (2,-2)]
+    hover=next((point for point in candidates if max(abs(point[0]-cursor['X']),abs(point[1]-cursor['Y']))>1),None)
+    require(hover is not None,'Route tooltip hover point unavailable')
+    receipt={'move_count':0,'observations':0,'mapped_covering_tooltip_observed':False}
+    client.route_open_native={'hover':receipt}
+    subprocess.run(['xdotool','mousemove',str(hover[0]),str(hover[1])],env=env,check=True,
+                   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+    receipt['move_count']=1
+    deadline=time.monotonic()+5
+    while time.monotonic()<deadline and receipt['observations']<50:
+        hit=route_native_hit(device,expected);receipt['observations']+=1;receipt['last_hit']=hit
+        if hit.get('nonowned_cover') is True:client.route_forbid_failure_screenshot=True
+        require(hit.get('nonowned_cover') is False,'Route tooltip target covered by foreign window')
+        if covering_native_tooltips(hit):receipt['mapped_covering_tooltip_observed']=True;return
+        time.sleep(.08)
+    require(False,'Mapped owned native tooltip covering route target not observed')
 
 
 def route_toolbar_observation(client,phase):
@@ -576,12 +681,14 @@ def route_toolbar_observation(client,phase):
         screen=subprocess.check_output(['xdotool','getdisplaygeometry'],env={**os.environ,'DISPLAY':device.display},text=True,timeout=3).split()
         require(len(screen)==2 and all(v.isdecimal() for v in screen),'Route observer screen unavailable')
         require(0<=box[0]<box[2]<=int(screen[0]) and 0<=box[1]<box[3]<=int(screen[1]),'Route observer crop outside owned screen')
+        result['hit_test']=route_native_hit(device,original)
+        if result['hit_test'].get('nonowned_cover') is True:client.route_forbid_failure_screenshot=True
+        require(not result['hit_test'].get('nonowned_cover',True),'Route observer foreign cover')
         from PIL import ImageGrab
         with ImageGrab.grab(bbox=box,xdisplay=device.display) as shot:
             require(shot.size==(box[2]-box[0],box[3]-box[1]),'Route observer crop unavailable')
             shot.save(out/('route-open-'+phase+'.png'))
         result.update(available=True,crop_saved=True,crop_width=box[2]-box[0],crop_height=box[3]-box[1])
-        result['hit_test']=route_native_hit(device,original)
     except Exception:result['observation_failed']=True
     return result
 
@@ -672,6 +779,14 @@ def route_open_trace_finish(client):
 
 
 def route_open_trace_self_test():
+    tooltip=dict(role='ownedApp',window_type='tooltip',mapped=True,override_redirect=True,covers_expected=True,
+                 input_shape_supported=True,input_shape_observed=True,input_rectangles=0,input_empty=True)
+    hit=dict(available=True,complete=True,visual_scan_complete=True,nonowned_cover=False,mapped_owned_tooltips=[tooltip])
+    assert tooltip_input_is_empty(hit)
+    assert not tooltip_input_is_empty(dict(hit,mapped_owned_tooltips=[dict(tooltip,input_rectangles=1,input_empty=False)]))
+    assert not tooltip_input_is_empty(dict(hit,nonowned_cover=True))
+    assert not tooltip_input_is_empty(dict(hit,mapped_owned_tooltips=[dict(tooltip,input_shape_observed=False)]))
+    assert not tooltip_input_is_empty(dict(hit,mapped_owned_tooltips=[]))
     expected,box=route_toolbar_geometry([10,20],{'x':100,'y':200},1.5,[800,600])
     assert expected==(115,230) and box==(100,200,1300,395)
     try:route_toolbar_geometry([10,20],{'x':0,'y':0},10,[800,600])
@@ -723,12 +838,22 @@ def apply_ui(client, label, owner, identifier, screenshot=None):
     require(call(client, 'aktivnaya') == owner and rows(client, owner)['aktivnaya'] == identifier,
             'Route UI target no longer matches the active native owner/tab')
     tracing=identifier==13 and owner=='routes-a'
+    regression=tracing and sys.platform!='win32'
     if tracing:
-        client.route_open_native={'before':route_toolbar_observation(client,'before')}
+        client.route_open_native={}
+        if regression:natural_route_tooltip_hover(client)
+        client.route_open_native['before']=route_toolbar_observation(client,'before')
         route_open_trace_begin(client,owner,identifier)
     try:
         client.click('button[aria-label="Путь вкладки"]')
         js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
+        if regression:
+            require(tooltip_input_is_empty(client.route_open_native['before'].get('hit_test')),
+                    'Mapped native tooltip input shape was not empty')
+            require(client.js('window.__routeOpenDiagnostic?.state?.counts?.click?.trusted_route??-1')==1,
+                    'Single physical route click did not reach trusted DOM through tooltip')
+            client.route_open_native['regression']={'mapped_tooltip_before_click':True,'input_empty_before_click':True,
+                                                   'one_physical_click':True,'trusted_dom_click':True,'dialog_present':True}
     except Exception:
         if tracing:client.route_open_native['failure']=route_toolbar_observation(client,'failure')
         raise
@@ -1360,7 +1485,9 @@ def run(args):
                 report['session_on_failure'] = rows(device.client, 'routes-a')
             except Exception as diagnostic_error:
                 report['diagnostic_error'] = type(diagnostic_error).__name__
-        if device:
+        if device and getattr(device.client,'route_forbid_failure_screenshot',False):
+            report['failure_screenshot_blocked_nonowned_cover']=True
+        if device and not getattr(device.client,'route_forbid_failure_screenshot',False):
             # Startup/inspector failures need a native screen too, even before
             # a CDP client exists. Capture before terminating the owned app.
             try:
