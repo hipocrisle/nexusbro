@@ -594,6 +594,28 @@ jobs:
           test "$RUNNER_ENVIRONMENT" = github-hosted
           echo "YOUTUBE_OLD_UNPRIVILEGED_PORT_START=$(sysctl -n net.ipv4.ip_unprivileged_port_start)" >> "$GITHUB_ENV"
           sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+      - name: Real native prepare-update drains engines while parent remains alive
+        timeout-minutes: 5
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            BIN=.dev-check/installed/nexusbro.exe
+            CEF=.dev-check/installed
+          else
+            BIN=/usr/bin/nexusbro
+            CEF=/usr/lib/NexusBro
+          fi
+          python tests/gui/app_shutdown_native.py --exe "$BIN" --cef "$CEF" --out .dev-check/app-shutdown --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: app-shutdown-native-${{ matrix.os }}
+          path: .dev-check/app-shutdown/result.json
+          if-no-files-found: warn
+          retention-days: 14
       - name: Real native controlled dual-WebM playback and per-context routing
         id: native-youtube-player
         timeout-minutes: 13
