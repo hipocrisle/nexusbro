@@ -834,7 +834,7 @@ mod tests {
         let ack = Ack::after_cef_shutdown(expected.clone());
         let mut wire = serde_json::json!({"tip":ACK_TIP,"ack":ack});
         assert!(parse_ack(&wire).unwrap().matches(&expected));
-        wire["extra"] = true;
+        wire["extra"] = serde_json::Value::Bool(true);
         assert!(parse_ack(&wire).is_none());
         wire.as_object_mut().unwrap().remove("extra");
         wire["ack"]["request"]["nonce"] = "x".repeat(65536).into();
