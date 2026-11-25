@@ -592,6 +592,12 @@ fn poll_owners(app: &tauri::AppHandle, expired: bool) {
     };
     let s = app.state::<crate::Sostoyanie>();
     for (key, entry) in entries {
+        // Linux probe can reap an exited leader and release its numeric PID
+        // reservation. Keep that reservation until ACK admission (or explicit
+        // deadline fallback), instead of needlessly probing ahead of the ACK.
+        if !entry.acked && !expired {
+            continue;
+        }
         let (action, owner) = {
             let Ok(mut map) = s.vkladki.lock() else {
                 blocked(app);
