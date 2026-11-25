@@ -47,11 +47,18 @@ from youtube_player_native import physical
 VIDEO = 'M7lc1UVf-VE'
 # Tauri Linux resource_dir is NOT exe-adjacent (tauri-utils platform.rs):
 # for exe at <root>/bin/nexusbro the resources are <root>/lib/nexusbro/...
-COMPONENT_FILES = ('yt-dlp', 'deno', 'ffmpeg')
+COMPONENT_FILES = ('yt-dlp', 'deno', 'ffmpeg/bin/ffmpeg')
 SAFE_CODE = re.compile(r'^[a-z0-9_]{1,48}$')
 # Exact fixed strings from youtube_light_jobs.rs::sidecar_error (primary source).
 # Raw Russian text never enters the report; only the enum below does.
 SIDECAR_FAILURE_ENUM = {
+    "Дождитесь завершения перехода": "document_not_ready",
+    "Документ недоступен": "document_unavailable",
+    "Нужна ссылка на одно видео YouTube": "video_url_unavailable",
+    "Компоненты YouTube недоступны": "components_unavailable",
+    "Не удалось запустить извлечение видео": "extraction_start_failed",
+    "Вкладка занята": "tab_busy",
+    "Сначала откройте вкладку": "tab_not_live",
     "Проверенные компоненты извлечения недоступны": "invalid_components",
     "Путь видео недоступен": "invalid_route",
     "Ответ извлечения превышает лимит": "output_limit",
@@ -74,7 +81,7 @@ SIDECAR_FAILURE_ENUM = {
     "Не удалось получить публичные данные видео": "process_failed",
 }
 MIN_POSITION_DELTA = 8.0
-PACKAGE_NAME = 'nexusbro'
+PACKAGE_NAME = 'NexusBro'
 
 
 def validate_components(raw_components, exe, root):
@@ -110,7 +117,7 @@ def light_state(state):
         raise Blocked('native_light_unavailable')
     numbers = {}
     for key in ('position', 'duration', 'decoded', 'dropped', 'video_width', 'video_height',
-                'ready_state', 'volume', 'playback_rate'):
+                'volume'):
         value = state.get(key)
         if type(value) not in (int, float) or isinstance(value, bool) or not math.isfinite(value) or value < 0:
             raise Blocked('native_light_state_invalid')
@@ -142,6 +149,9 @@ def light_snapshot(client, identifier, tab):
     call(client, 'obychnaya_komanda', id=identifier, komanda={'deystvie': 'youtube_snapshot', 'id': tab})
     deadline = time.monotonic() + 8
     while time.monotonic() < deadline:
+        failed = client.js('window.__paired.filter(e=>e.data?.id===' + str(tab) + '&&e.data?.tip==="youtube-result"&&e.data?.start===false&&typeof e.data?.error==="string").map(e=>e.data).pop()||null')
+        if isinstance(failed, dict):
+            return {'failure': sidecar_enum(failed.get('error') or failed.get('code'))}
         data = client.js('(()=>{const b=window.__paired;let best=-1;'
                          'for(let i=' + str(start) + ';i<b.length;i++){const e=b[i];'
                          'if(e.data&&e.data.id===' + str(tab) + '&&e.data.tip==="youtube-state")best=i;}'
@@ -153,7 +163,8 @@ def light_snapshot(client, identifier, tab):
             state = data.get('state')
             if isinstance(state, dict):
                 return {'state': state}
-            return {'failure': sidecar_enum(data.get('code'))}
+            code = data.get('code')
+            return {'pending_code': code if isinstance(code, str) and SAFE_CODE.fullmatch(code) else 'unavailable'}
         time.sleep(.1)
     return None
 
@@ -208,7 +219,7 @@ def run(args):
         if digest.hexdigest() != args.exe_sha256:
             raise Blocked('local_exe_sha256_mismatch')
         components = validate_components(args.components, exe, root)
-        report['components_path_shape'] = 'exe-adjacent-binaries-youtube-light'
+        report['components_path_shape'] = 'private-lib-NexusBro-binaries-youtube-light'
         out = root / 'out' / ('light-home-' + str(int(time.time())))
         out.mkdir(parents=True, exist_ok=False)
         work_deadline = started + WORK_BUDGET_SECONDS
@@ -240,7 +251,7 @@ def run(args):
         deadline = time.monotonic() + remaining(60); tab = None
         while time.monotonic() < deadline:
             session = rows(client, identifier, timeout=remaining(3)); tab = session.get('aktivnaya')
-            if any(v.get('id') == tab and v.get('browser_id', 0) > 0 for v in session.get('vkladki', [])):
+            if any(v.get('id') == tab and v.get('browser_id', 0) > 0 and not v.get('zagruzka') and v.get('adres') == url for v in session.get('vkladki', [])):
                 break
             time.sleep(.5)
         else:
@@ -264,18 +275,27 @@ def run(args):
             if receipt is None:
                 time.sleep(.5)
                 continue
+            if 'pending_code' in receipt:
+                report['last_snapshot_code'] = receipt['pending_code']
+                time.sleep(.5)
+                continue
             if 'failure' in receipt:
                 report['native_failure_code'] = receipt['failure']
                 report['native_stage'] = 'extraction'
                 raise Blocked('native_light_' + receipt['failure'])
             try:
-                first = light_state(receipt['state'])
-            except Blocked:
+                raw_state = receipt['state']
+                report['last_received_state'] = {k:v for k,v in raw_state.items() if type(v) in (int,float,bool) and (type(v) is bool or math.isfinite(v))}
+                first = light_state(raw_state)
+            except Blocked as error:
+                report['state_validation_code'] = str(error) if SAFE_CODE.fullmatch(str(error)) else 'unavailable'
                 time.sleep(.5)
         if first is None:
             report['native_failure_code'] = 'unavailable'
             report['native_stage'] = 'extraction'
             raise Blocked('real_extraction_unavailable_or_challenged')
+        report['first_light_state'] = first
+        report['extraction_completed'] = True
         report['stage'] = 'physical-play'
         if not first['playing']:
             diagnostics = {}
@@ -288,11 +308,12 @@ def run(args):
                 receipt = light_snapshot(client, identifier, tab)
             except (Blocked, NativeFailure):
                 receipt = None
-            if receipt is None or 'failure' in receipt:
+            if receipt is None or 'failure' in receipt or 'pending_code' in receipt:
                 time.sleep(1.0)
                 continue
             state = light_state(receipt['state'])
             last = state
+            report['last_light_state'] = last
             if state['playing'] and state['position'] - first['position'] >= MIN_POSITION_DELTA:
                 break
             time.sleep(1.0)
@@ -309,8 +330,12 @@ def run(args):
         report['completed'] = True; report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
-    except Exception:
+    except Exception as error:
         report['blocked_reason'] = 'light_home_probe_unavailable'
+        report['exception_type'] = type(error).__name__
+        if root is not None:
+            import traceback
+            (root / 'private-light-exception.txt').write_text(traceback.format_exc())
     finally:
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']

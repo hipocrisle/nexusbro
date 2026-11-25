@@ -32,7 +32,7 @@
   чужой DISPLAY/GPU не используется. Device/WM живут в per-run `out/device`,
   `out/wm` (root уже содержит прошлые embed-директории).
 - `--components` принимается ТОЛЬКО как Tauri resource_dir Linux:
-  ровно `<exe.parent.parent>/lib/nexusbro/binaries/youtube-light`
+  ровно `<exe.parent.parent>/lib/NexusBro/binaries/youtube-light`
   (tauri-utils platform.rs: exe_dir/../lib/<package> при существовании; приложение
   резолвит его через papka_resursov, cef_dvizhok.rs — НЕ exe-adjacent). Файлы:
   `yt-dlp`, `deno`, `ffmpeg` — реальные, несимлинковые, непустые. Запечатанный
@@ -73,3 +73,22 @@ Review границ → упаковка компонентов в `<exe>/binari
 `--private-root ~/AI/... --exe ... --cef ... --expect-uid 1001 --exe-sha256 <sha>
 --components <exe>/binaries/youtube-light --allow-local-virtual-display`
 → результат в `~/AI/out/light-result-*.json`.
+
+ROOT review: Linux resources используют productName `NexusBro` (регистр существенен), как реальный `.deb`: `lib/NexusBro/binaries/youtube-light`. Проверено по фактическому аргументу собственного CEF-процесса: путь внутри private-root, ожидаемый каталог существует. `ffmpeg` в пакете расположен как `ffmpeg/bin/ffmpeg`. Bootstrap-снапшоты до готовности не являются отказом извлечения; асинхронный youtube-result сохраняется и классифицируется отдельно.
+
+## Реальный результат 25.11.2026
+
+На Home, бинарник producer45592261113/source1f8ece5, штатный sandbox,
+новый изолированный профиль: реальное извлечение завершено, собственный
+плеер отрисован, выполнен физический клик. Video1280×720, время0→8.7301s,
+декодированные кадры4→271, dropped0, playingtrue, volume1/mutedfalse/default_sinktrue.
+Всего46.131s; родитель завершился штатно, наблюдаемые9native/15OSidentities
+завершены без использования убийства процессов как доказательства приёмки.
+Машинный отчёт: `docs/verification/0.2.27/light-home-summary.json`.
+
+Это **короткая диагностика воспроизведения**, не paired/performance/release
+приёмка, не физический захват звука и не доказательство универсальной
+доступности YouTube. Наследованные поля official-iframe в raw-report не
+используются для оценки лёгкого плеера; доказательства — physical_play,
+first_light_state/last_light_state/owned_exit. Промежуточные bootstrap
+коды сохранены, успешный итог их не скрывает.
