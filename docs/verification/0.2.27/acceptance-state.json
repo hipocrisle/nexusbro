@@ -45,7 +45,7 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-25T07:10:27.523278+00:00",
+  "observed_at_utc": "2026-11-25T14:46:17.491727+00:00",
   "native_summary": "native-summary.json",
   "frontend_recheck": {
     "run": 45554861820,
@@ -108,5 +108,37 @@
     "observations": 50,
     "mapped_seen": 0,
     "neutral_exit_hypothesis_proven": false
+  },
+  "home_public_playback": {
+    "producer_run": 45592261113,
+    "desktop_source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+    "ordinary_official_embed": {
+      "completed": true,
+      "clock_delta_seconds": 8.332,
+      "summary": "official-embed-home-summary.json"
+    },
+    "shipped_light_player": {
+      "completed": true,
+      "position_delta_seconds": 8.73,
+      "video_width": 1280,
+      "video_height": 720,
+      "decoded_before": 4,
+      "decoded_after": 271,
+      "dropped": 0,
+      "summary": "light-home-summary.json"
+    },
+    "short_playback_diagnostic_only": true,
+    "full_acceptance": false,
+    "normal_sandbox_preserved": true,
+    "owner_profile_or_cookies_used": false
+  },
+  "resource_soak_pending": {
+    "run": 45637553346,
+    "status": "in_progress",
+    "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+    "platform": "windows",
+    "required_seconds": 7200,
+    "diagnostic_pilot": false,
+    "acceptance_passed": false
   }
 }
