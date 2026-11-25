@@ -314,6 +314,110 @@ def linux_modal_observation(device,original,candidate):
             'original':properties(original),'candidate':properties(candidate)}
 
 
+
+def windows_read_control_text(handle):
+    """WM_GETTEXT marshals cross-process controls into a fixed local buffer."""
+    import ctypes
+    from ctypes import wintypes
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.SendMessageTimeoutW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM,
+                                      wintypes.UINT,wintypes.UINT,ctypes.POINTER(ctypes.c_size_t)]
+    user.SendMessageTimeoutW.restype=ctypes.c_size_t
+    text=ctypes.create_unicode_buffer(514);size=ctypes.c_size_t()
+    ok=user.SendMessageTimeoutW(handle,0x000D,len(text),ctypes.cast(text,ctypes.c_void_p).value,
+                               0x0002,500,ctypes.byref(size))
+    if not ok:return None,False
+    if size.value>512:return None,False
+    return text.value,True
+
+
+def windows_foreground_layout():
+    import ctypes
+    from ctypes import wintypes
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetForegroundWindow.restype=wintypes.HWND
+    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];user.GetWindowThreadProcessId.restype=wintypes.DWORD
+    user.GetKeyboardLayout.argtypes=[wintypes.DWORD];user.GetKeyboardLayout.restype=wintypes.HANDLE
+    thread=user.GetWindowThreadProcessId(user.GetForegroundWindow(),None)
+    if not thread:return 'other'
+    language=(user.GetKeyboardLayout(thread) or 0)&0xffff
+    return {0x0409:'US',0x0419:'RU'}.get(language,'other')
+
+
+def verify_windows_path_entry(device,dialog,target,expected,diagnostics):
+    import ctypes
+    from ctypes import wintypes
+    receipt={'filename_checked':False,'filename_bounded':False,'filename_equals_expected_target':False,
+             'foreground_layout':windows_foreground_layout()}
+    if diagnostics is not None:
+        entries=diagnostics.setdefault('windows_path_entry',[])
+        if len(entries)<8:entries.append(receipt)
+    require(len(expected)<=512,'Native SaveAs path entry mismatch')
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.IsChild.argtypes=[wintypes.HWND,wintypes.HWND];user.IsChild.restype=wintypes.BOOL
+    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];user.GetWindowThreadProcessId.restype=wintypes.DWORD
+    handle=target.handle;pid=wintypes.DWORD();user.GetWindowThreadProcessId(handle,ctypes.byref(pid))
+    require(bool(handle) and bool(user.IsChild(dialog,handle)) and pid.value in owned_pids(device),
+            'Native SaveAs path entry mismatch')
+    deadline=time.monotonic()+2
+    while True:
+        value,bounded=windows_read_control_text(handle)
+        receipt['filename_checked']=value is not None;receipt['filename_bounded']=bounded
+        receipt['filename_equals_expected_target']=bounded and value==expected
+        if receipt['filename_equals_expected_target']:return
+        if time.monotonic()>=deadline:break
+        time.sleep(.05)  # Read-only input-delivery wait; never type again.
+    require(False,'Native SaveAs path entry mismatch')
+
+
+def classify_windows_modal_text(texts):
+    """Return fixed categories only; synthetic paths and system text stay in RAM."""
+    if len(texts)>8 or any(not isinstance(t,str) or len(t)>512 for t in texts):return 'other'
+    text=' '.join(texts).lower()
+    if any(p in text for p in ('file name is not valid','filename is not valid','invalid file name','not a valid file name')):return 'invalid_name'
+    if any(p in text for p in ('path does not exist','path not found','cannot find the path','could not find the path','cannot find this file')):return 'path_missing'
+    if any(p in text for p in ('access is denied','permission denied','do not have permission',"don't have permission")):return 'permission_denied'
+    if 'already exists' in text and any(p in text for p in ('replace','overwrite')):return 'overwrite_confirmation'
+    return 'other'
+
+
+def windows_owned_modal_classification(device):
+    import ctypes
+    from ctypes import wintypes
+    from youtube_player_native import native_owner
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];user.GetWindow.restype=wintypes.HWND
+    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];user.GetWindowThreadProcessId.restype=wintypes.DWORD
+    user.IsWindowVisible.argtypes=[wintypes.HWND];user.IsWindowVisible.restype=wintypes.BOOL
+    user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int];user.GetClassNameW.restype=ctypes.c_int
+    root=native_owner(device).handle;owned=owned_pids(device);handles,complete=windows_native_dialog_handles()
+    result={'modals':[],'complete':complete}
+    callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+    user.EnumChildWindows.argtypes=[wintypes.HWND,callback_type,wintypes.LPARAM];user.EnumChildWindows.restype=wintypes.BOOL
+    for handle in handles:
+        pid=wintypes.DWORD();user.GetWindowThreadProcessId(handle,ctypes.byref(pid))
+        if pid.value not in owned or not user.IsWindowVisible(handle):continue
+        first=user.GetWindow(handle,4)
+        if not first or user.GetWindow(first,4)!=root:continue
+        texts=[];scanned=0;bounded=True
+        @callback_type
+        def collect(child,_):
+            nonlocal scanned,bounded
+            scanned+=1
+            if scanned>32:bounded=False;return False
+            name=ctypes.create_unicode_buffer(64);user.GetClassNameW(child,name,len(name))
+            if name.value=='Static':
+                if len(texts)>=8:bounded=False;return False
+                text,ok=windows_read_control_text(child)
+                if not ok or text is None:bounded=False;return False
+                texts.append(text)
+            return True
+        user.EnumChildWindows(handle,collect,0)
+        result['modals'].append({'kind':classify_windows_modal_text(texts) if bounded else 'other',
+                                 'bounded':bounded,'text_controls':len(texts)})
+    return result
+
+
 def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
     # A replacement confirmation is a distinct native modal. Do not send its
     # acceptance key before it exists or to the underlying file chooser.
@@ -328,7 +432,9 @@ def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
             require(target is not None,'Native SaveAs filename edit missing')
             target.click_input();keys(device,'ctrl+a')
             import pyautogui as gui
-            gui.write(str(path),interval=.002);keys(device,'enter')
+            gui.write(str(path),interval=.002)
+            verify_windows_path_entry(device,dialog,target,str(path),diagnostics)
+            keys(device,'enter')
     else:
         env={**os.environ,'DISPLAY':device.display}
         subprocess.run(['xdotool','windowfocus','--sync',str(dialog)],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=5)
@@ -514,6 +620,7 @@ def run(args):
             'Native SaveAs did not close':'save_dialog_did_not_close',
             'Native SaveAs did not appear':'save_dialog_did_not_appear',
             'Native SaveAs ambiguous':'save_dialog_ambiguous',
+            'Native SaveAs path entry mismatch':'path_entry_mismatch',
         }.get(str(error),'unclassified')
         if device is not None and 'client' in locals() and 'tab' in locals():
             try:
@@ -542,6 +649,7 @@ def run(args):
                         counts['owned_process' if window.process_id() in owned else 'owned_window_chain' if owner_match else 'other']+=1
                     report['native_dialog_counts']=counts
                     report['windows_dialog_observation_after_failure']=windows_dialog_observation(device,inspect_default=report.get('stage')=='save-dialog-cancel')
+                    report['windows_owned_modal_classification']=windows_owned_modal_classification(device)
             except Exception:
                 report['native_download_diagnostic_unavailable']=True
         trace=error.__traceback__
@@ -570,6 +678,12 @@ def self_test():
     import inspect
     inspect.signature(Fixture).bind(Path("cert"),Path("key"),Path("video"),Path("audio"))
     require(backtabs()==5 and backtabs(audio=True)==4 and backtabs(busy=True)==4,'Shipped physical focus sequence mismatch')
+    for texts,kind in [(['The file name is not valid.'],'invalid_name'),
+                       (['The path does not exist.'],'path_missing'),
+                       (['Access is denied.'],'permission_denied'),
+                       (['File already exists. Replace it?'],'overwrite_confirmation'),
+                       (['unrecognized system text'],'other'),(['x'*513],'other')]:
+        require(classify_windows_modal_text(texts)==kind,'Modal classification mismatch')
     class Client:
         def js(self,_):return [{'super_id':SUPER,'data':{'id':1,'state':{'done':True,'bytes':123}}}]
     require(terminal(Client(),1,'done')['bytes']==123,'Native receipt parsing mismatch')
