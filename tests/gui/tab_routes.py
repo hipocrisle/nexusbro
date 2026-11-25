@@ -714,10 +714,15 @@ def _natural_route_tooltip_hover(client):
     # select() just clicked this tab. An in-row motion is not a fresh hover
     # after that click. Establish a separately counted, observed pointer exit
     # before the one tooltip-triggering hover. No clicks, retries or JS events.
+    # The previous run observed keyboard focus in CEF while hovering GTK.
+    # Establish the real shell focus through its ordinary native command once;
+    # this does not create a tooltip, mutate title, or generate a DOM event.
+    call(client,'fokus_obolochke')
     initial=route_native_hit(device,expected)
     block_unknown_route_screenshot(client,initial)
     require(initial.get('available') is True and initial.get('complete') is True
             and initial.get('nonowned_cover') is False,'Neutral pointer ownership unavailable')
+    require(initial.get('focus_role') == 'ownedApp', 'Native shell focus before tooltip hover unconfirmed')
     subprocess.run(['xdotool','mousemove',str(neutral_point[0]),str(neutral_point[1])],env=env,check=True,
                    stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
     receipt['neutral_move_count']=1
