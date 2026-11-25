@@ -638,6 +638,15 @@ def tooltip_input_is_empty(hit):
 
 
 def natural_route_tooltip_hover(client):
+    # Any pre-observation or query failure leaves native ownership unknown.
+    # Preserve the original exception and never repeat a physical action.
+    try:return _natural_route_tooltip_hover(client)
+    except Exception:
+        block_unknown_route_screenshot(client)
+        raise
+
+
+def _natural_route_tooltip_hover(client):
     """One real hover, then read-only observation. No retries or synthetic tooltip."""
     device=client.route_trace_device
     require(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform!='win32'
@@ -815,6 +824,13 @@ def route_open_trace_self_test():
     with patch.object(sys,'platform','win32'):
         assert route_toolbar_observation(windows,'before')['unsupported_platform'] is True
     assert not hasattr(windows,'route_forbid_failure_screenshot')
+    failed=SimpleNamespace();original_error=RuntimeError('synthetic-private-error')
+    with patch(__name__+'._natural_route_tooltip_hover',side_effect=original_error) as observed:
+        try:natural_route_tooltip_hover(failed)
+        except RuntimeError as actual:assert actual is original_error
+        else:raise AssertionError('Observation exception suppressed')
+        assert observed.call_count==1
+    assert failed.route_forbid_failure_screenshot and failed.route_screenshot_block_reason=='incomplete_observation'
     tooltip=dict(role='ownedApp',window_type='tooltip',mapped=True,override_redirect=True,covers_expected=True,
                  input_shape_supported=True,input_shape_observed=True,input_rectangles=0,input_empty=True)
     hit=dict(available=True,complete=True,visual_scan_complete=True,nonowned_cover=False,mapped_owned_tooltips=[tooltip])
