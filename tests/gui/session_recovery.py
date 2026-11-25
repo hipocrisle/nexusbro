@@ -56,15 +56,8 @@ def close_owned_window(client, app, exe, display, expected_label):
     xenv = {**os.environ, 'DISPLAY': display}
     focused = int(subprocess.check_output(['xdotool', 'getwindowfocus'], env=xenv, text=True).strip())
     assert focused not in (0, 1), 'Native secondary shell did not obtain X11 focus'
-    owned_shells = {}
-    for child in psutil.Process(app.pid).children(recursive=True):
-        try:
-            args = child.cmdline()
-            if pathlib.Path(child.exe()) == exe and '--nb-dvizhok' not in args and not any(a.startswith('--type=') for a in args):
-                owned_shells[child.pid]=child.create_time()
-        except psutil.NoSuchProcess:
-            pass
-    assert len(owned_shells) == 1, 'Isolated app shell PID is ambiguous'
+    held=psutil.Process(app.pid)
+    owned_shells=owned_shell_identities([held,*held.children(recursive=True)],exe)
 
     atom = ctypes.c_ulong
     window = ctypes.c_ulong
@@ -156,6 +149,19 @@ def close_owned_window(client, app, exe, display, expected_label):
         x11.XCloseDisplay(connection)
 
 
+def owned_shell_identities(processes,exe):
+    owned={}
+    for process in processes:
+        try:
+            args=process.cmdline()
+            if pathlib.Path(process.exe())==exe and '--nb-dvizhok' not in args and not any(a.startswith('--type=') for a in args):
+                owned[process.pid]=process.create_time()
+        except psutil.NoSuchProcess:
+            pass
+    assert len(owned)==1,'Isolated app shell PID is ambiguous'
+    return owned
+
+
 def valid_close_label(label):
     return isinstance(label,str) and (label=='main' or label.startswith('browser-'))
 
@@ -212,6 +218,19 @@ def self_test():
         def status(self):return psutil.STATUS_RUNNING
     assert not known_execution_gone(Process(),5)
     assert known_execution_gone(Process(),4)
+    class Shell:
+        def __init__(self,pid,path,args):self.pid=pid;self.path=path;self.args=args
+        def exe(self):return self.path
+        def cmdline(self):return self.args
+        def create_time(self):return self.pid+0.5
+    path=pathlib.Path('/synthetic/nexusbro')
+    direct=Shell(1,str(path),[]);cef=Shell(2,str(path),['--nb-dvizhok'])
+    wrapper=Shell(3,'/synthetic/dbus-run-session',[])
+    assert owned_shell_identities([direct,cef],path)=={1:1.5}
+    assert owned_shell_identities([wrapper,direct,cef],path)=={1:1.5}
+    try:owned_shell_identities([direct,Shell(4,str(path),[])],path)
+    except AssertionError:pass
+    else:raise AssertionError('Ambiguous app owners accepted')
     print(json.dumps({'self_test':True,'native_execution':False}))
 
 

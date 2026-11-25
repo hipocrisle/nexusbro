@@ -14,6 +14,7 @@ import threading
 import time
 import urllib.parse
 from client import Client
+from session_recovery import close_owned_window
 
 parser=argparse.ArgumentParser()
 parser.add_argument('--display',default=':94')
@@ -72,9 +73,8 @@ def start():
     client.wait('!!document.querySelector(".niz")')
 
 def stop():
-    try:client.js('window.__TAURI_INTERNALS__.invoke("plugin:process|exit",{code:0});true')
-    except (websocket_error,KeyError):pass
-    app.wait(timeout=8);assert app.returncode==0
+    close_owned_window(client,app,(root/'desktop/src-tauri/target/debug/nexusbro').resolve(),args.display,'main')
+    app.wait(timeout=15);assert app.returncode==0
     client.close();log.close()
     time.sleep(.3)
 
