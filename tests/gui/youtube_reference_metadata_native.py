@@ -18,7 +18,7 @@ import time
 from youtube_paired_native import (
     Device, WindowsDevice, switch_super, rows, probe, normal_key, route_file,
     OwnedWindowManager, close_for_privacy, super_record, call, click_control,
-    Blocked,
+    Blocked, foreground,
 )
 
 BOOL_FIELDS=('playing','paused','ended','seeking','muted','default_sink')
@@ -27,7 +27,7 @@ NUMBER_FIELDS=('duration','video_width','video_height','position','decoded','dro
 
 
 def initial_report():
-    return {'schema':1,'diagnostic_only':True,'completed':False,'metadata_observed':False,
+    return {'schema':1,'diagnostic_only':True,'completed':False,'metadata_observed':False,'snapshot_observed':False,
             'measurement_valid':False,'comparison_valid':False,
             'accepted_measurement':False,'acceptance_passed':False,
             'playback_observed':False,'clock_advanced':False,'reference_metadata':None,
@@ -35,7 +35,7 @@ def initial_report():
                        'metadata_window_is_soft':True,'shared_probe_reservation_seconds':60,
                        'work_admission_seconds':150,'cleanup_reservation_seconds':90,
                        'outer_workflow_timeout_seconds':300},
-            'stage':'setup','snapshots':[],'play_key_sent':False,'cleanup_completed':False}
+            'stage':'setup','snapshots':[],'play_key_sent':False,'ordinary_tab_focus_click_sent':False,'cleanup_completed':False}
 
 
 def scalars(state):
@@ -52,6 +52,11 @@ def scalars(state):
     if out['video_count']!=1 or not 0<=out['ready_state']<=4 or not 0<=out['volume']<=1:
         raise Blocked('reference_metadata_invalid')
     return out  # Explicit scalars only, never strings, URLs, titles or identifiers.
+
+
+def metadata_ready(state):
+    return (state['ready_state']>=2 and state['duration']>0
+            and state['video_width']>0 and state['video_height']>0 and not state['ended'])
 
 
 def advancement(first,last,wall):
@@ -112,23 +117,35 @@ def run(args):
             if any(v.get('id')==tab and v.get('browser_id',0)>0 for v in session.get('vkladki',[])):
                 try:
                     selected(identifier,tab)
-                    state=reference_probe(identifier,tab);break
+                    state=reference_probe(identifier,tab)
+                    report['snapshot_observed']=True;report['reference_metadata']=state
+                    if metadata_ready(state):break
                 except Blocked as error:
                     if str(error)!='native_normal_unavailable':raise
             time.sleep(.5)
         if state is None:raise Blocked('reference_guard_unavailable_ad_or_wall_or_not_ready')
+        if not metadata_ready(state):raise Blocked('reference_metadata_unready')
         report['metadata_observed']=True;report['reference_metadata']=state;report['snapshots'].append(state)
         if state['paused'] and not state['ended'] and state['ready_state']>=2:
             report['stage']='optional-native-key';selected(identifier,tab)
-            normal_key(device,'k');report['play_key_sent']=True
-            state=reference_probe(identifier,tab);report['snapshots'].append(state)
+            # Exactly one ordinary chrome-tab click, never a website/ad/consent
+            # click, transfers focus through the product's normal selection UI.
+            foreground(device)
+            click_control(client,'.obychnaya[data-id="'+str(tab)+'"][aria-selected=true]',remaining(5))
+            report['ordinary_tab_focus_click_sent']=True
+            selected(identifier,tab);state=reference_probe(identifier,tab)
+            report['reference_metadata']=state
+            if state['paused'] and metadata_ready(state):
+                normal_key(device,'k');report['play_key_sent']=True
+                state=reference_probe(identifier,tab)
+                report['reference_metadata']=state;report['snapshots'].append(state)
         if state['playing'] or report['play_key_sent']:
             report['stage']='clock-observation';first=state;began=time.monotonic()
             for offset in (2,5,10):
                 delay=began+offset-time.monotonic()
                 if delay>0:time.sleep(min(delay,remaining(delay)))
                 selected(identifier,tab);state=reference_probe(identifier,tab)
-                report['snapshots'].append(state)
+                report['snapshots'].append(state);report['reference_metadata']=state
             report['observed_playback']=advancement(first,state,time.monotonic()-began)
             report['clock_advanced']=report['observed_playback']['clock_advanced']
             report['playback_observed']=report['clock_advanced'] and report['observed_playback']['decoded_advanced'] and state['playing']
@@ -176,7 +193,7 @@ def run(args):
 SAFE_CODES={'gha_only','reference_video_invalid','reference_direct_route_required','route_config_invalid',
  'reference_metadata_invalid','reference_clock_changed','reference_observation_deadline','reference_startup_deadline',
  'reference_selected_binding_changed','reference_listener_unavailable','reference_guard_unavailable_ad_or_wall_or_not_ready',
- 'normal_cef_focus_unproven','normal_key_invalid','reference_metadata_not_usable','reference_playback_fps_not_observed'}
+ 'normal_cef_focus_unproven','normal_key_invalid','reference_metadata_not_usable','reference_playback_fps_not_observed','reference_metadata_unready'}
 
 
 def self_test():
@@ -187,6 +204,11 @@ def self_test():
         except Blocked:pass
         else:raise AssertionError('invalid_native_metadata_accepted')
     assert advancement(dict(state,position=1,decoded=4),dict(state,position=3,decoded=28),2)['observed_frames_per_media_second']==12
+    ready=dict(state,ready_state=2,duration=600,video_width=1920,video_height=1080)
+    sequence=[state,state,ready]
+    assert next((index for index,value in enumerate(sequence) if metadata_ready(value)),None)==2
+    assert next((value for value in [state,state,state] if metadata_ready(value)),None)is None
+    assert not metadata_ready(dict(ready,ended=True))
     no_clock=advancement(state,state,10)
     assert no_clock['clock_advanced']is False and no_clock['decoded_advanced']is False
     assert no_clock['observed_frames_per_media_second']is None
