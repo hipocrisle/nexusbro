@@ -641,9 +641,9 @@ def route_tooltip_hover_point(tab, target_x):
     """Interior hover point for the tab-row title tooltip (CSS px).
 
     Contract (run 45585742892): hovering the tab's bottom EDGE (top+height-2)
-    produced zero mapped GTK tooltips across all 50 observations — the pointer
-    on the widget boundary causes enter/leave churn and GTK never starts the
-    tooltip timer. The hover must sit strictly inside the tab, biased toward
+    produced zero mapped GTK tooltips across all 50 observations. Boundary
+    churn is a hypothesis, not an observed cause. Keep the pointer strictly
+    inside the tab, biased toward
     the toolbar button so the naturally positioned tooltip lands over it.
     """
     left, top, width, height = tab
@@ -709,9 +709,27 @@ def _natural_route_tooltip_hover(client):
                    round(origin['y'] + hover_css_y * geometry['scale'])) for offset in (1, -1)]
     hover = next((point for point in candidates if max(abs(point[0] - cursor['X']), abs(point[1] - cursor['Y'])) > 1), None)
     require(hover is not None, 'Route tooltip hover point unavailable')
-    receipt = {'move_count': 0, 'observations': 0, 'mapped_covering_tooltip_observed': False,
+    receipt = {'move_count': 0, 'neutral_move_count': 0, 'neutral_exit_observed': False, 'observations': 0, 'mapped_covering_tooltip_observed': False,
                'journal': {'mapped_seen': 0, 'covering_seen': 0, 'incomplete': 0, 'scan_incomplete': 0, 'foreign_cover': 0}}
     client.route_open_native = {'hover': receipt}
+    # select() just clicked this tab. An in-row motion is not a fresh hover
+    # after that click. Establish a separately counted, observed pointer exit
+    # before the one tooltip-triggering hover. No clicks, retries or JS events.
+    initial=route_native_hit(device,expected)
+    block_unknown_route_screenshot(client,initial)
+    require(initial.get('available') is True and initial.get('complete') is True
+            and initial.get('nonowned_cover') is False,'Neutral pointer ownership unavailable')
+    subprocess.run(['xdotool','mousemove',str(expected[0]),str(expected[1])],env=env,check=True,
+                   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+    receipt['neutral_move_count']=1
+    js_wait(client,"!document.querySelector('.obychnaya[data-id=\"13\"]').matches(':hover')",
+            'Pointer did not leave the clicked tab before tooltip hover',5)
+    neutral=route_native_hit(device,expected)
+    block_unknown_route_screenshot(client,neutral)
+    require(neutral.get('available') is True and neutral.get('complete') is True
+            and neutral.get('nonowned_cover') is False and neutral.get('cursor_at_expected') is True,
+            'Neutral pointer position unconfirmed')
+    receipt['neutral_exit_observed']=True
     subprocess.run(['xdotool', 'mousemove', str(hover[0]), str(hover[1])], env=env, check=True,
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
     receipt['move_count'] = 1
@@ -848,9 +866,9 @@ def safe_route_open_native(value,depth=0):
         'mapped','input_shape_supported','input_shape_observed','input_empty','covers_expected',
         'cursor_observed','cursor_delta_bounded','cursor_at_expected','expected_point_unchanged','crop_saved',
         'observation_failed','unsupported_platform','mapped_covering_tooltip_observed',
-        'mapped_tooltip_before_click','input_empty_before_click','one_physical_click','trusted_dom_click','dialog_present'}
+        'mapped_tooltip_before_click','input_empty_before_click','one_physical_click','trusted_dom_click','dialog_present','neutral_exit_observed'}
     limits={'cursor_dx':(-16384,16384),'cursor_dy':(-16384,16384),'input_rectangles':(0,256),
-        'crop_width':(1,4096),'crop_height':(1,520),'observations':(0,50),'move_count':(0,1)}
+        'crop_width':(1,4096),'crop_height':(1,520),'observations':(0,50),'move_count':(0,1),'neutral_move_count':(0,1)}
     enums={'role':{'ownedApp','cef','other'},'focus_role':{'ownedApp','cef','other'},
         'visual_top_role':{'ownedApp','cef','other'},'window_type':{'normal','dialog','tooltip','popup_menu',
         'dropdown_menu','utility','dock','desktop','other','none'}}
