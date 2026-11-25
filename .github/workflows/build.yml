@@ -48,6 +48,10 @@ on:
         description: Build frontend and isolated security tests (no CEF)
         type: boolean
         default: false
+      linux_routes_core_only:
+        description: Diagnostic existing Linux binary routes without tooltip scenario; forbids publication
+        type: boolean
+        default: false
       linux_memory_diagnostic:
         description: Inspect native early-memory installation only (never security acceptance or publication)
         type: boolean
@@ -1458,7 +1462,12 @@ jobs:
           mkdir -p "$HOME/.pki/nssdb"
           if [ ! -f "$HOME/.pki/nssdb/cert9.db" ]; then certutil -N -d "sql:$HOME/.pki/nssdb" --empty-password; fi
           certutil -A -d "sql:$HOME/.pki/nssdb" -n nexusbro-route-fixture -t 'C,,' -i .dev-check/routes-ca/ca.crt
-          python3 tests/gui/tab_routes.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key
+          ROUTE_DIAGNOSTIC_ARGS=()
+          if [ "${{ inputs.linux_routes_core_only }}" = "true" ]; then
+            test -z "${{ inputs.publish_tag }}"
+            ROUTE_DIAGNOSTIC_ARGS+=(--core-routes-only)
+          fi
+          python3 tests/gui/tab_routes.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key "${ROUTE_DIAGNOSTIC_ARGS[@]}"
       - uses: actions/upload-artifact@v4
         if: always() && !inputs.linux_memory_diagnostic
         with:
@@ -1516,7 +1525,7 @@ jobs:
     if: >-
       always() && github.event_name == 'workflow_dispatch' &&
       inputs.runtime_build != '' && inputs.publish_tag != '' && !inputs.linux_build_only &&
-      !inputs.runtime_memory_only && !inputs.linux_memory_diagnostic &&
+      !inputs.runtime_memory_only && !inputs.linux_memory_diagnostic && !inputs.linux_routes_core_only &&
       needs.runtime.result == 'success' &&
       (inputs.linux_runtime_build == '' ||
        (inputs.linux_runtime_build == inputs.runtime_build && needs['linux-runtime'].result == 'success'))

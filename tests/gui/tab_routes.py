@@ -1026,7 +1026,7 @@ def apply_ui(client, label, owner, identifier, screenshot=None):
     require(call(client, 'aktivnaya') == owner and rows(client, owner)['aktivnaya'] == identifier,
             'Route UI target no longer matches the active native owner/tab')
     tracing=identifier==13 and owner=='routes-a'
-    regression=tracing and sys.platform!='win32'
+    regression=tracing and sys.platform!='win32' and not getattr(client,'route_core_only',False)
     if tracing:
         client.route_open_native={}
         if regression:natural_route_tooltip_hover(client)
@@ -1035,6 +1035,9 @@ def apply_ui(client, label, owner, identifier, screenshot=None):
     try:
         client.click('button[aria-label="Путь вкладки"]')
         js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
+        if tracing:
+            require(client.js('window.__routeOpenDiagnostic?.state?.counts?.click?.trusted_route??-1')==1,
+                    'Single physical route click did not reach trusted DOM')
         if regression:
             require(tooltip_input_is_empty(client.route_open_native['before'].get('hit_test')),
                     'Mapped native tooltip input shape was not empty')
@@ -1081,6 +1084,9 @@ def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed', 'rtc_dns_udp': 'not_executed', 'historical_cookies': 'not_executed', 'worker_ready_context': 'not_executed', 'worker_startup_pre_admission': 'not_executed'}}
+    report['diagnostic_only']=bool(args.core_routes_only)
+    report['tooltip_overlap_required']=not args.core_routes_only
+    report['coverage']['native_tooltip_overlap']='not_executed' if not args.core_routes_only else 'not_requested_diagnostic_only'
     device = fixture = stun = socks = None
     try:
         require(os.environ.get('GITHUB_ACTIONS') == 'true', 'Only an ephemeral GitHub runner may run this native test')
@@ -1147,6 +1153,7 @@ def run(args):
                                  'route': connection('B'), 'otlozhena': False}],
                     'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
         client = device.start()
+        client.route_core_only=args.core_routes_only
         client.route_trace_device=device;client.route_trace_out=out
         activate_saved(client, 'routes-a')
         assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
@@ -1374,6 +1381,8 @@ def run(args):
                 'Unavailable SOCKS5 changed the selected route or profile')
         report['socks_transport_witness']={'authenticated':True,'hostname_atyp3':True,'trusted_https':True,'profile_auth_isolated':True,'no_direct_fallback':True}
         report['checks'].append('native_authenticated_socks5_http_https_hostname_and_profile_switch')
+        if not args.core_routes_only and sys.platform!='win32':
+            report['coverage']['native_tooltip_overlap']='passed'
         report['checks'].append('native_socks5_down_no_direct_fallback_or_profile_change')
         # Prepare independent persistent state before the existing owned restart.
         # No original routes-a/routes-b profile is cleared or reseeded here.
@@ -1512,6 +1521,7 @@ def run(args):
         config['vyhody'].reverse()
         write_json(device.data / 'nastrojki.json', config)
         client = device.start()
+        client.route_core_only=args.core_routes_only
         client.route_trace_device=device;client.route_trace_out=out
         restored_at = time.monotonic()
         activate_saved(client, 'routes-a')
@@ -1647,6 +1657,7 @@ def run(args):
         write_json(device.data / 'nastrojki.json', config)
         before_restart = len(fixture.requests('seed-b'))
         client = device.start()
+        client.route_core_only=args.core_routes_only
         client.route_trace_device=device;client.route_trace_out=out
         activate_saved(client, 'routes-a')
         wait_for(lambda: row(client, 'routes-a', 2).get('route_error'), 'Deleted ID was not blocked on cold restore', 40)
@@ -1717,4 +1728,5 @@ if __name__ == '__main__':
     parser.add_argument('--out', required=True)
     parser.add_argument('--tls-cert')
     parser.add_argument('--tls-key')
+    parser.add_argument('--core-routes-only',action='store_true',help='Diagnostic only: route checks without the separate GTK tooltip-overlap scenario; never release acceptance')
     run(parser.parse_args())
