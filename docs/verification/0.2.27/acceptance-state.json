@@ -38,5 +38,11 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-25T05:42:24.775836+00:00"
+  "observed_at_utc": "2026-11-25T06:08:21.919918+00:00",
+  "native_summary": "native-summary.json",
+  "frontend_recheck": {
+    "run": 45554861820,
+    "status": "success",
+    "memory_protection_cases": 32
+  }
 }

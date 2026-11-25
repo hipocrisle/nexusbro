@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "version": "0.2.27",
+  "build_run": 45544984950,
+  "app_source": "7173361aed69d3587f0618b5e7b3ae88be23faef",
+  "ci_run": "https://github.com/hipocrisle/nexusbro/actions/runs/45544984950",
+  "scope": "controlled_native_media_fixtures",
+  "real_public_youtube_accepted": false,
+  "platforms": {
+    "linux": {
+      "playback": {
+        "completed": true,
+        "checks": 16,
+        "disk_privacy_accepted": true
+      },
+      "features": {
+        "completed": true,
+        "checks": 4
+      },
+      "resume": {
+        "completed": true,
+        "checks": 7,
+        "durable_restart_proven": true,
+        "resume_book_injected": false
+      },
+      "download": {
+        "completed": true,
+        "checks": 7,
+        "cleanup_completed": true
+      }
+    },
+    "windows": {
+      "playback": {
+        "completed": true,
+        "checks": 16,
+        "disk_privacy_accepted": true
+      },
+      "features": {
+        "completed": true,
+        "checks": 4
+      },
+      "resume": {
+        "completed": true,
+        "checks": 7,
+        "durable_restart_proven": true,
+        "resume_book_injected": false
+      },
+      "download": {
+        "completed": true,
+        "checks": 7,
+        "cleanup_completed": true
+      }
+    }
+  },
+  "linux_route_regression": {
+    "completed": true,
+    "route_checks": 22,
+    "assertion_source": "https://github.com/hipocrisle/nexusbro/blob/7173361aed69d3587f0618b5e7b3ae88be23faef/tests/gui/tab_routes.py",
+    "verified_by_successful_assertions": [
+      "mapped_owned_tooltip_covering_target",
+      "empty_native_input_shape",
+      "one_trusted_dom_click",
+      "route_dialog_visible"
+    ],
+    "raw_tooltip_metadata_exported_on_success": false
+  }
+}
