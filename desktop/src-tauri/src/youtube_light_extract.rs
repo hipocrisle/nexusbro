@@ -367,7 +367,13 @@ pub fn parse(bytes: &[u8], expected: &VideoId) -> Result<ExtractedVideo, Extract
             (true, true) => MediaKind::Muxed,
             (true, false) => MediaKind::VideoOnly,
             (false, true) => MediaKind::AudioOnly,
-            _ => return Err(ExtractError::InvalidFormat),
+            // yt-dlp can include a typed HTTPS entry which carries no media
+            // codecs. It is not a playback candidate; never use its URL as a
+            // fallback or let it invalidate independently valid media tracks.
+            (false, false) => {
+                rejected += 1;
+                continue;
+            }
         };
         if raw.width.is_some_and(|n| n == 0 || n > 16384)
             || raw.height.is_some_and(|n| n == 0 || n > 16384)
@@ -458,6 +464,57 @@ mod tests {
         assert_eq!(result.metadata.duration_seconds(), Some(124));
         assert_eq!(result.formats[1].acodec.as_deref(), Some("opus"));
     }
+    #[test]
+    fn no_codec_entries_do_not_invalidate_independent_vp9_and_opus_tracks() {
+        for absent in [Value::Null, json!("none")] {
+            let mut nonmedia = format();
+            nonmedia["format_id"] = json!("nonmedia");
+            nonmedia["vcodec"] = absent.clone();
+            nonmedia["acodec"] = absent;
+            let mut audio = format();
+            audio["format_id"] = json!("251");
+            audio["vcodec"] = json!("none");
+            audio["acodec"] = json!("opus");
+            audio["width"] = Value::Null;
+            audio["height"] = Value::Null;
+            audio["fps"] = Value::Null;
+            for candidates in [
+                json!([nonmedia.clone(), format(), audio.clone()]),
+                json!([format(), audio.clone(), nonmedia.clone()]),
+            ] {
+                let mut value = video();
+                value["formats"] = candidates;
+                let result = run(value).unwrap();
+                assert_eq!(result.rejected_formats, 1);
+                assert_eq!(result.formats.len(), 2);
+                assert_eq!(result.formats[0].vcodec.as_deref(), Some("vp9"));
+                assert_eq!(result.formats[1].acodec.as_deref(), Some("opus"));
+            }
+
+            let mut value = video();
+            value["formats"] = json!([nonmedia.clone()]);
+            assert_eq!(run(value).unwrap_err(), ExtractError::NoSupportedFormats);
+
+            // Rejecting a nonmedia entry does not make an unsafe real media
+            // URL, malformed codec, or malformed media dimension acceptable.
+            for (field, invalid, expected) in [
+                (
+                    "url",
+                    json!("https://127.0.0.1/videoplayback?x=1"),
+                    ExtractError::UnsafeUrl,
+                ),
+                ("vcodec", json!("bad\ncodec"), ExtractError::InvalidFormat),
+                ("width", json!(0), ExtractError::InvalidFormat),
+            ] {
+                let mut media = format();
+                media[field] = invalid;
+                let mut value = video();
+                value["formats"] = json!([nonmedia.clone(), media]);
+                assert_eq!(run(value).unwrap_err(), expected);
+            }
+        }
+    }
+
     #[test]
     fn forbidden_network_targets_and_url_normalization_attacks_fail() {
         for url in [
