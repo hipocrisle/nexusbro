@@ -28,6 +28,8 @@ References:
 import argparse
 import json
 import math
+import hashlib
+import io
 import os
 import shutil
 import subprocess
@@ -40,6 +42,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from origin_request import canonicalize
+from youtube_reference_metadata_native import crop_box, CropUnavailable
+from youtube_player_native import native_app_identity, native_app_identity_alive, native_app_window
 from youtube_paired_native import (
     Device, switch_super, rows, OwnedWindowManager,
     close_for_privacy, super_record, click_control, Blocked, foreground,
@@ -79,7 +83,7 @@ html,body{margin:0;padding:0;background:#123}
 <div id="yt"></div>
 <script>
 (function(){
-  var player=null, ready=false, played=false;
+  var player=null, ready=false, played=false, autoplayBlocked=false;
   var states=[], errors=[], time=0.0, invalid=false, lastStage='boot';
   function intList(list, value, allowed){
     if(!Number.isInteger(value)){invalid=true;lastStage='invalid_event';return;}
@@ -97,7 +101,8 @@ html,body{margin:0;padding:0;background:#123}
         onReady:function(){ready=true;lastStage='ready';},
         onStateChange:function(e){intList(states,e.data,[-1,0,1,2,3,5]);
           if(ready)lastStage='state_'+e.data;},
-        onError:function(e){intList(errors,e.data,[2,5,100,101,150,153]);lastStage='error';}
+        onError:function(e){intList(errors,e.data,[2,5,100,101,150,153]);lastStage='error';},
+        onAutoplayBlocked:function(){autoplayBlocked=true;lastStage='autoplay_blocked';}
       }});
   };
   document.getElementById('play').addEventListener('click',function(e){
@@ -110,7 +115,7 @@ html,body{margin:0;padding:0;background:#123}
       var t=player.getCurrentTime();
       if(typeof t==='number'&&isFinite(t))time=t;else{invalid=true;lastStage='invalid_clock';}
     }
-    var payload={stage:lastStage,ready:ready,played:played,invalid:invalid,
+    var payload={stage:autoplayBlocked?'autoplay_blocked':lastStage,ready:ready,played:played,invalid:invalid,
                  states:states,errors:errors,time:Math.round(time*1000)/1000};
     try{navigator.sendBeacon('/receipt',JSON.stringify(payload));}
     catch(_){fetch('/receipt',{method:'POST',body:JSON.stringify(payload)}).catch(function(){});}
@@ -146,7 +151,7 @@ class Fixture:
                 return None
             if set(data) != {'stage', 'ready', 'played', 'invalid', 'states', 'errors', 'time'}:
                 return None
-            if type(data.get('stage')) is not str or data['stage'] not in {'boot','api_loaded','api_load_error','api_exception','api_ready','ready','play_command','error','invalid_event','unexpected_code','invalid_clock', 'state_-1','state_0','state_1','state_2','state_3','state_5'}:
+            if type(data.get('stage')) is not str or data['stage'] not in {'autoplay_blocked','boot','api_loaded','api_load_error','api_exception','api_ready','ready','play_command','error','invalid_event','unexpected_code','invalid_clock', 'state_-1','state_0','state_1','state_2','state_3','state_5'}:
                 return None
             for key in ('ready', 'played', 'invalid'):
                 if type(data.get(key)) is not bool:
@@ -268,6 +273,44 @@ def yellow_observed(device, client, point):
     return (r,g,b)==YELLOW
 
 
+def failure_embed_crop(client,device,wm,out,identifier,tab,url):
+    receipt={'saved':False,'failure':'ownership_unproven'}
+    def ensure(value):
+        if not value:raise CropUnavailable('ownership_unproven')
+    try:
+        ensure(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform=='linux' and VIDEO=='M7lc1UVf-VE')
+        ensure(client is not None and isinstance(wm,OwnedWindowManager) and wm.device is device
+               and device.player_wm is wm and device.x.poll()is None and wm.process.poll()is None)
+        identity=native_app_identity(device);owner=native_app_window(device,identity);expected=int(str(owner),0)
+        def bound():
+            ensure(device.x.poll()is None and wm.process.poll()is None and native_app_identity_alive(device,identity))
+            ensure(int(str(native_app_window(device,identity)),0)==expected)
+            active=subprocess.check_output(['xdotool','getactivewindow'],env=wm.env,text=True,timeout=3).strip()
+            ensure(active.isdecimal() and int(active)==expected)
+            ensure(client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')=='main')
+            ensure(client.command('aktivnaya')==identifier and identifier=='embed-probe')
+            session=rows(client,identifier,timeout=3)
+            ensure(session.get('aktivnaya')==tab and any(v.get('id')==tab and v.get('adres')==url
+                and v.get('browser_id',0)>0 and not v.get('route_pending') for v in session.get('vkladki',[])))
+        foreground(device);bound()
+        rect=client.js('(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r?{x:r.x+16,y:r.y+96,w:Math.min(640,r.width-16),h:Math.min(360,r.height-96),vw:innerWidth,vh:innerHeight}:null})()')
+        ensure(isinstance(rect,dict))
+        origin=client.command('plugin:window|inner_position',label='main');scale=client.js('devicePixelRatio')
+        dimensions=subprocess.check_output(['xdotool','getdisplaygeometry'],env=wm.env,text=True,timeout=3).split()
+        ensure(len(dimensions)==2 and all(v.isdecimal() for v in dimensions))
+        box=crop_box(rect,origin,scale,tuple(map(int,dimensions)))
+        from PIL import ImageGrab
+        bound()
+        with ImageGrab.grab(bbox=box,xdisplay=device.display) as image:
+            ensure(image.size==(box[2]-box[0],box[3]-box[1]))
+            stream=io.BytesIO();image.save(stream,format='PNG');data=stream.getvalue()
+        bound();ensure(len(data)<=100*1024)
+        with (out/'embed-status.png').open('xb') as target:target.write(data)
+        return {'saved':True,'width':box[2]-box[0],'height':box[3]-box[1],
+                'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()}
+    except Exception:return receipt
+
+
 def initial_report():
     return {'schema': 1, 'diagnostic_only': True, 'feasibility_probe': True,
             'completed': False, 'video': VIDEO,
@@ -381,6 +424,7 @@ def run(args):
                 report.update({key: summary[key] for key in ('ready', 'played', 'states_seen', 'errors_seen', 'api_clock_advanced_seconds', 'playing_observed')})
                 report['fixture_stage'] = summary['stage']
                 report['trusted_play_click']=summary['played']
+                if summary['stage']=='autoplay_blocked':raise Blocked('official_autoplay_blocked')
                 if summary['errors_seen']:
                     raise Blocked('embed_error_' + '_'.join(str(e) for e in summary['errors_seen']))
                 if summary['playing_observed'] and first_wall is not None and time.monotonic()-first_wall>=MIN_ADVANCED_SECONDS:
@@ -414,6 +458,10 @@ def run(args):
                     'gtk_error':b'gtk-error' in raw,
                 }
     finally:
+        report['fixture_http_gets']=fixture.page_gets
+        report['fixture_receipt_posts']=fixture.receipt_posts
+        if not report['completed'] and report['stage']=='observation' and client is not None and wm is not None:
+            report['status_crop']=failure_embed_crop(client,device,wm,out,identifier,tab,url)
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']
             try:

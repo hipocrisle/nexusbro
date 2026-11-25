@@ -1457,7 +1457,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: youtube-official-embed-diagnostic-linux
-          path: .dev-check/youtube-official-embed/result.json
+          path: |
+            .dev-check/youtube-official-embed/result.json
+            .dev-check/youtube-official-embed/embed-status.png
           if-no-files-found: warn
           retention-days: 7
       - name: Check corrected browser fixtures against unchanged application sources
