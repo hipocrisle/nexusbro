@@ -39,6 +39,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from origin_request import canonicalize
 from youtube_paired_native import (
     Device, switch_super, rows, OwnedWindowManager,
     close_for_privacy, super_record, click_control, Blocked, foreground,
@@ -161,7 +162,7 @@ class Fixture:
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                path = self.path.split('?', 1)[0]
+                path = canonicalize(self.path).split('?', 1)[0]
                 if path == '/summary':
                     with lock:
                         payload = json.dumps(owner._latest).encode('utf-8')
@@ -185,7 +186,7 @@ class Fixture:
                 self.wfile.write(payload)
 
             def do_POST(self):
-                if self.path.split('?', 1)[0] != '/receipt':
+                if canonicalize(self.path).split('?', 1)[0] != '/receipt':
                     self.send_response(404); self.end_headers(); return
                 try:
                     length = int(self.headers.get('Content-Length') or 0)
@@ -480,9 +481,22 @@ def self_test():
     import urllib.request
     opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
     try:
-        request=urllib.request.Request(fixture.origin+'/receipt',data=json.dumps(good).encode(),method='POST')
-        with opener.open(request,timeout=3) as response:assert response.status==204
-        assert fixture.summary()['ready'] is True and fixture.summary()['time']==good['time']
+        import http.client
+        for target in ('/embed-probe.html',fixture.origin+'/embed-probe.html'):
+            connection=http.client.HTTPConnection('127.0.0.1',fixture._server.server_port,timeout=3)
+            try:
+                connection.request('GET',target);response=connection.getresponse()
+                assert response.status==200 and b'iframe_api' in response.read()
+            finally:connection.close()
+        assert fixture.page_gets==2
+        for target in ('/receipt',fixture.origin+'/receipt'):
+            connection=http.client.HTTPConnection('127.0.0.1',fixture._server.server_port,timeout=3)
+            try:
+                connection.request('POST',target,body=json.dumps(good).encode());response=connection.getresponse()
+                assert response.status==204;response.read()
+            finally:connection.close()
+            assert fixture.summary()['ready'] is True and fixture.summary()['time']==good['time']
+        assert fixture.receipt_posts==2
         bad=dict(good,time=float('nan'))
         request=urllib.request.Request(fixture.origin+'/receipt',data=json.dumps(bad).encode(),method='POST')
         with opener.open(request,timeout=3) as response:assert response.status==204
