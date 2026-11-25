@@ -29,7 +29,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from security_native import require, wait_for
+from security_native import require, wait_for, NativeFailure
 from youtube_embed_reference_native import PREFLIGHT_COMMANDS
 from youtube_embed_home_probe import (
     validate_private_root, validate_inside_root, SandboxedDevice, local_close,
@@ -40,7 +40,7 @@ try:
 except ImportError:  # older committed local entry without the WM subclass
     from youtube_paired_native import OwnedWindowManager as LocalWindowManager
 from youtube_paired_native import (
-    rows, switch_super, click_control, Blocked, super_record, call, audio_policy, probe,
+    rows, switch_super, click_control, Blocked, super_record, call, audio_policy,
 )
 from youtube_player_native import physical
 
@@ -49,6 +49,30 @@ VIDEO = 'M7lc1UVf-VE'
 # for exe at <root>/bin/nexusbro the resources are <root>/lib/nexusbro/...
 COMPONENT_FILES = ('yt-dlp', 'deno', 'ffmpeg')
 SAFE_CODE = re.compile(r'^[a-z0-9_]{1,48}$')
+# Exact fixed strings from youtube_light_jobs.rs::sidecar_error (primary source).
+# Raw Russian text never enters the report; only the enum below does.
+SIDECAR_FAILURE_ENUM = {
+    "Проверенные компоненты извлечения недоступны": "invalid_components",
+    "Путь видео недоступен": "invalid_route",
+    "Ответ извлечения превышает лимит": "output_limit",
+    "Истекло время извлечения": "timed_out",
+    "Компоненты лёгкого режима несовместимы": "unsupported_invocation",
+    "Сервер отклонил запрос видео (403)": "http_forbidden",
+    "Сервис ограничил частоту запросов; повторите позже": "rate_limited",
+    "Не удалось проверить защищённое соединение с видеосервисом": "tls_failure",
+    "YouTube потребовал дополнительную проверку. Используйте обычный режим.": "challenge_required",
+    "Видео недоступно для анонимного просмотра": "video_unavailable",
+    "Источник отклонил параметры запроса видео": "http_bad_request",
+    "Видео не найдено": "http_not_found",
+    "Видеосервис временно недоступен": "http_server_error",
+    "Соединение с видеосервисом прервано": "network_failure",
+    "Не удалось обработать проверку видеосервиса": "challenge_solver_unavailable",
+    "Подходящий формат видео недоступен": "format_unavailable",
+    "Компонент обработки видео недоступен": "ffmpeg_unavailable",
+    "Не удалось извлечь публичные данные видео": "extraction_failure",
+    "Видео недоступно для анонимного извлечения": "process_failed",
+    "Не удалось получить публичные данные видео": "process_failed",
+}
 MIN_POSITION_DELTA = 8.0
 PACKAGE_NAME = 'nexusbro'
 
@@ -98,6 +122,40 @@ def light_state(state):
     if numbers['duration'] <= 0 or numbers['video_width'] <= 0 or numbers['video_height'] <= 0:
         raise Blocked('native_light_state_invalid')
     return numbers
+
+
+def sidecar_enum(code):
+    if type(code) is not str:
+        return 'unavailable'
+    return SIDECAR_FAILURE_ENUM.get(code, 'unavailable')
+
+
+def light_snapshot(client, identifier, tab):
+    """Local snapshot helper: one youtube_snapshot invoke, then read only NEW
+    youtube-state events via a monotonic start index. Unlike the shared probe(),
+    the __paired buffer is NEVER reset here — asynchronous youtube-result
+    failure receipts stay observable for classification. Buffer stays bounded
+    (tail 512). Returns {'state': dict} | {'failure': safe_enum} | None."""
+    start = client.js('window.__paired.length')
+    if type(start) is not int:
+        raise Blocked('native_light_buffer_unavailable')
+    call(client, 'obychnaya_komanda', id=identifier, komanda={'deystvie': 'youtube_snapshot', 'id': tab})
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        data = client.js('(()=>{const b=window.__paired;let best=-1;'
+                         'for(let i=' + str(start) + ';i<b.length;i++){const e=b[i];'
+                         'if(e.data&&e.data.id===' + str(tab) + '&&e.data.tip==="youtube-state")best=i;}'
+                         'if(best<0)return null;'
+                         'const d=b[best].data;'
+                         'if(b.length>512)b.splice(0,b.length-512);'
+                         'return d;})()')
+        if isinstance(data, dict):
+            state = data.get('state')
+            if isinstance(state, dict):
+                return {'state': state}
+            return {'failure': sidecar_enum(data.get('code'))}
+        time.sleep(.1)
+    return None
 
 
 def failure_code(receipt):
@@ -193,25 +251,27 @@ def run(args):
         call(client, 'obychnaya_komanda', id=identifier, komanda={'deystvie': 'youtube_light', 'id': tab})
         report['stage'] = 'light-snapshot'
         first = None; last = None; began = None
-        # Extraction is asynchronous: the shipped light player starts extraction
-        # after the entry command and the first snapshots may legitimately be
-        # absent. Wait bounded (paired arm() pattern), classify the shipped
-        # youtube-result failure code when present, never fail instantly.
+        # Extraction is asynchronous: after the entry command the first
+        # snapshots may legitimately be absent. Wait bounded (paired arm()
+        # pattern); light_snapshot never clears __paired, so async youtube-result
+        # failures stay observable and map to fixed safe enums only.
         deadline = time.monotonic() + remaining(60)
-        while time.monotonic() < deadline:
-            failed = client.js('window.__paired.filter(e=>e.data?.id==='+str(tab)+'&&e.data?.tip==="youtube-result").map(e=>e.data).pop()||null')
-            if isinstance(failed, dict) and failed.get('start') is False:
-                code = failure_code(failed) or 'unavailable'
-                report['native_failure_code'] = code
-                report['native_stage'] = 'extraction'
-                raise Blocked('native_light_' + code)
+        while time.monotonic() < deadline and first is None:
             try:
-                state = light_state(probe(client, identifier, tab, 'light', VIDEO))
-            except Blocked:
+                receipt = light_snapshot(client, identifier, tab)
+            except (Blocked, NativeFailure):
+                receipt = None
+            if receipt is None:
                 time.sleep(.5)
                 continue
-            first = state; began = time.monotonic()
-            break
+            if 'failure' in receipt:
+                report['native_failure_code'] = receipt['failure']
+                report['native_stage'] = 'extraction'
+                raise Blocked('native_light_' + receipt['failure'])
+            try:
+                first = light_state(receipt['state'])
+            except Blocked:
+                time.sleep(.5)
         if first is None:
             report['native_failure_code'] = 'unavailable'
             report['native_stage'] = 'extraction'
@@ -224,7 +284,14 @@ def run(args):
         report['stage'] = 'observation'
         deadline = time.monotonic() + remaining(120)
         while time.monotonic() < deadline:
-            state = light_state(probe(client, identifier, tab, 'light', VIDEO))
+            try:
+                receipt = light_snapshot(client, identifier, tab)
+            except (Blocked, NativeFailure):
+                receipt = None
+            if receipt is None or 'failure' in receipt:
+                time.sleep(1.0)
+                continue
+            state = light_state(receipt['state'])
             last = state
             if state['playing'] and state['position'] - first['position'] >= MIN_POSITION_DELTA:
                 break
@@ -302,6 +369,13 @@ def self_test():
     assert 'local_mode_forbids_inherited_sandbox_disable' in run_source
     assert "'deystvie': 'youtube_light'" in run_source
     assert "out / 'device'" in run_source and "out / 'wm'" in run_source
+    assert 'NativeFailure' in run_source
+    snap = _inspect.getsource(light_snapshot)
+    assert 'window.__paired.length' in snap and 'window.__paired=[]' not in snap
+    assert sidecar_enum("YouTube потребовал дополнительную проверку. Используйте обычный режим.") == 'challenge_required'
+    assert sidecar_enum('Неизвестная ошибка') == 'unavailable' and sidecar_enum(None) == 'unavailable'
+    for enum in SIDECAR_FAILURE_ENUM.values():
+        assert SAFE_CODE.fullmatch(enum), enum
     return {'self_test': True, 'source_only': True, 'native_execution': False}
 
 

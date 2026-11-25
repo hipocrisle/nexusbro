@@ -37,10 +37,19 @@
   резолвит его через papka_resursov, cef_dvizhok.rs — НЕ exe-adjacent). Файлы:
   `yt-dlp`, `deno`, `ffmpeg` — реальные, несимлинковые, непустые. Запечатанный
   хэш компонентов авторитетен (pins не дублируем).
-- Данные: из нативного снапшота наружу — только скаляры; safe failure-код —
-  только `^[a-z0-9_]{1,48}$` из shipped-поля `code` формы `youtube-state`
-  (cef_vkladki.rs:1248), иначе `unavailable`. Никаких raw URL/tokens/output,
-  ни одного owner profile/session/cookie импорта.
+- Данные: из нативного снапшота наружу — только скаляры. Safe failure-коды:
+  точная таблица соответствия фиксированных русских строк
+  `youtube_light_jobs.rs::sidecar_error` → enum (`challenge_required`,
+  `rate_limited`, `network_failure`, …, неизвестное → `unavailable`). Сырые
+  строки в отчёт не попадают никогда. Никаких raw URL/tokens/output, ни одного
+  owner profile/session/cookie импорта.
+- Snapshot-helper локальный (`light_snapshot`): общий `probe()` из
+  `youtube_paired_native` НЕ используется — он обнуляет `window.__paired=[]`
+  на каждый снапшот и теряет асинхронный `youtube-result`, а его `wait_for`
+  бросает `NativeFailure` (не `Blocked`). Локальный helper: монотонный
+  start-index ДО invoke `youtube_snapshot`, чтение только НОВЫХ `youtube-state`
+  без очистки буфера (хвост ограничен 512), bounded-таймаут; `NativeFailure`
+  и `Blocked` в цикле ожидания ловятся корректно.
 - Успех пробности: position delta ≥8 с + `playing` + audio policy
   (`volume==1, muted=false, default_sink=true`) + счётчик decoded-кадров растёт
   (не image-only). Без аудио-захвата, без заявлений про рекламу/эффективность.
