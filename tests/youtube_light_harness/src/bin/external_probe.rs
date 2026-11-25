@@ -126,20 +126,21 @@ async fn main() {
         Err(error) => {
             #[cfg(feature = "encrypted-diagnostics")]
             let _ = diagnostic_capture::write_failure(&error);
+            // Preserve the ordinary/consumer summary schema exactly. The new
+            // predicates belong exclusively to the privileged diagnostic build.
+            #[allow(unused_mut)]
+            let mut summary = serde_json::json!({"stage":"extractor","impersonate_chrome":experiment,"chrome_available":capability,"ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic});
             #[cfg(feature = "encrypted-diagnostics")]
-            let captured = error.ci_stderr();
-            #[cfg(not(feature = "encrypted-diagnostics"))]
-            let captured: Option<&[u8]> = None;
-            let flags = captured.map(challenge_subreason).unwrap_or([false; 4]);
-            let subreason = serde_json::json!({
-                "available": captured.is_some(),
-                "bot_confirmation": flags[0], "js_challenge": flags[1],
-                "challenge_solving_failed": flags[2], "po_token_required": flags[3]
-            });
-            println!(
-                "{}",
-                serde_json::json!({"challenge_subreason":subreason,"stage":"extractor","impersonate_chrome":experiment,"chrome_available":capability,"ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
-            );
+            {
+                let captured = error.ci_stderr();
+                let flags = captured.map(challenge_subreason).unwrap_or([false; 4]);
+                summary["challenge_subreason"] = serde_json::json!({
+                    "available": captured.is_some(),
+                    "bot_confirmation": flags[0], "js_challenge": flags[1],
+                    "challenge_solving_failed": flags[2], "po_token_required": flags[3]
+                });
+            }
+            println!("{}", summary);
             // process::exit skips Drop; wipe retained CI stderr explicitly.
             drop(error);
             std::process::exit(3);
@@ -148,6 +149,7 @@ async fn main() {
 }
 
 /// Fixed diagnostic predicates only; never copy remote text into a summary.
+#[cfg(any(test, feature = "encrypted-diagnostics"))]
 fn challenge_subreason(stderr: &[u8]) -> [bool; 4] {
     let has = |needle: &[u8]| {
         stderr
