@@ -50,6 +50,23 @@ body {
   box-shadow: inset 3px 0 0 var(--akcent);
 }
 .vkladka .imya { flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; }
+/* Super hints stay in the themed DOM: never an input-grabbing native popup.
+   Parent scrolling/clipping is intentionally unchanged. The full accessible
+   name remains on the button when the sidebar displays its abbreviation. */
+.super-cloud-row > .vkladka[data-super-hint] { position: relative; }
+.super-cloud-row > .vkladka[data-super-hint]::after {
+  content: attr(data-super-hint);
+  position: absolute; z-index: 10; top: calc(100% + 4px); left: 0;
+  width: max-content; max-width: 260px; padding: 7px 9px;
+  border: 1px solid var(--kraj); border-radius: 7px;
+  background: var(--fon2); color: var(--tekst);
+  box-shadow: 0 4px 14px #0005; font-size: 12px; font-weight: normal;
+  line-height: 1.4; white-space: normal; overflow-wrap: anywhere;
+  opacity: 0; visibility: hidden; pointer-events: none;
+}
+.super-cloud-row > .vkladka[data-super-hint]:is(:hover, :focus-visible)::after {
+  opacity: 1; visibility: visible; transition: opacity .12s .4s;
+}
 .tochka { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--akcent); }
 .tochka[data-pryamo="da"] { background: #6b7384; }
 .tochka.spit { background: #4a5162; box-shadow: none; }

@@ -111,6 +111,20 @@ export default function App() {
   const [vkladki, setVkladki] = useState<Vidno[]>([]);
   const [aktivnaya, setAktivnaya] = useState<string | null>(null);
   const aktivnayaRef = useRef<string | null>(null);
+  // Fullscreen can transfer X11 keyboard ownership back to the shell. Use
+  // the same native exit command; only the native acknowledgement clears UI.
+  useEffect(() => {
+    if (!youtubeFullscreen || !aktivnaya) return;
+    const key = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.defaultPrevented || e.ctrlKey || e.altKey || e.metaKey || e.shiftKey) return;
+      e.preventDefault();
+      e.stopPropagation();
+      void invoke("obychnaya_komanda", { id: aktivnaya, komanda: { deystvie: "youtube_exit_fullscreen" } })
+        .catch(error => setOshibka(String(error)));
+    };
+    window.addEventListener("keydown", key, true);
+    return () => window.removeEventListener("keydown", key, true);
+  }, [youtubeFullscreen, aktivnaya]);
   const [dvizhokEst, setDvizhokEst] = useState(true);
   const [dialog, setDialog] = useState(false);
 
@@ -411,19 +425,19 @@ export default function App() {
                   {text:"Перезагрузить",action:async()=>{const o=await invoke<Otvet>("perezagruzit",{id:v.id});if(!o.ok)setOshibka(o.soobshchenie);setVkladki(await invoke<Vidno[]>("spisok"));}}
                 ],e.clientX,e.clientY,setOshibka).catch(err=>setOshibka(String(err)));
               }}
-              title={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "") + " — " + (v.proxy || "прямое соединение") + " · " + cloud.label(v.id,v.privatnaya)}
+              data-super-hint={v.nazvanie + (v.privatnaya ? " — приватная супер-вкладка" : "") + " — " + (v.proxy || "прямое соединение") + " · " + cloud.label(v.id,v.privatnaya) + (v.sohranena ? " · Есть в сохранённых" : "")}
             >
               <span
                 className={"tochka" + (v.zapushchena ? "" : " spit")}
                 data-pryamo={v.proxy ? "net" : "da"}
               />
-              <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" title="Приватная супер-вкладка" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" title="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
-              <span className="krest" title="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
+              <span className="imya">{v.nazvanie}</span>{v.privatnaya&&<span className="super-private-badge" aria-hidden="true"><svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round"><rect x="3.5" y="7" width="9" height="6.5" rx="1.7"/><path d="M5.5 7V4.8a2.5 2.5 0 0 1 5 0V7"/><path d="M8 9.5v1.5"/></svg></span>}{v.sohranena && <span className="saved-mark" aria-label="Есть в сохранённых"><Icon name="archive" size={13} /></span>}<span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
+              <span className="krest" aria-label="Закрыть" onClick={(e) => zakrytVkladku(v.id, v.nazvanie, e)}>
                 ×
               </span>
             </button></div>
   );}
-  function renderSaved(v:Nastrojki){return <div className="super-cloud-row super-cloud-row-saved" data-super-row={v.id} key={v.id}><button type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-saved"+(cloud.selected(v.id)?" super-cloud-selected":"")+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} title={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
+  function renderSaved(v:Nastrojki){return <div className="super-cloud-row super-cloud-row-saved" data-super-row={v.id} key={v.id}><button type="button" data-super-id={v.id} data-cloud-state={cloud.state(v.id)} data-cloud-saved="true" className={"vkladka super-cloud-saved"+(cloud.selected(v.id)?" super-cloud-selected":"")+(superColor(v.cvet)?" super-colored":"")} style={superColor(v.cvet)?{"--super-color":v.cvet} as CSSProperties:undefined} aria-label={v.nazvanie+" — сохранённая супер-вкладка, открыть"} data-super-hint={v.nazvanie+" · Сохранена на устройстве; открыть · "+cloud.label(v.id)} onClick={()=>void otkrytSohranennuyu(v.id)}>
     <span className="super-cloud-saved-name"><span className="imya">{v.nazvanie}</span><small>Сохранена · открыть</small></span><span className="kratkoe-imya">{Array.from(v.nazvanie).slice(0,3).join('')}</span>
   </button></div>;}
   return (
