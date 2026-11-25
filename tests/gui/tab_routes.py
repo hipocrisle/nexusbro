@@ -692,7 +692,7 @@ def _natural_route_tooltip_hover(client):
     device=client.route_trace_device
     require(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform!='win32'
             and device.x is not None and device.x.poll() is None,'Route tooltip requires private Linux fixture')
-    geometry=client.js('(()=>{const b=document.querySelector(".tab-route-button"),t=document.querySelector(".obychnaya[data-id=\"13\"]"),name=t?.querySelector(".obychnaya-imya"),a=document.querySelector("input[aria-label=\"Адрес страницы\"]"),r=b?.getBoundingClientRect(),q=name?.getBoundingClientRect(),ar=a?.getBoundingClientRect();if(!r||!q||!ar)return null;const n=[Math.round(ar.x+ar.width/2),Math.round(ar.y+ar.height/2)],h=[Math.round(q.x+q.width/2),Math.round(q.y+q.height/2)];return !document.elementFromPoint(...n)?.closest("[title]")&&document.elementFromPoint(...h)?.closest("[title]")===t?{point:[Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)],element:[q.x,q.y,q.width,q.height],neutral:n,title:!!t.getAttribute("title"),scale:devicePixelRatio||1,viewport:[innerWidth,innerHeight]}:null})()')
+    geometry=client.js(r'(()=>{const b=document.querySelector(".tab-route-button"),t=document.querySelector(".obychnaya[data-id=\"13\"]"),name=t?.querySelector(".obychnaya-imya"),a=document.querySelector("input[aria-label=\"Адрес страницы\"]"),r=b?.getBoundingClientRect(),q=name?.getBoundingClientRect(),ar=a?.getBoundingClientRect();if(!r||!q||!ar)return null;const n=[Math.round(ar.x+ar.width/2),Math.round(ar.y+ar.height/2)],h=[Math.round(q.x+q.width/2),Math.round(q.y+q.height/2)];return !document.elementFromPoint(...n)?.closest("[title]")&&document.elementFromPoint(...h)?.closest("[title]")===t?{point:[Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)],element:[q.x,q.y,q.width,q.height],neutral:n,title:!!t.getAttribute("title"),scale:devicePixelRatio||1,viewport:[innerWidth,innerHeight]}:null})()')
     label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
     require(label=='main' and geometry and geometry['title'],'Route tooltip natural title unavailable')
     origin=client.command('plugin:window|inner_position',label=label)
@@ -792,7 +792,7 @@ def _natural_route_tooltip_hover(client):
         time.sleep(.08)
     # Failure diagnosis only, using the SAME existing ownership/foreign-cover
     # screenshot gate; no tooltip synthesis, repositioning, or acceptance change.
-    dom=client.js('(()=>{const b=document.querySelector(".tab-route-button"),t=document.querySelector(".obychnaya[data-id=\"13\"]");return {dom_title_element_hovered:!!t?.matches(":hover"),dom_has_focus:document.hasFocus(),dom_button_hovered:!!b?.matches(":hover"),dom_button_enabled:!!b&&!b.disabled,dom_title_present:!!b?.getAttribute("title"),dom_pointer_on_svg:!!b?.querySelector("svg:hover")}})()')
+    dom=client.js(r'(()=>{const b=document.querySelector(".tab-route-button"),t=document.querySelector(".obychnaya[data-id=\"13\"]");return {dom_title_element_hovered:!!t?.matches(":hover"),dom_has_focus:document.hasFocus(),dom_button_hovered:!!b?.matches(":hover"),dom_button_enabled:!!b&&!b.disabled,dom_title_present:!!b?.getAttribute("title"),dom_pointer_on_svg:!!b?.querySelector("svg:hover")}})()')
     if isinstance(dom,dict):
         receipt.update({key:value for key,value in dom.items() if key in {'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present','dom_pointer_on_svg','dom_title_element_hovered'} and type(value)is bool})
     from gtk_tooltip_settings import observe as observe_gtk_settings
@@ -1099,6 +1099,16 @@ def route_open_trace_self_test():
     assert completed.returncode==0 and len(completed.stdout)<=65536,'Offline route observer failed'
     parsed=safe_route_open_trace(json.loads(completed.stdout))
     assert 'private.invalid' not in json.dumps(parsed) and parsed['restore_verified']
+    # Compile the ACTUAL embedded native-observer expressions before CI, so
+    # Python quote escaping cannot turn a fixture change into a JS syntax bug.
+    import ast
+    scripts=[]
+    for function in ast.parse(pathlib.Path(__file__).read_text()).body:
+        if not isinstance(function,ast.FunctionDef) or function.name not in ('_natural_route_tooltip_hover','route_toolbar_observation'):continue
+        for node in ast.walk(function):
+            if isinstance(node,ast.Call) and isinstance(node.func,ast.Attribute) and node.func.attr=='js' and node.args and isinstance(node.args[0],ast.Constant) and isinstance(node.args[0].value,str):scripts.append(node.args[0].value)
+    syntax=subprocess.run(['node','-e','for(const s of JSON.parse(require("fs").readFileSync(0,"utf8")))new Function(s)'],input=json.dumps(scripts),text=True,capture_output=True,timeout=5)
+    assert syntax.returncode==0,'Embedded native observer JavaScript syntax is invalid'
     return {'self_test':True,'synthetic_only':True,'native_execution':False}
 
 
