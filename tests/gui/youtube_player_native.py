@@ -188,7 +188,7 @@ def native_app_identity(device):
             and pid in second_family and window_pid()==pid and device.app.poll() is None
             and kernel_birth(pid,clock)==birth and kernel_birth(wrapper,clock)==wrapper_birth,
             'Native app identity invalid')
-    return dict(pid=pid,birth=birth,wrapper_pid=wrapper,wrapper_birth=wrapper_birth,clock=clock)
+    return dict(pid=pid,birth=birth,wrapper_pid=wrapper,wrapper_birth=wrapper_birth,clock=clock,window=owner)
 
 
 def native_app_execution_alive(identity):
@@ -207,6 +207,29 @@ def native_app_identity_alive(device,identity):
         return (kernel_birth(identity['wrapper_pid'],identity['clock'])==identity['wrapper_birth']
                 and native_app_execution_alive(identity))
     except psutil.NoSuchProcess:return False
+
+
+
+def native_app_window(device,identity):
+    """Revalidate the held main window using only OS identity, never late title IPC."""
+    require(native_app_identity_alive(device,identity),'Native app identity invalid')
+    owner=identity['window']
+    if sys.platform=='win32':
+        import ctypes
+        from ctypes import wintypes
+        user=ctypes.WinDLL('user32',use_last_error=True)
+        user.IsWindow.argtypes=[wintypes.HWND];user.IsWindow.restype=wintypes.BOOL
+        user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+        user.GetWindowThreadProcessId.restype=wintypes.DWORD
+        require(bool(user.IsWindow(owner.handle)),'Native app identity invalid')
+        pid=wintypes.DWORD();user.GetWindowThreadProcessId(owner.handle,ctypes.byref(pid));pid=pid.value
+    else:
+        result=subprocess.run(['xdotool','getwindowpid',str(owner)],env=device.player_wm.env,
+            capture_output=True,text=True,timeout=3,check=True)
+        require(len(result.stdout)<=32 and result.stdout.strip().isdecimal(),'Native app identity invalid')
+        pid=int(result.stdout.strip())
+    require(pid==identity['pid'] and native_app_identity_alive(device,identity),'Native app identity invalid')
+    return owner
 
 
 def native_app_identity_self_test():
@@ -1338,11 +1361,12 @@ def close_for_privacy(client,device,report):
         require(native_app_identity_alive(device,identity),'Native app identity invalid')
         foreground(device)
         require(native_app_identity_alive(device,identity),'Native app identity invalid')
-        if sys.platform=='win32':native_owner(device).close()
+        owner=native_app_window(device,identity)
+        if sys.platform=='win32':owner.close()
         else:
             # Ask the owned WM for normal window close, like its titlebar X.
             # A focused CEF child may intercept Alt+F4; never kill/destroy it.
-            subprocess.run(['wmctrl','-ic',str(native_owner(device))],
+            subprocess.run(['wmctrl','-ic',str(owner)],
                            env=device.player_wm.env,check=True,timeout=5)
         exit_code=device.app.wait(timeout=30)
         require(exit_code==0,'Privacy parent did not exit normally')
