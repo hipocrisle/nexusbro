@@ -1178,6 +1178,9 @@ impl Rabota {
             let private_command=matches!(&sobytie,Sobytie::Komanda(Komanda::NovayaPrivatnaya{..}));
             let memory_automatic=matches!(&sobytie,Sobytie::Komanda(Komanda::MemoryAuto{..}));
             match sobytie {
+                // Admitted shutdowns use the dedicated drain above. Invalid or
+                // secondary-window requests never become ordinary UI actions.
+                Sobytie::Komanda(Komanda::AppShutdown{..})=>{continue;}
                 Sobytie::Komanda(Komanda::YoutubeFixture{id})=>{
                     let result=brauzery.get(&id).ok_or("Вкладка недоступна").and_then(|browser|{
                         if std::env::var("NEXUSBRO_TEST_YOUTUBE_FEATURES").as_deref()==Ok("1"){
