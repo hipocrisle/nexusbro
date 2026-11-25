@@ -75,3 +75,19 @@ Workflow проверяет producer source/совпадение desktop, исп
 не запускает посторонние native-сценарии и запрещает publisher для JSON-запроса.
 Файл результата: `.dev-check/youtube-official-embed/result.json`; публикуется только
 этот небольшой JSON. Это один эксперимент, без client roulette и без yt-dlp.
+
+
+## Реальный результат 45627683045
+
+После исправления absolute-form запросов фикстура действительно получила GET,
+пришли HTTP receipts, официальный API стал ready, точная OS-отрисовка и один
+trusted click подтверждены. Для aqz-KE-bpKQ YouTube вернул150 после buffering,
+прогресса воспроизведения нет. Native exit и shutdown receipt приняты.
+Ошибка150 документирована как аналог101 — запрет встраивания ролика:
+https://developers.google.com/youtube/iframe_api_reference#onError .
+Это не PASS и не доказательство причины прежнего ChallengeRequired yt-dlp.
+
+Один следующий контроль использует M7lc1UVf-VE из официального примера того же
+API: https://developers.google.com/youtube/iframe_api_reference#Getting_Started .
+Старый отказ сохранён в official-embed-buck-summary.json. Никакой клиентской
+рулетки, авторизации, изменения маршрута или гарантий совместимости всех видео.

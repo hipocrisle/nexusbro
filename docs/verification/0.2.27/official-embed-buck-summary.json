@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "feasibility_probe": true,
+  "completed": false,
+  "video": "aqz-KE-bpKQ",
+  "trusted_play_click": true,
+  "os_paint_observed": true,
+  "ready": true,
+  "played": true,
+  "states_seen": [
+    -1,
+    3
+  ],
+  "errors_seen": [
+    150
+  ],
+  "api_clock_advanced_seconds": 0.0,
+  "playing_observed": false,
+  "full_playback_acceptance": false,
+  "paired": false,
+  "official_api_docs": [
+    "https://developers.google.com/youtube/player_parameters",
+    "https://support.google.com/youtube/answer/171780"
+  ],
+  "budgets": {
+    "work_seconds": 180,
+    "cleanup_seconds": 90
+  },
+  "stage": "observation",
+  "cleanup_completed": true,
+  "active_fixture_url_matches": true,
+  "fixture_http_gets": 1,
+  "fixture_receipt_posts": 2,
+  "fixture_stage": "state_-1",
+  "blocked_reason": "embed_error_150",
+  "owned_exit": {
+    "parent_normal_exit": true,
+    "native_members_observed": 11,
+    "os_identities_observed": 16,
+    "all_known_native_executions_exited": true,
+    "native_members_complete": true,
+    "tracker_seconds": 0.02,
+    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
+    "harness_kill_used_for_acceptance": false,
+    "clean_shutdown_receipt_verified": true,
+    "actual_app_identity_bound": true,
+    "launcher_is_actual_app": false,
+    "actual_app_execution_exited": true,
+    "launcher_exit_zero": true
+  },
+  "app_shutdown_receipt": {
+    "schema": 1,
+    "complete": true,
+    "owners": 1,
+    "clean": 1,
+    "forced": 0,
+    "unacknowledged": 0,
+    "unclean": 0,
+    "pending_starts": 0
+  },
+  "wall_seconds": 6.301,
+  "run": 45627683045,
+  "source": "f803b28",
+  "producer_run": 45592261113,
+  "meaning": "official_player_ready_and_real_click_then_error_150_no_playback"
+}

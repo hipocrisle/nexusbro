@@ -45,7 +45,9 @@ from youtube_paired_native import (
     close_for_privacy, super_record, click_control, Blocked, foreground,
 )
 
-VIDEO = 'aqz-KE-bpKQ'
+# Official IFrame API reference sample; the preceding Big Buck Bunny
+# probe returned embed error150. Keep that evidence, do not call it playback.
+VIDEO = 'M7lc1UVf-VE'
 ALLOWED_STATES = frozenset((-1, 0, 1, 2, 3, 5))
 ALLOWED_ERRORS = frozenset((2, 5, 100, 101, 150, 153))
 MAX_SAMPLES = 512
