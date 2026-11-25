@@ -60,6 +60,9 @@ BUTTON_HEIGHT = 64
 CLICK_OFFSET = (30, 30)
 YELLOW = (255, 212, 0)
 
+# External programs the owned fixture stack requires (preflight, fixed codes).
+PREFLIGHT_COMMANDS = ('Xvfb', 'xdotool', 'xclip', 'openbox', 'wmctrl', 'xprop', 'xwininfo', 'dbus-run-session')
+
 FIXTURE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>embed probe fixture</title>
 <style>
@@ -283,6 +286,14 @@ def run(args):
     try:
         if os.environ.get('GITHUB_ACTIONS') != 'true' or sys.platform != 'linux':
             raise Blocked('gha_linux_only')
+        report['stage'] = 'preflight'
+        # Fixed preflight codes: a missing system program must read as an
+        # environment defect, never as a YouTube availability signal, and the
+        # reason carries no str(error)/raw log reflection.
+        import shutil
+        for command in PREFLIGHT_COMMANDS:
+            if shutil.which(command) is None:
+                raise Blocked('embed_preflight_missing_' + command)
         root = Path(tempfile.mkdtemp(prefix='nb-embed-')).resolve(strict=True)
         exe = Path(args.exe).resolve(strict=True); cef = Path(args.cef).resolve(strict=True)
         url = fixture.start()
@@ -296,6 +307,7 @@ def run(args):
         (device.data / 'nastrojki.json').write_text(json.dumps({'avtoobnovleniya': False, 'apparatnoe_uskorenie': False, 'memory_saver': False}))
         report['stage'] = 'startup'; client = device.start()
         if time.monotonic() - started > 45: raise Blocked('embed_startup_deadline')
+        report['stage'] = 'owned-window-manager'
         wm = OwnedWindowManager(device, root / 'wm'); device.player_wm = wm
         switch_super(client, identifier, timeout=remaining(10))
         if client.js('!!document.querySelector(".pusto button")'):
@@ -466,6 +478,7 @@ def self_test():
         with opener.open(request,timeout=3) as response:assert response.status==204
         assert fixture.summary()=={'invalid_receipt':True}
     finally:fixture.close()
+    assert set(PREFLIGHT_COMMANDS) == {'Xvfb', 'xdotool', 'xclip', 'openbox', 'wmctrl', 'xprop', 'xwininfo', 'dbus-run-session'}
     assert initial_report()['full_playback_acceptance'] is False and initial_report()['paired'] is False
     return {'self_test': True, 'source_only': True, 'native_execution': False}
 
