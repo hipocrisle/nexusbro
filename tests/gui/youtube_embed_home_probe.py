@@ -104,11 +104,14 @@ class SandboxedDevice(Device):
         displayfd_dir = self.root
         displayfd_dir.mkdir(parents=True, exist_ok=True)
         read_fd, write_fd = os.pipe()
+        os.set_blocking(read_fd, False)
         try:
             self.x = subprocess.Popen(
-                ['Xvfb', '-displayfd', str(write_fd), '-screen', '0', '1280x900x24'],
+                ['Xvfb', '-displayfd', str(write_fd), '-screen', '0', '1280x900x24', '-nolisten', 'tcp', '-noreset'],
                 pass_fds=(write_fd,), stdout=self.log('xvfb.log'),
                 stderr=subprocess.STDOUT, start_new_session=True)
+            os.close(write_fd)
+            write_fd = None
             ready = False
             deadline = time.monotonic() + 25
             while time.monotonic() < deadline:
@@ -157,7 +160,7 @@ class SandboxedDevice(Device):
         # WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 override, which must not
         # leak into a local owner run.
         env = {**os.environ, 'DISPLAY': self.display, 'CEF_PATH': str(self.cef),
-               'LD_LIBRARY_PATH': str(self.cef), 'NEXUSBRO_TEST_DATA': str(self.data),
+               'LD_LIBRARY_PATH': os.pathsep.join((str(self.cef), str(self.cef.parent / 'tools/usr/lib/x86_64-linux-gnu'), str(self.cef.parent / 'tools/usr/lib/x86_64-linux-gnu/openbox'))), 'NEXUSBRO_TEST_DATA': str(self.data),
                'NEXUSBRO_PROBA': '0',
                'WEBKIT_INSPECTOR_HTTP_SERVER': '127.0.0.1:' + str(self.inspector),
                'XDG_CONFIG_HOME': str(self.root / 'config'),
@@ -181,6 +184,32 @@ class SandboxedDevice(Device):
         wait_for(lambda: self.client.js('!!window.__TAURI_INTERNALS__?.invoke'),
                  'Tauri IPC did not initialize under the preserved sandbox', 20)
         return self.client
+
+
+class LocalWindowManager(OwnedWindowManager):
+    def __init__(self, device, root):
+        require(device.x.poll() is None, 'Owned Xvfb required')
+        self.device = device
+        self.env = {**os.environ, 'DISPLAY': device.display,
+                    'HOME': str(root), 'XDG_CONFIG_HOME': str(root / 'config'),
+                    'XDG_CACHE_HOME': str(root / 'cache'),
+                    'XDG_DATA_DIRS': str(device.cef.parent / 'tools/usr/share') + ':/usr/local/share:/usr/share'}
+        root.mkdir(parents=True)
+        config = root / 'rc.xml'
+        config.write_text('<openbox_config xmlns="http://openbox.org/3.4/rc"><focus><focusNew>yes</focusNew></focus></openbox_config>')
+        with (root / 'openbox.log').open('wb') as log:
+            self.process = subprocess.Popen(['openbox', '--config-file', str(config)], env=self.env,
+                                            stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+        def ready():
+            require(self.process.poll() is None, 'Owned local window manager exited')
+            result = subprocess.run(['xprop', '-root', '_NET_SUPPORTING_WM_CHECK'], env=self.env,
+                                    capture_output=True, text=True, timeout=3)
+            return result.returncode == 0 and 'window id #' in result.stdout
+        try:
+            wait_for(ready, 'Owned local window manager not ready', 15)
+        except BaseException:
+            self.close()
+            raise
 
 
 def local_close(client, device, report):
@@ -236,6 +265,8 @@ def run(args):
     fixture = Fixture(args.video_id or VIDEO); close_attempted = False
     started = time.monotonic()
     try:
+        if os.environ.get('WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS'):
+            raise Blocked('local_mode_forbids_inherited_sandbox_disable')
         if os.environ.get('GITHUB_ACTIONS') == 'true':
             raise Blocked('local_mode_forbids_gha')
         if sys.platform != 'linux':
@@ -270,7 +301,7 @@ def run(args):
             return min(cap, left)
         url = fixture.start()
         report['stage'] = 'startup'
-        device = SandboxedDevice('embed-home', root / 'device', exe, cef)
+        device = SandboxedDevice('embed-home', out / 'device', exe, cef)
         identifier = 'embed-home'
         record = super_record(identifier, 'Official embed local reference', url, proxy='')
         folder = device.data / 'profili' / identifier; folder.mkdir(parents=True)
@@ -282,7 +313,7 @@ def run(args):
         if time.monotonic() - started > 45:
             raise Blocked('embed_startup_deadline')
         report['stage'] = 'owned-window-manager'
-        wm = OwnedWindowManager(device, root / 'wm'); device.player_wm = wm
+        wm = LocalWindowManager(device, out / 'wm'); device.player_wm = wm
         switch_super(client, identifier, timeout=remaining(10))
         if client.js('!!document.querySelector(".pusto button")'):
             click_control(client, '.pusto button', remaining(10))
@@ -357,8 +388,12 @@ def run(args):
         report['completed'] = True; report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
-    except Exception:
+    except Exception as error:
         report['blocked_reason'] = 'embed_home_probe_unavailable'
+        report['exception_type'] = type(error).__name__
+        if root is not None:
+            import traceback
+            (root / 'private-exception.txt').write_text(traceback.format_exc())
     finally:
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']
