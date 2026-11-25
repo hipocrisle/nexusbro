@@ -118,18 +118,42 @@ def protected_cost(page):
     assert after==before, (before,after)
     return {'tree_walks_before':before,'tree_walks_after':after}
 
+def actual_clock_advance(page, kind, baseline=None):
+    # Observe real renderer clocks; never replay, seek, or synthesize time.
+    if kind == 'media':
+        state = "(()=>{const a=__actualMedia;return {paused:a.paused,ended:a.ended,ready:a.readyState,network:a.networkState,error:a.error?a.error.code:null,time:a.currentTime,duration:a.duration};})()"
+        predicate = """base=>{const a=__actualMedia,d=a.duration,t=a.currentTime;
+            if(a.paused||a.ended||a.error||a.readyState<2||!Number.isFinite(d)||d<=0||!Number.isFinite(t))return false;
+            return base===null?t>0.01:((t-base+d)%d)>0.01;}"""
+    else:
+        state = "({state:__actualAudio.state,time:__actualAudio.currentTime})"
+        predicate = "base=>__actualAudio.state==='running'&&Number.isFinite(__actualAudio.currentTime)&&__actualAudio.currentTime>(base===null?0:base)+0.01"
+    try:
+        page.wait_for_function(predicate,arg=baseline,timeout=10000,polling=25)
+    except Exception:
+        # Fixed scalar diagnostics only: no source URI or browser exception text.
+        raise AssertionError(('real_clock_did_not_advance',kind,page.evaluate(state))) from None
+    return page.evaluate(state)
+
+def playback_guard(page):
+    result=page.evaluate('JSON.parse(__memoryProbeForTest())')
+    assert result['known'] and result['reason'],('playback_not_protected',result)
+    return result
+
 def web_audio(page):
-    before=page.evaluate('''async()=>{const a=new AudioContext();const gain=a.createGain();gain.gain.value=0;gain.connect(a.destination);const o=a.createOscillator();o.connect(gain);o.start();await a.resume();window.__actualAudio=a;return {state:a.state,time:a.currentTime};}''')
-    page.wait_for_timeout(150)
-    after=page.evaluate('({state:__actualAudio.state,time:__actualAudio.currentTime})')
-    assert before['state']=='running' and after['state']=='running' and after['time']>before['time'],(before,after)
-    return {'before':before,'after':after}
+    page.evaluate('''async()=>{const a=new AudioContext();const gain=a.createGain();gain.gain.value=0;gain.connect(a.destination);const o=a.createOscillator();o.connect(gain);o.start();await a.resume();window.__actualAudio=a;}''')
+    startup=actual_clock_advance(page,'audio')
+    before=actual_clock_advance(page,'audio',startup['time'])
+    guard=playback_guard(page)
+    after=actual_clock_advance(page,'audio',before['time'])
+    return {'startup':startup,'before':before,'guard':guard,'after':after}
 
 def media_play(page):
-    before=page.evaluate('''async src=>{const a=document.createElement('audio');a.src=src;a.loop=true;document.body.append(a);await a.play();window.__actualMedia=a;return {paused:a.paused,time:a.currentTime};}''',WAV)
-    page.wait_for_timeout(150)
-    after=page.evaluate('({paused:__actualMedia.paused,time:__actualMedia.currentTime})')
-    assert not before['paused'] and not after['paused'] and after['time']>before['time'],(before,after)
-    return {'before':before,'after':after}
+    page.evaluate('''async src=>{const a=document.createElement('audio');a.src=src;a.loop=true;document.body.append(a);await a.play();window.__actualMedia=a;}''',WAV)
+    startup=actual_clock_advance(page,'media')
+    before=actual_clock_advance(page,'media',startup['time'])
+    guard=playback_guard(page)
+    after=actual_clock_advance(page,'media',before['time'])
+    return {'startup':startup,'before':before,'guard':guard,'after':after}
 
 if __name__=='__main__':main()
