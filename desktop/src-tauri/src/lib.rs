@@ -403,6 +403,7 @@ async fn otkryt(
     v_zhurnal_granica("otkryt", &id, "вход");
     {
         let mut v = s.vkladki.lock().unwrap();
+        if app_shutdown_parent::is_draining(){return Err("Браузер завершает работу".into());}
         if v.contains_key(&id) {
             return Ok(net("такая супер-вкладка уже есть"));
         }
@@ -1555,7 +1556,7 @@ pub fn run() {
                         app_shutdown_parent::begin(app,0);
                     }
                 }
-                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label.starts_with("browser-")=>{if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label.starts_with("browser-")=>{if app_shutdown_parent::is_draining()&&!app_shutdown_parent::may_exit(){api.prevent_close();}else if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label.starts_with("browser-")=>{okna_app::zakryt(app,label);}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Focused(true)|tauri::WindowEvent::Resized(_),..} if label.starts_with("browser-")=>{
                     let s:State<Sostoyanie>=app.state();okna_app::obolochka(app,&s,label);
@@ -1593,7 +1594,7 @@ pub fn run() {
                     ..
                 } if label == "main"
             );
-            if okno_zhivo && !browser_lock::locked_global() && !AVTOSTART_SDELAN.swap(true, std::sync::atomic::Ordering::SeqCst)
+            if okno_zhivo && !app_shutdown_parent::is_draining() && !browser_lock::locked_global() && !AVTOSTART_SDELAN.swap(true, std::sync::atomic::Ordering::SeqCst)
             {
                 // При запуске поднимается ТОЛЬКО вкладка, которая была
                 // активна при закрытии (10.11.2026, задал user). Остальные

@@ -631,6 +631,7 @@ pub fn tick(app: &tauri::AppHandle) {
         let Ok(mut map) = s.vkladki.try_lock() else {
             return;
         };
+        if crate::app_shutdown_parent::is_draining(){return;}
         let total = map
             .values()
             .filter_map(|v| v.hibernate.snapshot.as_ref())
@@ -887,6 +888,7 @@ pub async fn ensure_view_ready(
     }
     let deadline = Instant::now() + Duration::from_secs(90);
     loop {
+        if crate::app_shutdown_parent::is_draining(){return Err("Браузер завершает работу".into());}
         if crate::browser_lock::locked_global() {
             return Err("Браузер заблокирован".into());
         }

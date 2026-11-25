@@ -60,6 +60,7 @@ pub fn sobytie(app:&tauri::AppHandle,s:&Sostoyanie,super_id:&str,data:&serde_jso
     true
 }
 pub fn zapros_okna(app:tauri::AppHandle,id:Option<String>,privatnaya:bool){
+    if crate::app_shutdown_parent::is_draining(){return;}
     // Отдельная короткая задача разрывает цикл opaque Future Send:
     // запуск движка -> reader callback -> новое окно -> запуск движка.
     std::thread::spawn(move||{
@@ -84,6 +85,7 @@ pub async fn novoe_okno(app:tauri::AppHandle,s:tauri::State<'_,Sostoyanie>,id:Op
     let previous=s.aktivnaya.lock().unwrap().clone();
     crate::super_hibernation_parent::ensure_view_ready(&app,&s,&id).await?;
     if let Some(previous)=previous{crate::pereklyuchit_vnutri(&app,&s,&previous);}
+    if crate::app_shutdown_parent::is_draining(){return Err("Браузер завершает работу".into());}
     create_window(&app,&s,id,privatnaya,None)
 }
 fn create_window(app:&tauri::AppHandle,s:&Sostoyanie,id:String,privatnaya:bool,recovery:Option<crate::window_recovery::WindowSession>)->Result<(),String>{
