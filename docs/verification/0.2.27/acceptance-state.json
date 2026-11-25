@@ -6,9 +6,9 @@
   "candidate": {
     "build_run": 45592261113,
     "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
-    "status": "in_progress",
-    "native_windows": "pending",
-    "native_linux": "pending"
+    "status": "failure",
+    "native_windows": "success",
+    "native_linux": "failure"
   },
   "resource_soak": {
     "run": 45549296137,
@@ -92,5 +92,21 @@
     "kimi_tooltip_qa": "a2f5921",
     "background_audio": "25a5f19",
     "painted_audio_gesture_and_diagnostics": "1f8ece5"
+  },
+  "linux_core_routes": {
+    "run": 45605130775,
+    "status": "success",
+    "diagnostic_only": true,
+    "checks_count": 22,
+    "summary": "linux-core-route-summary.json",
+    "release_acceptance": false
+  },
+  "linux_strict_routes": {
+    "run": 45605925274,
+    "status": "failure",
+    "reason": "owned_tooltip_not_observed",
+    "observations": 50,
+    "mapped_seen": 0,
+    "neutral_exit_hypothesis_proven": false
   }
 }
