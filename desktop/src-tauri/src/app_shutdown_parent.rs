@@ -456,7 +456,7 @@ fn discover(app: &tauri::AppHandle) -> usize {
                 continue;
             }
             if !state.entries.contains_key(&(id.clone(), engine)) {
-                if state.entries.len() >= MAX_OWNERS {
+                if state.entries.len() + state.unobserved_starts.len() >= MAX_OWNERS {
                     state.blocked = true;
                     pending += 1;
                     continue;
@@ -464,7 +464,9 @@ fn discover(app: &tauri::AppHandle) -> usize {
                 state.entries.insert((id, engine), Entry::new(engine));
             }
         } else if starting || !sleeping || residual_network {
-            if !state.entries.contains_key(&(id.clone(), engine)) {
+            if !state.entries.contains_key(&(id.clone(), engine))
+                && !state.unobserved_starts.contains(&(id.clone(), engine))
+            {
                 if state.entries.len() + state.unobserved_starts.len() >= MAX_OWNERS {
                     state.blocked = true;
                 } else {
