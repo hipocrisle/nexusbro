@@ -66,13 +66,13 @@ def dialogs(device):
 
 
 
-def windows_dialog_observation(device):
+def windows_dialog_observation(device,*,inspect_default=False):
     """Best-effort evidence must never replace the real native test outcome."""
-    try:return _windows_dialog_observation(device)
+    try:return _windows_dialog_observation(device,inspect_default=inspect_default)
     except Exception:return {'dialogs':[],'complete':False,'observation_unavailable':True}
 
 
-def _windows_dialog_observation(device):
+def _windows_dialog_observation(device,*,inspect_default=False):
     """Read-only bounded metadata, including foreign dialogs; never authorize input."""
     if sys.platform!='win32':return None
     import ctypes
@@ -90,7 +90,7 @@ def _windows_dialog_observation(device):
         if len(result['dialogs'])>=8:result['complete']=False;break
         item={'owned_process':False,'process':'other','root_owner_match':False,
               'root_owner_depth':None,'owner_chain_complete':False,'known_save_as_title':False,
-              'filename_edit_1001':False,'expected_fixture_filename':False,
+              'filename_edit_1001':False,'filename_value_checked':False,'expected_fixture_filename':False,
               'save_button':False,'cancel_button':False,'controls_complete':True}
         result['dialogs'].append(item)
         try:
@@ -113,8 +113,9 @@ def _windows_dialog_observation(device):
                 info=control.element_info;identity=info.automation_id;kind=info.control_type
                 if kind=='Edit' and identity=='1001':
                     item['filename_edit_1001']=True
-                    value=control.get_value()
-                    item['expected_fixture_filename']=isinstance(value,str) and len(value)<=256 and value==expected
+                    if inspect_default:
+                        value=control.get_value();item['filename_value_checked']=True
+                        item['expected_fixture_filename']=isinstance(value,str) and len(value)<=256 and value==expected
                 if kind=='Button':
                     item['save_button'] |= identity=='1' or info.name in {'Save','Сохранить','Speichern'}
                     item['cancel_button'] |= identity=='2' or info.name in {'Cancel','Отмена','Abbrechen'}
@@ -207,7 +208,7 @@ def start_chooser(client,device,diagnostics,*,audio=False):
     if sys.platform=='win32':
         observed=diagnostics.setdefault('windows_dialog_observations',[])
         if len(observed)<8:
-            observed.append({'phase':'before_activation','state':windows_dialog_observation(device)})
+            observed.append({'phase':'before_activation','state':windows_dialog_observation(device,inspect_default=not observed)})
     before=dialogs(device)
     # Painted native Play establishes genuine CEF focus; derive the complete
     # shipped native tab order, including footer links, before physical input.
@@ -474,7 +475,7 @@ def run(args):
                             seen.add(cursor);cursor=user.GetWindow(cursor,4)
                         counts['owned_process' if window.process_id() in owned else 'owned_window_chain' if owner_match else 'other']+=1
                     report['native_dialog_counts']=counts
-                    report['windows_dialog_observation_after_failure']=windows_dialog_observation(device)
+                    report['windows_dialog_observation_after_failure']=windows_dialog_observation(device,inspect_default=report.get('stage')=='save-dialog-cancel')
             except Exception:
                 report['native_download_diagnostic_unavailable']=True
         trace=error.__traceback__
