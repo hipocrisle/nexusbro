@@ -58,7 +58,7 @@ BUTTON_TOP = 16
 BUTTON_WIDTH = 220
 BUTTON_HEIGHT = 64
 CLICK_OFFSET = (30, 30)
-YELLOW = ((200, 255), (140, 255), (0, 140))  # (r,g,b) acceptance ranges
+YELLOW = (255, 212, 0)
 
 FIXTURE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>embed probe fixture</title>
@@ -130,14 +130,14 @@ class Fixture:
         template = self._template
         video = self._video
         lock = self._lock
-        box = {}
+        owner = self
 
         def validate(data):
             if not isinstance(data, dict):
                 return None
             if set(data) != {'stage', 'ready', 'played', 'invalid', 'states', 'errors', 'time'}:
                 return None
-            if type(data.get('stage')) is not str or len(data['stage']) > 32:
+            if type(data.get('stage')) is not str or data['stage'] not in {'boot','api_ready','ready','play_command','error','invalid_event','unexpected_code','invalid_clock', 'state_-1','state_0','state_1','state_2','state_3','state_5'}:
                 return None
             for key in ('ready', 'played', 'invalid'):
                 if type(data.get(key)) is not bool:
@@ -146,7 +146,7 @@ class Fixture:
                 value = data.get(key)
                 if not isinstance(value, list) or len(value) > MAX_SAMPLES:
                     return None
-                if any(type(v) is not int for v in value):
+                if any(type(v) is not int or v not in (ALLOWED_STATES if key=='states' else ALLOWED_ERRORS) for v in value):
                     return None
             t = data.get('time')
             if type(t) not in (int, float) or not math.isfinite(t) or not 0 <= t <= 10 ** 7:
@@ -158,7 +158,7 @@ class Fixture:
                 path = self.path.split('?', 1)[0]
                 if path == '/summary':
                     with lock:
-                        payload = json.dumps(box.get('latest')).encode('utf-8')
+                        payload = json.dumps(owner._latest).encode('utf-8')
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.send_header('Content-Length', str(len(payload)))
@@ -186,12 +186,13 @@ class Fixture:
                     length = 0
                 if not 0 < length <= MAX_RECEIPT_BYTES:
                     self.send_response(413); self.end_headers(); return
+                self.connection.settimeout(3)
                 try:
                     data = validate(json.loads(self.rfile.read(length).decode('utf-8')))
-                except (ValueError, UnicodeError):
+                except (ValueError, UnicodeError, OSError):
                     data = None
                 with lock:
-                    box['latest'] = {'invalid_receipt': True} if data is None else data
+                    owner._latest = {'invalid_receipt': True} if data is None else data
                 self.send_response(204); self.end_headers()
 
             def log_message(self, *args):
@@ -214,7 +215,7 @@ class Fixture:
             self._server = None
 
 
-def summarize(receipt):
+def summarize(receipt, first_time=None):
     """Second allowlist boundary on the test side; only ints/finite clock leave."""
     if not isinstance(receipt, dict) or receipt.get('invalid_receipt') is True:
         raise Blocked('embed_receipt_invalid')
@@ -233,15 +234,19 @@ def summarize(receipt):
     invalid = receipt.get('invalid') is True
     if invalid:
         raise Blocked('embed_unexpected_code')
+    advanced=max(0.0,float(t)-first_time) if first_time is not None else 0.0
     return {'stage': receipt.get('stage'), 'ready': ready, 'played': played,
             'states_seen': states, 'errors_seen': errors,
-            'api_clock_advanced_seconds': round(float(t), 3),
-            'playing_observed': bool(ready and played and 1 in states and float(t) >= MIN_ADVANCED_SECONDS)}
+            'api_clock_seconds':float(t),'api_clock_advanced_seconds':round(advanced,3),
+            'playing_observed':bool(ready and played and receipt.get('stage')=='state_1' and not errors and advanced>=MIN_ADVANCED_SECONDS)}
 
 
 def yellow_observed(device, client, point):
     """Real OS paint proof: yellow button pixel at the owned Xvfb screen point."""
+    if device.x is None or device.x.poll() is not None or client.display!=device.display:
+        raise Blocked('embed_owned_display_unavailable')
     label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    if label!='main':raise Blocked('embed_owner_unavailable')
     origin = client.command('plugin:window|inner_position', label=label)
     scale = client.js('devicePixelRatio||1') or 1
     x = round(origin['x'] + point[0] * scale)
@@ -249,7 +254,7 @@ def yellow_observed(device, client, point):
     from PIL import ImageGrab
     with ImageGrab.grab(bbox=(x, y, x + 1, y + 1), xdisplay=device.display) as image:
         r, g, b = image.convert('RGB').getpixel((0, 0))
-    return YELLOW[0][0] <= r <= YELLOW[0][1] and YELLOW[1][0] <= g <= YELLOW[1][1] and YELLOW[2][0] <= b <= YELLOW[2][1]
+    return (r,g,b)==YELLOW
 
 
 def initial_report():
@@ -285,7 +290,7 @@ def run(args):
         identifier = 'embed-probe'
         record = super_record(identifier, 'Official embed reference', url, proxy='')
         folder = device.data / 'profili' / identifier; folder.mkdir(parents=True)
-        (folder / 'obychnye.json').write_text(json.dumps({'vkladki': [{'id': 1, 'adres': url, 'zagolovok': 'Embed probe', 'otlozhena': True}], 'aktivnaya': 1, 'sleduyushchaya': 2}))
+        (folder / 'obychnye.json').write_text(json.dumps({'vkladki': [{'id': 1, 'adres': url, 'zagolovok': 'Embed probe', 'otlozhena': False}], 'aktivnaya': 1, 'sleduyushchaya': 2}))
         for name in ('vkladki.json', 'sohranennye.json'):
             (device.data / name).write_text(json.dumps([record]))
         (device.data / 'nastrojki.json').write_text(json.dumps({'avtoobnovleniya': False, 'apparatnoe_uskorenie': False, 'memory_saver': False}))
@@ -304,6 +309,18 @@ def run(args):
             time.sleep(.5)
         else:
             raise Blocked('embed_tab_not_live')
+        report['stage']='official-api-ready'
+        deadline=time.monotonic()+remaining(60)
+        while time.monotonic()<deadline:
+            receipt=fixture.summary()
+            if receipt is not None:
+                ready_state=summarize(receipt)
+                if ready_state['errors_seen']:
+                    raise Blocked('embed_error_'+'_'.join(str(e) for e in ready_state['errors_seen']))
+                if ready_state['ready']:
+                    report['ready']=True;break
+            time.sleep(.25)
+        else:raise Blocked('official_api_not_ready')
         # Shell-side only: the CEF area bounds of the active tab.
         point = None
         deadline = time.monotonic() + remaining(20)
@@ -327,22 +344,26 @@ def run(args):
         report['stage'] = 'trusted-play-click'
         client.mouse(*point)  # exactly one physical click on the yellow button
         report['stage'] = 'observation'
-        deadline = time.monotonic() + remaining(120); summary = None
+        deadline = time.monotonic() + remaining(120); summary = None; first_time=None; first_wall=None
         while time.monotonic() < deadline:
             receipt = fixture.summary()
             if receipt is not None:
-                summary = summarize(receipt)
+                current=summarize(receipt)
+                if current['played'] and first_time is None:
+                    first_time=current['api_clock_seconds'];first_wall=time.monotonic()
+                summary=summarize(receipt,first_time)
                 report.update({key: summary[key] for key in ('ready', 'played', 'states_seen', 'errors_seen', 'api_clock_advanced_seconds', 'playing_observed')})
                 report['fixture_stage'] = summary['stage']
+                report['trusted_play_click']=summary['played']
                 if summary['errors_seen']:
                     raise Blocked('embed_error_' + '_'.join(str(e) for e in summary['errors_seen']))
-                if summary['playing_observed']:
+                if summary['playing_observed'] and first_wall is not None and time.monotonic()-first_wall>=MIN_ADVANCED_SECONDS:
                     break
             time.sleep(.5)
         if summary is None: raise Blocked('embed_receipt_unavailable')
         report['trusted_play_click'] = summary['played']  # receipt written only by the trusted handler
         if not summary['played']: raise Blocked('trusted_click_missing')
-        if not summary['playing_observed']: raise Blocked('embed_playing_not_observed')
+        if not summary['playing_observed'] or first_wall is None or time.monotonic()-first_wall<MIN_ADVANCED_SECONDS: raise Blocked('embed_playing_not_observed')
         report['stage'] = 'normal-owned-exit'; close_attempted = True
         close_for_privacy(client, device, report)
         report['completed'] = True; report['stage'] = 'complete'
@@ -380,6 +401,8 @@ def run(args):
         if not cleanup: report['completed'] = False; report['blocked_reason'] = 'cleanup_failed'
         if not report.get('owned_exit', {}).get('clean_shutdown_receipt_verified'): report['completed'] = False
         report['wall_seconds'] = round(time.monotonic() - started, 3)
+        if report['wall_seconds']>WORK_BUDGET_SECONDS+CLEANUP_BUDGET_SECONDS:
+            report['completed']=False;report['blocked_reason']='embed_total_deadline_exceeded'
         (out / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
     return 0 if report['completed'] else 1
 
@@ -387,7 +410,8 @@ def run(args):
 def self_test():
     good = {'stage': 'state_1', 'ready': True, 'played': True, 'invalid': False,
             'states': [3, 1, 1, 2], 'errors': [], 'time': 9.125}
-    assert summarize(good)['playing_observed'] is True
+    assert summarize(good,first_time=0.0)['playing_observed'] is True
+    assert summarize(good)['playing_observed'] is False  # one absolute clock is not advancing evidence
     idle = {'stage': 'ready', 'ready': True, 'played': False, 'invalid': False,
             'states': [-1], 'errors': [], 'time': 0.5}
     assert summarize(idle)['playing_observed'] is False
@@ -414,11 +438,17 @@ def self_test():
                           for u in remote), 'fixture must reference only the official youtube origin'
     fixture = Fixture(VIDEO); url = fixture.start()
     assert url.startswith('http://127.0.0.1:') and url.endswith('/embed-probe.html')
-    good_copy = dict(good)
-    with fixture._lock:
-        fixture._latest = good_copy
-    assert fixture.summary()['ready'] is True
-    fixture.close()
+    import urllib.request
+    opener=urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    try:
+        request=urllib.request.Request(fixture.origin+'/receipt',data=json.dumps(good).encode(),method='POST')
+        with opener.open(request,timeout=3) as response:assert response.status==204
+        assert fixture.summary()['ready'] is True and fixture.summary()['time']==good['time']
+        bad=dict(good,time=float('nan'))
+        request=urllib.request.Request(fixture.origin+'/receipt',data=json.dumps(bad).encode(),method='POST')
+        with opener.open(request,timeout=3) as response:assert response.status==204
+        assert fixture.summary()=={'invalid_receipt':True}
+    finally:fixture.close()
     assert initial_report()['full_playback_acceptance'] is False and initial_report()['paired'] is False
     return {'self_test': True, 'source_only': True, 'native_execution': False}
 

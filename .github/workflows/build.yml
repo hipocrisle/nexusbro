@@ -1374,15 +1374,19 @@ jobs:
         run: |
           python3 - <<'PYREQUEST'
           import json,os,re
-          request=os.environ['REQUEST'];core=False
+          request=os.environ['REQUEST'];core=False;probe='routes'
           if request.startswith('{'):
               value=json.loads(request)
-              assert isinstance(value,dict) and set(value)=={'run','core_only'}
-              assert value['core_only'] is True and not os.environ['PUBLISH_TAG']
+              assert isinstance(value,dict) and not os.environ['PUBLISH_TAG']
+              if set(value)=={'run','core_only'}:
+                  assert value['core_only'] is True
+              else:
+                  assert set(value)=={'run','probe'} and value['probe']=='official_embed'
+                  probe='official_embed'
               request=value['run'];core=True
           assert isinstance(request,str) and re.fullmatch(r'[1-9][0-9]{0,19}',request)
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
-              output.write('run='+request+'\ncore_only='+str(core).lower()+'\n')
+              output.write('run='+request+'\ncore_only='+str(core).lower()+'\nprobe='+probe+'\n')
           PYREQUEST
       - name: Install native acceptance QR decoder and TypeScript
         run: npm ci --prefix desktop && npm run build --prefix desktop
@@ -1435,17 +1439,33 @@ jobs:
           mv .dev-check/cef/Resources/* .dev-check/cef/
           chmod +x .dev-check/native-binary/nexusbro .dev-check/backend-package/nexusbro-sync-server
           (cd .dev-check/backend-package && sha256sum -c SHA256SUMS)
+      - name: Official YouTube embed feasibility on exact binary DIAGNOSTIC ONLY
+        if: steps.producer_request.outputs.probe == 'official_embed'
+        timeout-minutes: 6
+        env:
+          PUBLISH_TAG: ${{ inputs.publish_tag }}
+        run: |
+          test -z "$PUBLISH_TAG"
+          python3 tests/gui/youtube_embed_reference_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/youtube-official-embed
+      - name: Preserve bounded official embed JSON only
+        if: always() && steps.producer_request.outputs.probe == 'official_embed'
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-official-embed-diagnostic-linux
+          path: .dev-check/youtube-official-embed/result.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Check corrected browser fixtures against unchanged application sources
-        if: ${{ !inputs.linux_memory_diagnostic }}
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         run: |
           python3 tests/backup_browser.py
           python3 tests/updater_startup_browser.py
           python3 tests/updater_app_startup_browser.py
       - name: Native Linux smoke from exact existing binary
-        if: ${{ !inputs.linux_memory_diagnostic }}
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         run: python3 tests/gui/linux_smoke.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/linux-runtime
       - uses: actions/upload-artifact@v4
-        if: always() && !inputs.linux_memory_diagnostic
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
         with:
           name: linux-runtime-verification
           path: |
@@ -1466,7 +1486,7 @@ jobs:
           path: .dev-check/native-memory-diagnostic/results.json
           retention-days: 14
       - name: Native per-tab routes, isolated profiles and trusted HTTPS
-        if: ${{ !inputs.linux_memory_diagnostic }}
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         timeout-minutes: 10
         env:
           ROUTE_CORE_ONLY: ${{ steps.producer_request.outputs.core_only }}
@@ -1486,7 +1506,7 @@ jobs:
           fi
           python3 tests/gui/tab_routes.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key "${ROUTE_DIAGNOSTIC_ARGS[@]}"
       - uses: actions/upload-artifact@v4
-        if: always() && !inputs.linux_memory_diagnostic
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
         with:
           name: linux-route-verification
           path: |
@@ -1498,11 +1518,11 @@ jobs:
             .dev-check/native-routes/device/data/profili/*/cef*.log
           retention-days: 14
       - name: Native encrypted vault, UI lock and two-device sync
-        if: ${{ !inputs.linux_memory_diagnostic }}
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         timeout-minutes: 10
         run: python3 tests/gui/security_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --server .dev-check/backend-package/nexusbro-sync-server --out .dev-check/security-native
       - uses: actions/upload-artifact@v4
-        if: always() && !inputs.linux_memory_diagnostic
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
         with:
           name: native-security-verification
           path: |
@@ -1513,7 +1533,7 @@ jobs:
           retention-days: 14
 
       - name: Native browser essentials from exact existing binary
-        if: ${{ !inputs.linux_memory_diagnostic }}
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         run: |
           BIN=.dev-check/native-binary/nexusbro
           python3 tests/gui/browser_essentials_native.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/browser-essentials
@@ -1521,7 +1541,7 @@ jobs:
           python3 tests/gui/sync_history_native.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/sync-history-native
           python3 tests/gui/backup_native.py --exe "$BIN" --cef .dev-check/cef --out .dev-check/backup-native
       - uses: actions/upload-artifact@v4
-        if: always() && !inputs.linux_memory_diagnostic
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
         with:
           name: browser-essentials-linux-runtime
           path: |
