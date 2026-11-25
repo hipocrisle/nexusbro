@@ -24,6 +24,7 @@ jobs:
           cargo test --manifest-path tests/youtube_light_harness/Cargo.toml --features consumer-probe
           cargo build --release --manifest-path tests/youtube_light_harness/Cargo.toml --bin external_probe --features consumer-probe
           python tests/gui/youtube_extract_consumer.py --self-test
+          python tests/youtube_consumer_protocol_test.py --probe-exe tests/youtube_light_harness/target/release/external_probe
           mkdir -p .dev-check/consumer-probe
           cp tests/youtube_light_harness/target/release/external_probe .dev-check/consumer-probe/
           cp tests/gui/youtube_extract_consumer.py .dev-check/consumer-probe/
