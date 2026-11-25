@@ -1429,7 +1429,7 @@ jobs:
             sudo sed -i -E -e 's@https?://([a-z0-9.-]+\.)?archive\.ubuntu\.com/ubuntu/?@https://archive.ubuntu.com/ubuntu/@g' -e 's@http://security\.ubuntu\.com/ubuntu/?@https://security.ubuntu.com/ubuntu/@g' /etc/apt/sources.list.d/ubuntu.sources
           fi
           sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 update
-          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 xvfb xdotool xclip libnss3-tools
+          sudo apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=30 -o Acquire::https::Timeout=30 install -y --no-install-recommends libwebkit2gtk-4.1-0 libgtk-3-0t64 libayatana-appindicator3-1 librsvg2-2 xvfb xdotool xclip libnss3-tools openbox wmctrl x11-utils dbus-x11
           python3 -m pip install --break-system-packages websocket-client psutil Pillow cryptography playwright
           curl -fSL --connect-timeout 20 --max-time 180 --retry 3 --retry-max-time 240 -o /tmp/cef.tar.bz2 'https://cef-builds.spotifycdn.com/cef_binary_156.0.26+g8ea0c73+chromium-156.0.8078.88_linux64_minimal.tar.bz2'
           echo 'cacfbb7d7261fea682fb67c108de7e4347519ff7 /tmp/cef.tar.bz2' | sha1sum -c -
@@ -1446,6 +1446,11 @@ jobs:
           PUBLISH_TAG: ${{ inputs.publish_tag }}
         run: |
           test -z "$PUBLISH_TAG"
+          # Dependency failures must surface as preflight, never masquerade as a
+          # YouTube availability signal inside the probe result JSON.
+          for cmd in Xvfb xdotool xclip openbox wmctrl xprop xwininfo dbus-run-session; do
+            command -v "$cmd" >/dev/null 2>&1 || { echo "embed_probe_preflight_missing:${cmd}" >&2; exit 127; }
+          done
           python3 tests/gui/youtube_embed_reference_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/youtube-official-embed
       - name: Preserve bounded official embed JSON only
         if: always() && steps.producer_request.outputs.probe == 'official_embed'
