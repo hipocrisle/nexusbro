@@ -698,7 +698,7 @@ fn drain(app: tauri::AppHandle) {
             if let Some(value) = receipt(0, true) {
                 output.write(&value);
             }
-            // Publish preparation ONLY after the final receipt is synced. A
+            // Attempt the CI-only receipt write before publishing preparation. A
             // concurrent begin() must not schedule exit ahead of that write.
             if let Ok(mut state) = coordinator().lock() {
                 state.preparation = Some(state.clean_for_preparation());
