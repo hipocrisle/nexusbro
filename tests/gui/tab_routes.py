@@ -752,9 +752,12 @@ def _natural_route_tooltip_hover(client):
         time.sleep(.08)
     # Failure diagnosis only, using the SAME existing ownership/foreign-cover
     # screenshot gate; no tooltip synthesis, repositioning, or acceptance change.
-    dom=client.js('(()=>{const b=document.querySelector(".tab-route-button");return {dom_has_focus:document.hasFocus(),dom_button_hovered:!!b?.matches(":hover"),dom_button_enabled:!!b&&!b.disabled,dom_title_present:!!b?.getAttribute("title")}})()')
+    dom=client.js('(()=>{const b=document.querySelector(".tab-route-button");return {dom_has_focus:document.hasFocus(),dom_button_hovered:!!b?.matches(":hover"),dom_button_enabled:!!b&&!b.disabled,dom_title_present:!!b?.getAttribute("title"),dom_pointer_on_svg:!!b?.querySelector("svg:hover")}})()')
     if isinstance(dom,dict):
-        receipt.update({key:value for key,value in dom.items() if key in {'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present'} and type(value)is bool})
+        receipt.update({key:value for key,value in dom.items() if key in {'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present','dom_pointer_on_svg',
+        'gtk_settings_observed','gtk_enabled','dom_pointer_on_svg'} and type(value)is bool})
+    from gtk_tooltip_settings import observe as observe_gtk_settings
+    receipt['gtk_settings']=observe_gtk_settings(device)
     client.route_open_native['failure']=route_toolbar_observation(client,'hover')
     journal = receipt['journal']
     require(False, 'Mapped owned native tooltip covering route target not observed; '
@@ -878,7 +881,7 @@ def safe_route_open_native(value,depth=0):
         'observation_failed','unsupported_platform','mapped_covering_tooltip_observed',
         'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present',
         'mapped_tooltip_before_click','input_empty_before_click','one_physical_click','trusted_dom_click','dialog_present','neutral_exit_observed'}
-    limits={'cursor_dx':(-16384,16384),'cursor_dy':(-16384,16384),'input_rectangles':(0,256),
+    limits={'gtk_timeout_ms':(0,120000),'gtk_browse_timeout_ms':(0,120000),'cursor_dx':(-16384,16384),'cursor_dy':(-16384,16384),'input_rectangles':(0,256),
         'crop_width':(1,4096),'crop_height':(1,520),'observations':(0,50),'move_count':(0,1),'neutral_move_count':(0,1)}
     enums={'role':{'ownedApp','cef','other'},'focus_role':{'ownedApp','cef','other'},
         'visual_top_role':{'ownedApp','cef','other'},'window_type':{'normal','dialog','tooltip','popup_menu',
@@ -888,7 +891,7 @@ def safe_route_open_native(value,depth=0):
         if key in booleans and type(item)is bool:result[key]=item
         elif key in limits and type(item)is int and limits[key][0]<=item<=limits[key][1]:result[key]=item
         elif key in enums and isinstance(item,str) and item in enums[key]:result[key]=item
-        elif key in {'before','failure','hover','regression','hit_test','last_hit'} and isinstance(item,dict):
+        elif key in {'before','failure','hover','regression','hit_test','last_hit','gtk_settings'} and isinstance(item,dict):
             result[key]=safe_route_open_native(item,depth+1)
         elif key=='journal' and isinstance(item,dict):
             result[key]={name:count for name,count in item.items()
