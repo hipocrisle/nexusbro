@@ -484,6 +484,9 @@ jobs:
           export LD_LIBRARY_PATH="$CEF_PATH:${LD_LIBRARY_PATH:-}"
           cargo test --release --target ${{ matrix.target }} --lib browser_backup::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib super_hibernation_parent::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib app_shutdown_protocol::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib app_shutdown_parent::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_app_shutdown::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_resume::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_http -- --test-threads=1

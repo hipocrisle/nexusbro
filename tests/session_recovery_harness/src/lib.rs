@@ -2,6 +2,8 @@
 // Session command payloads reference these actual protocol/AEAD types. Include
 // the production modules so signature/serialization errors cannot be hidden by
 // recovery-only stand-ins.
+#[path = "../../../desktop/src-tauri/src/app_shutdown_protocol.rs"]
+pub mod app_shutdown_protocol;
 #[path = "../../../desktop/src-tauri/src/super_cookie_escrow.rs"]
 pub mod super_cookie_escrow;
 #[path = "../../../desktop/src-tauri/src/super_hibernation_protocol.rs"]

@@ -15,6 +15,9 @@ mod fon_konteynera;
 mod okna_app;
 mod brauzer;
 mod sessiya;
+mod app_shutdown_protocol;
+mod cef_app_shutdown;
+mod app_shutdown_parent;
 mod window_recovery;
 mod tab_search;
 mod browser_tasks;
@@ -451,6 +454,7 @@ async fn zapustit_vnutri(app: &tauri::AppHandle, s: &State<'_, Sostoyanie>, id: 
     if browser_lock::locked_global() { return net("Браузер заблокирован. Введите мастер-пароль."); }
     let (nastrojki, zapusk_id) = {
         let mut v = s.vkladki.lock().unwrap();
+        if app_shutdown_parent::is_draining(){return net("Браузер завершает работу");}
         let Some(vk) = v.get_mut(id) else { return net("такой супер-вкладки нет") };
         if vk.hibernate.wake(vk.kanal.as_ref()) { drop(v); pereklyuchit_vnutri(app,s,id); return da(); }
         if vk.zapusk_idet || vk.proc.is_some() {
@@ -569,6 +573,10 @@ async fn podgotovit_dvizhok(
         if !v.hibernate.lease_acquired(zapusk_id){nash.ostanovit();if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}return net("Запуск отменён");}
         match v.hibernate.restore_wire(){Ok(wire)=>wire,Err(_)=>{nash.ostanovit();if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}return net("Не удалось подготовить сохранённый вход");}}
     };
+    if app_shutdown_parent::is_draining(){
+        drop(lease);nash.ostanovit();if let Some(mut t)=tunnel{let _=t.kill();let _=t.wait();}
+        return net("Браузер завершает работу");
+    }
     let mut ditya = match cef_dvizhok::zapustit_cep(id, &cherez, adres, nashe, nastrojki.rezat_reklamu, m, &route_bootstrap, zapusk_id, lease, restore.is_some()) {
         Ok(d) => d,
         Err(e) => {
@@ -633,6 +641,7 @@ async fn podgotovit_dvizhok(
             { let s:State<Sostoyanie>=h_ui.state();
               if !s.vkladki.lock().unwrap().get(&id_ui).is_some_and(|v|v.zapusk_id==zapusk_id){return;} }
             if data["tip"]=="browser-lock"{browser_lock::request_lock(h_ui.clone());return;}
+            if app_shutdown_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if tab_route_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if passwords::receive(&h_ui,&id_ui,&data){return;}
             if youtube_download_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
@@ -668,6 +677,7 @@ async fn podgotovit_dvizhok(
             .filter(|vk| vk.zapusk_id == zapusk_id && vk.zapusk_idet && vk.proc.is_some())
         else { return };
         vk.zapusk_idet = false;
+        if app_shutdown_parent::is_draining(){return;}
         if let Some(okno) = okno {
             vk.okno = Some(okno);
             vk.hibernate.ready(zapusk_id);
@@ -812,6 +822,7 @@ async fn ostanovit_vnutri(app:&tauri::AppHandle,s: &State<'_, Sostoyanie>, id: &
     perevod::otmenit_super(id);
     let resursy = {
         let mut v = s.vkladki.lock().unwrap();
+        if app_shutdown_parent::is_draining(){return;}
         let Some(vk) = v.get_mut(id) else { return };
         vk.hibernate.explicit_stop();
         vk.zapusk_idet = true;
@@ -951,6 +962,7 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     perevod::otmenit_super(&id);
     let udalena = {
         let mut v = s.vkladki.lock().unwrap();
+        if app_shutdown_parent::is_draining(){return Err("Браузер завершает работу".into());}
         v.remove(&id)
     };
     let Some(vk) = udalena else {
@@ -1266,6 +1278,36 @@ fn vosstanovit_dvizhok(app: &tauri::AppHandle) {
 
 }
 
+fn trusted_app_control(app: &tauri::AppHandle, window: &tauri::WebviewWindow) -> Result<(), String> {
+    let s: State<Sostoyanie> = app.state();
+    if window.label() == "main" || s.okna.0.lock().unwrap().contains_key(window.label()) { Ok(()) }
+    else { Err("Окно не имеет доступа к завершению приложения".into()) }
+}
+#[tauri::command]
+fn app_restart(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    trusted_app_control(&app, &window)?;
+    app_shutdown_parent::begin(&app, i32::MAX);
+    Ok(())
+}
+#[tauri::command]
+async fn app_prepare_update(app: tauri::AppHandle, window: tauri::WebviewWindow) -> Result<(), String> {
+    trusted_app_control(&app, &window)?;
+    let handle = app.clone();
+    app.run_on_main_thread(move || app_shutdown_parent::prepare_update(&handle)).map_err(|_| "Не удалось начать завершение движков")?;
+    let started = std::time::Instant::now();
+    loop {
+        match app_shutdown_parent::preparation_result() {
+            Some(true) => return Ok(()),
+            Some(false) => return Err("Движки не подтвердили безопасное завершение. Обновление отменено.".into()),
+            None => {}
+        }
+        if started.elapsed() > std::time::Duration::from_secs(15) {
+            return Err("Завершение движков ещё не подтверждено. Обновление не установлено.".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let recovery_root=brauzer::papka_profilej();
@@ -1277,6 +1319,7 @@ pub fn run() {
     let command_handler: Box<dyn Fn(tauri::ipc::Invoke<tauri::Wry>) -> bool + Send + Sync> =
         Box::new(tauri::generate_handler![
 
+                app_restart, app_prepare_update,
                 popup_menu::popup_menu_open,popup_menu::popup_menu_data,popup_menu::popup_menu_ready,
                 popup_menu::popup_menu_choose,popup_menu::popup_menu_dismiss,popup_menu::popup_menu_lock,
                 browser_lock::browser_lock_status,browser_lock::browser_lock,browser_lock::browser_unlock,
@@ -1309,10 +1352,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .plugin(tauri_plugin_process::init())
         // Размер, позиция и монитор окна запоминаются сами.
         .plugin(tauri_plugin_window_state::Builder::default().with_filter(|label|label=="main").build())
         .setup(|app| {
+            app_shutdown_parent::init(app.handle());
             passwords::setup(app.handle()).map_err(std::io::Error::other)?;
             browser_lock::setup(app.handle());
             #[cfg(target_os = "windows")]
@@ -1418,6 +1461,7 @@ pub fn run() {
                     let s: State<Sostoyanie> = h.state();
                     let mertvye: Vec<_> = {
                         let Ok(mut v) = s.vkladki.try_lock() else { continue };
+                        if app_shutdown_parent::is_draining(){return;}
                         v.iter_mut().filter_map(|(id, vk)| {
                             if vk.zapusk_idet || matches!(vk.hibernate.machine.phase(),super_lifecycle::Phase::Stopping) { return None }
                             // A dead launcher permits crash cleanup, never lease release.
@@ -1484,6 +1528,10 @@ pub fn run() {
                 invoke.resolver.reject("Браузер заблокирован. Введите мастер-пароль.");
                 return true;
             }
+            if app_shutdown_parent::is_draining() && !matches!(command, "app_restart" | "app_prepare_update") {
+                invoke.resolver.reject("Браузер завершает работу");
+                return true;
+            }
             command_handler(invoke)
         })
         .build(tauri::generate_context!())
@@ -1492,7 +1540,9 @@ pub fn run() {
             // Восстановление встроенного окна после сворачивания/фокуса:
             // чужое окно само не возвращается — показываем и ставим на место.
             match &sobytie {
-                tauri::RunEvent::ExitRequested{..}=>{okna_app::before_exit(app);}
+                tauri::RunEvent::ExitRequested{api,code,..}=>{
+                    if !app_shutdown_parent::may_exit(){api.prevent_exit();app_shutdown_parent::begin(app,code.unwrap_or(0));}
+                }
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label=="main"=>{
                     let s:State<Sostoyanie>=app.state();
                     if !s.okna.0.lock().unwrap().is_empty(){
@@ -1500,6 +1550,9 @@ pub fn run() {
                         let channels=s.vkladki.lock().unwrap().values().filter_map(|v|v.kanal.clone()).collect::<Vec<_>>();
                         for channel in channels{let _=channel.try_send(sessiya::Komanda::GlavnoeSkryto);}
                         if let Some(w)=app.get_webview_window("main"){let _=w.hide();}
+                    } else if !app_shutdown_parent::may_exit() {
+                        api.prevent_close();
+                        app_shutdown_parent::begin(app,0);
                     }
                 }
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label.starts_with("browser-")=>{if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
