@@ -111,7 +111,7 @@ async function obnovit(
       }
       await invoke("app_restart");
     } finally {
-      if (!podgotovleno) await invoke("pokazat_dvizhki", { vidno: true });
+      if (!podgotovleno) await invoke("pokazat_dvizhki", { vidno: true }).catch(() => {});
     }
   } catch (e) {
     if (!tiho || soglasen) {

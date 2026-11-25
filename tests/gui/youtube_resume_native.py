@@ -83,7 +83,7 @@ RESUME_FAILURE_CODES={
     'resume_admit_wrong_thread','resume_admit_stale','resume_admit_disabled','resume_admit_cancelled',
     'resume_admit_browser_changed','resume_admit_route_changed','resume_admit_private_changed',
     'resume_admit_document_unavailable','resume_admit_document_changed','resume_admit_scope_unavailable',
-    'resume_admit_scope_changed','resume_open_refused'}
+    'resume_admit_scope_changed','resume_open_refused','resume_native_commit_closed','resume_native_commit_timeout'}
 
 
 def fixture_ack_class(error,code=None):
