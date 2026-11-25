@@ -290,7 +290,7 @@ def run(args):
         identifier = 'embed-probe'
         record = super_record(identifier, 'Official embed reference', url, proxy='')
         folder = device.data / 'profili' / identifier; folder.mkdir(parents=True)
-        (folder / 'obychnye.json').write_text(json.dumps({'vkladki': [{'id': 1, 'adres': url, 'zagolovok': 'Embed probe', 'otlozhena': False}], 'aktivnaya': 1, 'sleduyushchaya': 2}))
+        (folder / 'obychnye.json').write_text(json.dumps({'vkladki': [{'id': 1, 'adres': url, 'zagolovok': 'Embed probe', 'otlozhena': True}], 'aktivnaya': 1, 'sleduyushchaya': 2}))
         for name in ('vkladki.json', 'sohranennye.json'):
             (device.data / name).write_text(json.dumps([record]))
         (device.data / 'nastrojki.json').write_text(json.dumps({'avtoobnovleniya': False, 'apparatnoe_uskorenie': False, 'memory_saver': False}))
@@ -300,6 +300,7 @@ def run(args):
         switch_super(client, identifier, timeout=remaining(10))
         if client.js('!!document.querySelector(".pusto button")'):
             click_control(client, '.pusto button', remaining(10))
+        click_control(client,'.obychnaya[data-id="1"]',remaining(10))
         report['stage'] = 'tab-live'
         deadline = time.monotonic() + remaining(60); tab = None
         while time.monotonic() < deadline:
@@ -369,8 +370,24 @@ def run(args):
         report['completed'] = True; report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
-    except Exception:
+    except Exception as error:
         report['blocked_reason'] = 'embed_probe_unavailable'
+        # Fixed diagnostic fields only. Never publish engine logs/URLs/headers.
+        report['exception_type']=type(error).__name__[:64]
+        if device is not None:
+            report['app_exit_code']=device.app.poll() if device.app is not None else None
+            report['xvfb_exit_code']=device.x.poll() if device.x is not None else None
+            log=device.root/'app-1.log'
+            if log.is_file() and not log.is_symlink():
+                with log.open('rb') as stream:
+                    stream.seek(max(0,log.stat().st_size-65536));raw=stream.read(65536).lower()
+                report['startup_log_flags']={
+                    'shared_library_error':b'error while loading shared libraries' in raw,
+                    'symbol_lookup_error':b'symbol lookup error' in raw,
+                    'display_error':b'cannot open display' in raw,
+                    'address_in_use':b'address already in use' in raw,
+                    'gtk_error':b'gtk-error' in raw,
+                }
     finally:
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']
