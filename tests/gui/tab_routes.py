@@ -441,6 +441,151 @@ def choose(client, label):
     client.click('[data-route-test-choice="true"]')
 
 
+def route_toolbar_geometry(point,origin,scale,viewport):
+    """Same rounding as Client.click()->mouse(), with a toolbar-only crop."""
+    import math
+    values=[*point,origin.get('x'),origin.get('y'),scale,*viewport]
+    require(all(type(v) in (int,float) and math.isfinite(v) for v in values),'Route observer geometry unavailable')
+    require(0<scale<=4 and 0<viewport[0]<=4096 and 0<viewport[1]<=4096,'Route observer geometry unavailable')
+    expected=(round(origin['x']+point[0]*scale),round(origin['y']+point[1]*scale))
+    box=(round(origin['x']),round(origin['y']),round(origin['x']+viewport[0]*scale),
+         round(origin['y']+min(130,viewport[1])*scale))
+    require(0<box[2]-box[0]<=4096 and 0<box[3]-box[1]<=520,'Route observer geometry unavailable')
+    return expected,box
+
+
+def route_native_hit(device,expected):
+    """Read-only Xlib queries on this fixture's private display. Export no IDs."""
+    import ctypes as c
+    from ctypes.util import find_library
+    result={'available':False,'complete':False,'chain':[],'focus_role':'other'}
+    require(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform!='win32'
+            and device.x is not None and device.x.poll() is None,'Route observer private display unavailable')
+    require(device.app is not None and device.app.poll() is None,'Route observer owner unavailable')
+    from resource_soak import kernel_birth
+    family={device.app.pid}|{p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}
+    require(len(family)<=256,'Route observer family bound')
+    owned={}
+    for pid in family:
+        try:owned[pid]=kernel_birth(pid,'linux_ticks')
+        except psutil.NoSuchProcess:pass
+    require(device.app.pid in owned,'Route observer owner unavailable')
+    library=find_library('X11');require(bool(library),'Route observer X11 unavailable')
+    x=c.CDLL(library);Window=c.c_ulong;Display=c.c_void_p
+    class Attributes(c.Structure):
+        _fields_=[('x',c.c_int),('y',c.c_int),('width',c.c_int),('height',c.c_int),('border_width',c.c_int),
+                  ('depth',c.c_int),('visual',c.c_void_p),('root',Window),('window_class',c.c_int),
+                  ('bit_gravity',c.c_int),('win_gravity',c.c_int),('backing_store',c.c_int),
+                  ('backing_planes',c.c_ulong),('backing_pixel',c.c_ulong),('save_under',c.c_int),
+                  ('colormap',c.c_ulong),('map_installed',c.c_int),('map_state',c.c_int),
+                  ('all_event_masks',c.c_long),('your_event_mask',c.c_long),('do_not_propagate_mask',c.c_long),
+                  ('override_redirect',c.c_int),('screen',c.c_void_p)]
+    x.XOpenDisplay.argtypes=[c.c_char_p];x.XOpenDisplay.restype=Display
+    x.XCloseDisplay.argtypes=[Display];x.XDefaultRootWindow.argtypes=[Display];x.XDefaultRootWindow.restype=Window
+    x.XInternAtom.argtypes=[Display,c.c_char_p,c.c_int];x.XInternAtom.restype=c.c_ulong
+    x.XGetWindowAttributes.argtypes=[Display,Window,c.POINTER(Attributes)];x.XGetWindowAttributes.restype=c.c_int
+    x.XTranslateCoordinates.argtypes=[Display,Window,Window,c.c_int,c.c_int,c.POINTER(c.c_int),c.POINTER(c.c_int),c.POINTER(Window)];x.XTranslateCoordinates.restype=c.c_int
+    x.XQueryPointer.argtypes=[Display,Window,c.POINTER(Window),c.POINTER(Window),c.POINTER(c.c_int),c.POINTER(c.c_int),c.POINTER(c.c_int),c.POINTER(c.c_int),c.POINTER(c.c_uint)];x.XQueryPointer.restype=c.c_int
+    x.XGetInputFocus.argtypes=[Display,c.POINTER(Window),c.POINTER(c.c_int)]
+    x.XQueryTree.argtypes=[Display,Window,c.POINTER(Window),c.POINTER(Window),c.POINTER(c.POINTER(Window)),c.POINTER(c.c_uint)];x.XQueryTree.restype=c.c_int
+    x.XGetWindowProperty.argtypes=[Display,Window,c.c_ulong,c.c_long,c.c_long,c.c_int,c.c_ulong,c.POINTER(c.c_ulong),c.POINTER(c.c_int),c.POINTER(c.c_ulong),c.POINTER(c.c_ulong),c.POINTER(c.c_void_p)];x.XGetWindowProperty.restype=c.c_int
+    x.XFree.argtypes=[c.c_void_p];x.XSync.argtypes=[Display,c.c_int]
+    x.XSetErrorHandler.argtypes=[c.c_void_p];x.XSetErrorHandler.restype=c.c_void_p
+    display=x.XOpenDisplay(os.fsencode(device.display));require(bool(display),'Route observer display unavailable')
+    failed=[False];handler_type=c.CFUNCTYPE(c.c_int,Display,c.c_void_p)
+    @handler_type
+    def error_handler(_display,_error):failed[0]=True;return 0
+    previous=x.XSetErrorHandler(c.cast(error_handler,c.c_void_p))
+    try:
+        root=x.XDefaultRootWindow(display)
+        types={}
+        for name in ('NORMAL','DIALOG','TOOLTIP','POPUP_MENU','DROPDOWN_MENU','UTILITY','DOCK','DESKTOP'):
+            atom=x.XInternAtom(display,('_NET_WM_WINDOW_TYPE_'+name).encode(),1)
+            if atom:types[atom]=name.lower()
+        type_atom=x.XInternAtom(display,b'_NET_WM_WINDOW_TYPE',1);pid_atom=x.XInternAtom(display,b'_NET_WM_PID',1)
+        def property_values(window,atom,limit):
+            if not atom:return []
+            actual=c.c_ulong();fmt=c.c_int();count=c.c_ulong();remaining=c.c_ulong();data=c.c_void_p()
+            status=x.XGetWindowProperty(display,window,atom,0,limit,0,0,c.byref(actual),c.byref(fmt),c.byref(count),c.byref(remaining),c.byref(data))
+            try:
+                if status!=0 or fmt.value!=32 or count.value>limit or remaining.value or not data:return []
+                return [c.cast(data,c.POINTER(c.c_ulong))[i] for i in range(count.value)]
+            finally:
+                if data:x.XFree(data)
+        def parent(window):
+            native_root=Window();up=Window();children=c.POINTER(Window)();count=c.c_uint()
+            ok=x.XQueryTree(display,window,c.byref(native_root),c.byref(up),c.byref(children),c.byref(count))
+            if children:x.XFree(children)
+            return up.value if ok else 0
+        def role(window):
+            visited=set()
+            for _ in range(16):
+                if not window or window==root or window in visited:break
+                visited.add(window);pids=property_values(window,pid_atom,1)
+                if pids:
+                    pid=pids[0]
+                    if pid not in owned:return 'other'
+                    try:
+                        if kernel_birth(pid,'linux_ticks')!=owned[pid]:return 'other'
+                        args=psutil.Process(pid).cmdline()
+                        if len(args)>128 or kernel_birth(pid,'linux_ticks')!=owned[pid]:return 'other'
+                        return 'cef' if any(a=='--nb-dvizhok' or a.startswith('--type=') for a in args) else 'ownedApp'
+                    except (psutil.NoSuchProcess,psutil.AccessDenied):return 'other'
+                window=parent(window)
+            return 'other'
+        def info(window):
+            attrs=Attributes();ok=x.XGetWindowAttributes(display,window,c.byref(attrs))
+            values=property_values(window,type_atom,16)
+            return {'role':role(window),'window_type':next((types[v] for v in values if v in types),'other' if values else 'none'),
+                    'override_redirect':bool(attrs.override_redirect) if ok else False,'mapped':attrs.map_state==2 if ok else False}
+        current=root;visited={root};complete=False
+        for _ in range(16):
+            dx=c.c_int();dy=c.c_int();child=Window()
+            if not x.XTranslateCoordinates(display,root,current,expected[0],expected[1],c.byref(dx),c.byref(dy),c.byref(child)):break
+            if not child.value:complete=True;break
+            if child.value in visited:break
+            visited.add(child.value);current=child.value;result['chain'].append(info(current))
+        focus=Window();revert=c.c_int();x.XGetInputFocus(display,c.byref(focus),c.byref(revert));result['focus_role']=role(focus.value)
+        native_root=Window();child=Window();rx=c.c_int();ry=c.c_int();wx=c.c_int();wy=c.c_int();mask=c.c_uint()
+        if x.XQueryPointer(display,root,c.byref(native_root),c.byref(child),c.byref(rx),c.byref(ry),c.byref(wx),c.byref(wy),c.byref(mask)):
+            delta=(rx.value-expected[0],ry.value-expected[1]);bounded=all(abs(v)<=16384 for v in delta)
+            result.update(cursor_observed=True,cursor_delta_bounded=bounded,cursor_at_expected=delta==(0,0))
+            if bounded:result.update(cursor_dx=delta[0],cursor_dy=delta[1])
+        x.XSync(display,0);result.update(available=True,complete=complete and not failed[0],query_error=failed[0])
+        return result
+    finally:
+        x.XSync(display,0);x.XCloseDisplay(display);x.XSetErrorHandler(previous)
+
+
+def route_toolbar_observation(client,phase):
+    """No pointer/focus changes. Only a top-130px crop of an owned private Xvfb."""
+    if sys.platform=='win32':return {'available':False,'unsupported_platform':True}
+    result={'available':False,'crop_saved':False}
+    try:
+        device=client.route_trace_device;out=client.route_trace_out
+        require(os.environ.get('GITHUB_ACTIONS')=='true' and device.x is not None and device.x.poll() is None
+                and client.display==device.display,'Route observer private display unavailable')
+        label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+        require(label=='main','Route observer owner unavailable')
+        geometry=client.js('(()=>{const b=document.querySelector(".tab-route-button"),r=b?.getBoundingClientRect();return r?{point:[Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)],scale:devicePixelRatio||1,viewport:[innerWidth,innerHeight]}:null})()')
+        origin=client.command('plugin:window|inner_position',label=label)
+        expected,box=route_toolbar_geometry(geometry['point'],origin,geometry['scale'],geometry['viewport'])
+        if phase=='before':client.route_open_expected_point=expected
+        original=getattr(client,'route_open_expected_point',expected)
+        result['expected_point_unchanged']=expected==original
+        screen=subprocess.check_output(['xdotool','getdisplaygeometry'],env={**os.environ,'DISPLAY':device.display},text=True,timeout=3).split()
+        require(len(screen)==2 and all(v.isdecimal() for v in screen),'Route observer screen unavailable')
+        require(0<=box[0]<box[2]<=int(screen[0]) and 0<=box[1]<box[3]<=int(screen[1]),'Route observer crop outside owned screen')
+        from PIL import ImageGrab
+        with ImageGrab.grab(bbox=box,xdisplay=device.display) as shot:
+            require(shot.size==(box[2]-box[0],box[3]-box[1]),'Route observer crop unavailable')
+            shot.save(out/('route-open-'+phase+'.png'))
+        result.update(available=True,crop_saved=True,crop_width=box[2]-box[0],crop_height=box[3]-box[1])
+        result['hit_test']=route_native_hit(device,original)
+    except Exception:result['observation_failed']=True
+    return result
+
+
 # Diagnostic observers only. No React handlers, synthetic events or IPC replies.
 ROUTE_OPEN_DIAGNOSTIC = r'''
 (()=>{
@@ -448,7 +593,7 @@ ROUTE_OPEN_DIAGNOSTIC = r'''
  if(!internal||typeof internal.invoke!=='function')return false;
  const previous=window.__routeOpenDiagnostic;if(previous?.stop)try{previous.stop()}catch{}
  const original=internal.invoke,types=['pointerdown','pointerup','pointercancel','mousedown','mouseup','click'];
- const state={trace:[],counts:Object.fromEntries(types.map(t=>[t,{trusted_route:0,trusted_other:0,untrusted:0}])),restore_verified:false,observation_failed:false};
+ const state={trace:[],counts:Object.fromEntries(types.map(t=>[t,{trusted_route:0,trusted_other:0,untrusted:0}])),restore_verified:false,observation_failed:false,native_spy_installed:false};
  const started=performance.now();let live=true,observer=null;
  const ownRoute=e=>!!(e instanceof Element&&e.closest('.tab-route-button'));
  const snapshot=()=>{
@@ -472,7 +617,7 @@ ROUTE_OPEN_DIAGNOSTIC = r'''
  const stop=()=>{try{record('finished');live=false;observer?.disconnect();for(const t of types){document.removeEventListener(t,capture,true);document.removeEventListener(t,bubble,false)}if(internal.invoke===wrapped){internal.invoke=original;state.restore_verified=true}}catch{}return state;};
  window.__routeOpenDiagnostic={stop,state};
  try{
-  internal.invoke=wrapped;for(const t of types){document.addEventListener(t,capture,{capture:true,passive:true});document.addEventListener(t,bubble,{capture:false,passive:true})}
+  try{internal.invoke=wrapped;state.native_spy_installed=internal.invoke===wrapped}catch{state.native_spy_installed=false}for(const t of types){document.addEventListener(t,capture,{capture:true,passive:true});document.addEventListener(t,bubble,{capture:false,passive:true})}
   let before=snapshot();observer=new MutationObserver(records=>{try{
    const delta={route_added:0,route_removed:0,other_modal_added:0,other_modal_removed:0};
    const count=(nodes,removed)=>{for(const node of Array.from(nodes).slice(0,32)){if(!(node instanceof Element))continue;const candidates=[node,...Array.from(node.querySelectorAll('[data-tab-route-root],.zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay,.security-overlay')).slice(0,32)];for(const element of candidates){if(element.matches('[data-tab-route-root]')){const key=removed?'route_removed':'route_added';delta[key]=Math.min(32,delta[key]+1)}else if(element.matches('.zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay,.security-overlay')&&!element.closest('[data-tab-route-root]')){const key=removed?'other_modal_removed':'other_modal_added';delta[key]=Math.min(32,delta[key]+1)}}}};
@@ -494,7 +639,8 @@ def safe_route_open_trace(value):
            'phase':{'capture','bubble','request','resolved','rejected'},
            'command':{'pokazat_dvizhki','fokus_obolochke'},'route_state':{'pending','error','applied','unknown'}}
     result={'trace':[],'counts':{},'restore_verified':value.get('restore_verified') is True,
-            'observation_failed':value.get('observation_failed') is True}
+            'observation_failed':value.get('observation_failed') is True,
+            'native_spy_installed':value.get('native_spy_installed') is True}
     trace=value.get('trace',[])
     for row in trace[-32:] if isinstance(trace,list) else []:
         if not isinstance(row,dict) or row.get('event') not in enums['event']:continue
@@ -526,6 +672,11 @@ def route_open_trace_finish(client):
 
 
 def route_open_trace_self_test():
+    expected,box=route_toolbar_geometry([10,20],{'x':100,'y':200},1.5,[800,600])
+    assert expected==(115,230) and box==(100,200,1300,395)
+    try:route_toolbar_geometry([10,20],{'x':0,'y':0},10,[800,600])
+    except Exception:pass
+    else:raise AssertionError('Unbounded toolbar crop accepted')
     private='https://private.invalid/secret title'
     receipt=safe_route_open_trace({'trace':[{'event':'invoke','command':'pokazat_dvizhki','phase':'resolved','visible':False,'url':private,'error':private},{'event':private}], 'counts':{'click':{'trusted_route':1,'secret':private}},'restore_verified':True})
     assert private not in json.dumps(receipt) and len(receipt['trace'])==1 and receipt['restore_verified']
@@ -551,10 +702,13 @@ def route_open_trace_self_test():
     assert(context.invoke('pokazat_dvizhki',throwingArgs)===promise&&calls===3);
     for(const [type,fn,options] of [...listeners])if(type==='click')fn({type:'click',target:button,isTrusted:true,defaultPrevented:false});
     resolve('https://private.invalid/result');
-    Promise.resolve().then(async()=>{const output=window.__routeOpenDiagnostic.stop();assert(context.invoke===original&&listeners.length===0);assert(output.counts.click.trusted_route===1);assert(output.trace.some(x=>x.event==='invoke'&&x.phase==='resolved'));
+    Promise.resolve().then(async()=>{const output=window.__routeOpenDiagnostic.stop();assert(context.invoke===original&&listeners.length===0&&output.native_spy_installed===true);assert(output.counts.click.trusted_route===1);assert(output.trace.some(x=>x.event==='invoke'&&x.phase==='resolved'));
       const error=new Error('https://private.invalid/rejected');const rejected=Promise.reject(error);let rejectCalls=0;const rejectOriginal=()=>{rejectCalls++;return rejected};context.invoke=rejectOriginal;assert(eval(SCRIPT)===true);
       const result=context.invoke('fokus_obolochke');assert(result===rejected&&rejectCalls===1);assert(await result.catch(value=>value===error));
-      const second=window.__routeOpenDiagnostic.stop();assert(context.invoke===rejectOriginal&&listeners.length===0&&second.trace.some(x=>x.phase==='rejected'));console.log(JSON.stringify(output))
+      const second=window.__routeOpenDiagnostic.stop();assert(context.invoke===rejectOriginal&&listeners.length===0&&second.trace.some(x=>x.phase==='rejected'));
+      Object.defineProperty(context,'invoke',{value:original,writable:false,configurable:true});assert(eval(SCRIPT)===true);assert(window.__routeOpenDiagnostic.state.native_spy_installed===false);
+      for(const [type,fn] of [...listeners])if(type==='click')fn({type:'click',target:button,isTrusted:true,defaultPrevented:false});
+      const readonly=window.__routeOpenDiagnostic.stop();assert(context.invoke===original&&listeners.length===0&&readonly.counts.click.trusted_route===1);console.log(JSON.stringify(output))
     }).catch(()=>{process.exitCode=1});
     '''.replace('SCRIPT',json.dumps(script))
     completed=subprocess.run(['node','-'],input=harness,text=True,capture_output=True,timeout=5)
@@ -569,10 +723,15 @@ def apply_ui(client, label, owner, identifier, screenshot=None):
     require(call(client, 'aktivnaya') == owner and rows(client, owner)['aktivnaya'] == identifier,
             'Route UI target no longer matches the active native owner/tab')
     tracing=identifier==13 and owner=='routes-a'
-    if tracing:route_open_trace_begin(client,owner,identifier)
+    if tracing:
+        client.route_open_native={'before':route_toolbar_observation(client,'before')}
+        route_open_trace_begin(client,owner,identifier)
     try:
         client.click('button[aria-label="Путь вкладки"]')
         js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
+    except Exception:
+        if tracing:client.route_open_native['failure']=route_toolbar_observation(client,'failure')
+        raise
     finally:
         if tracing:route_open_trace_finish(client)
     choose(client, label)
@@ -675,6 +834,7 @@ def run(args):
                                  'route': connection('B'), 'otlozhena': False}],
                     'aktivnaya': 1, 'sleduyushchaya': 2, 'zakrytye': []})
         client = device.start()
+        client.route_trace_device=device;client.route_trace_out=out
         activate_saved(client, 'routes-a')
         assert_receipt(fixture, 'seed-a', 'A', 'A', 'A')
         for identifier, case, lane, auth, storage, tls in [
@@ -1028,6 +1188,7 @@ def run(args):
         config['vyhody'].reverse()
         write_json(device.data / 'nastrojki.json', config)
         client = device.start()
+        client.route_trace_device=device;client.route_trace_out=out
         restored_at = time.monotonic()
         activate_saved(client, 'routes-a')
         wait_for(lambda: any(r['time'] > restored_at and r['lane'] == 'B' for r in fixture.records('seed-b')), 'Cold restore lost opaque B connection ID')
@@ -1162,6 +1323,7 @@ def run(args):
         write_json(device.data / 'nastrojki.json', config)
         before_restart = len(fixture.requests('seed-b'))
         client = device.start()
+        client.route_trace_device=device;client.route_trace_out=out
         activate_saved(client, 'routes-a')
         wait_for(lambda: row(client, 'routes-a', 2).get('route_error'), 'Deleted ID was not blocked on cold restore', 40)
         time.sleep(2)
@@ -1191,6 +1353,8 @@ def run(args):
         if device and device.client:
             if hasattr(device.client,'route_open_trace'):
                 report['route_open_diagnostic']=safe_route_open_trace(device.client.route_open_trace)
+            if hasattr(device.client,'route_open_native'):
+                report['route_open_native']=device.client.route_open_native
             try:
                 report['shell_text_on_failure'] = device.client.js('document.body.innerText').strip()[:12000]
                 report['session_on_failure'] = rows(device.client, 'routes-a')
