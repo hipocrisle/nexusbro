@@ -444,10 +444,79 @@ def windows_selection_ready(device,dialog,target,diagnostics):
     require(False,'Native SaveAs filename selection not ready')
 
 
+def unicode_input_types(bits):
+    import ctypes as c
+    require(bits in (32,64),'Native Unicode input ABI invalid')
+    pointer=c.c_uint64 if bits==64 else c.c_uint32
+    class Mouse(c.Structure):
+        _fields_=[('dx',c.c_int32),('dy',c.c_int32),('mouseData',c.c_uint32),('flags',c.c_uint32),('time',c.c_uint32),('extra',pointer)]
+    class Keyboard(c.Structure):
+        _fields_=[('vk',c.c_uint16),('scan',c.c_uint16),('flags',c.c_uint32),('time',c.c_uint32),('extra',pointer)]
+    class Hardware(c.Structure):
+        _fields_=[('message',c.c_uint32),('low',c.c_uint16),('high',c.c_uint16)]
+    class Payload(c.Union):_fields_=[('mouse',Mouse),('keyboard',Keyboard),('hardware',Hardware)]
+    class Input(c.Structure):_fields_=[('kind',c.c_uint32),('payload',Payload)]
+    require(c.sizeof(Input)==(40 if bits==64 else 28) and Input.payload.offset==(8 if bits==64 else 4),'Native Unicode input ABI invalid')
+    return Input
+
+
+def unicode_input_events(text,bits):
+    require(isinstance(text,str) and '\0' not in text,'Native Unicode input text invalid')
+    raw=text.encode('utf-16-le');require(0<len(raw)<=2048,'Native Unicode input text invalid')
+    units=[int.from_bytes(raw[i:i+2],'little') for i in range(0,len(raw),2)]
+    Input=unicode_input_types(bits);events=(Input*(2*len(units)))()
+    for index,unit in enumerate(units):
+        for offset,flags in ((0,0x0004),(1,0x0004|0x0002)):
+            event=events[2*index+offset];event.kind=1;event.payload.keyboard.vk=0
+            event.payload.keyboard.scan=unit;event.payload.keyboard.flags=flags
+    return Input,events
+
+
+def insert_unicode_events_once(send,events,size,receipt):
+    receipt['inserted_events']=int(send(len(events),events,size))
+    require(receipt['inserted_events']==len(events),'Native Unicode input insertion incomplete')
+
+
+def windows_unicode_write(device,dialog,target,text,diagnostics):
+    # Actual foreground text input, not an Edit-control setter or clipboard.
+    # https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput
+    # https://learn.microsoft.com/en-us/windows/win32/api/winuser/ns-winuser-keybdinput
+    import ctypes as c
+    user=c.WinDLL('user32',use_last_error=True)
+    user.GetAsyncKeyState.argtypes=[c.c_int];user.GetAsyncKeyState.restype=c.c_int16
+    deadline=time.monotonic()+1
+    while any(user.GetAsyncKeyState(key)&0x8000 for key in (0x11,0x10,0x12,0x5b,0x5c)):
+        require(time.monotonic()<deadline,'Native Unicode input modifiers not released')
+        time.sleep(.025) # Observation only; never synthesize a modifier release.
+    focus=windows_path_focus(device,dialog,target)
+    require(focus.get('observed') and focus.get('foreground')=='same_dialog' and focus.get('focus')=='same_edit','Native SaveAs filename focus not ready')
+    Input,events=unicode_input_events(text,c.sizeof(c.c_void_p)*8)
+    receipt={'unicode_stream':True,'modifiers_released':True,'expected_events':len(events),'inserted_events':0,'input_bytes':c.sizeof(Input)}
+    if diagnostics is not None:
+        items=diagnostics.setdefault('windows_unicode_input',[])
+        require(len(items)<8,'Native Unicode input diagnostic bound exceeded');items.append(receipt)
+    user.SendInput.argtypes=[c.c_uint32,c.POINTER(Input),c.c_int];user.SendInput.restype=c.c_uint32
+    insert_unicode_events_once(user.SendInput,events,c.sizeof(Input),receipt)
+
+
+def single_deletion_diagnostic(value,expected):
+    result={'single_deletion_index':None,'single_deletion_charclass':None,'single_deletion_ambiguous':False}
+    if not isinstance(value,str) or not isinstance(expected,str) or len(expected)>512 or len(value)!=len(expected)-1:return result
+    positions=[i for i in range(len(expected)) if expected[:i]+expected[i+1:]==value]
+    if not positions:return result
+    result['single_deletion_ambiguous']=len(positions)>1
+    if len(positions)==1:result['single_deletion_index']=positions[0]
+    char=expected[positions[0]]
+    result['single_deletion_charclass']=('path_separator' if char in '/\\' else 'drive_separator' if char==':' else
+        'ascii_letter' if char.isascii() and char.isalpha() else 'digit' if char.isascii() and char.isdigit() else
+        'space' if char==' ' else 'non_ascii' if not char.isascii() else 'punctuation' if char.isprintable() else 'control')
+    return result
+
+
 def path_entry_comparison(value,bounded,expected):
     checked=isinstance(value,str)
     valid=bool(bounded and checked)
-    return {'filename_checked':checked,'filename_bounded':bool(bounded),
+    result={'filename_checked':checked,'filename_bounded':bool(bounded),
             'filename_equals_expected_target':valid and value==expected,
             'filename_empty':valid and not value,
             'filename_length_equal':valid and len(value)==len(expected),
@@ -456,6 +525,8 @@ def path_entry_comparison(value,bounded,expected):
             'filename_full_path_suffix':valid and value.endswith(expected),
             'filename_length_delta':max(-512,min(512,len(value)-len(expected))) if valid else None,
             'filename_extra_prefix_single_a':valid and value=='a'+expected}
+    result.update(single_deletion_diagnostic(value if valid else None,expected))
+    return result
 
 
 def verify_windows_path_entry(device,dialog,target,expected,diagnostics,*,focus_before=None):
@@ -553,7 +624,7 @@ def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
             # reject any missed selection or queued input. No corrective input.
             gui.hotkey('ctrl','a',interval=.05)
             focus_before=windows_selection_ready(device,dialog,target,diagnostics)
-            gui.write(str(path),interval=.02)
+            windows_unicode_write(device,dialog,target,str(path),diagnostics)
             verify_windows_path_entry(device,dialog,target,str(path),diagnostics,focus_before=focus_before)
             keys(device,'enter')
     else:
@@ -754,6 +825,10 @@ def run(args):
             'Native SaveAs did not appear':'save_dialog_did_not_appear',
             'Native SaveAs ambiguous':'save_dialog_ambiguous',
             'Native SaveAs path entry mismatch':'path_entry_mismatch',
+            'Native Unicode input insertion incomplete':'unicode_input_incomplete',
+            'Native Unicode input modifiers not released':'unicode_modifiers_held',
+            'Native Unicode input ABI invalid':'unicode_input_abi',
+            'Native Unicode input text invalid':'unicode_input_text',
             'Native SaveAs filename focus not ready':'filename_focus_not_ready',
             'Native SaveAs filename selection not ready':'filename_selection_not_ready',
             'Native completion dismissal closed SaveAs':'completion_closed_save_dialog',
@@ -823,6 +898,22 @@ def self_test():
     require(comparison['filename_equals_expected_target'] and comparison['filename_basename_suffix'],'Exact path diagnostic mismatch')
     comparison=path_entry_comparison('example.webm',True,'Example.webm')
     require(not comparison['filename_equals_expected_target'] and comparison['filename_casefold_equal'],'Casefold diagnostic mismatch')
+    import ctypes
+    for bits,size in ((32,28),(64,40)):
+        Input,events=unicode_input_events('a😀',bits)
+        require(ctypes.sizeof(Input)==size and len(events)==6,'Unicode input ABI/pair mismatch')
+        require([e.payload.keyboard.scan for e in events]==[97,97,0xd83d,0xd83d,0xde00,0xde00],'Unicode unit order mismatch')
+        require([e.payload.keyboard.flags for e in events]==[4,6,4,6,4,6],'Unicode balanced flags mismatch')
+        for inserted in (0,len(events)-1,len(events)):
+            calls=[];receipt={}
+            def send(count,array,input_size):calls.append(count);return inserted
+            failed=False
+            try:insert_unicode_events_once(send,events,size,receipt)
+            except Exception:failed=True
+            require(len(calls)==1 and failed==(inserted!=len(events)),'Unicode partial insertion resent or accepted')
+    require(single_deletion_diagnostic('ac','abc')['single_deletion_index']==1,'Single deletion index mismatch')
+    require(single_deletion_diagnostic('ac','abc')['single_deletion_charclass']=='ascii_letter','Deletion class mismatch')
+    require(single_deletion_diagnostic('a','aa')['single_deletion_ambiguous'],'Repeated deletion ambiguity lost')
     prefixed=path_entry_comparison('aExample.webm',True,'Example.webm')
     require(prefixed['filename_full_path_suffix'] and prefixed['filename_length_delta']==1 and prefixed['filename_extra_prefix_single_a'],'Single queued-character diagnostic mismatch')
     require(not path_entry_comparison('aaExample.webm',True,'Example.webm')['filename_extra_prefix_single_a'],'Multiple prefix misclassified')
