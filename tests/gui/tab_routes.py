@@ -606,6 +606,22 @@ def route_native_hit(device,expected):
         x.XSync(display,0);x.XCloseDisplay(display);x.XSetErrorHandler(previous)
 
 
+def route_native_screenshot_allowed(hit):
+    return (isinstance(hit,dict) and hit.get('available') is True and hit.get('complete') is True
+            and hit.get('visual_scan_complete') is True and hit.get('nonowned_cover') is False)
+
+
+def block_unknown_route_screenshot(client,hit=None):
+    # Only Linux native diagnostic callers use this guard. It has no effect on
+    # the independent Windows path, which has no corresponding X11 evidence.
+    if not route_native_screenshot_allowed(hit):
+        client.route_forbid_failure_screenshot=True
+        if isinstance(hit,dict) and hit.get('nonowned_cover') is True:
+            client.route_screenshot_block_reason='foreign_cover'
+        elif getattr(client,'route_screenshot_block_reason',None)!='foreign_cover':
+            client.route_screenshot_block_reason='incomplete_observation'
+
+
 def covering_native_tooltips(hit):
     if not isinstance(hit,dict) or hit.get('available') is not True or hit.get('complete') is not True or hit.get('visual_scan_complete') is not True or hit.get('nonowned_cover') is not False:return []
     values=hit.get('mapped_owned_tooltips',[])
@@ -655,7 +671,7 @@ def natural_route_tooltip_hover(client):
     deadline=time.monotonic()+5
     while time.monotonic()<deadline and receipt['observations']<50:
         hit=route_native_hit(device,expected);receipt['observations']+=1;receipt['last_hit']=hit
-        if hit.get('nonowned_cover') is True:client.route_forbid_failure_screenshot=True
+        block_unknown_route_screenshot(client,hit)
         require(hit.get('nonowned_cover') is False,'Route tooltip target covered by foreign window')
         if covering_native_tooltips(hit):receipt['mapped_covering_tooltip_observed']=True;return
         time.sleep(.08)
@@ -682,14 +698,16 @@ def route_toolbar_observation(client,phase):
         require(len(screen)==2 and all(v.isdecimal() for v in screen),'Route observer screen unavailable')
         require(0<=box[0]<box[2]<=int(screen[0]) and 0<=box[1]<box[3]<=int(screen[1]),'Route observer crop outside owned screen')
         result['hit_test']=route_native_hit(device,original)
-        if result['hit_test'].get('nonowned_cover') is True:client.route_forbid_failure_screenshot=True
-        require(not result['hit_test'].get('nonowned_cover',True),'Route observer foreign cover')
+        block_unknown_route_screenshot(client,result['hit_test'])
+        require(route_native_screenshot_allowed(result['hit_test']),'Route observer native ownership not established')
         from PIL import ImageGrab
         with ImageGrab.grab(bbox=box,xdisplay=device.display) as shot:
             require(shot.size==(box[2]-box[0],box[3]-box[1]),'Route observer crop unavailable')
             shot.save(out/('route-open-'+phase+'.png'))
         result.update(available=True,crop_saved=True,crop_width=box[2]-box[0],crop_height=box[3]-box[1])
-    except Exception:result['observation_failed']=True
+    except Exception:
+        block_unknown_route_screenshot(client)
+        result['observation_failed']=True
     return result
 
 
@@ -779,6 +797,24 @@ def route_open_trace_finish(client):
 
 
 def route_open_trace_self_test():
+    complete=dict(available=True,complete=True,visual_scan_complete=True,nonowned_cover=False)
+    assert route_native_screenshot_allowed(complete)
+    for bad in (None,{},dict(complete,available=False),dict(complete,complete=False),
+                dict(complete,visual_scan_complete=False),dict(complete,nonowned_cover=True),
+                dict(complete,complete=1)):
+        assert not route_native_screenshot_allowed(bad)
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    unknown=SimpleNamespace();block_unknown_route_screenshot(unknown,dict(complete,complete=False))
+    assert unknown.route_forbid_failure_screenshot and unknown.route_screenshot_block_reason=='incomplete_observation'
+    foreign=SimpleNamespace();block_unknown_route_screenshot(foreign,dict(complete,nonowned_cover=True))
+    assert foreign.route_forbid_failure_screenshot and foreign.route_screenshot_block_reason=='foreign_cover'
+    block_unknown_route_screenshot(foreign)
+    assert foreign.route_screenshot_block_reason=='foreign_cover'
+    windows=SimpleNamespace()
+    with patch.object(sys,'platform','win32'):
+        assert route_toolbar_observation(windows,'before')['unsupported_platform'] is True
+    assert not hasattr(windows,'route_forbid_failure_screenshot')
     tooltip=dict(role='ownedApp',window_type='tooltip',mapped=True,override_redirect=True,covers_expected=True,
                  input_shape_supported=True,input_shape_observed=True,input_rectangles=0,input_empty=True)
     hit=dict(available=True,complete=True,visual_scan_complete=True,nonowned_cover=False,mapped_owned_tooltips=[tooltip])
@@ -1486,7 +1522,10 @@ def run(args):
             except Exception as diagnostic_error:
                 report['diagnostic_error'] = type(diagnostic_error).__name__
         if device and getattr(device.client,'route_forbid_failure_screenshot',False):
-            report['failure_screenshot_blocked_nonowned_cover']=True
+            reason=getattr(device.client,'route_screenshot_block_reason','incomplete_observation')
+            report['failure_screenshot_blocked_native_ownership']=True
+            report['route_screenshot_block_reason']=reason if reason in ('foreign_cover','incomplete_observation') else 'incomplete_observation'
+            if reason=='foreign_cover':report['failure_screenshot_blocked_nonowned_cover']=True
         if device and not getattr(device.client,'route_forbid_failure_screenshot',False):
             # Startup/inspector failures need a native screen too, even before
             # a CDP client exists. Capture before terminating the owned app.
