@@ -83,6 +83,31 @@ impl PrepareFailure {
     }
 }
 
+/// Sanitize terminal fixture/native-open failures without exposing their text.
+pub fn failure_code(error: &str) -> &'static str {
+    match error {
+        "resume_prepare_busy" => "resume_prepare_busy",
+        "resume_prepare_full" => "resume_prepare_full",
+        "resume_prepare_unavailable" => "resume_prepare_unavailable",
+        "resume_prepare_storage" => "resume_prepare_storage",
+        "resume_prepare_invalid_position" => "resume_prepare_invalid_position",
+        "resume_prepare_timeout" => "resume_prepare_timeout",
+        "resume_prepare_panic" => "resume_prepare_panic",
+        "resume_admit_wrong_thread" => "resume_admit_wrong_thread",
+        "resume_admit_stale" => "resume_admit_stale",
+        "resume_admit_disabled" => "resume_admit_disabled",
+        "resume_admit_cancelled" => "resume_admit_cancelled",
+        "resume_admit_browser_changed" => "resume_admit_browser_changed",
+        "resume_admit_route_changed" => "resume_admit_route_changed",
+        "resume_admit_private_changed" => "resume_admit_private_changed",
+        "resume_admit_document_unavailable" => "resume_admit_document_unavailable",
+        "resume_admit_document_changed" => "resume_admit_document_changed",
+        "resume_admit_scope_unavailable" => "resume_admit_scope_unavailable",
+        "resume_admit_scope_changed" => "resume_admit_scope_changed",
+        _ => "resume_open_refused",
+    }
+}
+
 // Deliberately no Debug/Serialize/Clone: contains private native context data
 // and the nonduplicable process-wide permit.
 pub struct Ready {
@@ -333,6 +358,17 @@ mod tests {
 #[cfg(test)]
 mod failure_tests {
     use super::PrepareFailure;
+    #[test]
+    fn unknown_error_text_cannot_escape_code_boundary() {
+        assert_eq!(
+            super::failure_code("private/path secret"),
+            "resume_open_refused"
+        );
+        assert_eq!(
+            super::failure_code("resume_prepare_storage"),
+            "resume_prepare_storage"
+        );
+    }
     #[test]
     fn every_service_category_has_unique_bounded_static_code() {
         use crate::youtube_light_resume_service::ServiceError;
