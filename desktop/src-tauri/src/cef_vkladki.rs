@@ -1132,7 +1132,9 @@ impl Rabota {
                     if k.routes.borrow().key_for_browser(browser.identifier()).as_deref()!=Some(route.key.as_str()){crate::cef_youtube_resume_fixture::discard(ready);continue;}
                     let result=crate::cef_youtube_resume_fixture::admit(ready,browser,&route,tab.route_generation,tab.privatnaya||*force_private)
                         .and_then(|(operation,resume)|crate::cef_youtube::open_fixture_with_resume(browser,operation,resume));
-                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":false,"error":result.err()})));
+                    let code=result.as_ref().err().map(|reason|crate::cef_youtube_resume_fixture::failure_code(reason));
+                    let error=result.is_err().then_some("Подготовка позиции видео недоступна");
+                    let _=tx.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":id,"start":false,"error":error,"code":code})));
                     continue;
                 }
                 Sobytie::Komanda(Komanda::YoutubeReferenceSnapshot{id,video_id})=>{

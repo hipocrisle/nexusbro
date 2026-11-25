@@ -77,7 +77,17 @@ PROBE_CODES = {
 }
 
 
-def fixture_ack_class(error):
+RESUME_FAILURE_CODES={
+    'resume_prepare_busy','resume_prepare_full','resume_prepare_unavailable','resume_prepare_storage',
+    'resume_prepare_invalid_position','resume_prepare_timeout','resume_prepare_panic',
+    'resume_admit_wrong_thread','resume_admit_stale','resume_admit_disabled','resume_admit_cancelled',
+    'resume_admit_browser_changed','resume_admit_route_changed','resume_admit_private_changed',
+    'resume_admit_document_unavailable','resume_admit_document_changed','resume_admit_scope_unavailable',
+    'resume_admit_scope_changed','resume_open_refused'}
+
+
+def fixture_ack_class(error,code=None):
+    if code in RESUME_FAILURE_CODES:return code
     if error is None: return 'accepted'
     return {'Подготовка позиции видео недоступна': 'resume_preparation_refused',
             'Позиция видео сейчас недоступна': 'resume_setup_refused',
@@ -126,7 +136,7 @@ def admit(client, owner, tab, low, high, diagnostics):
         ordinary_blank=selected.get('adres') == 'about:blank')
     client.js('window.__resumeResults=[];true')
     call(client, 'obychnaya_komanda', id=owner, komanda={'deystvie': 'youtube_resume_fixture', 'id': tab})
-    expression = 'window.__resumeResults.filter(x=>x.super_id===' + json.dumps(owner) + '&&x.data?.id===' + str(tab) + ').slice(-8).map(x=>({start:x.data?.start,error:x.data?.error??null}))'
+    expression = 'window.__resumeResults.filter(x=>x.super_id===' + json.dumps(owner) + '&&x.data?.id===' + str(tab) + ').slice(-8).map(x=>({start:x.data?.start,error:x.data?.error??null,code:x.data?.code??null}))'
     def terminal():
         events = client.js(expression)
         if not isinstance(events, list): return None
@@ -134,11 +144,11 @@ def admit(client, owner, tab, low, high, diagnostics):
         result = next((event for event in events if isinstance(event, dict) and event.get('start') is False), None)
         if result is not None:
             receipt['terminal_ack_seen'] = True
-            receipt['terminal_code'] = fixture_ack_class(result.get('error'))
+            receipt['terminal_code'] = fixture_ack_class(result.get('error'),result.get('code'))
             receipt['terminal_codes'] = {receipt['terminal_code']: 1}
         return result
     acknowledgement = wait_for(terminal, 'Resume fixture terminal acknowledgement missing', 30)
-    require(acknowledgement.get('error') is None, 'Resume fixture admission refused')
+    require(acknowledgement.get('error') is None and acknowledgement.get('code') is None, 'Resume fixture admission refused')
     def admitted():
         snapshot = admission_probe(client, owner, tab, diagnostics, receipt, admitting=True)
         if not configured(snapshot): return None
@@ -380,8 +390,10 @@ def run(args):
 def self_test():
     assert fixture_ack_class(None) == 'accepted'
     assert fixture_ack_class('Подготовка позиции видео недоступна') == 'resume_preparation_refused'
+    assert fixture_ack_class('Подготовка позиции видео недоступна','resume_prepare_storage') == 'resume_prepare_storage'
     private = 'https://private.invalid/path secret'
     assert private not in fixture_ack_class(private)
+    assert private not in fixture_ack_class(private,private)
     assert 'probe_document_not_admitted' in PROBE_CODES and 'probe_timeout' in PROBE_CODES
     assert different_process_identity((1, '10'), (2, '11'))
     assert different_process_identity((1, '10'), (1, '11'))  # PID reuse is a new OS identity.
