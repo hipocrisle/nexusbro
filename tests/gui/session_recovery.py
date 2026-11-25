@@ -241,6 +241,7 @@ def run(exe, cef, out, display=':97'):
     data.mkdir()
     hits = []
     checks = []
+    terminal_success = False
 
     class Fixture(http.server.BaseHTTPRequestHandler):
         def do_GET(self):
@@ -420,8 +421,15 @@ def run(exe, cef, out, display=':97'):
         assert len(json.loads((data / 'windows-recovery.json').read_text())['windows']) == 1
         checks.append({'graceful_app_exit_retains_open_window_recovery_snapshot': True})
         main, secondary = start()
+        closed_label=next(label for label,client in clients.items() if client is secondary)
         close_owned_secondary(secondary, app, exe, display)
         wait(lambda: json.loads((data / 'windows-recovery.json').read_text())['windows'] == [], 'Explicit window close did not remove its recovery record')
+        # Native closure/removal is proved above. Retire only the inspector
+        # bookkeeping, so later main-only quit never queries a dead renderer.
+        retired=clients.pop(closed_label)
+        assert retired is secondary
+        try:retired.close()
+        except Exception:pass
         checks.append({'explicit_secondary_window_close_commits_removal': True})
         stop(crash=False)
         main, secondary = start(expected=1)
@@ -430,6 +438,7 @@ def run(exe, cef, out, display=':97'):
         assert json.loads((data / 'windows-recovery.json').read_text())['windows'] == []
         checks.append({'closed_window_does_not_resurrect_on_next_start': True})
         stop(crash=False)
+        terminal_success = True
     finally:
         if app:
             try:
@@ -443,7 +452,7 @@ def run(exe, cef, out, display=':97'):
             x.terminate()
             x.wait(timeout=10)
         server.shutdown()
-        (out / 'results.json').write_text(json.dumps({'completed': len(checks) == 6, 'checks': checks}, indent=2) + '\n')
+        (out / 'results.json').write_text(json.dumps({'completed': terminal_success and len(checks) == 6, 'checks': checks}, indent=2) + '\n')
 
 
 if __name__ == '__main__':
