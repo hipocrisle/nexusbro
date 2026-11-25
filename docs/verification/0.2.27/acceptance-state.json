@@ -36,8 +36,13 @@
     "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
-    "status": "not_run",
-    "accepted": false
+    "status": "blocked_native_benchmark_fixture_only",
+    "accepted": false,
+    "native_gate": "desktop/src-tauri/src/cef_youtube_benchmark.rs:65",
+    "local_execution_performed": false,
+    "gha_environment_spoofed": false,
+    "local_preparation_branch": "research/youtube-home-paired",
+    "preparation_reviewed_ready": false
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -145,9 +150,21 @@
     "run": 45638466418,
     "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
     "test_source": "0e95fcbdadb534262fb34c88e78a18732b8ea135",
-    "status": "in_progress",
+    "status": "failure",
     "change": "one hover on existing route-button title after observed neutral exit",
     "overlap_and_input_shape_contract_unchanged": true,
-    "accepted": false
+    "accepted": false,
+    "observations": 50,
+    "mapped_seen": 0,
+    "native_focus_role": "cef"
+  },
+  "linux_strict_focus_check": {
+    "run": 45640001478,
+    "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+    "test_source": "4d66e17c6fe2a1ed8765041d94466f605e6716ab",
+    "status": "in_progress",
+    "accepted": false,
+    "precondition": "one native shell-focus command; require actual ownedApp focus before one natural hover",
+    "tooltip_contract_unchanged": true
   }
 }
