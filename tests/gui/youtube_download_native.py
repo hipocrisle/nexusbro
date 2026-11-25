@@ -81,24 +81,51 @@ def _windows_dialog_observation(device,*,inspect_default=False):
     from youtube_player_native import native_owner
     user=ctypes.WinDLL('user32',use_last_error=True)
     user.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];user.GetWindow.restype=wintypes.HWND
+    user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int];user.GetClassNameW.restype=ctypes.c_int
+    user.IsWindowVisible.argtypes=[wintypes.HWND];user.IsWindowVisible.restype=wintypes.BOOL
+    user.IsIconic.argtypes=[wintypes.HWND];user.IsIconic.restype=wintypes.BOOL
+    user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)];user.GetWindowRect.restype=wintypes.BOOL
+    user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];user.GetWindowThreadProcessId.restype=wintypes.DWORD
+    user.GetWindowTextW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int];user.GetWindowTextW.restype=ctypes.c_int
     root=native_owner(device).handle;owned=owned_pids(device)
     result={'dialogs':[],'complete':True}
+    handles=[];scanned=0
+    callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+    @callback_type
+    def collect(handle,_):
+        nonlocal scanned
+        scanned+=1
+        if scanned>512:result['complete']=False;return False
+        name=ctypes.create_unicode_buffer(64)
+        if user.GetClassNameW(handle,name,len(name)) and name.value=='#32770':
+            if len(handles)>=8:result['complete']=False;return False
+            handles.append(handle)
+        return True
+    user.EnumWindows.argtypes=[callback_type,wintypes.LPARAM];user.EnumWindows.restype=wintypes.BOOL
+    if not user.EnumWindows(collect,0) and result['complete']:result['complete']=False
+    left,top,sw,sh=(user.GetSystemMetrics(index) for index in (76,77,78,79))
     expected='YouTube-BaW_jenozKc-fixture-video.webm'
     known_titles={'Save As','Save as','Сохранить как','Сохранение','Speichern unter'}
-    for window in Desktop(backend='uia').windows():
-        if window.class_name()!='#32770' or not window.is_visible():continue
-        if len(result['dialogs'])>=8:result['complete']=False;break
+    for handle in handles:
         item={'owned_process':False,'process':'other','root_owner_match':False,
               'root_owner_depth':None,'owner_chain_complete':False,'known_save_as_title':False,
               'filename_edit_1001':False,'filename_value_checked':False,'expected_fixture_filename':False,
               'save_button':False,'cancel_button':False,'controls_complete':True}
         result['dialogs'].append(item)
         try:
-            pid=window.process_id();item['owned_process']=pid in owned
+            pid=wintypes.DWORD();user.GetWindowThreadProcessId(handle,ctypes.byref(pid));pid=pid.value
+            item['owned_process']=pid in owned
+            item['native_visible']=bool(user.IsWindowVisible(handle));item['native_iconic']=bool(user.IsIconic(handle))
+            rect=wintypes.RECT();read=bool(user.GetWindowRect(handle,ctypes.byref(rect)))
+            width,height=rect.right-rect.left,rect.bottom-rect.top
+            valid=read and 0<width<=16384 and 0<height<=16384
+            item['native_rect_valid']=valid
+            item['native_width']=width if valid else None;item['native_height']=height if valid else None
+            item['native_intersects_screen']=bool(valid and sw>0 and sh>0 and rect.right>left and rect.bottom>top and rect.left<left+sw and rect.top<top+sh)
             name=psutil.Process(pid).name().lower()
             item['process']={'nexusbro.exe':'nexusbro','msedgewebview2.exe':'msedgewebview2',
                              'explorer.exe':'explorer','dllhost.exe':'dllhost'}.get(name,'other')
-            cursor=window.handle;seen=set()
+            cursor=handle;seen=set()
             for depth in range(8):
                 if not cursor: item['owner_chain_complete']=True;break
                 if cursor in seen:break
@@ -106,7 +133,10 @@ def _windows_dialog_observation(device,*,inspect_default=False):
                     item['root_owner_match']=True;item['root_owner_depth']=depth
                     item['owner_chain_complete']=True;break
                 seen.add(cursor);cursor=user.GetWindow(cursor,4)
-            item['known_save_as_title']=window.window_text() in known_titles
+            title=ctypes.create_unicode_buffer(128)
+            user.GetWindowTextW(handle,title,len(title));item['known_save_as_title']=title.value in known_titles
+            window=Desktop(backend='uia').window(handle=handle)
+            item['uia_offscreen']=not window.is_visible()
             pending=list(window.children())[:33];inspected=0
             while pending and inspected<32:
                 control=pending.pop(0);inspected+=1
