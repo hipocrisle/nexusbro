@@ -45,6 +45,143 @@ thread_local! {
     static PENDING: RefCell<HashMap<i32, Pending>> = RefCell::new(HashMap::new());
 }
 
+// A blank Browser can exist before memory-bootstrap replaces its first
+// document. Only native load completion AND authenticated renderer commit
+// for the same current main frame authorize asynchronous preparation.
+#[derive(Default)]
+struct Commit {
+    loaded: Option<(String, String)>,
+    authenticated: Option<(String, String)>,
+}
+impl Commit {
+    fn ready(&self, current: &(String, String)) -> bool {
+        self.loaded.as_ref() == Some(current) && self.authenticated.as_ref() == Some(current)
+    }
+}
+struct Waiting {
+    identity: i32,
+    browser: Browser,
+    tab: u64,
+    route_generation: u64,
+    route: NativeRoute,
+    private: bool,
+    sender: Sender<Sobytie>,
+    since: std::time::Instant,
+    _permit: Permit,
+}
+thread_local! {
+    static COMMITS:RefCell<HashMap<i32,Commit>>=Default::default();
+    static WAITING:RefCell<Vec<Waiting>>=Default::default();
+}
+fn committed(browser: &Browser) -> bool {
+    let Ok(current) = document(browser) else {
+        return false;
+    };
+    let identity = browser.identifier();
+    COMMITS.with(|s| s.borrow().get(&identity).is_some_and(|c| c.ready(&current)))
+}
+pub fn loaded(browser: &Browser, frame: &Frame) {
+    if !enabled()
+        || currently_on(ThreadId::UI) == 0
+        || frame.is_main() == 0
+        || frame.is_valid() == 0
+    {
+        return;
+    }
+    let Ok(current) = document(browser) else {
+        return;
+    };
+    if CefString::from(&frame.identifier()).to_string() != current.0
+        || CefString::from(&frame.url()).to_string() != current.1
+    {
+        return;
+    }
+    let identity = browser.identifier();
+    COMMITS.with(|s| s.borrow_mut().entry(identity).or_default().loaded = Some(current));
+}
+pub fn authenticated_document(browser: &Browser, frame: &Frame) {
+    if !enabled()
+        || currently_on(ThreadId::UI) == 0
+        || frame.is_main() == 0
+        || frame.is_valid() == 0
+    {
+        return;
+    }
+    let Ok(current) = document(browser) else {
+        return;
+    };
+    if CefString::from(&frame.identifier()).to_string() != current.0
+        || CefString::from(&frame.url()).to_string() != current.1
+    {
+        return;
+    }
+    let identity = browser.identifier();
+    COMMITS.with(|s| s.borrow_mut().entry(identity).or_default().authenticated = Some(current));
+}
+fn waiting_error(waiting: &Waiting, code: &'static str) {
+    let _=waiting.sender.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":waiting.tab,"start":false,"error":REFUSED,"code":code})));
+}
+pub fn any_pending() -> bool {
+    ACTIVE.load(Ordering::Acquire) != 0
+}
+pub fn poll() {
+    if currently_on(ThreadId::UI) == 0 || crate::cef_app_shutdown::active() {
+        return;
+    }
+    let waiting = WAITING.with(|s| std::mem::take(&mut *s.borrow_mut()));
+    for pending in waiting {
+        if pending.browser.is_valid() == 0 {
+            waiting_error(&pending, "resume_native_commit_closed");
+            continue;
+        }
+        if pending.since.elapsed() >= std::time::Duration::from_secs(5) {
+            waiting_error(&pending, "resume_native_commit_timeout");
+            continue;
+        }
+        if committed(&pending.browser) {
+            let Waiting {
+                browser,
+                tab,
+                route_generation,
+                route,
+                private,
+                sender,
+                _permit,
+                ..
+            } = pending;
+            let result = prepare(
+                &browser,
+                tab,
+                route_generation,
+                &route,
+                private,
+                sender.clone(),
+                _permit,
+            );
+            if let Err(code) = result {
+                let _=sender.send(Sobytie::Sluzhebnoe(serde_json::json!({"tip":"youtube-result","id":tab,"start":false,"error":REFUSED,"code":failure_code(code)})));
+            }
+        } else {
+            WAITING.with(|s| s.borrow_mut().push(pending));
+        }
+    }
+}
+pub fn closed(browser: i32) {
+    cancel(browser);
+    let removed = WAITING.with(|s| {
+        let all = std::mem::take(&mut *s.borrow_mut());
+        let (removed, keep) = all
+            .into_iter()
+            .partition::<Vec<_>, _>(|w| w.identity == browser);
+        *s.borrow_mut() = keep;
+        removed
+    });
+    for waiting in &removed {
+        waiting_error(waiting, "resume_native_commit_closed");
+    }
+    drop(removed);
+}
+
 // Only fixed categories cross the fixture boundary; no underlying error text.
 #[derive(Clone, Copy)]
 enum PrepareFailure {
@@ -166,10 +303,64 @@ pub fn start(
     {
         return Err(REFUSED);
     }
+    let permit = Permit::acquire().ok_or(REFUSED)?;
+    if committed(browser) {
+        return prepare(
+            browser,
+            tab,
+            route_generation,
+            route,
+            private,
+            sender,
+            permit,
+        );
+    }
+    let identity = browser.identifier();
+    let pending = Waiting {
+        identity,
+        browser: browser.clone(),
+        tab,
+        route_generation,
+        route: route.clone(),
+        private,
+        sender,
+        since: std::time::Instant::now(),
+        _permit: permit,
+    };
+    let mut pending = Some(pending);
+    let accepted = WAITING.with(|s| {
+        let mut s = s.borrow_mut();
+        if s.iter().any(|w| w.identity == identity) {
+            false
+        } else {
+            s.push(pending.take().unwrap());
+            true
+        }
+    });
+    drop(pending);
+    if accepted {
+        Ok(())
+    } else {
+        Err(REFUSED)
+    }
+}
+
+fn prepare(
+    browser: &Browser,
+    tab: u64,
+    route_generation: u64,
+    route: &NativeRoute,
+    private: bool,
+    sender: Sender<Sobytie>,
+    permit: Permit,
+) -> Result<(), &'static str> {
+    if !enabled() || currently_on(ThreadId::UI) == 0 || browser.is_valid() == 0 || !route.validate()
+    {
+        return Err(REFUSED);
+    }
     let identity = browser.identifier();
     let (frame, document) = document(browser)?;
     let (scope, root) = crate::cef_youtube_resume::setup(browser, &route.key, private)?;
-    let permit = Permit::acquire().ok_or(REFUSED)?;
     let operation = OPERATION
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| n.checked_add(1))
         .map_err(|_| REFUSED)?;
@@ -303,6 +494,9 @@ pub fn cancel(browser: i32) {
     if currently_on(ThreadId::UI) == 0 {
         return;
     }
+    COMMITS.with(|s| {
+        s.borrow_mut().remove(&browser);
+    });
     PENDING.with(|slot| {
         if let Ok(mut map) = slot.try_borrow_mut() {
             if let Some(old) = map.remove(&browser) {
@@ -315,6 +509,20 @@ pub fn cancel(browser: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn load_and_authenticated_commit_must_match_exact_current_document() {
+        let a = ("frame-a".into(), "about:blank".into());
+        let b = ("frame-b".into(), "about:blank".into());
+        let mut commit = Commit::default();
+        commit.loaded = Some(a.clone());
+        assert!(!commit.ready(&a));
+        commit.authenticated = Some(b.clone());
+        assert!(!commit.ready(&a));
+        assert!(!commit.ready(&b));
+        commit.loaded = Some(b.clone());
+        assert!(commit.ready(&b));
+        assert!(!Commit::default().ready(&b));
+    }
     #[test]
     fn stale_operation_cannot_consume_newer_pending_request() {
         let old = Arc::new(AtomicBool::new(false));

@@ -99,6 +99,7 @@ wrap_load_handler! {
             if let (Some(browser),Some(frame))=(browser.as_ref(),frame.as_ref()){crate::cef_youtube::on_loaded(browser,frame);}
             if (200..600).contains(&_http_status_code)&&frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::memory_guard::load_succeeded(b.identifier());}}
             if self.bootstrap.waiting_for_target(){return;}
+            if self.bootstrap.approved(){if let (Some(browser),Some(frame))=(browser.as_ref(),frame.as_ref()){crate::cef_youtube_resume_fixture::loaded(browser,frame);}}
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(b)=browser.as_ref(){crate::password_cef::install(b,self.id,self.privatnaya,self.tx.clone());let _=self.tx.send(Sobytie::MemoryLoaded(self.id,b.identifier(),frame.as_ref().map(|f|CefString::from(&f.url()).to_string()).unwrap_or_default()));}}
             if !crate::borba_s_reklamoy::vklyuchena() { return; }
             if let Some(f) = frame {
@@ -305,7 +306,7 @@ wrap_client! {
                     let internal_error=!initial_blank&&crate::memory_guard::error_document(b.identifier(),&current,data["url"].as_str().unwrap_or(""),token.into());
                     if (!uri_matches&&!internal_error)||initial_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=false uri_matches={uri_matches} initial_blank={initial_blank}",b.identifier());return 1;}
                     if internal_error{eprintln!("NEXUSBRO_ROUTE_ERROR browser={} internal_document_confirmed=true",b.identifier());}
-                    else{crate::memory_guard::document(b.identifier(),token.into());}
+                    else{crate::memory_guard::document(b.identifier(),token.into());crate::cef_youtube_resume_fixture::authenticated_document(b,f);}
                     if owned_blank{eprintln!("NEXUSBRO_MEMORY_DOCUMENT browser={} accepted=true owned_blank=true guard={}",b.identifier(),route_guard_code(crate::memory_guard::reason(b.identifier()).unwrap_or("")));}
                 }
                 let _=self.tx.send(Sobytie::MemoryMessage(self.id,b.identifier(),data));return 1;
@@ -871,7 +872,7 @@ impl Rabota {
         crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
         let closed=self.app_shutdown_closed();
         if self.label.is_empty(){
-            crate::cef_app_shutdown::poll_drained(closed&&!crate::youtube_light_jobs::any_active()&&!crate::cef_youtube_download::any_active());
+            crate::cef_app_shutdown::poll_drained(closed&&!crate::youtube_light_jobs::any_active()&&!crate::cef_youtube_download::any_active()&&!crate::cef_youtube_resume_fixture::any_pending());
         }
         Ok(())
     }
@@ -1025,6 +1026,7 @@ impl Rabota {
         self.sync_native_visibility();
     }
     fn shag(&mut self) -> anyhow::Result<()> {
+        crate::cef_youtube_resume_fixture::poll();
         crate::cef_youtube::poll_probes();
         crate::cef_youtube_resume::maintenance(&self.brauzery);
         crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
