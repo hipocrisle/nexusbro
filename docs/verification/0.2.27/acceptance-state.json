@@ -4,19 +4,18 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "build_run": 45544984950,
-    "source": "7173361aed69d3587f0618b5e7b3ae88be23faef",
-    "status": "success",
-    "native_windows": "success",
-    "native_linux": "success"
+    "status": "parser_fix_pending_new_build",
+    "previous_source": "7173361aed69d3587f0618b5e7b3ae88be23faef"
   },
   "resource_soak": {
     "run": 45549296137,
     "status": "success",
     "required_seconds": 7200,
-    "accepted": true,
+    "accepted": false,
     "actual_seconds": 7200.094,
-    "summary": "resource-summary.json"
+    "summary": "resource-summary.json",
+    "accepted_for_previous_candidate_only": true,
+    "new_candidate_requires_full_repeat": true
   },
   "public_youtube": {
     "diagnostic_run": 45550180154,
@@ -49,5 +48,23 @@
     "run": 45554861820,
     "status": "success",
     "memory_protection_cases": 32
+  },
+  "home_consumer_diagnostic": {
+    "ssh_host_check": "strict_saved_key_accepted",
+    "extraction": "succeeded_then_parser_rejected",
+    "parser_error": "invalid_format",
+    "safe_diagnostic": "one_non_media_format_both_codecs_absent",
+    "playback_accepted": false,
+    "evidence": [
+      "home-extraction-before-fix.json",
+      "home-parser-diagnostic.json"
+    ]
+  },
+  "previous_candidate": {
+    "build_run": 45544984950,
+    "source": "7173361aed69d3587f0618b5e7b3ae88be23faef",
+    "status": "success",
+    "native_windows": "success",
+    "native_linux": "success"
   }
 }

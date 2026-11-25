@@ -1,0 +1,43 @@
+{
+  "schema": 1,
+  "completed": false,
+  "playback_tested": false,
+  "scope": "single_anonymous_production_extraction",
+  "components_sha256": {
+    "yt-dlp": "249ddb058234276bc449b9cd9492aad9f133bda5923c61a9e39983ae114ef17d",
+    "deno": "368bca08999e02c6911b8f248167b582276b1f547db5712b6e736d7eda1dbda7"
+  },
+  "manifest_sha256": "697d3fda721e1c06916108b23f994dd9607c3f7399f267d1ded1064606a8fc68",
+  "probe_sha256": "425317d4cae45ddd0b6123f5c1822077b9fe2b313891c3c592918061afc9d16f",
+  "caller_uid_matches": true,
+  "filesystem_sandbox": false,
+  "egress_coverage": "production_proxy_plus_sampled_owned_proc_sockets_not_firewall",
+  "probe": {
+    "stage": "parser",
+    "ok": false,
+    "impersonate_chrome": false,
+    "chrome_available": null,
+    "reason": "invalid_format"
+  },
+  "admission_consumed": true,
+  "processes": {
+    "observed": 4,
+    "samples": 60,
+    "transient_exits": 0,
+    "tree_exit_verified": true
+  },
+  "failure_class": "AssertionError",
+  "failure_code": "production_extraction_failed",
+  "probe_exit_code": 4,
+  "proxy": {
+    "connections": {
+      "connect_attempts": 2,
+      "connections_established": 2
+    },
+    "domains": {
+      "youtube.com": 1,
+      "googlevideo.com": 1
+    }
+  },
+  "wall_seconds": 3.761
+}
