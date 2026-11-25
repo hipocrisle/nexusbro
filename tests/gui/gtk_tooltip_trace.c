@@ -35,7 +35,7 @@
 #define TRACE_MAX_LINES 64
 #define TIMEOUT_CAP_MS 120000
 
-typedef void *(*set_has_tooltip_fn)(void *widget, int state);
+typedef void (*set_has_tooltip_fn)(void *widget, int state);
 typedef void (*trigger_query_fn)(void *widget);
 typedef void (*set_text_fn)(void *tooltip, const char *text);
 typedef int (*get_has_tooltip_fn)(void *widget);
@@ -53,9 +53,8 @@ static g_object_get_fn real_g_object_get;
 
 static pthread_once_t resolve_once = PTHREAD_ONCE_INIT;
 static atomic_int resolve_state; /* 0 = not ready, 1 = ok, 2 = hard failure */
-static atomic_int armed = -1;    /* -1 unknown, 0 disarmed, 1 armed */
 static atomic_uint line_count;
-static atomic_int in_hook;
+static _Thread_local int in_hook;
 
 static void trace_resolve(void)
 {
@@ -76,19 +75,11 @@ static void trace_resolve(void)
 
 static int trace_is_armed(void)
 {
-    int value = atomic_load_explicit(&armed, memory_order_acquire);
-    const char *marker;
-    if (value >= 0)
-        return value;
-    value = 0;
-    if (getenv("GITHUB_ACTIONS") && strcmp(getenv("GITHUB_ACTIONS"), "true") == 0
-        && getenv("NEXUSBRO_TEST_DATA")) {
-        marker = getenv("NEXUSBRO_TEST_TOOLTIP_TRACE_ARM");
-        if (marker && access(marker, F_OK) == 0)
-            value = 1;
-    }
-    atomic_store_explicit(&armed, value, memory_order_release);
-    return value;
+    const char *gha = getenv("GITHUB_ACTIONS");
+    const char *data = getenv("NEXUSBRO_TEST_DATA");
+    const char *marker = getenv("NEXUSBRO_TEST_TOOLTIP_TRACE_ARM");
+    return gha && strcmp(gha, "true") == 0 && data && data[0]
+        && marker && access(marker, F_OK) == 0;
 }
 
 static int trace_widget_known(void *widget)
@@ -104,22 +95,18 @@ static int trace_widget_known(void *widget)
 
 static int trace_line_left(void)
 {
-    if (atomic_load_explicit(&line_count, memory_order_relaxed) >= TRACE_MAX_LINES)
-        return 0;
-    atomic_fetch_add_explicit(&line_count, 1, memory_order_relaxed);
-    return 1;
+    return atomic_fetch_add_explicit(&line_count, 1, memory_order_relaxed) < TRACE_MAX_LINES;
 }
 
 static void trace_emit(const char *event, void *widget, int requested, const char *text)
 {
-    int has = 0, enabled = 0, text_present = 0;
-    long timeout_ms = 0, browse_ms = 0;
+    int has = 0, enabled = 0, text_present = 0, observed = 0;
+    unsigned int timeout_ms = 0, browse_ms = 0;
     void *settings;
-    int guard;
 
-    if (atomic_load_explicit(&in_hook, memory_order_acquire))
+    if (in_hook)
         return; /* recursion guard: never re-enter from our own diagnostics */
-    guard = atomic_fetch_add_explicit(&in_hook, 1, memory_order_acq_rel);
+    in_hook = 1;
 
     if (strcmp(event, "text") == 0)
         text_present = text && text[0] != '\0' ? 1 : 0;
@@ -127,23 +114,24 @@ static void trace_emit(const char *event, void *widget, int requested, const cha
         has = real_get_has_tooltip(widget) ? 1 : 0;
     if (widget && real_get_settings && real_g_object_get) {
         settings = real_get_settings(widget);
-        if (settings)
+        if (settings) {
+            observed = real_get_has_tooltip != NULL;
             real_g_object_get(settings,
                               "gtk-enable-tooltips", &enabled,
                               "gtk-tooltip-timeout", &timeout_ms,
                               "gtk-tooltip-browse-timeout", &browse_ms,
                               NULL);
+        }
     }
-    if (timeout_ms < 0 || timeout_ms > TIMEOUT_CAP_MS)
+    if (timeout_ms > TIMEOUT_CAP_MS)
         timeout_ms = 0;
-    if (browse_ms < 0 || browse_ms > TIMEOUT_CAP_MS)
+    if (browse_ms > TIMEOUT_CAP_MS)
         browse_ms = 0;
 
-    fprintf(stderr, TRACE_PREFIX " event=%s requested=%d has=%d enabled=%d "
-            "timeout_ms=%ld browse_ms=%ld text_present=%d\n",
-            event, requested, has, enabled, timeout_ms, browse_ms, text_present);
-    (void)guard;
-    atomic_store_explicit(&in_hook, 0, memory_order_release);
+    fprintf(stderr, TRACE_PREFIX " event=%s observed=%d requested=%d has=%d enabled=%d "
+            "timeout_ms=%u browse_ms=%u text_present=%d\n",
+            event, observed, requested, has, enabled ? 1 : 0, timeout_ms, browse_ms, text_present);
+    in_hook = 0;
 }
 
 void gtk_widget_set_has_tooltip(void *widget, int state)

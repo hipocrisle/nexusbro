@@ -48,3 +48,15 @@ ROOT-овские workflow/security_native.py/tab_routes.py не тронуты;
 (45637553346) не затронут. Paired-ветка остаётся BLOCKED. Source-observer —
 наблюдатель, не исправление; реальные факты оправдывают максимум один будущий
 trace-прогон.
+
+ROOT review: correct void setter ABI, recheck marker on every call (no startup
+false latch), exact unsigned GTK timeout property storage, thread-local recursion
+guard and atomic64-record cap. Optional getter readiness is explicit `observed`;
+unknown getters are not interpreted as disabled GTK. A stub-native-ABI contract
+test verifies exact forwarding, late arming/disarming, bounded output and no
+private text export. It never starts GTK or a browser and is not acceptance.
+
+ROOT integration: structured JSON `probe=tooltip_trace`, exact owned CI .so
+path only, actual native shell library mapping verified with held OS identity.
+The ordinary CI mode is unchanged; any observed-with-interposer route result
+is diagnostic_only, and structured requests are forbidden to the publisher.

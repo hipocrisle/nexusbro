@@ -1381,9 +1381,9 @@ jobs:
               if set(value)=={'run','core_only'}:
                   assert value['core_only'] is True
               else:
-                  assert set(value)=={'run','probe'} and value['probe']=='official_embed'
-                  probe='official_embed'
-              request=value['run'];core=True
+                  assert set(value)=={'run','probe'} and value['probe'] in ('official_embed','tooltip_trace')
+                  probe=value['probe']
+              request=value['run'];core=value.get('core_only',False)
           assert isinstance(request,str) and re.fullmatch(r'[1-9][0-9]{0,19}',request)
           with open(os.environ['GITHUB_OUTPUT'],'a') as output:
               output.write('run='+request+'\ncore_only='+str(core).lower()+'\nprobe='+probe+'\n')
@@ -1412,6 +1412,12 @@ jobs:
           path: .dev-check/backend-package
           run-id: ${{ steps.producer_request.outputs.run }}
           github-token: ${{ github.token }}
+      - name: Compile read-only GTK tooltip observer (diagnostic only)
+        if: ${{ steps.producer_request.outputs.probe == 'tooltip_trace' && inputs.publish_tag == '' }}
+        run: |
+          mkdir -p .dev-check/tooltip-trace
+          cc -std=c11 -shared -fPIC -O2 -Wall -Wextra -Werror tests/gui/gtk_tooltip_trace.c -o .dev-check/tooltip-trace/libnb-tooltip-trace.so -ldl -pthread
+          chmod 700 .dev-check/tooltip-trace/libnb-tooltip-trace.so
       - name: Runtime dependencies and verified CEF
         timeout-minutes: 10
         run: |
@@ -1510,6 +1516,10 @@ jobs:
           if [ "$ROUTE_CORE_ONLY" = "true" ]; then
             test -z "$PUBLISH_TAG"
             ROUTE_DIAGNOSTIC_ARGS+=(--core-routes-only)
+          fi
+          if [ '${{ steps.producer_request.outputs.probe }}' = 'tooltip_trace' ]; then
+            test -z "$PUBLISH_TAG"
+            ROUTE_DIAGNOSTIC_ARGS+=(--tooltip-native-trace "$GITHUB_WORKSPACE/.dev-check/tooltip-trace/libnb-tooltip-trace.so")
           fi
           python3 tests/gui/tab_routes.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/native-routes --tls-cert .dev-check/routes-ca/server.crt --tls-key .dev-check/routes-ca/server.key "${ROUTE_DIAGNOSTIC_ARGS[@]}"
       - uses: actions/upload-artifact@v4

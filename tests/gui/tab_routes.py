@@ -598,7 +598,7 @@ def route_native_hit(device,expected):
         native_root=Window();child=Window();rx=c.c_int();ry=c.c_int();wx=c.c_int();wy=c.c_int();mask=c.c_uint()
         if x.XQueryPointer(display,root,c.byref(native_root),c.byref(child),c.byref(rx),c.byref(ry),c.byref(wx),c.byref(wy),c.byref(mask)):
             delta=(rx.value-expected[0],ry.value-expected[1]);bounded=all(abs(v)<=16384 for v in delta)
-            result.update(cursor_observed=True,cursor_delta_bounded=bounded,cursor_at_expected=delta==(0,0))
+            result.update(cursor_observed=True,cursor_delta_bounded=bounded,cursor_at_expected=delta==(0,0),pointer_buttons_down=bool(mask.value & 0x1f00))
             if bounded:result.update(cursor_dx=delta[0],cursor_dy=delta[1])
         x.XSync(display,0);result.update(available=True,complete=complete and not failed[0],query_error=failed[0])
         return result
@@ -667,6 +667,24 @@ def tooltip_observation_facts(hit):
             'foreign': hit.get('nonowned_cover') is True}
 
 
+def tooltip_trace_records(device):
+    """Export only fixed observer enums and bounded integers, never app log text."""
+    records=[]
+    pattern=re.compile(r'NB_TOOLTIP_TRACE event=(has|trigger|text) observed=([01]) requested=([01]) has=([01]) enabled=([01]) timeout_ms=([0-9]{1,6}) browse_ms=([0-9]{1,6}) text_present=([01])')
+    for path in sorted(device.root.glob('app-*.log')):
+        with path.open('rb') as stream:
+            stream.seek(0,2);stream.seek(max(0,stream.tell()-524288))
+            lines=stream.read(524288).decode('utf-8',errors='replace').splitlines()
+        for line in lines:
+            match=pattern.fullmatch(line)
+            if not match:continue
+            event,*values=match.groups();values=list(map(int,values))
+            if values[4]>120000 or values[5]>120000:continue
+            records.append(dict(zip(('event','observed','requested','has','enabled','timeout_ms','browse_ms','text_present'),[event,*values])))
+            if len(records)==64:return records
+    return records
+
+
 def natural_route_tooltip_hover(client):
     # Any pre-observation or query failure leaves native ownership unknown.
     # Preserve the original exception and never repeat a physical action.
@@ -717,6 +735,26 @@ def _natural_route_tooltip_hover(client):
     # The previous run observed keyboard focus in CEF while hovering GTK.
     # Establish the real shell focus through its ordinary native command once;
     # this does not create a tooltip, mutate title, or generate a DOM event.
+    if hasattr(device,'tooltip_trace_library'):
+        # Verify the observer is mapped in the actual native shell process,
+        # not merely the dbus launcher. Paths/PIDs/mappings never enter receipts.
+        family=[psutil.Process(device.app.pid),*psutil.Process(device.app.pid).children(recursive=True)]
+        candidates=[]
+        for process in family:
+            try:
+                if pathlib.Path(process.exe()).resolve()!=device.exe.resolve():continue
+                if any(a=='--nb-dvizhok' or a.startswith('--type=') for a in process.cmdline()):continue
+                candidates.append(process)
+            except psutil.NoSuchProcess:continue
+        require(len(candidates)==1,'Exact native shell for GTK observer is ambiguous')
+        from resource_soak import kernel_birth
+        process=candidates[0];birth=kernel_birth(process.pid,'linux_ticks')
+        with open('/proc/'+str(process.pid)+'/maps','rb') as stream:maps=stream.read(4*1024*1024+1)
+        require(len(maps)<=4*1024*1024 and kernel_birth(process.pid,'linux_ticks')==birth
+                and str(pathlib.Path(device.tooltip_trace_library).resolve()).encode() in maps,
+                'Read-only GTK observer is not mapped in exact native shell')
+        receipt['native_trace_library_mapped']=True
+        (device.root/'tooltip-trace.arm').touch(exist_ok=False)
     call(client,'fokus_obolochke')
     initial=route_native_hit(device,expected)
     block_unknown_route_screenshot(client,initial)
@@ -754,8 +792,7 @@ def _natural_route_tooltip_hover(client):
     # screenshot gate; no tooltip synthesis, repositioning, or acceptance change.
     dom=client.js('(()=>{const b=document.querySelector(".tab-route-button");return {dom_has_focus:document.hasFocus(),dom_button_hovered:!!b?.matches(":hover"),dom_button_enabled:!!b&&!b.disabled,dom_title_present:!!b?.getAttribute("title"),dom_pointer_on_svg:!!b?.querySelector("svg:hover")}})()')
     if isinstance(dom,dict):
-        receipt.update({key:value for key,value in dom.items() if key in {'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present','dom_pointer_on_svg',
-        'gtk_settings_observed','gtk_enabled','dom_pointer_on_svg'} and type(value)is bool})
+        receipt.update({key:value for key,value in dom.items() if key in {'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present','dom_pointer_on_svg'} and type(value)is bool})
     from gtk_tooltip_settings import observe as observe_gtk_settings
     receipt['gtk_settings']=observe_gtk_settings(device)
     client.route_open_native['failure']=route_toolbar_observation(client,'hover')
@@ -879,7 +916,8 @@ def safe_route_open_native(value,depth=0):
         'mapped','input_shape_supported','input_shape_observed','input_empty','covers_expected',
         'cursor_observed','cursor_delta_bounded','cursor_at_expected','expected_point_unchanged','crop_saved',
         'observation_failed','unsupported_platform','mapped_covering_tooltip_observed',
-        'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present',
+        'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present','dom_pointer_on_svg',
+        'gtk_settings_observed','gtk_enabled','pointer_buttons_down','native_trace_library_mapped',
         'mapped_tooltip_before_click','input_empty_before_click','one_physical_click','trusted_dom_click','dialog_present','neutral_exit_observed'}
     limits={'gtk_timeout_ms':(0,120000),'gtk_browse_timeout_ms':(0,120000),'cursor_dx':(-16384,16384),'cursor_dy':(-16384,16384),'input_rectangles':(0,256),
         'crop_width':(1,4096),'crop_height':(1,520),'observations':(0,50),'move_count':(0,1),'neutral_move_count':(0,1)}
@@ -1012,6 +1050,8 @@ def route_open_trace_self_test():
     journal=safe_route_open_native({'hover':{'journal':{'mapped_seen':50,'covering_seen':0,
         'foreign_cover':True,'incomplete':51,'private':'secret'}}})
     assert journal=={'hover':{'journal':{'mapped_seen':50,'covering_seen':0}}}
+    facts=safe_route_open_native({'hover':{'dom_pointer_on_svg':True,'gtk_settings':{'gtk_settings_observed':True,'gtk_enabled':False,'gtk_timeout_ms':500,'private':'secret'}}})
+    assert facts=={'hover':{'dom_pointer_on_svg':True,'gtk_settings':{'gtk_settings_observed':True,'gtk_enabled':False,'gtk_timeout_ms':500}}}
     private='https://private.invalid/secret title'
     receipt=safe_route_open_trace({'trace':[{'event':'invoke','command':'pokazat_dvizhki','phase':'resolved','visible':False,'url':private,'error':private},{'event':private}], 'counts':{'click':{'trusted_route':1,'secret':private}},'restore_verified':True})
     assert private not in json.dumps(receipt) and len(receipt['trace'])==1 and receipt['restore_verified']
@@ -1116,7 +1156,7 @@ def run(args):
     out = pathlib.Path(args.out).resolve()
     out.mkdir(parents=True, exist_ok=False)
     report = {'schema': 1, 'completed': False, 'checks': [], 'platform': sys.platform, 'coverage': {'http_ui': 'not_executed', 'https_connect': 'not_executed', 'refusal': 'not_executed', 'cold_restore': 'not_executed', 'transport_down': 'not_executed', 'rtc_dns_udp': 'not_executed', 'historical_cookies': 'not_executed', 'worker_ready_context': 'not_executed', 'worker_startup_pre_admission': 'not_executed'}}
-    report['diagnostic_only']=bool(args.core_routes_only)
+    report['diagnostic_only']=bool(args.core_routes_only or getattr(args,'tooltip_native_trace',None))
     report['tooltip_overlap_required']=not args.core_routes_only
     report['coverage']['native_tooltip_overlap']='not_executed' if not args.core_routes_only else 'not_requested_diagnostic_only'
     device = fixture = stun = socks = None
@@ -1132,6 +1172,7 @@ def run(args):
         exe, cef = pathlib.Path(args.exe).resolve(), pathlib.Path(args.cef).resolve()
         require(exe.is_file() and cef.is_dir(), 'Built native app/CEF prerequisite missing')
         device = WindowsDevice(out / 'device', exe, cef) if sys.platform == 'win32' else Device('routes', out / 'device', exe, cef)
+        if getattr(args,'tooltip_native_trace',None):device.tooltip_trace_library=args.tooltip_native_trace
         config = settings('grafit', 'unused')
         config['vyhody'] = [{'id': 'lane-' + lane, 'nazvanie': 'Fixture ' + lane,
                              'adres': 'http://127.0.0.1:' + str(fixture.proxies[lane]), 'proxy_uzel': ''} for lane in ('A', 'B')]
@@ -1742,6 +1783,7 @@ def run(args):
         if device:
             persist_route_open_report(report,device.client,device)
             device.close()
+            if hasattr(device,'tooltip_trace_library'):report['gtk_tooltip_trace']=tooltip_trace_records(device)
         if socks:
             socks.close()
         if fixture:
@@ -1760,5 +1802,6 @@ if __name__ == '__main__':
     parser.add_argument('--out', required=True)
     parser.add_argument('--tls-cert')
     parser.add_argument('--tls-key')
+    parser.add_argument('--tooltip-native-trace',help='Diagnostic only: exact private CI pass-through GTK observer; never release acceptance')
     parser.add_argument('--core-routes-only',action='store_true',help='Diagnostic only: route checks without the separate GTK tooltip-overlap scenario; never release acceptance')
     run(parser.parse_args())
