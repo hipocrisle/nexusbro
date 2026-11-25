@@ -637,6 +637,36 @@ def tooltip_input_is_empty(hit):
         and type(v.get('input_rectangles')) is int and v['input_rectangles']==0 and v.get('input_empty') is True for v in values)
 
 
+def route_tooltip_hover_point(tab, target_x):
+    """Interior hover point for the tab-row title tooltip (CSS px).
+
+    Contract (run 45585742892): hovering the tab's bottom EDGE (top+height-2)
+    produced zero mapped GTK tooltips across all 50 observations — the pointer
+    on the widget boundary causes enter/leave churn and GTK never starts the
+    tooltip timer. The hover must sit strictly inside the tab, biased toward
+    the toolbar button so the naturally positioned tooltip lands over it.
+    """
+    left, top, width, height = tab
+    require(width > 16 and height > 16, 'Route tooltip tab too small for interior hover')
+    inset_x = max(3, min(width // 8, 12))
+    inset_y = max(4, height // 4)
+    x = max(left + inset_x, min(left + width - inset_x, target_x - 24))
+    y = top + height - inset_y
+    require(left + inset_x < left + width - inset_x and top + inset_y < top + height - inset_y,
+            'Route tooltip tab too small for interior hover')
+    return x, y
+
+
+def tooltip_observation_facts(hit):
+    """Compact factual aggregate of one native observation (no window IDs)."""
+    tooltips = hit.get('mapped_owned_tooltips') if isinstance(hit, dict) else None
+    mapped = isinstance(tooltips, list) and bool(tooltips)
+    covering = mapped and any(v.get('covers_expected') is True for v in tooltips if isinstance(v, dict))
+    return {'mapped': mapped, 'covering': covering,
+            'complete': hit.get('complete') is True, 'scan': hit.get('visual_scan_complete') is True,
+            'foreign': hit.get('nonowned_cover') is True}
+
+
 def natural_route_tooltip_hover(client):
     # Any pre-observation or query failure leaves native ownership unknown.
     # Preserve the original exception and never repeat a physical action.
@@ -667,31 +697,43 @@ def _natural_route_tooltip_hover(client):
         key,_,value=line.partition('=')
         if key in ('X','Y') and value.lstrip('-').isdecimal():cursor[key]=int(value)
     require(set(cursor)=={'X','Y'},'Route tooltip cursor unavailable')
-    # The title belongs to the entire tab row. Hover its lower edge nearest
-    # the toolbar target: hovering the row centre can put GTK's naturally
-    # positioned tooltip above the button (the native failure showed dy=-43).
-    # Keep one physical hover and require actual visual overlap below; never
-    # move/resize the tooltip or turn a non-overlap into a regression PASS.
-    target_x=(expected[0]-origin['x'])/geometry['scale']
-    hover_x=max(left+4,min(left+width-4,target_x-24))
-    hover_y=top+height-2
-    candidates=[(round(origin['x']+(hover_x+offset)*geometry['scale']),
-                 round(origin['y']+hover_y*geometry['scale'])) for offset in (1,-1)]
-    hover=next((point for point in candidates if max(abs(point[0]-cursor['X']),abs(point[1]-cursor['Y']))>1),None)
-    require(hover is not None,'Route tooltip hover point unavailable')
-    receipt={'move_count':0,'observations':0,'mapped_covering_tooltip_observed':False}
-    client.route_open_native={'hover':receipt}
-    subprocess.run(['xdotool','mousemove',str(hover[0]),str(hover[1])],env=env,check=True,
-                   stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
-    receipt['move_count']=1
-    deadline=time.monotonic()+5
-    while time.monotonic()<deadline and receipt['observations']<50:
-        hit=route_native_hit(device,expected);receipt['observations']+=1;receipt['last_hit']=hit
-        block_unknown_route_screenshot(client,hit)
-        require(hit.get('nonowned_cover') is False,'Route tooltip target covered by foreign window')
-        if covering_native_tooltips(hit):receipt['mapped_covering_tooltip_observed']=True;return
+    target_x = (expected[0] - origin['x']) / geometry['scale']
+    # Interior hover, biased toward the toolbar target: the row-centre hover
+    # put GTK's tooltip above the button (native failure dy=-43) and the
+    # bottom-edge hover gave zero tooltips at all (boundary enter/leave churn,
+    # run 45585742892). Keep one physical hover and require actual visual
+    # overlap below; never move/resize the tooltip or turn a non-overlap into
+    # a regression PASS.
+    hover_css_x, hover_css_y = route_tooltip_hover_point((left, top, width, height), target_x)
+    candidates = [(round(origin['x'] + (hover_css_x + offset) * geometry['scale']),
+                   round(origin['y'] + hover_css_y * geometry['scale'])) for offset in (1, -1)]
+    hover = next((point for point in candidates if max(abs(point[0] - cursor['X']), abs(point[1] - cursor['Y'])) > 1), None)
+    require(hover is not None, 'Route tooltip hover point unavailable')
+    receipt = {'move_count': 0, 'observations': 0, 'mapped_covering_tooltip_observed': False,
+               'journal': {'mapped_seen': 0, 'covering_seen': 0, 'incomplete': 0, 'scan_incomplete': 0, 'foreign_cover': 0}}
+    client.route_open_native = {'hover': receipt}
+    subprocess.run(['xdotool', 'mousemove', str(hover[0]), str(hover[1])], env=env, check=True,
+                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+    receipt['move_count'] = 1
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline and receipt['observations'] < 50:
+        hit = route_native_hit(device, expected); receipt['observations'] += 1; receipt['last_hit'] = hit
+        facts = tooltip_observation_facts(hit)
+        receipt['journal']['mapped_seen'] += 1 if facts['mapped'] else 0
+        receipt['journal']['covering_seen'] += 1 if facts['covering'] else 0
+        receipt['journal']['incomplete'] += 1 if not facts['complete'] else 0
+        receipt['journal']['scan_incomplete'] += 1 if not facts['scan'] else 0
+        receipt['journal']['foreign_cover'] += 1 if facts['foreign'] else 0
+        block_unknown_route_screenshot(client, hit)
+        require(hit.get('nonowned_cover') is False, 'Route tooltip target covered by foreign window')
+        if covering_native_tooltips(hit): receipt['mapped_covering_tooltip_observed'] = True; return
         time.sleep(.08)
-    require(False,'Mapped owned native tooltip covering route target not observed')
+    journal = receipt['journal']
+    require(False, 'Mapped owned native tooltip covering route target not observed; '
+                   f"facts: observations={receipt['observations']} "
+                   f"mapped_seen={journal['mapped_seen']} covering_seen={journal['covering_seen']} "
+                   f"incomplete={journal['incomplete']} scan_incomplete={journal['scan_incomplete']} "
+                   f"foreign_cover={journal['foreign_cover']}")
 
 
 def route_toolbar_observation(client,phase):
@@ -914,6 +956,23 @@ def route_open_trace_self_test():
     try:route_toolbar_geometry([10,20],{'x':0,'y':0},10,[800,600])
     except Exception:pass
     else:raise AssertionError('Unbounded toolbar crop accepted')
+    # Tooltip hover point: strictly interior, biased toward the toolbar button.
+    # Boundary hover (old top+height-2) is forbidden: enter/leave churn left
+    # zero mapped GTK tooltips across all observations in run 45585742892.
+    hx,hy=route_tooltip_hover_point((100,50,200,34),240)
+    assert 100+12<=hx<=100+200-12 and hy==50+34-8 and hx<240
+    hx2,hy2=route_tooltip_hover_point((100,50,200,34),900)
+    assert hx2==100+200-12 and hy2==hy
+    try:route_tooltip_hover_point((100,50,12,12),240)
+    except Exception:pass
+    else:raise AssertionError('Degenerate tab hover accepted')
+    facts=tooltip_observation_facts(dict(complete=True,visual_scan_complete=True,nonowned_cover=False,
+        mapped_owned_tooltips=[dict(role='ownedApp',window_type='tooltip',mapped=True,covers_expected=True)]))
+    assert facts['mapped'] is True and facts['covering'] is True and facts['foreign'] is False
+    facts=tooltip_observation_facts(dict(complete=True,visual_scan_complete=True,nonowned_cover=True,mapped_owned_tooltips=[]))
+    assert facts['mapped'] is False and facts['foreign'] is True
+    facts=tooltip_observation_facts(dict(complete=False,visual_scan_complete=False,nonowned_cover=False))
+    assert facts['complete'] is False and facts['scan'] is False
     private='https://private.invalid/secret title'
     receipt=safe_route_open_trace({'trace':[{'event':'invoke','command':'pokazat_dvizhki','phase':'resolved','visible':False,'url':private,'error':private},{'event':private}], 'counts':{'click':{'trusted_route':1,'secret':private}},'restore_verified':True})
     assert private not in json.dumps(receipt) and len(receipt['trace'])==1 and receipt['restore_verified']
