@@ -4,8 +4,8 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "build_run": 45578091381,
-    "source": "34be02e12d4a2dbece299a2892a0f0a6ad00c505",
+    "build_run": 45592261113,
+    "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
     "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending"
@@ -80,5 +80,17 @@
     "status": "success",
     "native_windows": "success",
     "native_linux": "success"
+  },
+  "linux_previous_runtime": {
+    "run": 45589398484,
+    "status": "failure",
+    "reason": "media_running_receipt_missing",
+    "environment_cause_proven": false,
+    "tooltip_fix_executed": false
+  },
+  "pending_changes": {
+    "kimi_tooltip_qa": "a2f5921",
+    "background_audio": "25a5f19",
+    "painted_audio_gesture_and_diagnostics": "1f8ece5"
   }
 }
