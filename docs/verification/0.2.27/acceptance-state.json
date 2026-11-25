@@ -28,7 +28,10 @@
     "linux": {
       "reason": "NetworkFailure",
       "test_proxy_domain_denied": 2
-    }
+    },
+    "summary": "public-youtube-summary.json",
+    "status": "not_accepted",
+    "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
     "status": "not_run",
@@ -40,7 +43,7 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-25T06:59:24.407811+00:00",
+  "observed_at_utc": "2026-11-25T07:10:27.523278+00:00",
   "native_summary": "native-summary.json",
   "frontend_recheck": {
     "run": 45554861820,

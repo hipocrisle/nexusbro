@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "version": "0.2.27",
+  "app_source": "7173361aed69d3587f0618b5e7b3ae88be23faef",
+  "build_run": 45544984950,
+  "public_playback_accepted": false,
+  "paired_comparison_accepted": false,
+  "ordinary_cef_ui_observation": {
+    "run": 45565312152,
+    "platform": "linux",
+    "ci_run": "https://github.com/hipocrisle/nexusbro/actions/runs/45565312152",
+    "fresh_test_profile": true,
+    "bot_confirmation_visible": true,
+    "message": "Sign in to confirm you’re not a bot",
+    "crop_bytes": 55908,
+    "crop_width": 640,
+    "crop_height": 360,
+    "crop_sha256": "8123e693fcdd6b26012fc623659615c79f23efda605d0ae7b2ef6b688ae38fbc",
+    "sign_in_or_challenge_action_performed": false,
+    "normal_owned_exit_proven": true
+  },
+  "anonymous_helper_observation": {
+    "run": 45550180154,
+    "windows_bot_confirmation": true,
+    "linux_reason": "NetworkFailure",
+    "linux_test_proxy_domain_denied": 2
+  },
+  "required_next_evidence": "Successful real public playback and matched paired measurement in an authorized verified end-user environment"
+}
