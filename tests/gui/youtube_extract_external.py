@@ -168,7 +168,7 @@ def safe_summary(raw):
     require(0<len(raw)<=LIMIT,'probe_summary_size')
     lines=raw.decode('utf-8').splitlines();require(len(lines)==1,'probe_summary_lines')
     value=json.loads(lines[0]);require(isinstance(value,dict),'probe_summary_shape')
-    require(set(value)<= {'stage','ok','reason','formats','vp9','opus','rejected_formats','diagnostic','impersonate_chrome','chrome_available'},'probe_summary_unknown_fields')
+    require(set(value)<= {'stage','ok','reason','formats','vp9','opus','rejected_formats','diagnostic','impersonate_chrome','chrome_available','challenge_subreason'},'probe_summary_unknown_fields')
     require(value.get('stage') in ('components','extractor','parser','parsed') and type(value.get('ok')) is bool,'probe_summary_state')
     result={'stage':value['stage'],'ok':value['ok']}
     if 'impersonate_chrome' in value or 'chrome_available' in value:
@@ -180,6 +180,12 @@ def safe_summary(raw):
                  'UnsupportedInvocation','HttpForbidden','RateLimited','TlsFailure','ChallengeRequired','VideoUnavailable','HttpBadRequest','HttpNotFound','HttpServerError','NetworkFailure','RuntimeFailure','ChallengeSolverUnavailable','FormatUnavailable','FfmpegUnavailable','ExtractionFailure',
                  'oversized','invalid_json','wrong_video','unsupported_video','invalid_metadata','invalid_format','unsafe_url','unsafe_headers','no_supported_formats'}
         result['reason']=value['reason'] if isinstance(value['reason'],str) and value['reason'] in reasons else 'unclassified_native_reason'
+    if 'challenge_subreason' in value:
+        subreason=value['challenge_subreason']
+        fields={'available','bot_confirmation','js_challenge','challenge_solving_failed','po_token_required'}
+        require(isinstance(subreason,dict) and set(subreason)==fields and all(type(subreason[k]) is bool for k in fields),'probe_subreason_shape')
+        require(subreason['available'] or not any(subreason[k] for k in fields-{'available'}),'probe_subreason_unavailable')
+        result['challenge_subreason']={k:subreason[k] for k in sorted(fields)}
     if 'diagnostic' in value:
         diagnostic=value['diagnostic']
         flags={'usage','http_400','http_403','http_404','http_429','http_5xx','tls','network','runtime','solver','format_unavailable','ffmpeg_missing','extractor','error_prefix','warning_prefix','file_missing','permission_denied','invalid_argument','home_unavailable','connection_reset','connection_closed','timeout','dns'}
@@ -396,6 +402,13 @@ def self_test():
         try:safe_summary(json.dumps(bad).encode())
         except AssertionError:continue
         raise AssertionError('self_test_reject_summary')
+    sub={'available':True,'bot_confirmation':True,'js_challenge':False,'challenge_solving_failed':False,'po_token_required':False}
+    value={'stage':'extractor','ok':False,'challenge_subreason':sub}
+    require(safe_summary(json.dumps(value).encode())==value,'self_test_subreason')
+    for malformed in (dict(sub,raw='secret'),dict(sub,available=False),dict(sub,js_challenge=1),{'available':True}):
+        try:safe_summary(json.dumps(dict(value,challenge_subreason=malformed)).encode())
+        except AssertionError:continue
+        raise AssertionError('self_test_subreason_redaction')
     print('Pure domain boundary/private-address/sanitized summary checks passed; no components or network executed')
 
 

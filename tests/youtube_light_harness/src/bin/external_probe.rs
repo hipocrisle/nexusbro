@@ -126,13 +126,72 @@ async fn main() {
         Err(error) => {
             #[cfg(feature = "encrypted-diagnostics")]
             let _ = diagnostic_capture::write_failure(&error);
+            #[cfg(feature = "encrypted-diagnostics")]
+            let captured = error.ci_stderr();
+            #[cfg(not(feature = "encrypted-diagnostics"))]
+            let captured: Option<&[u8]> = None;
+            let flags = captured.map(challenge_subreason).unwrap_or([false; 4]);
+            let subreason = serde_json::json!({
+                "available": captured.is_some(),
+                "bot_confirmation": flags[0], "js_challenge": flags[1],
+                "challenge_solving_failed": flags[2], "po_token_required": flags[3]
+            });
             println!(
                 "{}",
-                serde_json::json!({"stage":"extractor","impersonate_chrome":experiment,"chrome_available":capability,"ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
+                serde_json::json!({"challenge_subreason":subreason,"stage":"extractor","impersonate_chrome":experiment,"chrome_available":capability,"ok":false,"reason":format!("{:?}",error.error),"diagnostic":error.diagnostic})
             );
             // process::exit skips Drop; wipe retained CI stderr explicitly.
             drop(error);
             std::process::exit(3);
+        }
+    }
+}
+
+/// Fixed diagnostic predicates only; never copy remote text into a summary.
+fn challenge_subreason(stderr: &[u8]) -> [bool; 4] {
+    let has = |needle: &[u8]| {
+        stderr
+            .windows(needle.len())
+            .any(|part| part.eq_ignore_ascii_case(needle))
+    };
+    [
+        has(b"sign in to confirm you") && has(b"not a bot"),
+        has(b"js challenge") || has(b"javascript challenge"),
+        has(b"challenge solving failed"),
+        has(b"po token is required") || has(b"requires a po token"),
+    ]
+}
+
+#[cfg(test)]
+mod diagnostic_capture_challenge_tests {
+    use super::challenge_subreason;
+    #[test]
+    fn fixed_classes_are_independent_and_case_insensitive() {
+        for (text, expected) in [
+            (
+                b"Sign in to confirm you're not a bot".as_slice(),
+                [true, false, false, false],
+            ),
+            (
+                b"JAVASCRIPT CHALLENGE".as_slice(),
+                [false, true, false, false],
+            ),
+            (
+                b"n challenge solving failed".as_slice(),
+                [false, false, true, false],
+            ),
+            (
+                b"requires a PO token".as_slice(),
+                [false, false, false, true],
+            ),
+            (
+                b"WARNING: unknown https://private.invalid/secret".as_slice(),
+                [false; 4],
+            ),
+            (b"sign in to confirm your age".as_slice(), [false; 4]),
+            (b"".as_slice(), [false; 4]),
+        ] {
+            assert_eq!(challenge_subreason(text), expected);
         }
     }
 }
