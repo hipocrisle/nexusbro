@@ -53,7 +53,9 @@ typedef const char *(*type_name_fn)(void *instance);
 typedef void (*g_object_get_fn)(void *object, const char *first_property, ...);
 typedef int (*get_mapped_fn)(void *widget);
 typedef int (*get_visible_fn)(void *widget);
-typedef unsigned long (*signal_add_hook_fn)(unsigned int signal_id, void *closure, void *callback, void *data, void *destroy);
+typedef int (*emission_hook_fn)(void *, unsigned int, const void *, void *);
+typedef void (*destroy_notify_fn)(void *);
+typedef unsigned long (*signal_add_hook_fn)(unsigned int, unsigned int, emission_hook_fn, void *, destroy_notify_fn);
 typedef unsigned int (*signal_lookup_fn)(const char *name, unsigned long type_id);
 typedef void *(*value_get_object_fn)(const void *value);
 typedef int (*type_check_instance_is_a_fn)(void *instance, unsigned long type);
@@ -207,18 +209,17 @@ static void trace_emit(const char *event, void *widget, int requested, const cha
  * pointer outlives this callback. */
 static int trace_signal_cb(void *hint, unsigned int nparams, const void *raw_values, void *data)
 {
-    const void *const *values = (const void *const *)raw_values;
     const char *event = (const char *)data;
     void *object;
     int mapped = 0, visible = 0;
 
     (void)hint;
-    if (nparams < 1 || !values || !real_value_get_object)
+    if (nparams != 1 || !raw_values || !real_value_get_object || !trace_is_armed())
         return 1;
     if (in_hook)
         return 1;
     in_hook = 1;
-    object = real_value_get_object(values[0]);
+    object = real_value_get_object(raw_values); /* First GValue itself, not its g_type as a pointer. */
     if (object && real_type_check && real_gtk_window_get_type && real_gtk_window_get_type_hint) {
         unsigned long window_type = real_gtk_window_get_type();
         if (window_type && real_type_check(object, window_type)
@@ -228,7 +229,7 @@ static int trace_signal_cb(void *hint, unsigned int nparams, const void *raw_val
             if (real_get_visible)
                 visible = real_get_visible(object) ? 1 : 0;
             if (trace_is_armed() && trace_line_left())
-                trace_emit_line(event, 1, 1, 0, 0, 0, 0, 0, mapped, visible);
+                trace_emit_line(event, 0, 1, 0, 0, 0, 0, 0, mapped, visible);
         }
     }
     in_hook = 0;
@@ -240,22 +241,23 @@ static void trace_register_hooks(void)
     static const char *const names[3] = {"realize", "map", "unmap"};
     int index;
     unsigned int signal_id;
+    int registered = 0;
 
     if (in_hook)
         return;
     in_hook = 1;
     if (real_signal_add_hook && real_signal_lookup && real_gtk_widget_get_type
         && real_value_get_object && real_type_check
-        && real_gtk_window_get_type && real_gtk_window_get_type_hint) {
+        && real_gtk_window_get_type && real_gtk_window_get_type_hint
+        && real_get_mapped && real_get_visible) {
         unsigned long widget_type = real_gtk_widget_get_type();
         if (widget_type) {
             for (index = 0; index < 3; index++) {
                 signal_id = real_signal_lookup(names[index], widget_type);
-                if (signal_id)
-                    real_signal_add_hook(signal_id, NULL, (void *)trace_signal_cb,
-                                         (void *)names[index], NULL);
+                if (signal_id && real_signal_add_hook(signal_id, 0, trace_signal_cb, (void *)names[index], NULL))
+                    registered++;
             }
-            atomic_store_explicit(&hooks_state, 1, memory_order_release);
+            atomic_store_explicit(&hooks_state, registered == 3, memory_order_release);
         }
     }
     in_hook = 0;
@@ -263,7 +265,8 @@ static void trace_register_hooks(void)
 
 static void trace_ensure_hooks(void)
 {
-    pthread_once(&hooks_once, trace_register_hooks);
+    if (!in_hook)
+        pthread_once(&hooks_once, trace_register_hooks);
 }
 
 void gtk_widget_set_has_tooltip(void *widget, int state)

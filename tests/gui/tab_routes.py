@@ -671,7 +671,7 @@ def tooltip_observation_facts(hit):
 def tooltip_trace_records(device):
     """Export only fixed observer enums and bounded integers, never app log text."""
     records=[]
-    pattern=re.compile(r'NB_TOOLTIP_TRACE event=(has|trigger|text) observed=([01]) requested=([01]) has=([01]) enabled=([01]) timeout_ms=([0-9]{1,6}) browse_ms=([0-9]{1,6}) text_present=([01])')
+    pattern=re.compile(r'NB_TOOLTIP_TRACE event=(has|trigger|text|realize|map|unmap) observed=([01]) requested=([01]) has=([01]) enabled=([01]) timeout_ms=([0-9]{1,6}) browse_ms=([0-9]{1,6}) text_present=([01])(?: mapped=([01]) visible=([01]) hooks=([01]) tick_ms=([0-9]{1,6}))?')
     for path in sorted(device.root.glob('app-*.log')):
         with path.open('rb') as stream:
             stream.seek(0,2);stream.seek(max(0,stream.tell()-524288))
@@ -679,9 +679,14 @@ def tooltip_trace_records(device):
         for line in lines:
             match=pattern.fullmatch(line)
             if not match:continue
-            event,*values=match.groups();values=list(map(int,values))
+            groups=match.groups();event=groups[0];values=list(map(int,groups[1:8]))
             if values[4]>120000 or values[5]>120000:continue
-            records.append(dict(zip(('event','observed','requested','has','enabled','timeout_ms','browse_ms','text_present'),[event,*values])))
+            row=dict(zip(('event','observed','requested','has','enabled','timeout_ms','browse_ms','text_present'),[event,*values]))
+            if groups[8] is not None:
+                extra=list(map(int,groups[8:]))
+                if extra[3]>600000:continue
+                row.update(dict(zip(('mapped','visible','hooks','tick_ms'),extra)))
+            records.append(row)
             if len(records)==64:return records
     return records
 
@@ -1058,6 +1063,10 @@ def route_open_trace_self_test():
         observed=tooltip_trace_records(SimpleNamespace(root=pathlib.Path(folder)))
         assert observed==[{'event':'trigger','observed':1,'requested':1,'has':1,'enabled':1,'timeout_ms':500,'browse_ms':60,'text_present':0}]
         assert 'private URL' not in json.dumps(observed)
+        with log.open('a') as stream:stream.write('NB_TOOLTIP_TRACE event=map observed=0 requested=1 has=0 enabled=0 timeout_ms=0 browse_ms=0 text_present=0 mapped=1 visible=1 hooks=1 tick_ms=500\n')
+        lifecycle=tooltip_trace_records(SimpleNamespace(root=pathlib.Path(folder)))
+        assert len(lifecycle)==2 and lifecycle[1]['event']=='map' and lifecycle[1]['mapped']==1 and lifecycle[1]['visible']==1 and lifecycle[1]['hooks']==1 and lifecycle[1]['tick_ms']==500
+
     facts=safe_route_open_native({'hover':{'dom_pointer_on_svg':True,'gtk_settings':{'gtk_settings_observed':True,'gtk_enabled':False,'gtk_timeout_ms':500,'private':'secret'}}})
     assert facts=={'hover':{'dom_pointer_on_svg':True,'gtk_settings':{'gtk_settings_observed':True,'gtk_enabled':False,'gtk_timeout_ms':500}}}
     private='https://private.invalid/secret title'

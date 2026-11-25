@@ -85,3 +85,12 @@ hooks=1 → GTK не создавал окно вообще (тогда даль
 наблюдение невозможно, вывод не делается. COMPILED + ROOT-unit-stub PASS; НЕ исполнялось
 ни с реальным GTK, ни с приложением. Это наблюдатель, не фикс; source-observer не является
 исправлением. Бинарник 1f не пересобран; 2h ресурсный (45637553346) не затронут.
+
+ROOT lifecycle review: GLib passes a GValue array pointer; the first GValue
+itself is passed to g_value_get_object, never its g_type word. Signal add-hook
+uses exact GQuark/function-pointer ABI, all three nonzero registration handles
+are required for hooks=1, and callback registration cannot reenter its once-lock.
+Opaque-GValue stub callbacks exercise realize/map/unmap, ignore wrong value
+count/non-window objects, and test partial registration -> hooks=0. No GTK or
+browser is started by those tests. Lifecycle records have observed=0 for the
+unused settings fields; their actual proof fields are event/mapped/visible/hooks.
