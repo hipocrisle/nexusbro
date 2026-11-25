@@ -45,6 +45,44 @@ thread_local! {
     static PENDING: RefCell<HashMap<i32, Pending>> = RefCell::new(HashMap::new());
 }
 
+// Only fixed categories cross the fixture boundary; no underlying error text.
+#[derive(Clone, Copy)]
+enum PrepareFailure {
+    Busy,
+    Full,
+    Unavailable,
+    Storage,
+    InvalidPosition,
+    Timeout,
+    Panic,
+}
+impl From<crate::youtube_light_resume_service::ServiceError> for PrepareFailure {
+    fn from(error: crate::youtube_light_resume_service::ServiceError) -> Self {
+        use crate::youtube_light_resume_service::ServiceError;
+        match error {
+            ServiceError::Busy => Self::Busy,
+            ServiceError::Full => Self::Full,
+            ServiceError::Unavailable => Self::Unavailable,
+            ServiceError::Storage => Self::Storage,
+            ServiceError::InvalidPosition => Self::InvalidPosition,
+            ServiceError::Timeout => Self::Timeout,
+        }
+    }
+}
+impl PrepareFailure {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Busy => "resume_prepare_busy",
+            Self::Full => "resume_prepare_full",
+            Self::Unavailable => "resume_prepare_unavailable",
+            Self::Storage => "resume_prepare_storage",
+            Self::InvalidPosition => "resume_prepare_invalid_position",
+            Self::Timeout => "resume_prepare_timeout",
+            Self::Panic => "resume_prepare_panic",
+        }
+    }
+}
+
 // Deliberately no Debug/Serialize/Clone: contains private native context data
 // and the nonduplicable process-wide permit.
 pub struct Ready {
@@ -59,7 +97,7 @@ pub struct Ready {
     scope: ResumeScope,
     root: Option<PathBuf>,
     cancelled: Arc<AtomicBool>,
-    result: Result<(), &'static str>,
+    result: Result<(), PrepareFailure>,
     _permit: Permit,
 }
 
@@ -138,8 +176,8 @@ pub fn start(
             let result = catch_unwind(AssertUnwindSafe(|| {
                 crate::youtube_light_resume_service::prepare(scope.clone(), root.clone())
             }))
-            .map_err(|_| REFUSED)
-            .and_then(|answer| answer.map(|_| ()).map_err(|_| REFUSED));
+            .map_err(|_| PrepareFailure::Panic)
+            .and_then(|answer| answer.map(|_| ()).map_err(PrepareFailure::from));
             let ready = Ready {
                 tab,
                 browser: identity,
@@ -179,33 +217,45 @@ pub fn admit(
     private: bool,
 ) -> Result<(u64, (ResumeScope, Option<PathBuf>)), &'static str> {
     if currently_on(ThreadId::UI) == 0 {
-        return Err(REFUSED);
+        return Err("resume_admit_wrong_thread");
     }
     let current = PENDING.with(|slot| {
         slot.try_borrow_mut()
             .map(|mut map| take_exact(&mut map, ready.browser, ready.operation))
             .unwrap_or(false)
     });
-    if !current
-        || !enabled()
-        || ready.cancelled.load(Ordering::Acquire)
-        || ready.result.is_err()
-        || browser.is_valid() == 0
-        || browser.identifier() != ready.browser
-        || !current_route.validate()
+    if !current {
+        return Err("resume_admit_stale");
+    }
+    if !enabled() {
+        return Err("resume_admit_disabled");
+    }
+    if ready.cancelled.load(Ordering::Acquire) {
+        return Err("resume_admit_cancelled");
+    }
+    if let Err(error) = ready.result {
+        return Err(error.code());
+    }
+    if browser.is_valid() == 0 || browser.identifier() != ready.browser {
+        return Err("resume_admit_browser_changed");
+    }
+    if !current_route.validate()
         || current_route.key != ready.route_key
         || route_generation != ready.route_generation
-        || private != ready.private
     {
-        return Err(REFUSED);
+        return Err("resume_admit_route_changed");
     }
-    let (frame, document) = document(browser)?;
+    if private != ready.private {
+        return Err("resume_admit_private_changed");
+    }
+    let (frame, document) = document(browser).map_err(|_| "resume_admit_document_unavailable")?;
     if frame != ready.frame || document != ready.document {
-        return Err(REFUSED);
+        return Err("resume_admit_document_changed");
     }
-    let actual = crate::cef_youtube_resume::setup(browser, &current_route.key, private)?;
+    let actual = crate::cef_youtube_resume::setup(browser, &current_route.key, private)
+        .map_err(|_| "resume_admit_scope_unavailable")?;
     if actual.0 != ready.scope || actual.1 != ready.root {
-        return Err(REFUSED);
+        return Err("resume_admit_scope_changed");
     }
     Ok((ready.operation, (ready.scope, ready.root)))
 }
@@ -277,5 +327,32 @@ mod tests {
         assert_eq!(ACTIVE.load(Ordering::Acquire), 0);
         drop(Permit::acquire().unwrap());
         assert_eq!(ACTIVE.load(Ordering::Acquire), 0);
+    }
+}
+
+#[cfg(test)]
+mod failure_tests {
+    use super::PrepareFailure;
+    #[test]
+    fn every_service_category_has_unique_bounded_static_code() {
+        use crate::youtube_light_resume_service::ServiceError;
+        let variants = [
+            ServiceError::Busy,
+            ServiceError::Full,
+            ServiceError::Unavailable,
+            ServiceError::Storage,
+            ServiceError::InvalidPosition,
+            ServiceError::Timeout,
+        ];
+        let mut codes = std::collections::HashSet::new();
+        for error in variants {
+            let code = PrepareFailure::from(error).code();
+            assert!(code.starts_with("resume_prepare_"));
+            assert!(code.len() < 48);
+            assert!(code.bytes().all(|b| b.is_ascii_lowercase() || b == b'_'));
+            assert!(codes.insert(code));
+        }
+        assert!(codes.insert(PrepareFailure::Panic.code()));
+        assert_eq!(codes.len(), 7);
     }
 }
