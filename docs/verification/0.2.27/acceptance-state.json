@@ -63,7 +63,16 @@
       "home-parser-diagnostic.json"
     ],
     "fix_commit": "34be02e12d4a2dbece299a2892a0f0a6ad00c505",
-    "fixed_package_retest": "pending"
+    "fixed_package_retest": {
+      "build_run": 45578091381,
+      "artifact": 15003869415,
+      "archive_sha256": "3f2934111bc8d85461f682fa8e62db08b871301890b425a960e8899297272072",
+      "reason": "ChallengeRequired",
+      "stage": "extractor",
+      "parser_retest_accepted": false,
+      "playback_accepted": false,
+      "evidence": "home-extraction-fixed-candidate.json"
+    }
   },
   "previous_candidate": {
     "build_run": 45544984950,

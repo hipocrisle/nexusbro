@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "completed": false,
+  "playback_tested": false,
+  "scope": "single_anonymous_production_extraction",
+  "components_sha256": {
+    "yt-dlp": "249ddb058234276bc449b9cd9492aad9f133bda5923c61a9e39983ae114ef17d",
+    "deno": "368bca08999e02c6911b8f248167b582276b1f547db5712b6e736d7eda1dbda7"
+  },
+  "manifest_sha256": "697d3fda721e1c06916108b23f994dd9607c3f7399f267d1ded1064606a8fc68",
+  "probe_sha256": "bf3b0598d467ccd1a5ea1ad641095b1bd6ac9f1374a67cdf50e5f7c06691c571",
+  "caller_uid_matches": true,
+  "filesystem_sandbox": false,
+  "egress_coverage": "production_proxy_plus_sampled_owned_proc_sockets_not_firewall",
+  "probe": {
+    "stage": "extractor",
+    "ok": false,
+    "impersonate_chrome": false,
+    "chrome_available": null,
+    "reason": "ChallengeRequired",
+    "diagnostic": {
+      "connection_closed": false,
+      "connection_reset": false,
+      "dns": false,
+      "errno": null,
+      "error_prefix": true,
+      "exit_code": 1,
+      "extractor": false,
+      "ffmpeg_missing": false,
+      "file_missing": false,
+      "format_unavailable": false,
+      "home_unavailable": false,
+      "http_400": false,
+      "http_403": false,
+      "http_404": false,
+      "http_429": false,
+      "http_5xx": false,
+      "invalid_argument": false,
+      "network": false,
+      "permission_denied": false,
+      "runtime": false,
+      "solver": false,
+      "stderr_bytes": 548,
+      "timeout": false,
+      "tls": false,
+      "usage": false,
+      "warning_prefix": true,
+      "win_error": null
+    }
+  },
+  "admission_consumed": true,
+  "processes": {
+    "observed": 3,
+    "samples": 35,
+    "transient_exits": 0,
+    "tree_exit_verified": true
+  },
+  "failure_class": "AssertionError",
+  "failure_code": "production_extraction_failed",
+  "probe_exit_code": 3,
+  "proxy": {
+    "connections": {
+      "connect_attempts": 1,
+      "connections_established": 1
+    },
+    "domains": {
+      "youtube.com": 1
+    }
+  },
+  "wall_seconds": 2.174
+}
