@@ -2,29 +2,35 @@
 """GHA-only official YouTube embed feasibility probe in ordinary NexusBro CEF.
 
 Diagnostic only, never playback acceptance. Verifies the architectural
-hypothesis that the supported IFrame Player API (official embed) can start
-playback in a normal isolated Super tab without the anonymous extractor.
-No yt-dlp, no native player private URL, no native IPC from the frame,
-no nb-lite CSP/MAIN-grant changes, no owner profile/cookies/auth.
+hypothesis that the official IFrame Player API (youtube iframe_api + YT.Player)
+can start playback in a normal isolated Super tab without the anonymous
+extractor. No yt-dlp, no native player private URL, no native IPC from the
+frame, no nb-lite CSP/MAIN-grant changes, no owner profile/cookies/auth.
 
-Fixture: own loopback HTTP origin serving clean HTML with the official
-https://www.youtube.com/embed/<video> iframe (enablejsapi=1&origin=<fixture>)
-and one contrast Play button. One physical trusted click -> the fixture's
-own DOM handler commands playVideo through the documented postMessage
-IFrame API (no remote iframe_api script is required for this). Only
-allowlisted integers cross the page boundary: states {-1,0,1,2,3,5},
-errors {2,5,100,101,150,153}; plus advancing currentTime seconds.
-Any ad wall / unknown code / refused embed -> blocked, never playback.
+CRITICAL (review KIMI-EMBED-REVIEW): client.js evaluates the TAURI SHELL DOM,
+never the CEF page. Therefore:
+- the fixture page reports ONLY through HTTP POST /receipt to the own
+  loopback fixture server (typed allowlisted payload, <=4096 bytes);
+- the trusted click is ONE physical client.mouse at .pole-relative (30,30),
+  where the fixture button is absolutely positioned at (16,16) 220x64 solid
+  yellow, so the point lands inside the button;
+- real OS paint is proven by a yellow pixel observed via ImageGrab in the
+  owned Xvfb at that exact screen point, not by DOM geometry.
 
-Primary references (official docs):
+Official API only: https://www.youtube.com/iframe_api script + YT.Player with
+onReady/onStateChange/onError and player.getCurrentTime() on a timer. The
+trusted DOM click handler calls player.playVideo() exactly once after onReady.
+
+References:
 - https://developers.google.com/youtube/player_parameters (enablejsapi, origin)
-- https://support.google.com/youtube/answer/171780 (IFrame Player API,
-  postMessage command protocol incl. playVideo without the api script)
+- https://support.google.com/youtube/answer/171780 (IFrame Player API)
 """
 import argparse
 import json
+import math
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 import threading
@@ -34,72 +40,132 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from youtube_paired_native import (
-    Device, switch_super, rows, route_file, OwnedWindowManager,
-    close_for_privacy, super_record, call, click_control, Blocked, foreground,
+    Device, switch_super, rows, OwnedWindowManager,
+    close_for_privacy, super_record, click_control, Blocked, foreground,
 )
 
 VIDEO = 'aqz-KE-bpKQ'
 ALLOWED_STATES = frozenset((-1, 0, 1, 2, 3, 5))
 ALLOWED_ERRORS = frozenset((2, 5, 100, 101, 150, 153))
+MAX_SAMPLES = 512
+MAX_RECEIPT_BYTES = 4096
 MIN_ADVANCED_SECONDS = 8
 WORK_BUDGET_SECONDS = 180
 CLEANUP_BUDGET_SECONDS = 90
+# Button geometry contract with the fixture page (absolute, no margins).
+BUTTON_LEFT = 16
+BUTTON_TOP = 16
+BUTTON_WIDTH = 220
+BUTTON_HEIGHT = 64
+CLICK_OFFSET = (30, 30)
+YELLOW = ((200, 255), (140, 255), (0, 140))  # (r,g,b) acceptance ranges
 
 FIXTURE_HTML = """<!doctype html>
 <html><head><meta charset="utf-8"><title>embed probe fixture</title>
 <style>
-body{margin:0;background:#123;color:#fff;font:16px sans-serif}
-#play{display:block;width:220px;height:64px;margin:16px;font-size:24px;background:#ffd400;color:#000;border:4px solid #000;cursor:pointer}
-#yt{width:640px;height:360px;border:0;background:#000;margin:0 16px 16px}
+html,body{margin:0;padding:0;background:#123}
+#play{position:absolute;left:16px;top:16px;width:220px;height:64px;font-size:24px;
+      background:#ffd400;color:#000;border:0;cursor:pointer}
+#yt{position:absolute;left:16px;top:96px;width:640px;height:360px;border:0;background:#000}
 </style></head>
 <body>
 <button id="play" type="button">PLAY</button>
-<iframe id="yt" src="https://www.youtube.com/embed/__VIDEO__?enablejsapi=1&amp;origin=__ORIGIN__&amp;rel=0&amp;modestbranding=1"
-        allow="autoplay; encrypted-media; picture-in-picture"></iframe>
+<div id="yt"></div>
 <script>
 (function(){
-  var yt=document.getElementById('yt');
-  var out={trusted_click:false,states:[],errors:[],times:[]};
-  window.__embed=out;
-  function send(payload){yt.contentWindow.postMessage(JSON.stringify(payload),'https://www.youtube.com');}
-  yt.addEventListener('load',function(){send({event:'listening'});});
-  setInterval(function(){send({event:'listening'});},1000);
-  setInterval(function(){send({event:'command',func:'getCurrentTime',args:[]});},500);
+  var player=null, ready=false, played=false;
+  var states=[], errors=[], time=0.0, invalid=false, lastStage='boot';
+  function intList(list, value, allowed){
+    if(!Number.isInteger(value)){invalid=true;lastStage='invalid_event';return;}
+    if(allowed.indexOf(value)<0){invalid=true;lastStage='unexpected_code';return;}
+    if(list.length<512&&list.indexOf(value)<0)list.push(value);
+  }
+  window.onYouTubeIframeAPIReady=function(){
+    lastStage='api_ready';
+    player=new YT.Player('yt',{
+      videoId:'__VIDEO__',
+      playerVars:{enablejsapi:1,origin:location.origin,rel:0,modestbranding:1},
+      events:{
+        onReady:function(){ready=true;lastStage='ready';},
+        onStateChange:function(e){intList(states,e.data,[-1,0,1,2,3,5]);
+          if(ready)lastStage='state_'+e.data;},
+        onError:function(e){intList(errors,e.data,[2,5,100,101,150,153]);lastStage='error';}
+      }});
+  };
   document.getElementById('play').addEventListener('click',function(e){
-    if(!e.isTrusted)return;
-    out.trusted_click=true;
-    send({event:'command',func:'playVideo',args:[]});
+    if(!e.isTrusted||!ready||played||invalid)return;
+    played=true;lastStage='play_command';
+    player.playVideo();
   });
-  window.addEventListener('message',function(e){
-    if(e.origin!=='https://www.youtube.com')return;
-    var d;try{d=JSON.parse(e.data);}catch(_){return;}
-    if(d.event==='onStateChange')out.states.push(d.info|0);
-    else if(d.event==='onError')out.errors.push(d.info|0);
-    else if(d.event==='infoDelivery'&&d.info&&typeof d.info.currentTime==='number')out.times.push(d.info.currentTime);
-  });
+  setInterval(function(){
+    if(player&&ready&&typeof player.getCurrentTime==='function'){
+      var t=player.getCurrentTime();
+      if(typeof t==='number'&&isFinite(t))time=t;else{invalid=true;lastStage='invalid_clock';}
+    }
+    var payload={stage:lastStage,ready:ready,played:played,invalid:invalid,
+                 states:states,errors:errors,time:Math.round(time*1000)/1000};
+    try{navigator.sendBeacon('/receipt',JSON.stringify(payload));}
+    catch(_){fetch('/receipt',{method:'POST',body:JSON.stringify(payload)}).catch(function(){});}
+  },500);
 })();
 </script>
+<script src="https://www.youtube.com/iframe_api"></script>
 </body></html>
 """
 
 
 class Fixture:
-    """Own loopback HTTP origin serving exactly one page; logs nothing."""
+    """Own loopback HTTP origin: one page, POST /receipt store, GET /summary read."""
 
     def __init__(self, video):
-        self.origin = None
         self._template = FIXTURE_HTML
         self._video = video
         self._server = None
         self._thread = None
+        self._lock = threading.Lock()
+        self._latest = None
+        self.origin = None
 
     def start(self):
         template = self._template
         video = self._video
+        lock = self._lock
+        box = {}
+
+        def validate(data):
+            if not isinstance(data, dict):
+                return None
+            if set(data) != {'stage', 'ready', 'played', 'invalid', 'states', 'errors', 'time'}:
+                return None
+            if type(data.get('stage')) is not str or len(data['stage']) > 32:
+                return None
+            for key in ('ready', 'played', 'invalid'):
+                if type(data.get(key)) is not bool:
+                    return None
+            for key in ('states', 'errors'):
+                value = data.get(key)
+                if not isinstance(value, list) or len(value) > MAX_SAMPLES:
+                    return None
+                if any(type(v) is not int for v in value):
+                    return None
+            t = data.get('time')
+            if type(t) not in (int, float) or not math.isfinite(t) or not 0 <= t <= 10 ** 7:
+                return None
+            return data
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                if self.path.split('?', 1)[0] != '/embed-probe.html':
+                path = self.path.split('?', 1)[0]
+                if path == '/summary':
+                    with lock:
+                        payload = json.dumps(box.get('latest')).encode('utf-8')
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.send_header('Content-Length', str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                if path != '/embed-probe.html':
                     self.send_response(404); self.end_headers(); return
                 origin = f'http://127.0.0.1:{self.server.server_port}'
                 payload = (template.replace('__VIDEO__', video)
@@ -111,6 +177,23 @@ class Fixture:
                 self.end_headers()
                 self.wfile.write(payload)
 
+            def do_POST(self):
+                if self.path.split('?', 1)[0] != '/receipt':
+                    self.send_response(404); self.end_headers(); return
+                try:
+                    length = int(self.headers.get('Content-Length') or 0)
+                except ValueError:
+                    length = 0
+                if not 0 < length <= MAX_RECEIPT_BYTES:
+                    self.send_response(413); self.end_headers(); return
+                try:
+                    data = validate(json.loads(self.rfile.read(length).decode('utf-8')))
+                except (ValueError, UnicodeError):
+                    data = None
+                with lock:
+                    box['latest'] = {'invalid_receipt': True} if data is None else data
+                self.send_response(204); self.end_headers()
+
             def log_message(self, *args):
                 return
 
@@ -120,6 +203,10 @@ class Fixture:
         self._thread.start()
         return self.origin + '/embed-probe.html'
 
+    def summary(self):
+        with self._lock:
+            return self._latest
+
     def close(self):
         if self._server is not None:
             self._server.shutdown()
@@ -127,39 +214,51 @@ class Fixture:
             self._server = None
 
 
-def filter_allowlisted(values, allowed):
-    if not isinstance(values, list):
+def summarize(receipt):
+    """Second allowlist boundary on the test side; only ints/finite clock leave."""
+    if not isinstance(receipt, dict) or receipt.get('invalid_receipt') is True:
         raise Blocked('embed_receipt_invalid')
-    seen = []
-    for value in values:
-        if type(value) is not int or value not in allowed:
-            raise Blocked('embed_unexpected_code')
-        if value not in seen:
-            seen.append(value)
-    return seen
+    states, errors = [], []
+    for key, allowed in (('states', ALLOWED_STATES), ('errors', ALLOWED_ERRORS)):
+        for value in receipt.get(key) or []:
+            if type(value) is not int or value not in allowed:
+                raise Blocked('embed_unexpected_code')
+            if value not in (states if key == 'states' else errors):
+                (states if key == 'states' else errors).append(value)
+    t = receipt.get('time')
+    if type(t) not in (int, float) or not math.isfinite(t):
+        raise Blocked('embed_receipt_invalid')
+    ready = receipt.get('ready') is True
+    played = receipt.get('played') is True
+    invalid = receipt.get('invalid') is True
+    if invalid:
+        raise Blocked('embed_unexpected_code')
+    return {'stage': receipt.get('stage'), 'ready': ready, 'played': played,
+            'states_seen': states, 'errors_seen': errors,
+            'api_clock_advanced_seconds': round(float(t), 3),
+            'playing_observed': bool(ready and played and 1 in states and float(t) >= MIN_ADVANCED_SECONDS)}
 
 
-def summarize(raw):
-    """Allowlist boundary: only documented integers and advancing clock leave the page."""
-    if not isinstance(raw, dict) or type(raw.get('trusted_click')) is not bool:
-        raise Blocked('embed_receipt_invalid')
-    trusted = raw.get('trusted_click')
-    states = filter_allowlisted(raw.get('states'), ALLOWED_STATES)
-    errors = filter_allowlisted(raw.get('errors'), ALLOWED_ERRORS)
-    times = raw.get('times')
-    if type(times) is not list or any(type(t) not in (int, float) or t < 0 or t > 10 ** 7 for t in times):
-        raise Blocked('embed_receipt_invalid')
-    advanced = round(max(times) - min(times), 1) if len(times) >= 2 else 0.0
-    return {'trusted_play_click': trusted is True, 'states_seen': states, 'errors_seen': errors,
-            'api_clock_advanced_seconds': advanced,
-            'playing_observed': 1 in states and advanced >= MIN_ADVANCED_SECONDS}
+def yellow_observed(device, client, point):
+    """Real OS paint proof: yellow button pixel at the owned Xvfb screen point."""
+    label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    origin = client.command('plugin:window|inner_position', label=label)
+    scale = client.js('devicePixelRatio||1') or 1
+    x = round(origin['x'] + point[0] * scale)
+    y = round(origin['y'] + point[1] * scale)
+    from PIL import ImageGrab
+    with ImageGrab.grab(bbox=(x, y, x + 1, y + 1), xdisplay=device.display) as image:
+        r, g, b = image.convert('RGB').getpixel((0, 0))
+    return YELLOW[0][0] <= r <= YELLOW[0][1] and YELLOW[1][0] <= g <= YELLOW[1][1] and YELLOW[2][0] <= b <= YELLOW[2][1]
 
 
 def initial_report():
     return {'schema': 1, 'diagnostic_only': True, 'feasibility_probe': True,
             'completed': False, 'video': VIDEO,
-            'trusted_play_click': False, 'states_seen': [], 'errors_seen': [],
-            'api_clock_advanced_seconds': 0.0, 'playing_observed': False,
+            'trusted_play_click': False, 'os_paint_observed': False,
+            'ready': False, 'played': False,
+            'states_seen': [], 'errors_seen': [], 'api_clock_advanced_seconds': 0.0,
+            'playing_observed': False,
             'full_playback_acceptance': False, 'paired': False,
             'official_api_docs': ['https://developers.google.com/youtube/player_parameters',
                                   'https://support.google.com/youtube/answer/171780'],
@@ -169,7 +268,7 @@ def initial_report():
 
 def run(args):
     report = initial_report(); device = wm = None; root = None; client = None
-    fixture = Fixture(VIDEO); closed = False; close_attempted = False
+    fixture = Fixture(VIDEO); close_attempted = False
     out = Path(args.out).resolve(); out.mkdir(parents=True, exist_ok=False)
     started = time.monotonic(); work_deadline = started + WORK_BUDGET_SECONDS
     def remaining(cap):
@@ -196,7 +295,7 @@ def run(args):
         switch_super(client, identifier, timeout=remaining(10))
         if client.js('!!document.querySelector(".pusto button")'):
             click_control(client, '.pusto button', remaining(10))
-        report['stage'] = 'fixture-load'
+        report['stage'] = 'tab-live'
         deadline = time.monotonic() + remaining(60); tab = None
         while time.monotonic() < deadline:
             session = rows(client, identifier, timeout=remaining(3)); tab = session.get('aktivnaya')
@@ -205,32 +304,47 @@ def run(args):
             time.sleep(.5)
         else:
             raise Blocked('embed_tab_not_live')
-        # Real paint of the contrast button in the owned viewport.
-        deadline = time.monotonic() + remaining(20); painted = False
-        while time.monotonic() < deadline and not painted:
-            painted = client.js('(()=>{const b=document.getElementById("play");return !!b&&b.getBoundingClientRect().width>0&&document.readyState==="complete"})()') is True
+        # Shell-side only: the CEF area bounds of the active tab.
+        point = None
+        deadline = time.monotonic() + remaining(20)
+        while time.monotonic() < deadline:
+            value = client.js('(()=>{const e=document.querySelector(".pole");if(!e)return null;const r=e.getBoundingClientRect();return r.width>300&&r.height>200?[Math.round(r.x+30),Math.round(r.y+30)]:null})()')
+            if value:
+                point = tuple(value); break
             time.sleep(.25)
-        if not painted: raise Blocked('embed_button_not_painted')
-        report['stage'] = 'trusted-play-click'
+        if point is None: raise Blocked('embed_pole_unavailable')
         foreground(device)
-        click_control(client, '#play', remaining(10))  # one physical trusted click
+        report['stage'] = 'os-paint'
+        deadline = time.monotonic() + remaining(30)
+        while time.monotonic() < deadline:
+            try:
+                if yellow_observed(device, client, point):
+                    report['os_paint_observed'] = True; break
+            except Exception:
+                pass
+            time.sleep(.4)
+        if not report['os_paint_observed']: raise Blocked('embed_button_not_painted')
+        report['stage'] = 'trusted-play-click'
+        client.mouse(*point)  # exactly one physical click on the yellow button
         report['stage'] = 'observation'
         deadline = time.monotonic() + remaining(120); summary = None
         while time.monotonic() < deadline:
-            raw = client.js('window.__embed||null')
-            if raw:
-                summary = summarize(raw)
-                report.update(summary)
+            receipt = fixture.summary()
+            if receipt is not None:
+                summary = summarize(receipt)
+                report.update({key: summary[key] for key in ('ready', 'played', 'states_seen', 'errors_seen', 'api_clock_advanced_seconds', 'playing_observed')})
+                report['fixture_stage'] = summary['stage']
                 if summary['errors_seen']:
                     raise Blocked('embed_error_' + '_'.join(str(e) for e in summary['errors_seen']))
                 if summary['playing_observed']:
                     break
             time.sleep(.5)
         if summary is None: raise Blocked('embed_receipt_unavailable')
-        if not summary['trusted_play_click']: raise Blocked('trusted_click_missing')
+        report['trusted_play_click'] = summary['played']  # receipt written only by the trusted handler
+        if not summary['played']: raise Blocked('trusted_click_missing')
         if not summary['playing_observed']: raise Blocked('embed_playing_not_observed')
         report['stage'] = 'normal-owned-exit'; close_attempted = True
-        close_for_privacy(client, device, report); closed = True
+        close_for_privacy(client, device, report)
         report['completed'] = True; report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
@@ -271,31 +385,41 @@ def run(args):
 
 
 def self_test():
-    assert summarize({'trusted_click': True, 'states': [3, 1, 1, 2], 'errors': [], 'times': [0.0, 4.2, 9.1]}) == {
-        'trusted_play_click': True, 'states_seen': [3, 1, 2], 'errors_seen': [],
-        'api_clock_advanced_seconds': 9.1, 'playing_observed': True}
-    assert summarize({'trusted_click': False, 'states': [-1], 'errors': [], 'times': [1.0]})['playing_observed'] is False
-    for bad in ({'trusted_click': True, 'states': [4], 'errors': [], 'times': []},
-                {'trusted_click': True, 'states': [], 'errors': [7], 'times': []},
-                {'trusted_click': True, 'states': [], 'errors': [], 'times': ['x']},
-                {'states': [], 'errors': [], 'times': []}):
+    good = {'stage': 'state_1', 'ready': True, 'played': True, 'invalid': False,
+            'states': [3, 1, 1, 2], 'errors': [], 'time': 9.125}
+    assert summarize(good)['playing_observed'] is True
+    idle = {'stage': 'ready', 'ready': True, 'played': False, 'invalid': False,
+            'states': [-1], 'errors': [], 'time': 0.5}
+    assert summarize(idle)['playing_observed'] is False
+    for bad in ({'stage': 'x', 'ready': True, 'played': True, 'invalid': False, 'states': [4], 'errors': [], 'time': 1},
+                {'stage': 'x', 'ready': True, 'played': True, 'invalid': False, 'states': [], 'errors': [7], 'time': 1},
+                {'stage': 'x', 'ready': True, 'played': True, 'invalid': True, 'states': [], 'errors': [], 'time': 1},
+                {'stage': 'x', 'ready': True, 'played': True, 'invalid': False, 'states': [], 'errors': [], 'time': float('nan')},
+                {'invalid_receipt': True}):
         try:
             summarize(bad)
         except Blocked:
             pass
         else:
             raise AssertionError('invalid_embed_receipt_accepted')
-    assert FIXTURE_HTML.count('https://www.youtube.com/embed/') == 1
-    assert 'enablejsapi=1' in FIXTURE_HTML and '__ORIGIN__' in FIXTURE_HTML
-    assert 'iframe_api' not in FIXTURE_HTML  # postMessage protocol needs no remote script
+    assert f'left:{BUTTON_LEFT}px;top:{BUTTON_TOP}px;width:{BUTTON_WIDTH}px;height:{BUTTON_HEIGHT}px' in FIXTURE_HTML
+    assert CLICK_OFFSET[0] > BUTTON_LEFT and CLICK_OFFSET[1] > BUTTON_TOP
+    assert CLICK_OFFSET[0] < BUTTON_LEFT + BUTTON_WIDTH and CLICK_OFFSET[1] < BUTTON_TOP + BUTTON_HEIGHT
+    assert 'iframe_api' in FIXTURE_HTML and 'YT.Player' in FIXTURE_HTML
+    assert 'postMessage' not in FIXTURE_HTML  # official API only, no manual protocol
+    assert 'playVideo()' in FIXTURE_HTML and FIXTURE_HTML.count('playVideo()') == 1
     import re as _re
     remote = [u for u in _re.findall(r'https://[^\s"\'<>\\)]+', FIXTURE_HTML) if '127.0.0.1' not in u]
     assert remote and all(u == 'https://www.youtube.com' or u.startswith('https://www.youtube.com/')
                           for u in remote), 'fixture must reference only the official youtube origin'
-    probe = Fixture(VIDEO); url = probe.start(); probe.close()
+    fixture = Fixture(VIDEO); url = fixture.start()
     assert url.startswith('http://127.0.0.1:') and url.endswith('/embed-probe.html')
-    report = initial_report()
-    assert report['full_playback_acceptance'] is False and report['paired'] is False
+    good_copy = dict(good)
+    with fixture._lock:
+        fixture._latest = good_copy
+    assert fixture.summary()['ready'] is True
+    fixture.close()
+    assert initial_report()['full_playback_acceptance'] is False and initial_report()['paired'] is False
     return {'self_test': True, 'source_only': True, 'native_execution': False}
 
 

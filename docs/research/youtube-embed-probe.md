@@ -1,50 +1,60 @@
 # YouTube official embed — feasibility probe (изолированный зонд)
 
 Ветка: research/youtube-embed-probe (worktree /matrix/nexusbro-kimi-embed, base c88ba5ea).
-Статус: **скрипт готов, self-test PASS, нативный прогон НЕ запускался** (запускает ROOT/CI).
-Production/workflow/desktop не менялись; новые файлы только эта документация и
-`tests/gui/youtube_embed_reference_native.py`.
+Статус: **скрипт готов после review KIMI-EMBED-REVIEW, self-test PASS, нативный
+прогон НЕ запускался** (запускает ROOT/CI на кандидате FULL 45592261113, source 1f8ece5).
+Production/workflow/desktop/существующие тесты не менялись.
 
-## Гипотеза
+## Ключевая правка по review
 
-ChallengeRequired анонимного extractor не доказывает, что официальный embedded
-player не играет. Зонд проверяет supported IFrame Player API в обычном CEF
-NexusBro: реальный enclosing fixture-origin на loopback, из которого iframe
-грузит официальный `https://www.youtube.com/embed/aqz-KE-bpKQ?enablejsapi=1&
-origin=<fixture>`. Прямой навигации на `/embed/` и подделки Referer нет
-(актуальное ограничение — error 153 без enclosing origin).
+`client.js` оценивает DOM оболочки Tauri, НЕ страницу CEF. Поэтому:
 
-## Что делает скрипт
+- Страница fixture общается с тестом **только через HTTP**: POST `/receipt`
+  (sendBeacon, typed allowlisted payload ≤4096 Б, сервер валидирует и хранит
+  последнюю сводку под lock; тест читает GET `/summary` read-only).
+- Trusted click — **один физический `client.mouse(pole.x+30, pole.y+30)`**;
+  кнопка fixture абсолютно позиционирована в (16,16), 220×64, сплошная жёлтая,
+  без margin — точка (30,30) гарантированно внутри.
+- OS paint доказывается **ImageGrab в owned Xvfb**: пиксель (30,30) от .pole
+  должен быть жёлтым; DOM-геометрия как доказательство paint не принимается.
+- Shell-side js используется только для `.pole` bounds / identity / rows —
+  как в реальных референс-фикстурах репо.
 
-- Только `GITHUB_ACTIONS=true` + Linux, флаги `--exe --cef --out`; видео фиксировано.
-- Fixture: собственный loopback HTTP-origin отдаёт один чистый HTML: официальный
-  iframe (единственный внешний origin), одна контрастная кнопка Play, inline JS.
-  Никаких remote script (iframe_api НЕ требуется — управление идёт документированным
-  postMessage-протоколом: `listening` + `command/playVideo`).
-- Один физический trusted click по кнопке (click_control), обработчик кнопки
-  (isTrusted) шлёт официальную команду playVideo. Никакого autoplay/JS-кликов из
-  тест-клиента, никакого native IPC из фрейма.
-- Ждётся реальная отрисовка кнопки в owned-viewport, собирается fixture-receipt.
-- Граница данных: из страницы наружу проходят ТОЛЬКО allowlisted целые —
-  состояния {-1,0,1,2,3,5}, ошибки {2,5,100,101,150,153} и продвигающийся
-  currentTime (≥8 с). Любой другой код → blocked. Сырые URL/заголовки/ошибки/
-  cookies не сохраняются и не публикуются.
-- Процесс-ownership, normal exit receipt и cleanup не ослаблены; бюджеты:
-  работа ≤180 с, cleanup ≤90 с (под будущий CI).
-- Отчёт всегда оставляет `full_playback_acceptance=false`, `paired=false` —
-  API-часы и состояния — это feasibility, не paired-decoder приёмка; официальный
-  API не доказывает отсутствие рекламы.
+## Официальный API
+
+Только `https://www.youtube.com/iframe_api` + `YT.Player` с onReady /
+onStateChange / onError; `player.getCurrentTime()` на таймере (500 мс).
+Ручной postMessage-протокол удалён (необещанный документами).
+Trusted DOM-обработчик кнопки зовёт `player.playVideo()` **ровно один раз**
+после onReady и только при `e.isTrusted`.
+
+## Границы данных
+
+Из страницы наружу: stage (known strings ≤32), ready/played/invalid bool,
+states {-1,0,1,2,3,5}, errors {2,5,100,101,150,153} (обе ≤512, строго int —
+никаких coerce `|0`), finite currentTime. Второй allowlist-контур — на стороне
+теста в `summarize()`. Сырые URL/ошибки/cookies не сохраняются.
+Отчёт всегда `full_playback_acceptance=false`, `paired=false` — API-часы не
+доказывают ни paired-decode, ни отсутствие рекламы.
 
 ## Исходы
 
 - `completed=true` + `playing_observed=true`: официальный embed стартует в
-  обычном CEF — основание для продуктового решения (отдельный честный режим с
-  ограничениями качества/рекламы/фона/загрузок, без ослабления nb-lite CSP).
-- Любой `blocked_reason` (embed_refused 101/150, embed_origin_invalid 153,
-  unexpected code, playing_not_observed): честный blocked, playback не заявлен.
+  обычном CEF → основание для отдельного честного режима (ограничения
+  качества/рекламы/фона/загрузок) без ослабления nb-lite CSP/MAIN-grant.
+- Любой `blocked_reason` (embed_refused 101/150, unexpected code,
+  playing_not_observed, receipt_invalid): честный blocked, playback не заявлен.
+
+## Честные ограничения готовности
+
+- Self-test покрывает: оба allowlist-контура, валидацию receipt-схемы, геометрию
+  кнопки/клика, отсутствие postMessage-протокола, единственность внешнего
+  origin, старт fixture-сервера.
+- НЕ проверено вживую (только в нативном прогоне ROOT): реальный POST /receipt
+  из CEF-страницы (sendBeacon/POST), жёлтый пиксель через ImageGrab на owned
+  Xvfb, поведение YT.Player при challenge/рекламе.
 
 ## Следующий шаг
 
-ROOT запускает зонд на существующем кандидате (FULL run 45592261113,
-source 1f8ece5) вручную/через CI-шаг по его выбору; этот прогон сейчас не
-запускался по ограничению задания.
+ROOT: один запуск зонда на существующем кандидате (`--exe --cef --out`),
+результат — `result.json` рядом с out.
