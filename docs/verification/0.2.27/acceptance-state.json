@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "version": "0.2.27",
+  "published": false,
+  "machine_acceptance_complete": false,
+  "candidate": {
+    "build_run": 45544984950,
+    "source": "7173361aed69d3587f0618b5e7b3ae88be23faef",
+    "status": "success",
+    "native_windows": "success",
+    "native_linux": "success"
+  },
+  "resource_soak": {
+    "run": 45549296137,
+    "status": "in_progress",
+    "required_seconds": 7200,
+    "accepted": false
+  },
+  "public_youtube": {
+    "diagnostic_run": 45550180154,
+    "playback_accepted": false,
+    "windows": {
+      "reason": "ChallengeRequired",
+      "bot_confirmation": true
+    },
+    "linux": {
+      "reason": "NetworkFailure",
+      "test_proxy_domain_denied": 2
+    }
+  },
+  "paired_public_measurement": {
+    "status": "not_run",
+    "accepted": false
+  },
+  "public_updater_verification": {
+    "status": "not_run",
+    "execution_location": "github_actions",
+    "required_public_packages": 3,
+    "accepted": false
+  },
+  "observed_at_utc": "2026-11-25T05:42:24.775836+00:00"
+}
