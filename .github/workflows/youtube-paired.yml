@@ -216,7 +216,7 @@ jobs:
           MEASUREMENT_OUTCOME: ${{ steps.measurement.outcome }}
         run: |
           python - <<'PY'
-          import json,math,os,pathlib,re
+          import hashlib,io,json,math,os,pathlib,re
           root=pathlib.Path('.dev-check/paired-control');public=root/'public';public.mkdir(parents=True,exist_ok=True)
           def load(path):
               if not path.is_file() or path.stat().st_size>2*1024*1024:return {}
@@ -246,6 +246,26 @@ jobs:
                       if numeric(value.get(key)):result['observed_playback'][key]=value[key]
                   for key in ('clock_advanced','decoded_advanced'):
                       if type(value.get(key)) is bool:result['observed_playback'][key]=value[key]
+              crop=raw.get('status_crop',{})
+              if isinstance(crop,dict):
+                  allowed_crop_failures={'scope_denied','ownership_unproven','binding_unproven','geometry_invalid','capture_invalid','encoded_size_limit','output_exists','capture_unavailable'}
+                  reason=crop.get('failure')
+                  result['status_crop']={'saved':False,'failure':reason if isinstance(reason,str) and reason in allowed_crop_failures else 'unclassified'}
+                  if crop.get('saved') is True:
+                      try:
+                          from PIL import Image
+                          path=root/'private/measurement/reference-status.png'
+                          if any(type(crop.get(key)) is not int for key in ('bytes','width','height')):raise ValueError()
+                          if load(root/'config.json').get('platform')!='linux' or path.is_symlink() or not path.is_file() or not 0<path.stat().st_size<=102400:raise ValueError()
+                          with path.open('rb') as stream:body=stream.read(102401)
+                          if not 0<len(body)<=102400 or len(body)!=crop.get('bytes') or hashlib.sha256(body).hexdigest()!=crop.get('sha256'):raise ValueError()
+                          with Image.open(io.BytesIO(body)) as shot:
+                              if shot.format!='PNG' or shot.size!=(crop.get('width'),crop.get('height')) or not 0<shot.width<=640 or not 0<shot.height<=360:raise ValueError()
+                              width,height=shot.size
+                              shot.verify()
+                          with (public/'reference-status.png').open('xb') as stream:stream.write(body)
+                          result['status_crop']={'saved':True,'bytes':len(body),'width':width,'height':height,'sha256':hashlib.sha256(body).hexdigest()}
+                      except Exception:result['status_crop']={'saved':False,'failure':'receipt_mismatch'}
           for key in ('improvement_observed','drop_regression_observed','audio_policy_proven'):result[key]=raw.get(key) is True
           for key in ('cpu_ratio','private_ratio'):
               if numeric(raw.get(key)):result[key]=raw[key]
@@ -268,6 +288,8 @@ jobs:
         if: always()
         with:
           name: youtube-paired-${{ runner.os }}-${{ inputs.run }}
-          path: .dev-check/paired-control/public/*.json
+          path: |
+            .dev-check/paired-control/public/*.json
+            .dev-check/paired-control/public/reference-status.png
           if-no-files-found: error
           retention-days: 14
