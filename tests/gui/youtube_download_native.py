@@ -452,7 +452,10 @@ def path_entry_comparison(value,bounded,expected):
             'filename_empty':valid and not value,
             'filename_length_equal':valid and len(value)==len(expected),
             'filename_casefold_equal':valid and value.casefold()==expected.casefold(),
-            'filename_basename_suffix':valid and value.endswith(Path(expected).name)}
+            'filename_basename_suffix':valid and value.endswith(Path(expected).name),
+            'filename_full_path_suffix':valid and value.endswith(expected),
+            'filename_length_delta':max(-512,min(512,len(value)-len(expected))) if valid else None,
+            'filename_extra_prefix_single_a':valid and value=='a'+expected}
 
 
 def verify_windows_path_entry(device,dialog,target,expected,diagnostics,*,focus_before=None):
@@ -545,10 +548,12 @@ def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
             require(target is not None,'Native SaveAs filename edit missing')
             target.click_input()
             windows_focus_ready(device,dialog,target)
-            keys(device,'ctrl+a')
-            focus_before=windows_selection_ready(device,dialog,target,diagnostics)
             import pyautogui as gui
-            gui.write(str(path),interval=.002)
+            # One human-paced chord and one write; the native guards still
+            # reject any missed selection or queued input. No corrective input.
+            gui.hotkey('ctrl','a',interval=.05)
+            focus_before=windows_selection_ready(device,dialog,target,diagnostics)
+            gui.write(str(path),interval=.02)
             verify_windows_path_entry(device,dialog,target,str(path),diagnostics,focus_before=focus_before)
             keys(device,'enter')
     else:
@@ -818,6 +823,9 @@ def self_test():
     require(comparison['filename_equals_expected_target'] and comparison['filename_basename_suffix'],'Exact path diagnostic mismatch')
     comparison=path_entry_comparison('example.webm',True,'Example.webm')
     require(not comparison['filename_equals_expected_target'] and comparison['filename_casefold_equal'],'Casefold diagnostic mismatch')
+    prefixed=path_entry_comparison('aExample.webm',True,'Example.webm')
+    require(prefixed['filename_full_path_suffix'] and prefixed['filename_length_delta']==1 and prefixed['filename_extra_prefix_single_a'],'Single queued-character diagnostic mismatch')
+    require(not path_entry_comparison('aaExample.webm',True,'Example.webm')['filename_extra_prefix_single_a'],'Multiple prefix misclassified')
     require(path_entry_comparison('',True,'Example.webm')['filename_empty'],'Empty path diagnostic mismatch')
     require(not any(path_entry_comparison(None,False,'Example.webm').values()),'Unobserved path diagnostic accepted')
     for label,kind in [('File name:','file_name'),('Имя файла','file_name'),('Address','folder_address'),('Search','search'),('unknown','other'),('x'*81,'other')]:
