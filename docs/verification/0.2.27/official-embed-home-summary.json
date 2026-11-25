@@ -1,0 +1,71 @@
+{
+  "schema": 1,
+  "diagnostic_only": true,
+  "feasibility_probe": true,
+  "completed": true,
+  "video": "M7lc1UVf-VE",
+  "trusted_play_click": true,
+  "os_paint_observed": true,
+  "ready": true,
+  "played": true,
+  "states_seen": [
+    -1,
+    3,
+    1
+  ],
+  "errors_seen": [],
+  "api_clock_advanced_seconds": 8.332,
+  "playing_observed": true,
+  "full_playback_acceptance": false,
+  "paired": false,
+  "official_api_docs": [
+    "https://developers.google.com/youtube/player_parameters",
+    "https://support.google.com/youtube/answer/171780"
+  ],
+  "budgets": {
+    "work_seconds": 180,
+    "cleanup_seconds": 90
+  },
+  "stage": "complete",
+  "cleanup_completed": true,
+  "mode": "local_home",
+  "receipt_unavailable_in_local_mode": true,
+  "sandbox": "preserved_no_gha_disable",
+  "allowed_stages": [
+    "preflight",
+    "private-root",
+    "startup",
+    "owned-window-manager",
+    "tab-live",
+    "official-api-ready",
+    "os-paint",
+    "trusted-play-click",
+    "observation",
+    "local-normal-owned-exit"
+  ],
+  "private_root_inside_ai": true,
+  "owned_exit": {
+    "parent_normal_exit": true,
+    "native_members_observed": 10,
+    "os_identities_observed": 16,
+    "all_known_native_executions_exited": true,
+    "native_members_complete": true,
+    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
+    "harness_kill_used_for_acceptance": false,
+    "clean_shutdown_receipt_verified": false,
+    "receipt_unavailable_in_local_mode": true,
+    "actual_app_identity_bound": true,
+    "launcher_is_actual_app": false,
+    "actual_app_execution_exited": true,
+    "launcher_exit_zero": true
+  },
+  "wall_seconds": 38.646,
+  "producer_run": 45592261113,
+  "desktop_source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+  "binary_sha256": "4d76ff61ebcf26a3db5a287a92e1646b88a13dd3f53e53815ed1b584f2a61dd1",
+  "limitations": [
+    "Official iframe playback feasibility only; not lightweight mode",
+    "API playback clock and OS painted control, not audio capture or decoder acceptance",
+    "Not performance comparison or release acceptance"
+  ]
+}
