@@ -391,6 +391,59 @@ def windows_path_focus(device,dialog,target):
     return result
 
 
+def full_native_selection(value,bounded,start,end):
+    return (bounded and isinstance(value,str) and type(start) is int and type(end) is int
+            and start==0 and end==len(value.encode('utf-16-le'))//2 and 0<=end<=512)
+
+
+def windows_read_selection(handle):
+    """Bounded standard Edit EM_GETSEL; no text mutation or selection command."""
+    import ctypes
+    from ctypes import wintypes
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.SendMessageTimeoutW.argtypes=[wintypes.HWND,wintypes.UINT,wintypes.WPARAM,wintypes.LPARAM,
+                                      wintypes.UINT,wintypes.UINT,ctypes.POINTER(ctypes.c_size_t)]
+    user.SendMessageTimeoutW.restype=ctypes.c_size_t
+    result=ctypes.c_size_t()
+    ok=user.SendMessageTimeoutW(handle,0x00B0,0,0,0x0003,200,ctypes.byref(result))
+    if not ok or result.value==0xffffffff:return None
+    start,end=result.value&0xffff,(result.value>>16)&0xffff
+    if not 0<=start<=end<=512:return None
+    return start,end
+
+
+def windows_focus_ready(device,dialog,target):
+    def ready():
+        state=windows_path_focus(device,dialog,target)
+        return state if state.get('observed') and state.get('foreground')=='same_dialog' and state.get('focus')=='same_edit' else None
+    return wait_for(ready,'Native SaveAs filename focus not ready',2)
+
+
+def windows_selection_ready(device,dialog,target,diagnostics):
+    receipt={'focus_ready':True,'selection_observed':False,'selection_full':False}
+    if diagnostics is not None:
+        items=diagnostics.setdefault('windows_selection',[])
+        require(len(items)<8,'Native SaveAs selection diagnostic bound exceeded')
+        items.append(receipt)
+    deadline=time.monotonic()+2
+    while True:
+        state=windows_path_focus(device,dialog,target)
+        focused=state.get('observed') and state.get('foreground')=='same_dialog' and state.get('focus')=='same_edit'
+        selection=windows_read_selection(target.handle) if focused else None
+        value,bounded=windows_read_control_text(target.handle) if focused else (None,False)
+        receipt['focus_ready']=bool(focused)
+        receipt['selection_observed']=selection is not None
+        if selection is not None:
+            receipt.update(selection_start=selection[0],selection_end=selection[1],
+                           initial_empty=bool(bounded and value==''),
+                           initial_utf16_length=len(value.encode('utf-16-le'))//2 if bounded and isinstance(value,str) else None,
+                           selection_full=full_native_selection(value,bounded,*selection))
+            if receipt['selection_full']:return state
+        if time.monotonic()>=deadline:break
+        time.sleep(.05) # Observe the single Ctrl+A; never send it again.
+    require(False,'Native SaveAs filename selection not ready')
+
+
 def path_entry_comparison(value,bounded,expected):
     checked=isinstance(value,str)
     valid=bool(bounded and checked)
@@ -490,9 +543,11 @@ def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
             edits=window.descendants(control_type='Edit')
             target=next((e for e in edits if e.element_info.automation_id=='1001'),None)
             require(target is not None,'Native SaveAs filename edit missing')
-            target.click_input();keys(device,'ctrl+a')
+            target.click_input()
+            windows_focus_ready(device,dialog,target)
+            keys(device,'ctrl+a')
+            focus_before=windows_selection_ready(device,dialog,target,diagnostics)
             import pyautogui as gui
-            focus_before=windows_path_focus(device,dialog,target)
             gui.write(str(path),interval=.002)
             verify_windows_path_entry(device,dialog,target,str(path),diagnostics,focus_before=focus_before)
             keys(device,'enter')
@@ -505,12 +560,24 @@ def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
             subprocess.run(['xdotool','type','--clearmodifiers','--delay','2','--',str(path)],env=env,check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=10)
             keys(device,'Return')
             time.sleep(.4)
-            if dialog in dialogs(device):keys(device,'alt+s')
+            if dialog in dialogs(device):
+                if replace:
+                    # GTK Name completion may consume Return. Dismiss that popup
+                    # once, then prove the same owned chooser still owns input.
+                    keys(device,'Escape')
+                    require(dialog in dialogs(device),'Native completion dismissal closed SaveAs')
+                keys(device,'alt+s')
     if replace:
         # Explicit physical confirmation is part of this synthetic user's choice;
         # backend must still refuse replacing any already-existing target.
-        confirmations=wait_for(lambda:dialogs(device)-before_confirmation,
-                               'Native replacement confirmation did not appear',15)
+        try:
+            confirmations=wait_for(lambda:dialogs(device)-before_confirmation,
+                                   'Native replacement confirmation did not appear',15)
+        except Exception:
+            if sys.platform!='win32' and diagnostics is not None:
+                try:diagnostics['replacement_missing']=linux_modal_observation(device,dialog,dialog)
+                except Exception:diagnostics['replacement_missing']={'observation_incomplete':True}
+            raise
         require(len(confirmations)==1,'Native replacement confirmation ambiguous')
         confirmation=next(iter(confirmations))
         if sys.platform=='win32':
@@ -682,6 +749,9 @@ def run(args):
             'Native SaveAs did not appear':'save_dialog_did_not_appear',
             'Native SaveAs ambiguous':'save_dialog_ambiguous',
             'Native SaveAs path entry mismatch':'path_entry_mismatch',
+            'Native SaveAs filename focus not ready':'filename_focus_not_ready',
+            'Native SaveAs filename selection not ready':'filename_selection_not_ready',
+            'Native completion dismissal closed SaveAs':'completion_closed_save_dialog',
         }.get(str(error),'unclassified')
         if device is not None and 'client' in locals() and 'tab' in locals():
             try:
@@ -739,6 +809,11 @@ def self_test():
     import inspect
     inspect.signature(Fixture).bind(Path("cert"),Path("key"),Path("video"),Path("audio"))
     require(backtabs()==5 and backtabs(audio=True)==4 and backtabs(busy=True)==4,'Shipped physical focus sequence mismatch')
+    require(full_native_selection('file.webm',True,0,9),'Full native selection rejected')
+    require(full_native_selection('a😀',True,0,3),'UTF16 selection length mismatch')
+    require(not full_native_selection('a😀',True,0,2),'Partial UTF16 selection accepted')
+    require(not full_native_selection('file.webm',True,1,9),'Partial initial selection accepted')
+    require(not full_native_selection('file.webm',False,0,9),'Unknown initial value accepted')
     comparison=path_entry_comparison('Example.webm',True,'Example.webm')
     require(comparison['filename_equals_expected_target'] and comparison['filename_basename_suffix'],'Exact path diagnostic mismatch')
     comparison=path_entry_comparison('example.webm',True,'Example.webm')
