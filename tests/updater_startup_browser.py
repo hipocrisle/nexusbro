@@ -43,7 +43,7 @@ server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)
 server.daemon_threads = True
 threading.Thread(target=server.serve_forever, daemon=True).start()
 fixture = r'''
-window.f={calls:[],visible:true,accepted:false,failure:'',available:true,done:0};
+window.f={calls:[],visible:true,prepared:false,accepted:false,failure:'',available:true,done:0};
 window.exports={};
 const f=window.f;
 const update={version:'99.0.0',async download(callback, options){
@@ -54,7 +54,7 @@ const update={version:'99.0.0',async download(callback, options){
  const reader=r.body.getReader();while(true){const row=await reader.read();if(row.done)break;
  if(!f.visible)throw Error('stream hid sites');callback({event:'Progress',data:{chunkLength:row.value.length}});}
  callback({event:'Finished',data:{}});
-},async install(){f.calls.push('install');if(f.visible)throw Error('install must hide engines');if(f.failure==='install')throw Error('install failed');},async close(){f.calls.push('close');}};
+},async install(){f.calls.push('install');if(f.visible||!f.prepared)throw Error('install requires completed preparation');if(['install','install-and-restart'].includes(f.failure))throw Error('install failed');},async close(){f.calls.push('close');}};
 window.require=name=>({
  '@tauri-apps/plugin-updater':{check:async()=>{f.calls.push('check');if(f.failure==='check')throw Error('check failed');return f.available?update:null;}},
  '@tauri-apps/plugin-dialog':{ask:async()=>{f.calls.push('ask');if(f.visible)throw Error('dialog covered by CEF');
@@ -62,8 +62,21 @@ window.require=name=>({
   return new Promise(resolve=>{for(const [id,result] of [['yes',true],['no',false]])document.querySelector('#'+id).onclick=()=>{
    document.querySelector('#yes').hidden=true;document.querySelector('#no').hidden=true;resolve(result);
   };});}},
- '@tauri-apps/api/core':{invoke:async(command,args)=>{if(command!=='pokazat_dvizhki')throw Error('unexpected command');f.visible=args.vidno;f.calls.push(f.visible?'show':'hide');}},
- '@tauri-apps/plugin-process':{relaunch:async()=>{f.calls.push('relaunch');}}
+ '@tauri-apps/api/core':{invoke:async(command,args)=>{
+  if(command==='pokazat_dvizhki'){
+   if(args.vidno&&f.prepared)throw Error('drained writers must never resume');
+   f.visible=args.vidno;f.calls.push(f.visible?'show':'hide');return;
+  }
+  if(command==='app_prepare_update'){
+   f.calls.push('prepare');if(f.visible)throw Error('prepare must hide engines');
+   if(f.failure==='prepare')throw Error('prepare failed');f.prepared=true;return;
+  }
+  if(command==='app_restart'){
+   f.calls.push('restart');if(!f.prepared)throw Error('restart before preparation');
+   if(['restart','install-and-restart'].includes(f.failure))throw Error('restart failed');return;
+  }
+  throw Error('unexpected command');
+ }}
 })[name];
 '''
 handlers = r'''
@@ -79,6 +92,7 @@ try:
         channel=os.environ.get('NEXUSBRO_PLAYWRIGHT_CHANNEL','chrome')
         browser=p.chromium.launch(headless=True, **({'channel':channel} if channel else {}))
         page=browser.new_page()
+        page.set_default_timeout(10_000)
         def reset():
             page.goto('http://127.0.0.1:'+str(server.server_port))
             page.evaluate('localStorage.clear()')
@@ -96,13 +110,15 @@ try:
         page.wait_for_function('f.done===2')
         assert page.evaluate('f.calls.filter(x=>x==="download").length')==1
         assert page.evaluate('f.calls.filter(x=>x==="install").length')==1
-        assert page.evaluate('f.calls.includes("relaunch")&&f.calls.includes("close")&&f.visible')
+        assert page.evaluate('f.calls.includes("restart")&&f.calls.includes("close")&&f.prepared&&!f.visible')
+        assert page.evaluate('f.calls.filter(x=>x==="prepare").length===1&&f.calls.filter(x=>x==="restart").length===1')
+        assert page.evaluate('f.calls.indexOf("prepare")<f.calls.indexOf("install")&&f.calls.indexOf("install")<f.calls.indexOf("restart")')
         # Accepted startup failures cannot be swallowed under quiet=true.
         reset();page.evaluate('f.failure="download"')
         page.locator('#start').click();page.locator('#yes').click()
         page.wait_for_function('f.done===1')
         expect(page.locator('#status')).to_contain_text('download failed')
-        assert page.evaluate('f.visible&&f.calls.includes("close")&&!f.calls.includes("install")')
+        assert page.evaluate('f.visible&&f.calls.includes("close")&&!f.calls.includes("prepare")&&!f.calls.includes("install")&&!f.calls.includes("restart")')
         # Explicit toolbar retry is allowed immediately, no timer/automatic loop.
         page.evaluate('f.failure=""');page.locator('#manual').click();page.locator('#yes').click()
         page.wait_for_function('f.done===2')
@@ -110,16 +126,33 @@ try:
         reset();page.locator('#start').click();page.locator('#no').click()
         page.wait_for_function('f.done===1')
         assert page.evaluate('f.visible&&f.calls.includes("close")&&!f.calls.includes("download")')
+        # A failed native preparation blocks BOTH installation and restart.
+        reset();page.evaluate('f.failure="prepare"');page.locator('#start').click();page.locator('#yes').click()
+        page.wait_for_function('f.done===1')
+        expect(page.locator('#status')).to_contain_text('prepare failed')
+        assert page.evaluate('!f.prepared&&f.visible&&!f.calls.includes("install")&&!f.calls.includes("restart")&&f.calls.includes("close")')
+        # Once preparation succeeded, the old process never resumes writers.
         reset();page.evaluate('f.failure="install"');page.locator('#start').click();page.locator('#yes').click()
         page.wait_for_function('f.done===1')
         expect(page.locator('#status')).to_contain_text('install failed')
-        assert page.evaluate('f.visible&&!f.calls.includes("relaunch")&&f.calls.includes("close")')
+        assert page.evaluate('f.prepared&&!f.visible&&f.calls.filter(x=>x==="restart").length===1&&f.calls.includes("close")')
+        assert page.evaluate('f.calls.indexOf("prepare")<f.calls.indexOf("install")&&f.calls.indexOf("install")<f.calls.indexOf("restart")&&!f.calls.slice(f.calls.indexOf("prepare")+1).includes("show")')
+        # A failed restart is not retried or converted into a resume of old pages.
+        reset();page.evaluate('f.failure="restart"');page.locator('#start').click();page.locator('#yes').click()
+        page.wait_for_function('f.done===1')
+        expect(page.locator('#status')).to_contain_text('restart failed')
+        assert page.evaluate('f.prepared&&!f.visible&&f.calls.filter(x=>x==="install").length===1&&f.calls.filter(x=>x==="restart").length===1&&f.calls.includes("close")')
+        reset();page.evaluate('f.failure="install-and-restart"');page.locator('#start').click();page.locator('#yes').click()
+        page.wait_for_function('f.done===1')
+        expect(page.locator('#status')).to_contain_text('install failed')
+        expect(page.locator('#status')).to_contain_text('restart failed')
+        assert page.evaluate('f.prepared&&!f.visible&&f.calls.filter(x=>x==="restart").length===1&&f.calls.includes("close")')
         reset();page.evaluate('f.available=false');page.locator('#start').click();page.wait_for_function('f.done===1')
         assert page.evaluate('f.calls.join(",")==="check"&&f.visible')
         reset();page.evaluate('f.failure="check"');page.locator('#start').click();page.wait_for_function('f.done===1')
         assert page.evaluate('!localStorage.getItem("nexusbro.lastUpdateCheck")&&f.visible')
         expect(page.locator('#status')).to_have_text('')
-        print(json.dumps({'real_chromium':True,'module':'actual updater.ts','http_download':'real streamed localhost','tauri_and_os_install':'explicit test adapters','startup_confirmation_download_progress':True,'startup_accepted_failure_visible':True,'decline_closes_update_resource':True,'singleflight_duplicate_start_and_manual':True,'manual_retry_after_failure':True,'no_hide_during_check_or_stream':True,'install_failure_restores_sites':True,'check_error_does_not_throttle_retry':True}))
+        print(json.dumps({'real_chromium':True,'module':'actual updater.ts','http_download':'real streamed localhost','tauri_and_os_install':'explicit test adapters','startup_confirmation_download_progress':True,'startup_accepted_failure_visible':True,'decline_closes_update_resource':True,'singleflight_duplicate_start_and_manual':True,'manual_retry_after_failure':True,'no_hide_during_check_or_stream':True,'prepare_before_install_before_restart':True,'prepare_failure_blocks_install_and_restart':True,'install_failure_restarts_drained_old_version':True,'restart_failure_no_resume_no_retry':True,'check_error_does_not_throttle_retry':True}))
         browser.close()
 finally:
     server.shutdown();server.server_close()

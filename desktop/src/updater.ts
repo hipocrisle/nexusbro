@@ -4,7 +4,6 @@
 
 import { check, type Update } from "@tauri-apps/plugin-updater";
 import { ask } from "@tauri-apps/plugin-dialog";
-import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
 
 const LAST_CHECK_LS = "nexusbro.lastUpdateCheck";
@@ -42,6 +41,7 @@ async function obnovit(
 ): Promise<void> {
   let update: Update | null = null;
   let soglasen = false;
+  let podgotovleno = false;
   try {
     let last = 0;
     if (!prinuditelno) {
@@ -93,16 +93,31 @@ async function obnovit(
     soobshchit?.("Ставлю обновление…");
     await invoke("pokazat_dvizhki", { vidno: false });
     try {
-      await update.install();
-      await relaunch();
+      // Windows installer can terminate the parent without RunEvent::Exit.
+      // Actual engine ACK/tree exit and private cleanup must precede install.
+      await invoke("app_prepare_update");
+      podgotovleno = true;
+      try {
+        await update.install();
+      } catch (installError) {
+        // The old process has permanently drained its writers. Restart the old
+        // version on install failure instead of reopening that process's pages.
+        try {
+          await invoke("app_restart");
+        } catch (restartError) {
+          throw new Error(String(installError) + ". Перезапуск браузера не удался: " + String(restartError));
+        }
+        throw installError;
+      }
+      await invoke("app_restart");
     } finally {
-      // Ошибка установки/перезапуска не должна оставлять пустое окно.
-      await invoke("pokazat_dvizhki", { vidno: true });
+      if (!podgotovleno) await invoke("pokazat_dvizhki", { vidno: true });
     }
   } catch (e) {
     if (!tiho || soglasen) {
       const etapa = soglasen ? "Не удалось установить обновление" : "Проверка обновления не удалась";
-      soobshchit?.(etapa + ": " + String(e) + ". Повторить можно кнопкой обновления.");
+      const dalshe = podgotovleno ? ". Движки остановлены; нужен перезапуск браузера." : ". Повторить можно кнопкой обновления.";
+      soobshchit?.(etapa + ": " + String(e) + dalshe);
     }
     console.warn("обновление не удалось:", e);
   } finally {
