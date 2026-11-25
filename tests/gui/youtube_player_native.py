@@ -17,6 +17,7 @@ import shutil
 import socket
 import socketserver
 import ssl
+import stat
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,7 @@ import urllib.parse
 from security_native import Device, call, js_wait, painted, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
 from resource_soak import foreground as bare_foreground, kernel_birth
-from youtube_privacy_scan import scan_profile
+from youtube_privacy_scan import scan_profile, _open_readonly, _windows_info
 from hibernation_cookie_probe import WindowsFixtureTrust, tls_proxy_preflight
 
 HOST = 'fixture.googlevideo.com'
@@ -1149,9 +1150,104 @@ def privacy_canary(client,device,fixture,lane,identifier,report):
             'media_sentinel_requested':True,'marker_in_control_url':False,'direct_connections':0}
 
 
+
+def parse_shutdown_receipt(value,parent_pid):
+    keys={'schema','prepared_update','parent_pid','owners','clean','forced','unacknowledged','unclean','pending_starts','complete'}
+    require(isinstance(value,dict) and set(value)==keys,'Shutdown receipt invalid')
+    integers=('schema','parent_pid','owners','clean','forced','unacknowledged','unclean','pending_starts')
+    require(all(type(value[key]) is int for key in integers)
+            and type(value['prepared_update']) is bool and type(value['complete']) is bool,
+            'Shutdown receipt invalid')
+    require(value['schema']==1 and value['parent_pid']==parent_pid
+            and 1<=value['owners']<=1024
+            and all(0<=value[key]<=1024 for key in ('clean','forced','unacknowledged','unclean','pending_starts')),
+            'Shutdown receipt invalid')
+    require(value['complete'] is True and value['clean']==value['owners']
+            and all(value[key]==0 for key in ('forced','unacknowledged','unclean','pending_starts')),
+            'Shutdown receipt unclean')
+    return value
+
+
+def read_shutdown_receipt(data,parent_pid):
+    """Only after the held parent and all known native executions have exited."""
+    root=pathlib.Path(data);path=root/'app-shutdown-receipt.json'
+    def ordinary(metadata):
+        return not stat.S_ISLNK(metadata.st_mode) and not getattr(metadata,'st_file_attributes',0)&0x400
+    def identity(metadata):return metadata.st_dev,metadata.st_ino
+    def unique(pairs):
+        result={}
+        for key,value in pairs:
+            if key in result:raise ValueError('duplicate')
+            result[key]=value
+        return result
+    try:
+        before_root=os.lstat(root)
+        require(stat.S_ISDIR(before_root.st_mode) and ordinary(before_root),'Shutdown receipt invalid')
+        before=os.lstat(path)
+        require(stat.S_ISREG(before.st_mode) and ordinary(before) and before.st_nlink==1
+                and 0<before.st_size<=4096,'Shutdown receipt invalid')
+        flags=os.O_RDONLY|getattr(os,'O_NOFOLLOW',0)|getattr(os,'O_BINARY',0)
+        with os.fdopen(_open_readonly(path,flags),'rb') as stream:
+            opened=os.fstat(stream.fileno());native=_windows_info(stream.fileno())
+            require(stat.S_ISREG(opened.st_mode) and ordinary(opened) and opened.st_nlink==1
+                    and identity(opened)==identity(before) and opened.st_size==before.st_size,
+                    'Shutdown receipt invalid')
+            require(native is None or not native['reparse'] and native['number_of_links']==1,
+                    'Shutdown receipt invalid')
+            contents=stream.read(4097);after=os.fstat(stream.fileno());native_after=_windows_info(stream.fileno())
+            require(0<len(contents)<=4096 and len(contents)==before.st_size
+                    and identity(after)==identity(opened) and after.st_size==opened.st_size
+                    and after.st_mtime_ns==opened.st_mtime_ns and ordinary(after) and after.st_nlink==1,
+                    'Shutdown receipt invalid')
+            require(native_after is None or native_after==native,'Shutdown receipt invalid')
+        final=os.lstat(path);final_root=os.lstat(root)
+        require(identity(final)==identity(before) and ordinary(final) and stat.S_ISREG(final.st_mode)
+                and final.st_nlink==1 and final.st_size==before.st_size
+                and identity(final_root)==identity(before_root) and ordinary(final_root),
+                'Shutdown receipt invalid')
+        return parse_shutdown_receipt(json.loads(contents.decode('utf-8'),object_pairs_hook=unique),parent_pid)
+    except FileNotFoundError:
+        require(False,'Shutdown receipt missing')
+    except (OSError,ValueError,UnicodeError):
+        require(False,'Shutdown receipt invalid')
+
+
+def shutdown_receipt_self_test():
+    valid=dict(schema=1,prepared_update=False,parent_pid=12345,owners=2,clean=2,forced=0,
+               unacknowledged=0,unclean=0,pending_starts=0,complete=True)
+    def refused(value,pid=12345):
+        try:parse_shutdown_receipt(value,pid)
+        except Exception:return
+        raise AssertionError('Unproven shutdown accepted')
+    assert parse_shutdown_receipt(valid,12345)==valid
+    refused(valid,54321)
+    for key,value in [('schema',2),('owners',0),('owners',True),('clean',1),('forced',1),
+                      ('unacknowledged',1),('unclean',1),('pending_starts',1),('complete',False)]:
+        refused(dict(valid,**{key:value}))
+    refused(dict(valid,extra='private'))
+    with tempfile.TemporaryDirectory(prefix='nb-shutdown-proof-') as directory:
+        root=pathlib.Path(directory);path=root/'app-shutdown-receipt.json'
+        path.write_text(json.dumps(valid),encoding='utf-8')
+        assert read_shutdown_receipt(root,12345)==valid
+        def file_refused():
+            try:read_shutdown_receipt(root,12345)
+            except Exception:return
+            raise AssertionError('Unsafe receipt file accepted')
+        path.write_text(json.dumps(valid)[:-1]+',"owners":2}',encoding='utf-8');file_refused()
+        path.write_bytes(b'x'*4097);file_refused()
+        path.unlink();file_refused()
+        target=root/'other';target.write_text(json.dumps(valid),encoding='utf-8')
+        try:path.symlink_to(target)
+        except OSError:pass
+        else:file_refused();path.unlink()
+        os.link(target,path);file_refused();path.unlink()
+    return {'self_test':True,'synthetic_only':True,'native_execution':False}
+
+
 def close_for_privacy(client,device,report):
     report['stage']='privacy-normal-owned-exit'
     witness=ExitWitness(device,client)
+    parent_pid=device.app.pid  # Held Popen identity, captured before actual close.
     try:
         foreground(device)
         if sys.platform=='win32':native_owner(device).close()
@@ -1168,10 +1264,13 @@ def close_for_privacy(client,device,report):
         report['owned_exit']={'parent_normal_exit':True,'native_members_observed':witness.native_members,
                               'os_identities_observed':len(witness.identities),'all_known_native_executions_exited':True,
                               'native_members_complete':True,'tracker_seconds':.02,
-                              'scope':'bounded_owned_fixture_not_universal_noescape_proof','harness_kill_used_for_acceptance':False}
+                              'scope':'bounded_owned_fixture_not_universal_noescape_proof','harness_kill_used_for_acceptance':False,
+                              'clean_shutdown_receipt_verified':False}
         # Prevent generic emergency cleanup from signalling an already reaped
         # PID/PGID that could later be reused while the disk scan runs.
         device.app=None
+        report['app_shutdown_receipt']=read_shutdown_receipt(device.data,parent_pid)
+        report['owned_exit']['clean_shutdown_receipt_verified']=True
     finally:
         witness.close()
 
@@ -1365,6 +1464,9 @@ def run(args):
                'Cacheable control did not actually load through selected route':'privacy_canary_not_loaded',
                'Cacheable control did not actually paint':'privacy_canary_not_painted',
                'Native media privacy sentinel was not requested':'privacy_sentinel_not_requested',
+               'Shutdown receipt missing':'shutdown_receipt_missing',
+               'Shutdown receipt invalid':'shutdown_receipt_invalid',
+               'Shutdown receipt unclean':'shutdown_receipt_unclean',
                'Privacy parent already exited':'privacy_parent_already_exited',
                'Privacy parent did not exit normally':'privacy_parent_exit_failed',
                'Privacy owned native processes did not exit':'privacy_owned_exit_failed',
@@ -1425,6 +1527,7 @@ def run(args):
 
 
 if __name__=='__main__':
+    if sys.argv[1:]==['--self-test-shutdown-receipt']:print(json.dumps(shutdown_receipt_self_test()));raise SystemExit(0)
     if sys.argv[1:]==['--self-test-restore-observer']:print(json.dumps(restore_observer_self_test()));raise SystemExit(0)
     if sys.argv[1:]==['--self-test-sidebar']:print(json.dumps(sidebar_self_test()));raise SystemExit(0)
     parser=argparse.ArgumentParser(description=__doc__)

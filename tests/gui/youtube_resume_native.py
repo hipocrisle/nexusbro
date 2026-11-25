@@ -276,8 +276,11 @@ def run(args):
         previous_native = native_owned_identities(client)
         close_for_privacy(client, device, report)
         report['restart_owned_exit'] = report.pop('owned_exit')
+        # Consume the old parent's exact receipt BEFORE setup clears it on restart.
+        report['restart_app_shutdown_receipt'] = report.pop('app_shutdown_receipt')
         require(device.app is None and report['restart_owned_exit'].get('parent_normal_exit') is True
-                and report['restart_owned_exit'].get('all_known_native_executions_exited') is True,
+                and report['restart_owned_exit'].get('all_known_native_executions_exited') is True
+                and report['restart_owned_exit'].get('clean_shutdown_receipt_verified') is True,
                 'Restart old owned executions did not exit normally')
         # app=None: these public lifecycle methods close only stale inspector/
         # Windows policy handles, not a living acceptance process. Linux Xvfb
@@ -311,6 +314,7 @@ def run(args):
         report['stage'] = 'normal-owned-final-exit'
         close_for_privacy(client, device, report)
         report['final_owned_exit'] = report.pop('owned_exit')
+        report['final_app_shutdown_receipt'] = report.pop('app_shutdown_receipt')
         media = fixture.receipts
         report['stage'] = 'controlled-route-proof'
         report['controlled_route_observed'] = {
@@ -327,6 +331,9 @@ def run(args):
         report.update(completed=True, stage='complete'); code = 0
     except Exception as error:
         reasons = {
+            'Shutdown receipt missing': 'shutdown_receipt_missing',
+            'Shutdown receipt invalid': 'shutdown_receipt_invalid',
+            'Shutdown receipt unclean': 'shutdown_receipt_unclean',
             'Restart old owned executions did not exit normally': 'restart_old_owned_exit_failed',
             'Restart parent OS identity not fresh': 'restart_parent_not_fresh',
             'Restart master lock screen missing': 'restart_master_screen_missing',
