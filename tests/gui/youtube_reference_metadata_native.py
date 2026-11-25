@@ -6,6 +6,9 @@ Native reference admission remains the authority for video identity and ad state
 """
 import argparse
 import json
+import hashlib
+import io
+import subprocess
 import math
 import os
 from pathlib import Path
@@ -20,6 +23,8 @@ from youtube_paired_native import (
     OwnedWindowManager, close_for_privacy, super_record, call, click_control,
     Blocked, foreground,
 )
+
+from youtube_player_native import native_app_identity, native_app_identity_alive, native_app_window
 
 BOOL_FIELDS=('playing','paused','ended','seeking','muted','default_sink')
 NUMBER_FIELDS=('duration','video_width','video_height','position','decoded','dropped',
@@ -69,9 +74,78 @@ def advancement(first,last,wall):
             'observed_frames_per_wall_second':frames/wall}
 
 
+class CropUnavailable(Exception):
+    pass
+
+
+def crop_box(rect,origin,scale,screen):
+    values=[rect.get(k) for k in ('x','y','w','h','vw','vh')]+[origin.get('x'),origin.get('y'),scale]+list(screen)
+    if any(type(v)not in(int,float) or not math.isfinite(v) for v in values):raise CropUnavailable('geometry_invalid')
+    if not 0.5<=scale<=4 or min(rect['w'],rect['h'],rect['vw'],rect['vh'])<=0:raise CropUnavailable('geometry_invalid')
+    left=math.ceil(origin['x']+max(0,rect['x'])*scale)
+    top=math.ceil(origin['y']+max(0,rect['y'])*scale)
+    right=min(math.floor(origin['x']+min(rect['vw'],rect['x']+rect['w'])*scale),left+640)
+    bottom=min(math.floor(origin['y']+min(rect['vh'],rect['y']+rect['h'])*scale),top+360)
+    if not (0<=left<right<=screen[0] and 0<=top<bottom<=screen[1]):raise CropUnavailable('geometry_invalid')
+    return left,top,right,bottom
+
+
+def failure_status_crop(client,device,wm,out,identifier,tab,video):
+    """One failure-only owned public content crop; no UI content interaction."""
+    receipt={'saved':False,'width':0,'height':0,'bytes':0,'sha256':None,'failure':'ownership_unproven'}
+    def ensure(condition,reason):
+        if not condition:raise CropUnavailable(reason)
+    try:
+        ensure(os.environ.get('GITHUB_ACTIONS')=='true' and sys.platform=='linux'
+               and video=='aqz-KE-bpKQ','scope_denied')
+        ensure(device is not None and client is not None and isinstance(wm,OwnedWindowManager)
+               and device.player_wm is wm and wm.device is device and wm.env.get('DISPLAY')==device.display and wm.process.poll()is None
+               and device.x is not None and device.x.poll()is None
+               and re.fullmatch(r':\d+',device.display or '') is not None,'ownership_unproven')
+        identity=native_app_identity(device);owner=native_app_window(device,identity)
+        expected=int(str(owner),0)
+        def active():
+            text=subprocess.check_output(['xdotool','getactivewindow'],env=wm.env,stderr=subprocess.DEVNULL,timeout=3,text=True).strip()
+            ensure(text.isdecimal() and len(text)<=20,'ownership_unproven')
+            return int(text)
+        def bound():
+            ensure(device.x.poll()is None and wm.process.poll()is None,'ownership_unproven')
+            ensure(native_app_identity_alive(device,identity) and int(str(native_app_window(device,identity)),0)==expected
+                   and active()==expected,'ownership_unproven')
+            ensure(client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')=='main','binding_unproven')
+            ensure(type(tab)is int and tab>0 and identifier=='reference-metadata','binding_unproven')
+            matched=client.js('(()=>{const s=document.querySelector(".vkladka.aktivna[data-super-id]"),t=document.querySelector(".obychnaya[aria-selected=true]");return !!s&&s.dataset.superId==="reference-metadata"&&!!t&&t.dataset.id==='+json.dumps(str(tab))+'})()')
+            ensure(matched is True,'binding_unproven')
+            value=rows(client,identifier,timeout=3)
+            ensure(value.get('aktivnaya')==tab and any(v.get('id')==tab and v.get('browser_id',0)>0 and not v.get('route_pending') for v in value.get('vkladki',[])),'binding_unproven')
+        foreground(device);bound()
+        rect=client.js('(()=>{const r=document.querySelector(".pole")?.getBoundingClientRect();return r?{x:r.x,y:r.y,w:r.width,h:r.height,vw:innerWidth,vh:innerHeight}:null})()')
+        ensure(isinstance(rect,dict),'geometry_invalid')
+        origin=call(client,'plugin:window|inner_position',label='main',timeout=3)
+        scale=client.js('devicePixelRatio')
+        text=subprocess.check_output(['xdotool','getdisplaygeometry'],env=wm.env,stderr=subprocess.DEVNULL,timeout=3,text=True).split()
+        ensure(len(text)==2 and all(v.isdecimal() for v in text),'geometry_invalid')
+        box=crop_box(rect,origin,scale,tuple(map(int,text)))
+        from PIL import ImageGrab
+        bound()
+        with ImageGrab.grab(bbox=box,xdisplay=device.display) as image:
+            ensure(image.size==(box[2]-box[0],box[3]-box[1]),'capture_invalid')
+            stream=io.BytesIO();image.save(stream,format='PNG');payload=stream.getvalue()
+        bound()
+        ensure(len(payload)<=100*1024,'encoded_size_limit')
+        target=out/'reference-status.png'
+        with target.open('xb') as stream:stream.write(payload)
+        receipt.update(saved=True,width=box[2]-box[0],height=box[3]-box[1],bytes=len(payload),sha256=hashlib.sha256(payload).hexdigest(),failure=None)
+    except CropUnavailable as error:receipt['failure']=str(error)
+    except FileExistsError:receipt['failure']='output_exists'
+    except Exception:receipt['failure']='capture_unavailable'
+    return receipt
+
+
 def run(args):
     report=initial_report();device=wm=None;root=None;client=None;closed=False;close_attempted=False
     out=Path(args.out).resolve();out.mkdir(parents=True,exist_ok=False)
+    identifier='reference-metadata';tab=None
     started=time.monotonic();observation_deadline=started+150
     def remaining(cap):
         left=observation_deadline-time.monotonic()
@@ -160,6 +234,7 @@ def run(args):
         report['stage']='normal-owned-exit';close_attempted=True;close_for_privacy(client,device,report);closed=True
         report['completed']=True;report['stage']='complete'
     except Exception as error:
+        report['status_crop']=failure_status_crop(client,device,wm,out,identifier,tab,args.video_id)
         report['blocked_reason']=str(error) if isinstance(error,Blocked) and str(error) in SAFE_CODES else 'native_reference_unavailable'
         report['failure_class']=type(error).__name__ if type(error).__name__ in ('Blocked','AssertionError','TimeoutExpired','OSError','RuntimeError') else 'NativeError'
     finally:
@@ -209,6 +284,11 @@ def self_test():
     assert next((index for index,value in enumerate(sequence) if metadata_ready(value)),None)==2
     assert next((value for value in [state,state,state] if metadata_ready(value)),None)is None
     assert not metadata_ready(dict(ready,ended=True))
+    assert crop_box({'x':20,'y':100,'w':900,'h':600,'vw':1000,'vh':800},{'x':0,'y':0},1,(1280,900))==(20,100,660,460)
+    for bad in (float('nan'),0,5):
+        try:crop_box({'x':0,'y':0,'w':10,'h':10,'vw':100,'vh':100},{'x':0,'y':0},bad,(1280,900))
+        except CropUnavailable:pass
+        else:raise AssertionError('invalid_crop_geometry_accepted')
     no_clock=advancement(state,state,10)
     assert no_clock['clock_advanced']is False and no_clock['decoded_advanced']is False
     assert no_clock['observed_frames_per_media_second']is None
