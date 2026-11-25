@@ -43,11 +43,60 @@ def owned_pids(device):
     return {root.pid,*[p.pid for p in root.children(recursive=True)]}
 
 
+
+def windows_native_dialog_handles():
+    """Private HWNDs from native enumeration; never serialize handles or titles."""
+    import ctypes
+    from ctypes import wintypes
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetClassNameW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int];user.GetClassNameW.restype=ctypes.c_int
+    handles=[];scanned=0;complete=True
+    callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
+    @callback_type
+    def collect(handle,_):
+        nonlocal scanned,complete
+        scanned+=1
+        if scanned>512:complete=False;return False
+        name=ctypes.create_unicode_buffer(64)
+        if user.GetClassNameW(handle,name,len(name)) and name.value=='#32770':
+            if len(handles)>=8:complete=False;return False
+            handles.append(handle)
+        return True
+    user.EnumWindows.argtypes=[callback_type,wintypes.LPARAM];user.EnumWindows.restype=wintypes.BOOL
+    if not user.EnumWindows(collect,0) and complete:complete=False
+    return handles,complete
+
+
 def dialogs(device):
     owned=owned_pids(device)
     if sys.platform=='win32':
-        from pywinauto import Desktop
-        return {w.handle for w in Desktop(backend='uia').windows() if w.process_id() in owned and w.class_name()=='#32770' and w.is_visible()}
+        import ctypes
+        from ctypes import wintypes
+        from youtube_player_native import native_owner
+        user=ctypes.WinDLL('user32',use_last_error=True)
+        user.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];user.GetWindow.restype=wintypes.HWND
+        user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];user.GetWindowThreadProcessId.restype=wintypes.DWORD
+        user.IsWindowVisible.argtypes=[wintypes.HWND];user.IsWindowVisible.restype=wintypes.BOOL
+        user.GetWindowRect.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.RECT)];user.GetWindowRect.restype=wintypes.BOOL
+        root=native_owner(device).handle
+        handles,complete=windows_native_dialog_handles()
+        require(complete,'Native Windows dialog enumeration bound exceeded')
+        left,top,sw,sh=(user.GetSystemMetrics(index) for index in (76,77,78,79))
+        actual=set()
+        for handle in handles:
+            pid=wintypes.DWORD();user.GetWindowThreadProcessId(handle,ctypes.byref(pid))
+            if pid.value not in owned or not user.IsWindowVisible(handle):continue
+            rect=wintypes.RECT()
+            if not user.GetWindowRect(handle,ctypes.byref(rect)):continue
+            width,height=rect.right-rect.left,rect.bottom-rect.top
+            if not (0<width<=16384 and 0<height<=16384 and sw>0 and sh>0
+                    and rect.right>left and rect.bottom>top and rect.left<left+sw and rect.top<top+sh):continue
+            cursor=handle;seen=set()
+            for _ in range(8):
+                if not cursor or cursor in seen:break
+                if cursor==root:actual.add(handle);break
+                seen.add(cursor);cursor=user.GetWindow(cursor,4)
+        return actual
     found=set()
     for pid in owned:
         result=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(pid)],env={**os.environ,'DISPLAY':device.display},capture_output=True,text=True,timeout=4)
@@ -89,20 +138,7 @@ def _windows_dialog_observation(device,*,inspect_default=False):
     user.GetWindowTextW.argtypes=[wintypes.HWND,wintypes.LPWSTR,ctypes.c_int];user.GetWindowTextW.restype=ctypes.c_int
     root=native_owner(device).handle;owned=owned_pids(device)
     result={'dialogs':[],'complete':True}
-    handles=[];scanned=0
-    callback_type=ctypes.WINFUNCTYPE(wintypes.BOOL,wintypes.HWND,wintypes.LPARAM)
-    @callback_type
-    def collect(handle,_):
-        nonlocal scanned
-        scanned+=1
-        if scanned>512:result['complete']=False;return False
-        name=ctypes.create_unicode_buffer(64)
-        if user.GetClassNameW(handle,name,len(name)) and name.value=='#32770':
-            if len(handles)>=8:result['complete']=False;return False
-            handles.append(handle)
-        return True
-    user.EnumWindows.argtypes=[callback_type,wintypes.LPARAM];user.EnumWindows.restype=wintypes.BOOL
-    if not user.EnumWindows(collect,0) and result['complete']:result['complete']=False
+    handles,result['complete']=windows_native_dialog_handles()
     left,top,sw,sh=(user.GetSystemMetrics(index) for index in (76,77,78,79))
     expected='YouTube-BaW_jenozKc-fixture-video.webm'
     known_titles={'Save As','Save as','Сохранить как','Сохранение','Speichern unter'}
