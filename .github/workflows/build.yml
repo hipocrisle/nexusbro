@@ -213,7 +213,7 @@ jobs:
           node-version: "22"
       - run: npm ci && npm run build
         working-directory: desktop
-      - run: node --test tests/updater_visibility.cjs
+      - run: node --test tests/updater_visibility.cjs tests/youtube_background_audio.cjs
       - run: python3 tests/release_acceptance_test.py
       - run: |
           python3 -m pip install --break-system-packages playwright
@@ -714,7 +714,7 @@ jobs:
       - name: Проверить списки и подписки в интерфейсе
         if: matrix.os == 'ubuntu-24.04'
         run: |
-          node --test tests/updater_visibility.cjs
+          node --test tests/updater_visibility.cjs tests/youtube_background_audio.cjs
           python3 tests/release_acceptance_test.py
           python3 -m pip install --break-system-packages playwright
           python3 tests/frontend_controls.py

@@ -53,6 +53,10 @@
   const setStatus = text => { status.textContent = text; };
   const tick = ready => console.debug(ready ? '__NEXUSBRO_LIGHT_READY__' : '__NEXUSBRO_LIGHT_TICK__');
   const media = () => separate ? [video, audio] : [video];
+  // Hidden muted video can be suspended by Chromium independently of audio.
+  // It must not become the readiness gate for background listening.
+  const activeMedia = () => separate && document.hidden ? [audio] : media();
+  const bufferReady = () => activeMedia().every(m => m.readyState >= 3);
   function pause() { ++epoch; intended = false; syncing = false; clearInterval(timer); timer = null; media().forEach(m => m.pause()); button.textContent = 'Воспроизвести'; updateView(); tick(false); }
   function error() { if (disposed) return; pause(); setStatus('Не удалось воспроизвести видео. Можно открыть обычный YouTube.'); }
   function align() {
@@ -66,10 +70,10 @@
     if (!configured || disposed) return;
     intended = true; const run = ++epoch;
     if (timer === null) timer = setInterval(updateView, 250);
-    if (media().every(m => m.readyState >= 3)) syncing = false;
+    if (bufferReady()) syncing = false;
     for (const m of media()) m.preload = 'auto';
     try {
-      align(); await Promise.all(media().map(m => m.play()));
+      align(); await Promise.all(activeMedia().map(m => m.play()));
       if (run !== epoch) return;
       if (disposed || !intended) { media().forEach(m => m.pause()); return; }
       button.textContent = 'Пауза'; setStatus(''); tick(false);
@@ -117,14 +121,25 @@
   // Pause both clocks during a buffer stall; resume only the user's play intent.
   for (const m of [video, audio]) {
     m.addEventListener('waiting', () => {
-      if (!intended) return; syncing = true; media().forEach(item => item.pause()); setStatus('Буферизация…');
+      if (!intended || (m === video && separate && document.hidden)) return;
+      syncing = true; media().forEach(item => item.pause()); setStatus('Буферизация…');
     });
     m.addEventListener('canplay', () => {
-      if (syncing && intended && media().every(item => item.readyState >= 3)) {
+      if (syncing && intended && bufferReady()) {
         syncing = false; align(); void play();
       }
     });
   }
+  document.addEventListener('visibilitychange', () => {
+    if (disposed || !configured || !separate || !intended) return;
+    // Leaving a stalled visual track must release background audio; returning
+    // restores the two-track clock. Never start a user-paused player.
+    if (!document.hidden && !audio.paused && video.readyState >= 1
+        && Number.isFinite(audio.currentTime) && Math.abs(video.currentTime - audio.currentTime) > 0.12) {
+      video.currentTime = audio.currentTime;
+    }
+    if (!document.hidden || (bufferReady() && (syncing || audio.paused))) void play();
+  });
   function updateView() {
     if (disposed || !configured) return;
     duration = Number.isFinite(video.duration) ? video.duration : 0;
