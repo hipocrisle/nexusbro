@@ -358,12 +358,58 @@ def windows_foreground_layout():
     return {0x0409:'US',0x0419:'RU'}.get(language,'other')
 
 
-def verify_windows_path_entry(device,dialog,target,expected,diagnostics):
+
+def windows_path_focus(device,dialog,target):
+    """Read native foreground/focus roles only; no handles or process IDs escape."""
+    result={'observed':False,'foreground':'other','focus':'other'}
+    try:
+        import ctypes
+        from ctypes import wintypes
+        class GuiThreadInfo(ctypes.Structure):
+            _fields_=[('size',wintypes.DWORD),('flags',wintypes.DWORD),
+                      ('active',wintypes.HWND),('focus',wintypes.HWND),('capture',wintypes.HWND),
+                      ('menu_owner',wintypes.HWND),('move_size',wintypes.HWND),('caret',wintypes.HWND),
+                      ('caret_rect',wintypes.RECT)]
+        user=ctypes.WinDLL('user32',use_last_error=True)
+        user.GetForegroundWindow.restype=wintypes.HWND
+        user.GetWindowThreadProcessId.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];user.GetWindowThreadProcessId.restype=wintypes.DWORD
+        user.GetGUIThreadInfo.argtypes=[wintypes.DWORD,ctypes.POINTER(GuiThreadInfo)];user.GetGUIThreadInfo.restype=wintypes.BOOL
+        user.IsChild.argtypes=[wintypes.HWND,wintypes.HWND];user.IsChild.restype=wintypes.BOOL
+        owned=owned_pids(device);edit=target.handle;pid=wintypes.DWORD()
+        user.GetWindowThreadProcessId(edit,ctypes.byref(pid))
+        if not edit or pid.value not in owned or not user.IsChild(dialog,edit):return result
+        foreground=user.GetForegroundWindow();thread=user.GetWindowThreadProcessId(foreground,None)
+        state=GuiThreadInfo();state.size=ctypes.sizeof(state)
+        if not foreground or not thread or not user.GetGUIThreadInfo(thread,ctypes.byref(state)):return result
+        def role(handle):
+            if handle==edit:return 'same_edit'
+            if handle==dialog or handle and user.IsChild(dialog,handle):return 'same_dialog'
+            return 'other'
+        result.update(observed=True,foreground=role(foreground),focus=role(state.focus))
+    except Exception:
+        pass  # Best-effort diagnostic, never change physical input or acceptance.
+    return result
+
+
+def path_entry_comparison(value,bounded,expected):
+    checked=isinstance(value,str)
+    valid=bool(bounded and checked)
+    return {'filename_checked':checked,'filename_bounded':bool(bounded),
+            'filename_equals_expected_target':valid and value==expected,
+            'filename_empty':valid and not value,
+            'filename_length_equal':valid and len(value)==len(expected),
+            'filename_casefold_equal':valid and value.casefold()==expected.casefold(),
+            'filename_basename_suffix':valid and value.endswith(Path(expected).name)}
+
+
+def verify_windows_path_entry(device,dialog,target,expected,diagnostics,*,focus_before=None):
     import ctypes
     from ctypes import wintypes
     receipt={'filename_checked':False,'filename_bounded':False,'filename_equals_expected_target':False,
              'foreground_layout':windows_foreground_layout(),
-             'selected_edit_label':classify_windows_edit_label(target.element_info.name)}
+             'selected_edit_label':classify_windows_edit_label(target.element_info.name),
+             'focus_before_write':focus_before,
+             'focus_after_write':windows_path_focus(device,dialog,target)}
     if diagnostics is not None:
         entries=diagnostics.setdefault('windows_path_entry',[])
         if len(entries)<8:entries.append(receipt)
@@ -377,8 +423,7 @@ def verify_windows_path_entry(device,dialog,target,expected,diagnostics):
     deadline=time.monotonic()+2
     while True:
         value,bounded=windows_read_control_text(handle)
-        receipt['filename_checked']=value is not None;receipt['filename_bounded']=bounded
-        receipt['filename_equals_expected_target']=bounded and value==expected
+        receipt.update(path_entry_comparison(value,bounded,expected))
         if receipt['filename_equals_expected_target']:return
         if time.monotonic()>=deadline:break
         time.sleep(.05)  # Read-only input-delivery wait; never type again.
@@ -447,8 +492,9 @@ def choose(device,dialog,path=None,*,replace=False,diagnostics=None):
             require(target is not None,'Native SaveAs filename edit missing')
             target.click_input();keys(device,'ctrl+a')
             import pyautogui as gui
+            focus_before=windows_path_focus(device,dialog,target)
             gui.write(str(path),interval=.002)
-            verify_windows_path_entry(device,dialog,target,str(path),diagnostics)
+            verify_windows_path_entry(device,dialog,target,str(path),diagnostics,focus_before=focus_before)
             keys(device,'enter')
     else:
         env={**os.environ,'DISPLAY':device.display}
@@ -693,6 +739,12 @@ def self_test():
     import inspect
     inspect.signature(Fixture).bind(Path("cert"),Path("key"),Path("video"),Path("audio"))
     require(backtabs()==5 and backtabs(audio=True)==4 and backtabs(busy=True)==4,'Shipped physical focus sequence mismatch')
+    comparison=path_entry_comparison('Example.webm',True,'Example.webm')
+    require(comparison['filename_equals_expected_target'] and comparison['filename_basename_suffix'],'Exact path diagnostic mismatch')
+    comparison=path_entry_comparison('example.webm',True,'Example.webm')
+    require(not comparison['filename_equals_expected_target'] and comparison['filename_casefold_equal'],'Casefold diagnostic mismatch')
+    require(path_entry_comparison('',True,'Example.webm')['filename_empty'],'Empty path diagnostic mismatch')
+    require(not any(path_entry_comparison(None,False,'Example.webm').values()),'Unobserved path diagnostic accepted')
     for label,kind in [('File name:','file_name'),('Имя файла','file_name'),('Address','folder_address'),('Search','search'),('unknown','other'),('x'*81,'other')]:
         require(classify_windows_edit_label(label)==kind,'Edit label classification mismatch')
     for texts,kind in [(['The file name is not valid.'],'invalid_name'),
