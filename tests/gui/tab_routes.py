@@ -750,6 +750,12 @@ def _natural_route_tooltip_hover(client):
         require(hit.get('nonowned_cover') is False, 'Route tooltip target covered by foreign window')
         if covering_native_tooltips(hit): receipt['mapped_covering_tooltip_observed'] = True; return
         time.sleep(.08)
+    # Failure diagnosis only, using the SAME existing ownership/foreign-cover
+    # screenshot gate; no tooltip synthesis, repositioning, or acceptance change.
+    dom=client.js('(()=>{const b=document.querySelector(".tab-route-button");return {dom_has_focus:document.hasFocus(),dom_button_hovered:!!b?.matches(":hover"),dom_button_enabled:!!b&&!b.disabled,dom_title_present:!!b?.getAttribute("title")}})()')
+    if isinstance(dom,dict):
+        receipt.update({key:value for key,value in dom.items() if key in {'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present'} and type(value)is bool})
+    client.route_open_native['failure']=route_toolbar_observation(client,'hover')
     journal = receipt['journal']
     require(False, 'Mapped owned native tooltip covering route target not observed; '
                    f"facts: observations={receipt['observations']} "
@@ -870,6 +876,7 @@ def safe_route_open_native(value,depth=0):
         'mapped','input_shape_supported','input_shape_observed','input_empty','covers_expected',
         'cursor_observed','cursor_delta_bounded','cursor_at_expected','expected_point_unchanged','crop_saved',
         'observation_failed','unsupported_platform','mapped_covering_tooltip_observed',
+        'dom_has_focus','dom_button_hovered','dom_button_enabled','dom_title_present',
         'mapped_tooltip_before_click','input_empty_before_click','one_physical_click','trusted_dom_click','dialog_present','neutral_exit_observed'}
     limits={'cursor_dx':(-16384,16384),'cursor_dy':(-16384,16384),'input_rectangles':(0,256),
         'crop_width':(1,4096),'crop_height':(1,520),'observations':(0,50),'move_count':(0,1),'neutral_move_count':(0,1)}
