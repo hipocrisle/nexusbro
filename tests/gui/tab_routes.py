@@ -441,12 +441,140 @@ def choose(client, label):
     client.click('[data-route-test-choice="true"]')
 
 
+# Diagnostic observers only. No React handlers, synthetic events or IPC replies.
+ROUTE_OPEN_DIAGNOSTIC = r'''
+(()=>{
+ const expectedOwner=__OWNER__,expectedTab=__TAB__,internal=window.__TAURI_INTERNALS__;
+ if(!internal||typeof internal.invoke!=='function')return false;
+ const previous=window.__routeOpenDiagnostic;if(previous?.stop)try{previous.stop()}catch{}
+ const original=internal.invoke,types=['pointerdown','pointerup','pointercancel','mousedown','mouseup','click'];
+ const state={trace:[],counts:Object.fromEntries(types.map(t=>[t,{trusted_route:0,trusted_other:0,untrusted:0}])),restore_verified:false,observation_failed:false};
+ const started=performance.now();let live=true,observer=null;
+ const ownRoute=e=>!!(e instanceof Element&&e.closest('.tab-route-button'));
+ const snapshot=()=>{
+  const button=document.querySelector('.tab-route-button'),selected=document.querySelector('.vkladka.aktivna[data-super-id]'),tab=document.querySelector('.obychnaya[aria-selected=true]');
+  const modals=Array.from(document.querySelectorAll('.zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay,.security-overlay')).filter(e=>!e.closest('[data-tab-route-root]'));
+  let hit=false,inView=false;if(button){const r=button.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2;inView=r.width>0&&r.height>0&&x>=0&&y>=0&&x<innerWidth&&y<innerHeight;hit=inView&&button.contains(document.elementFromPoint(x,y));}
+  const routeState=button?.getAttribute('data-route-state');
+  return {button_present:!!button,button_enabled:!!button&&!button.disabled,button_busy:button?.getAttribute('aria-busy')==='true',route_state:['pending','error','applied','unknown'].includes(routeState)?routeState:'unknown',active_owner_match:selected?.getAttribute('data-super-id')===expectedOwner,active_tab_match:tab?.getAttribute('data-id')===String(expectedTab),point_hits_route:hit,center_in_view:inView,other_modals:Math.min(modals.length,32),visible_other_modals:Math.min(modals.filter(e=>e.getClientRects().length>0).length,32),route_roots:Math.min(document.querySelectorAll('[data-tab-route-root]').length,4),route_comboboxes:Math.min(document.querySelectorAll('[data-tab-route-root] [role=combobox]').length,16)};
+ };
+ const record=(event,extra={})=>{try{if(!live)return;state.trace.push({event,ms:Math.min(60000,Math.max(0,Math.round(performance.now()-started))),...snapshot(),...extra});if(state.trace.length>32)state.trace.shift()}catch{state.observation_failed=true}};
+ function wrapped(command,args){
+  const tracked=command==='pokazat_dvizhki'||command==='fokus_obolochke';
+  const extra={command,phase:'request'};try{if(command==='pokazat_dvizhki'&&typeof args?.vidno==='boolean')extra.visible=args.vidno}catch{}
+  if(tracked)record('invoke',extra);
+  let result;try{result=Reflect.apply(original,this,arguments)}catch(error){if(tracked)record('invoke',{command,phase:'rejected'});throw error}
+  if(tracked)try{result.then(()=>record('invoke',{command,phase:'resolved'}),()=>record('invoke',{command,phase:'rejected'}))}catch{}
+  return result;
+ }
+ const capture=e=>{try{if(!live||!types.includes(e.type))return;const route=ownRoute(e.target),count=state.counts[e.type],key=e.isTrusted?(route?'trusted_route':'trusted_other'):'untrusted';count[key]=Math.min(32,count[key]+1);record(e.type,{phase:'capture',trusted:e.isTrusted===true,target_is_route:route,default_prevented:e.defaultPrevented===true})}catch{}};
+ const bubble=e=>{try{if(live&&types.includes(e.type))record(e.type,{phase:'bubble',trusted:e.isTrusted===true,target_is_route:ownRoute(e.target),default_prevented:e.defaultPrevented===true})}catch{}};
+ const stop=()=>{try{record('finished');live=false;observer?.disconnect();for(const t of types){document.removeEventListener(t,capture,true);document.removeEventListener(t,bubble,false)}if(internal.invoke===wrapped){internal.invoke=original;state.restore_verified=true}}catch{}return state;};
+ window.__routeOpenDiagnostic={stop,state};
+ try{
+  internal.invoke=wrapped;for(const t of types){document.addEventListener(t,capture,{capture:true,passive:true});document.addEventListener(t,bubble,{capture:false,passive:true})}
+  let before=snapshot();observer=new MutationObserver(records=>{try{
+   const delta={route_added:0,route_removed:0,other_modal_added:0,other_modal_removed:0};
+   const count=(nodes,removed)=>{for(const node of Array.from(nodes).slice(0,32)){if(!(node instanceof Element))continue;const candidates=[node,...Array.from(node.querySelectorAll('[data-tab-route-root],.zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay,.security-overlay')).slice(0,32)];for(const element of candidates){if(element.matches('[data-tab-route-root]')){const key=removed?'route_removed':'route_added';delta[key]=Math.min(32,delta[key]+1)}else if(element.matches('.zatemnenie,[role=dialog],[role=alertdialog],.browser-lock-screen,.settings-overlay,.security-overlay')&&!element.closest('[data-tab-route-root]')){const key=removed?'other_modal_removed':'other_modal_added';delta[key]=Math.min(32,delta[key]+1)}}}};
+   for(const mutation of records.slice(0,64)){count(mutation.addedNodes,false);count(mutation.removedNodes,true)}
+   const now=snapshot();if(Object.values(delta).some(Boolean)||['other_modals','visible_other_modals','route_roots','route_comboboxes'].some(k=>now[k]!==before[k]))record('dom_change',delta);before=now;
+  }catch{state.observation_failed=true}});observer.observe(document.body,{childList:true,subtree:true});record('armed');return true;
+ }catch{state.observation_failed=true;stop();return false}
+})()
+'''
+
+
+def safe_route_open_trace(value):
+    """Whitelist only fixed observer fields; never export titles, URLs or errors."""
+    if not isinstance(value,dict):return {'observation_failed':True,'trace':[]}
+    bools={'button_present','button_enabled','button_busy','active_owner_match','active_tab_match',
+           'point_hits_route','center_in_view','visible','trusted','target_is_route','default_prevented'}
+    integers={'ms','other_modals','visible_other_modals','route_roots','route_comboboxes','route_added','route_removed','other_modal_added','other_modal_removed'}
+    enums={'event':{'armed','finished','invoke','dom_change','pointerdown','pointerup','pointercancel','mousedown','mouseup','click'},
+           'phase':{'capture','bubble','request','resolved','rejected'},
+           'command':{'pokazat_dvizhki','fokus_obolochke'},'route_state':{'pending','error','applied','unknown'}}
+    result={'trace':[],'counts':{},'restore_verified':value.get('restore_verified') is True,
+            'observation_failed':value.get('observation_failed') is True}
+    trace=value.get('trace',[])
+    for row in trace[-32:] if isinstance(trace,list) else []:
+        if not isinstance(row,dict) or row.get('event') not in enums['event']:continue
+        clean={}
+        for key,item in row.items():
+            if key in bools and type(item)is bool:clean[key]=item
+            elif key in integers and type(item)is int and 0<=item<=60000:clean[key]=item
+            elif key in enums and isinstance(item,str) and item in enums[key]:clean[key]=item
+        result['trace'].append(clean)
+    counts=value.get('counts',{})
+    if isinstance(counts,dict):
+        for event in ('pointerdown','pointerup','pointercancel','mousedown','mouseup','click'):
+            row=counts.get(event)
+            if isinstance(row,dict):result['counts'][event]={key:number for key,number in row.items() if key in ('trusted_route','trusted_other','untrusted') and type(number)is int and 0<=number<=32}
+    return result
+
+
+def route_open_trace_begin(client,owner,identifier):
+    client.route_open_trace={'observation_failed':True,'trace':[]}
+    try:
+        script=ROUTE_OPEN_DIAGNOSTIC.replace('__OWNER__',json.dumps(owner)).replace('__TAB__',str(identifier))
+        return client.js(script) is True
+    except Exception:return False
+
+
+def route_open_trace_finish(client):
+    try:client.route_open_trace=safe_route_open_trace(client.js('window.__routeOpenDiagnostic?.stop()'))
+    except Exception:client.route_open_trace={'observation_failed':True,'trace':[]}
+
+
+def route_open_trace_self_test():
+    private='https://private.invalid/secret title'
+    receipt=safe_route_open_trace({'trace':[{'event':'invoke','command':'pokazat_dvizhki','phase':'resolved','visible':False,'url':private,'error':private},{'event':private}], 'counts':{'click':{'trusted_route':1,'secret':private}},'restore_verified':True})
+    assert private not in json.dumps(receipt) and len(receipt['trace'])==1 and receipt['restore_verified']
+    assert safe_route_open_trace({'trace':[{'event':'armed'}]*100})['trace']==[{'event':'armed'}]*32
+    # Execute the ACTUAL observer/wrapper with a tiny mock DOM; no browser/network.
+    script=ROUTE_OPEN_DIAGNOSTIC.replace('__OWNER__',json.dumps('routes-a')).replace('__TAB__','13')
+    harness=r'''
+    const assert=x=>{if(!x)throw new Error('observer_contract')};
+    global.Element=class{closest(){return this.route?this:null}};
+    const button=new Element();button.route=true;button.disabled=false;button.getAttribute=k=>k==='data-route-state'?'applied':'false';button.getBoundingClientRect=()=>({x:1,y:1,width:20,height:20});button.contains=x=>x===button;
+    global.innerWidth=1280;global.innerHeight=900;
+    const listeners=[];global.document={body:{},querySelector:s=>s==='.tab-route-button'?button:{getAttribute:k=>k==='data-super-id'?'routes-a':'13'},querySelectorAll:()=>[],elementFromPoint:()=>button,addEventListener:(t,f,o)=>listeners.push([t,f,o]),removeEventListener:(t,f)=>{const i=listeners.findIndex(x=>x[0]===t&&x[1]===f);if(i>=0)listeners.splice(i,1)}};
+    global.MutationObserver=class{observe(){}disconnect(){}};
+    let calls=0,received=null;let resolve,reject;const promise=new Promise((a,b)=>{resolve=a;reject=b});
+    const original=function(){calls++;received={self:this,args:[...arguments]};return promise};
+    global.window={__TAURI_INTERNALS__:{invoke:original}};
+    assert(eval(SCRIPT)===true);
+    const context=window.__TAURI_INTERNALS__,args={vidno:false,private:'https://private.invalid/secret'};
+    const returned=context.invoke('pokazat_dvizhki',args);
+    assert(returned===promise&&calls===1&&received.self===context&&received.args[1]===args);
+    const untracked=context.invoke('private_command',args);assert(untracked===promise&&calls===2);
+    const throwingArgs=Object.defineProperty({},'vidno',{get(){throw new Error('private_observer_getter')}});
+    assert(context.invoke('pokazat_dvizhki',throwingArgs)===promise&&calls===3);
+    for(const [type,fn,options] of [...listeners])if(type==='click')fn({type:'click',target:button,isTrusted:true,defaultPrevented:false});
+    resolve('https://private.invalid/result');
+    Promise.resolve().then(async()=>{const output=window.__routeOpenDiagnostic.stop();assert(context.invoke===original&&listeners.length===0);assert(output.counts.click.trusted_route===1);assert(output.trace.some(x=>x.event==='invoke'&&x.phase==='resolved'));
+      const error=new Error('https://private.invalid/rejected');const rejected=Promise.reject(error);let rejectCalls=0;const rejectOriginal=()=>{rejectCalls++;return rejected};context.invoke=rejectOriginal;assert(eval(SCRIPT)===true);
+      const result=context.invoke('fokus_obolochke');assert(result===rejected&&rejectCalls===1);assert(await result.catch(value=>value===error));
+      const second=window.__routeOpenDiagnostic.stop();assert(context.invoke===rejectOriginal&&listeners.length===0&&second.trace.some(x=>x.phase==='rejected'));console.log(JSON.stringify(output))
+    }).catch(()=>{process.exitCode=1});
+    '''.replace('SCRIPT',json.dumps(script))
+    completed=subprocess.run(['node','-'],input=harness,text=True,capture_output=True,timeout=5)
+    assert completed.returncode==0 and len(completed.stdout)<=65536,'Offline route observer failed'
+    parsed=safe_route_open_trace(json.loads(completed.stdout))
+    assert 'private.invalid' not in json.dumps(parsed) and parsed['restore_verified']
+    return {'self_test':True,'synthetic_only':True,'native_execution':False}
+
+
 def apply_ui(client, label, owner, identifier, screenshot=None):
     target_dom(client, owner, identifier, route_button=True)
     require(call(client, 'aktivnaya') == owner and rows(client, owner)['aktivnaya'] == identifier,
             'Route UI target no longer matches the active native owner/tab')
-    client.click('button[aria-label="Путь вкладки"]')
-    js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
+    tracing=identifier==13 and owner=='routes-a'
+    if tracing:route_open_trace_begin(client,owner,identifier)
+    try:
+        client.click('button[aria-label="Путь вкладки"]')
+        js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
+    finally:
+        if tracing:route_open_trace_finish(client)
     choose(client, label)
     if screenshot:
         from PIL import ImageGrab
@@ -1061,6 +1189,8 @@ def run(args):
             except Exception as diagnostic_error:
                 report['inspector_diagnostic_error'] = type(diagnostic_error).__name__
         if device and device.client:
+            if hasattr(device.client,'route_open_trace'):
+                report['route_open_diagnostic']=safe_route_open_trace(device.client.route_open_trace)
             try:
                 report['shell_text_on_failure'] = device.client.js('document.body.innerText').strip()[:12000]
                 report['session_on_failure'] = rows(device.client, 'routes-a')
@@ -1088,6 +1218,8 @@ def run(args):
 
 
 if __name__ == '__main__':
+    if sys.argv[1:]==['--self-test-route-open-trace']:
+        print(json.dumps(route_open_trace_self_test()));raise SystemExit(0)
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--exe', required=True)
     parser.add_argument('--cef', required=True)
