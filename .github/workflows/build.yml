@@ -679,7 +679,10 @@ jobs:
         if: always()
         with:
           name: youtube-native-player-${{ matrix.os }}
-          path: .dev-check/youtube-player/result.json
+          path: |
+            .dev-check/youtube-player/result.json
+            .dev-check/youtube-player/background-super-B-before.png
+            .dev-check/youtube-player/background-super-B-failure.png
           if-no-files-found: warn
           retention-days: 14
 

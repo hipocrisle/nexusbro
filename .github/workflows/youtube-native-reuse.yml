@@ -456,7 +456,10 @@ jobs:
         if: ${{ always() && !cancelled() }}
         with:
           name: youtube-checkpoint-linux-player
-          path: .dev-check/linux-reuse-player/diagnostic-checkpoint.json
+          path: |
+            .dev-check/linux-reuse-player/diagnostic-checkpoint.json
+            .dev-check/linux-reuse-player/background-super-B-before.png
+            .dev-check/linux-reuse-player/background-super-B-failure.png
           if-no-files-found: ignore
           retention-days: 7
       - name: Linux same installed binary download DIAGNOSTIC
@@ -554,6 +557,8 @@ jobs:
           path: |
             .dev-check/linux-reuse-provenance.json
             .dev-check/linux-reuse-player/result.json
+            .dev-check/linux-reuse-player/background-super-B-before.png
+            .dev-check/linux-reuse-player/background-super-B-failure.png
             .dev-check/linux-reuse-download/result.json
             .dev-check/linux-reuse-download/native-save-dialog.png
             .dev-check/linux-reuse-features/result.json
