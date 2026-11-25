@@ -45,22 +45,26 @@ from youtube_paired_native import (
 from youtube_player_native import physical
 
 VIDEO = 'M7lc1UVf-VE'
-COMPONENT_FILES = ('yt-dlp', 'deno')
+# Tauri Linux resource_dir is NOT exe-adjacent (tauri-utils platform.rs):
+# for exe at <root>/bin/nexusbro the resources are <root>/lib/nexusbro/...
+COMPONENT_FILES = ('yt-dlp', 'deno', 'ffmpeg')
 SAFE_CODE = re.compile(r'^[a-z0-9_]{1,48}$')
 MIN_POSITION_DELTA = 8.0
+PACKAGE_NAME = 'nexusbro'
 
 
 def validate_components(raw_components, exe, root):
-    """The app fixes the components directory itself (cef_dvizhok.rs:
-    resources/binaries/youtube-light). Preflight must only accept exactly that
+    """The app resolves components via its Tauri resource_dir (papka_resursov,
+    cef_dvizhok.rs) — on Linux that is exe_dir/../lib/<package>/binaries/
+    youtube-light, not the exe's own directory. Accept exactly that resolved
     path inside the private root, with real non-empty component files."""
-    expected = (exe.parent / 'binaries' / 'youtube-light').resolve(strict=True)
+    expected = (exe.parent.parent / 'lib' / PACKAGE_NAME / 'binaries' / 'youtube-light').resolve(strict=True)
     try:
         value = Path(raw_components).resolve(strict=True)
     except OSError:
         raise Blocked('local_components_unresolvable')
     if value != expected:
-        raise Blocked('local_components_not_exe_adjacent')
+        raise Blocked('local_components_not_resource_dir')
     if root not in value.parents:
         raise Blocked('local_components_outside_root')
     for name in COMPONENT_FILES:
@@ -120,6 +124,8 @@ def run(args):
     report = initial_light_report(); device = wm = None; root = None; client = None
     close_attempted = False; started = time.monotonic()
     try:
+        if os.environ.get('WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS'):
+            raise Blocked('local_mode_forbids_inherited_sandbox_disable')
         if os.environ.get('GITHUB_ACTIONS') == 'true':
             raise Blocked('local_mode_forbids_gha')
         if sys.platform != 'linux':
@@ -155,7 +161,7 @@ def run(args):
             return min(cap, left)
         url = 'https://www.youtube.com/watch?v=' + VIDEO
         report['stage'] = 'startup'
-        device = SandboxedDevice('light-home', root / 'device', exe, cef)
+        device = SandboxedDevice('light-home', out / 'device', exe, cef)
         identifier = 'light-home'
         record = super_record(identifier, 'Lightweight player local', url, proxy='')
         folder = device.data / 'profili' / identifier; folder.mkdir(parents=True)
@@ -167,7 +173,7 @@ def run(args):
         if time.monotonic() - started > 45:
             raise Blocked('light_startup_deadline')
         report['stage'] = 'owned-window-manager'
-        wm = LocalWindowManager(device, root / 'wm'); device.player_wm = wm
+        wm = LocalWindowManager(device, out / 'wm'); device.player_wm = wm
         switch_super(client, identifier, timeout=remaining(10))
         if client.js('!!document.querySelector(".pusto button")'):
             click_control(client, '.pusto button', remaining(10))
@@ -181,33 +187,35 @@ def run(args):
             time.sleep(.5)
         else:
             raise Blocked('light_tab_not_live')
-        client.js('window.__paired=[];window.__pairedReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(e.payload?.data?.tip==="youtube-state")window.__paired.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__pairedReady=true);true')
+        client.js('window.__paired=[];window.__pairedReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(["youtube-state","youtube-result"].includes(e.payload?.data?.tip))window.__paired.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__pairedReady=true);true')
         wait_for(lambda: client.js('window.__pairedReady'), 'Light state listener unavailable', remaining(5))
+        report['stage'] = 'light-entry'
+        call(client, 'obychnaya_komanda', id=identifier, komanda={'deystvie': 'youtube_light', 'id': tab})
         report['stage'] = 'light-snapshot'
         first = None; last = None; began = None
-        deadline = time.monotonic() + remaining(90)
+        # Extraction is asynchronous: the shipped light player starts extraction
+        # after the entry command and the first snapshots may legitimately be
+        # absent. Wait bounded (paired arm() pattern), classify the shipped
+        # youtube-result failure code when present, never fail instantly.
+        deadline = time.monotonic() + remaining(60)
         while time.monotonic() < deadline:
+            failed = client.js('window.__paired.filter(e=>e.data?.id==='+str(tab)+'&&e.data?.tip==="youtube-result").map(e=>e.data).pop()||null')
+            if isinstance(failed, dict) and failed.get('start') is False:
+                code = failure_code(failed) or 'unavailable'
+                report['native_failure_code'] = code
+                report['native_stage'] = 'extraction'
+                raise Blocked('native_light_' + code)
             try:
                 state = light_state(probe(client, identifier, tab, 'light', VIDEO))
-            except Blocked as error:
-                if str(error) != 'native_light_unavailable':
-                    raise
-                # Distinguish shipped safe failure categories from plain absence.
-                receipt = client.js('window.__paired.find(e=>e.data?.id==='+str(tab)+'&&e.data?.tip==="youtube-state")')
-                code = failure_code(receipt.get('data') if isinstance(receipt, dict) else None)
-                report['native_failure_code'] = code or 'unavailable'
-                raise Blocked('native_light_' + (code or 'unavailable'))
-            if first is None:
-                first = state; began = time.monotonic()
-                if not first['playing']:
-                    break  # proceed to physical play below
-            else:
-                last = state
-                if last['position'] - first['position'] >= MIN_POSITION_DELTA and last['decoded'] > first['decoded'] and last['playing']:
-                    break
-            time.sleep(1.0)
+            except Blocked:
+                time.sleep(.5)
+                continue
+            first = state; began = time.monotonic()
+            break
         if first is None:
-            raise Blocked('native_light_unavailable')
+            report['native_failure_code'] = 'unavailable'
+            report['native_stage'] = 'extraction'
+            raise Blocked('real_extraction_unavailable_or_challenged')
         report['stage'] = 'physical-play'
         if not first['playing']:
             diagnostics = {}
@@ -287,6 +295,13 @@ def self_test():
     report = initial_light_report()
     assert report['full_playback_acceptance'] is False and report['paired'] is False
     assert report['mode'] == 'local_home_light'
+    import inspect as _inspect
+    source = _inspect.getsource(validate_components)
+    assert "'lib' / PACKAGE_NAME / 'binaries' / 'youtube-light'" in source
+    run_source = _inspect.getsource(run)
+    assert 'local_mode_forbids_inherited_sandbox_disable' in run_source
+    assert "'deystvie': 'youtube_light'" in run_source
+    assert "out / 'device'" in run_source and "out / 'wm'" in run_source
     return {'self_test': True, 'source_only': True, 'native_execution': False}
 
 
