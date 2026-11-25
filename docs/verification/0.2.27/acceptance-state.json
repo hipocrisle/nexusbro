@@ -140,5 +140,14 @@
     "required_seconds": 7200,
     "diagnostic_pilot": false,
     "acceptance_passed": false
+  },
+  "linux_strict_routes_pending": {
+    "run": 45638466418,
+    "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+    "test_source": "0e95fcbdadb534262fb34c88e78a18732b8ea135",
+    "status": "in_progress",
+    "change": "one hover on existing route-button title after observed neutral exit",
+    "overlap_and_input_shape_contract_unchanged": true,
+    "accepted": false
   }
 }
