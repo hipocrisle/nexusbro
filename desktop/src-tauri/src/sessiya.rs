@@ -53,6 +53,7 @@ pub struct Sessiya {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "deystvie", rename_all = "snake_case")]
 pub enum Komanda {
+    AppShutdown { request:crate::app_shutdown_protocol::Request },
     OknoNovoe { label:String, parent:u64, x:i32, y:i32, w:u32, h:u32, privatnaya:bool, #[serde(default)] sessiya:Option<Sessiya> },
     OknoKomanda { label:String, komanda:Box<Komanda> },
     OknoZakryt { label:String },

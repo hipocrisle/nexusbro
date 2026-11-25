@@ -615,7 +615,7 @@ pub fn rabotat(
         loop {
             do_message_loop_work();
             rabota.shag()?;
-            if rabota.hibernate.stopped(){break;}
+            if crate::cef_app_shutdown::ready()||(!crate::cef_app_shutdown::active()&&rabota.hibernate.stopped()){break;}
             std::thread::sleep(std::time::Duration::from_millis(8));
         }
         crate::cef_youtube_fullscreen::clear(&rabota.tx);
@@ -670,7 +670,7 @@ wrap_task! {
                     quit_message_loop();
                     return None;
                 }
-                if work.hibernate.stopped(){quit_message_loop();return None;}
+                if crate::cef_app_shutdown::ready()||(!crate::cef_app_shutdown::active()&&work.hibernate.stopped()){quit_message_loop();return None;}
                 Some(if work.has_live_devtools() { 16 } else { 100 })
             });
             if self.maintenance {
@@ -815,6 +815,70 @@ struct Rabota {
 }
 
 impl Rabota {
+    fn app_shutdown_close(&mut self){
+        self.closing=true;
+        if self.label.is_empty(){
+            crate::youtube_light_jobs::cancel_all();crate::youtube_light_aux::cancel_all();
+            crate::cef_youtube::clear_probes();
+        }
+        // Session rows remain intact: callbacks below remove only Browser refs.
+        self.deferred_actions.clear();self.pending_downloads.clear();self.data_requests.clear();
+        self.route_attempts.clear();self.sleep_requests.clear();self.memory_registrations.clear();
+        self.perevody.clear();self.perevod_due.clear();
+        for (tab,browser) in &self.brauzery{
+            let identity=browser.identifier();
+            crate::youtube_light_jobs::cancel(identity);
+            crate::youtube_light_aux::cancel(identity);
+            crate::cef_youtube_resume_fixture::cancel(identity);
+            crate::cef_youtube_download::cancel(identity);
+            crate::cef_youtube::stop(browser,*tab,&self.tx);
+            if let Some(host)=browser.host(){host.close_dev_tools();host.close_browser(1);}
+        }
+        for extra in self.extras.values_mut(){extra.app_shutdown_close();}
+    }
+    fn app_shutdown_tick(&mut self,events:Vec<Sobytie>)->anyhow::Result<()>{
+        for event in events {match event {
+            Sobytie::YoutubeReady(ready)=>{crate::youtube_light_jobs::finish(ready.browser,ready.operation);}
+            Sobytie::YoutubeResumeFixtureReady(ready)=>crate::cef_youtube_resume_fixture::discard(ready),
+            Sobytie::YoutubeFocus{..}=>crate::cef_youtube_focus::finish(),
+            Sobytie::Zakryta(id,Some(identity))=>{
+                if self.brauzery.get(&id).is_some_and(|b|b.identifier()==identity){
+                    self.brauzery.remove(&id);self.k.routes.borrow_mut().forget_browser(identity);
+                    self.memory_registrations.remove(&id);
+                }
+            }
+            Sobytie::DevtoolsZakryty(id)=>{self.devtools.remove(&id);self.devtools_pending.remove(&id);}
+            Sobytie::DevtoolsGotovy(id)=>{if let Some(host)=self.brauzery.get(&id).and_then(|b|b.host()){host.close_dev_tools();}}
+            #[cfg(target_os="windows")]
+            Sobytie::DevtoolsZakrytOkno(_,hwnd)=>{
+                use windows::Win32::{Foundation::HWND,System::Threading::{GetCurrentProcessId,GetCurrentThreadId},UI::WindowsAndMessaging::*};
+                unsafe{let h=HWND(hwnd as usize as _);let mut pid=0;let thread=GetWindowThreadProcessId(h,Some(&mut pid));
+                    if pid==GetCurrentProcessId()&&thread==GetCurrentThreadId()&&GetParent(h).ok().is_some_and(|p|p.0 as usize as u32==self.k.okno){let _=DestroyWindow(h);}}
+            }
+            #[cfg(target_os="windows")]
+            Sobytie::ZakrytOkno(id,identity)=>{
+                if let Some(b)=self.brauzery.get(&id).filter(|b|b.identifier()==identity){
+                    use windows::Win32::{Foundation::HWND,System::Threading::{GetCurrentProcessId,GetCurrentThreadId},UI::WindowsAndMessaging::*};
+                    unsafe {let h=HWND(handle(b) as usize as _);let mut pid=0;let thread=GetWindowThreadProcessId(h,Some(&mut pid));
+                        if pid==GetCurrentProcessId()&&thread==GetCurrentThreadId(){let _=DestroyWindow(h);}}
+                }
+            }
+            _=>{} // No UI action, navigation, ready grant or session mutation.
+        }}
+        for extra in self.extras.values_mut(){
+            let events=extra.rx.try_iter().take(128).collect();extra.app_shutdown_tick(events)?;
+        }
+        crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
+        let closed=self.app_shutdown_closed();
+        if self.label.is_empty(){
+            crate::cef_app_shutdown::poll_drained(closed&&!crate::youtube_light_jobs::any_active()&&!crate::cef_youtube_download::any_active());
+        }
+        Ok(())
+    }
+    fn app_shutdown_closed(&self)->bool{
+        self.brauzery.is_empty()&&self.devtools.is_empty()&&self.devtools_pending.is_empty()
+            &&self.extras.values().all(|extra|extra.app_shutdown_closed())
+    }
     fn hibernate_safe(&self)->bool{
         self.label.is_empty()&&self.extras.is_empty()&&!self.force_private&&!self.browser_locked&&!self.closing
         &&self.route_attempts.is_empty()&&self.sleep_requests.is_empty()&&self.pending_downloads.is_empty()&&self.devtools.is_empty()&&self.devtools_pending.is_empty()&&self.perevody.is_empty()&&self.data_requests.is_empty()&&self.deferred_actions.is_empty()
@@ -822,9 +886,8 @@ impl Rabota {
         &&!(crate::youtube_light_jobs::any_active()||crate::cef_youtube_download::any_active())
         &&self.brauzery.keys().all(|id|memory_blocked_scoped(*id,true,&self.s,&self.brauzery,&self.devtools_pending,self.force_private,true).is_none())
     }
-    fn hibernate_shag(&mut self)->anyhow::Result<()>{
+    fn hibernate_shag(&mut self,events:Vec<Sobytie>)->anyhow::Result<()>{
         if self.hibernate.stopped(){return Ok(());}
-        let events=self.rx.try_iter().take(128).collect::<Vec<_>>();
         for event in events{
             if matches!(&event,Sobytie::YoutubeFocus{..}){crate::cef_youtube_focus::finish();}
             if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&event{if *generation>=self.browser_lock_generation{self.browser_locked=*locked;self.browser_lock_generation=*generation;}else{continue;}}
@@ -965,7 +1028,18 @@ impl Rabota {
         crate::cef_youtube::poll_probes();
         crate::cef_youtube_resume::maintenance(&self.brauzery);
         crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
-        if self.hibernate.active()||self.hibernate.stopped(){return self.hibernate_shag();}
+        let incoming=self.rx.try_iter().take(128).collect::<Vec<_>>();
+        for event in &incoming {if let Sobytie::Komanda(Komanda::AppShutdown{request})=event {
+            if self.label.is_empty()&&crate::cef_app_shutdown::begin(request){
+                // An irreversible hibernation already owns browser closure.
+                if !self.hibernate.committed(){self.hibernate.invalidate(&self.brauzery);self.app_shutdown_close();}
+            }
+        }}
+        if crate::cef_app_shutdown::active(){
+            if self.hibernate.committed()&&!self.hibernate.stopped(){return self.hibernate_shag(incoming);}
+            return self.app_shutdown_tick(incoming);
+        }
+        if self.hibernate.active()||self.hibernate.stopped(){return self.hibernate_shag(incoming);}
         self.route_tick()?;
         if !self.data_requests.is_empty(){
             let contexts=self.k.routes.borrow_mut().all_owned();
@@ -1017,7 +1091,7 @@ impl Rabota {
         let mut fokus_klaviatury = false;
         let mut fokus_posle_devtools=false;
         let mut handled_events = 0;
-        for sobytie in rx.try_iter().take(128) {
+        for sobytie in incoming {
             handled_events += 1;
             if matches!(&sobytie,Sobytie::YoutubeFocus{..}){crate::cef_youtube_focus::finish();}
             if hibernate.active(){

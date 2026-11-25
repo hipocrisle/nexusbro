@@ -221,10 +221,21 @@ fn process_supertab(main_args: &MainArgs, _komandnaya_stroka: &CommandLine) -> i
     crate::cef_youtube::clear_probes();
     match result {
         Ok(()) => {
-            if let Some(token)=crate::cef_vkladki::take_hibernate_shutdown_token(){
+            let app_request=crate::cef_app_shutdown::take_completed();
+            let hibernate_token=crate::cef_vkladki::take_hibernate_shutdown_token();
+            if app_request.is_some()||hibernate_token.is_some(){
+                // rabotat has dropped every container/context/browser reference.
+                // Both lifecycle protocols share this one initialize-thread call.
                 shutdown();
-                let frame=crate::super_hibernation_protocol::Frame::ShutdownAck{token};
-                if let Ok(wire)=serde_json::to_string(&frame){println!("NB-HIBERNATE {wire}");let _=std::io::stdout().flush();}
+                if let Some(token)=hibernate_token{
+                    let frame=crate::super_hibernation_protocol::Frame::ShutdownAck{token};
+                    if let Ok(wire)=serde_json::to_string(&frame){println!("NB-HIBERNATE {wire}");}
+                }
+                if let Some(request)=app_request{
+                    let ack=crate::app_shutdown_protocol::Ack::after_cef_shutdown(request);
+                    println!("NB-UI {}",serde_json::json!({"tip":crate::app_shutdown_protocol::ACK_TIP,"ack":ack}));
+                }
+                let _=std::io::stdout().flush();
             }
             0
         },
