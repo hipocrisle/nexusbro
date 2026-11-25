@@ -37,3 +37,9 @@ release=json.loads(gh('release','view',tag,'--json','isDraft'));assert release['
 assets=[str(x) for f in files.values() for x in [f,pathlib.Path(str(f)+'.sig')]]
 subprocess.run(['gh','release','upload',tag,*assets,str(root/'latest.json'),str(root/'signature-verification.json'),'--repo',repo,'--clobber'],check=True)
 subprocess.run(['gh','release','edit',tag,'--repo',repo,'--notes-file',f'docs/RELEASE-{version}.md','--draft=false','--latest'],check=True)
+# Verify the actual anonymous updater/CDN path on this disposable GHA runner.
+# The verifier receives public metadata only; publisher credentials stay here.
+subprocess.run([sys.executable,'tests/verify_public_release.py','--directory',str(root),
+ '--version',version,'--source',metadata['headSha'],'--build-run',run,
+ '--out',str(root/'public-verification.json')],check=True,
+ env={key:os.environ[key] for key in ('GITHUB_ACTIONS','PATH','LANG') if key in os.environ})

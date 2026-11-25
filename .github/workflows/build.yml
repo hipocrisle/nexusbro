@@ -1537,3 +1537,14 @@ jobs:
           LINUX_RUNTIME_BUILD: ${{ inputs.linux_runtime_build }}
           LINUX_RUNTIME_RESULT: ${{ needs['linux-runtime'].result }}
         run: python3 tests/publish_tested_release.py
+      - name: Preserve small public updater verification receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-updater-verification-${{ github.run_attempt }}
+          path: |
+            .dev-check/publish/latest.json
+            .dev-check/publish/signature-verification.json
+            .dev-check/publish/public-verification.json
+            .dev-check/publish/*.sig
+          retention-days: 14
