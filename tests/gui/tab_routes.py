@@ -792,6 +792,47 @@ def safe_route_open_trace(value):
     return result
 
 
+def safe_route_open_native(value,depth=0):
+    """Retain native proof fields only, never actual IDs, coordinates or paths."""
+    if not isinstance(value,dict) or depth>8:return {}
+    booleans={'available','complete','query_error','visual_scan_complete','nonowned_cover','override_redirect',
+        'mapped','input_shape_supported','input_shape_observed','input_empty','covers_expected',
+        'cursor_observed','cursor_delta_bounded','cursor_at_expected','expected_point_unchanged','crop_saved',
+        'observation_failed','unsupported_platform','mapped_covering_tooltip_observed',
+        'mapped_tooltip_before_click','input_empty_before_click','one_physical_click','trusted_dom_click','dialog_present'}
+    limits={'cursor_dx':(-16384,16384),'cursor_dy':(-16384,16384),'input_rectangles':(0,256),
+        'crop_width':(1,4096),'crop_height':(1,520),'observations':(0,50),'move_count':(0,1)}
+    enums={'role':{'ownedApp','cef','other'},'focus_role':{'ownedApp','cef','other'},
+        'visual_top_role':{'ownedApp','cef','other'},'window_type':{'normal','dialog','tooltip','popup_menu',
+        'dropdown_menu','utility','dock','desktop','other','none'}}
+    result={}
+    for key,item in value.items():
+        if key in booleans and type(item)is bool:result[key]=item
+        elif key in limits and type(item)is int and limits[key][0]<=item<=limits[key][1]:result[key]=item
+        elif key in enums and isinstance(item,str) and item in enums[key]:result[key]=item
+        elif key in {'before','failure','hover','regression','hit_test','last_hit'} and isinstance(item,dict):
+            result[key]=safe_route_open_native(item,depth+1)
+        elif key in {'chain','mapped_owned_tooltips'} and isinstance(item,list):
+            result[key]=[safe_route_open_native(row,depth+1) for row in item[:16 if key=='chain' else 8] if isinstance(row,dict)]
+    return result
+
+
+def persist_route_open_report(report,client,device=None):
+    # Reporting must never replace an actual native acceptance exception.
+    try:
+        device=device if device is not None else getattr(client,'route_trace_device',None)
+        saved=getattr(device,'route_open_report',{}) if device is not None else {}
+        snapshot=dict(saved) if isinstance(saved,dict) else {}
+        if hasattr(client,'route_open_trace'):snapshot['route_open_diagnostic']=safe_route_open_trace(client.route_open_trace)
+        if hasattr(client,'route_open_native'):snapshot['route_open_native']=safe_route_open_native(client.route_open_native)
+        if snapshot and device is not None:device.route_open_report=snapshot
+        if isinstance(report,dict):report.update(snapshot)
+    except Exception:
+        try:
+            if isinstance(report,dict):report['route_open_reporting_failed']=True
+        except Exception:pass
+
+
 def route_open_trace_begin(client,owner,identifier):
     client.route_open_trace={'observation_failed':True,'trace':[]}
     try:
@@ -803,6 +844,8 @@ def route_open_trace_begin(client,owner,identifier):
 def route_open_trace_finish(client):
     try:client.route_open_trace=safe_route_open_trace(client.js('window.__routeOpenDiagnostic?.stop()'))
     except Exception:client.route_open_trace={'observation_failed':True,'trace':[]}
+    # Preserve the successful case before a later Device restart replaces Client.
+    persist_route_open_report(None,client)
 
 
 def route_open_trace_self_test():
@@ -831,6 +874,26 @@ def route_open_trace_self_test():
         else:raise AssertionError('Observation exception suppressed')
         assert observed.call_count==1
     assert failed.route_forbid_failure_screenshot and failed.route_screenshot_block_reason=='incomplete_observation'
+    private='https://private.invalid/secret title'
+    saved={};held_device=SimpleNamespace();first=SimpleNamespace(route_trace_device=held_device,
+        route_open_trace={'trace':[{'event':'click','phase':'capture','trusted':True,'target_is_route':True,'url':private}],
+                          'counts':{'click':{'trusted_route':1}},'restore_verified':True},
+        route_open_native={'before':{'hit_test':{'available':True,'complete':True,'visual_scan_complete':True,
+            'nonowned_cover':False,'mapped_owned_tooltips':[{'role':'ownedApp','window_type':'tooltip','mapped':True,
+                'input_shape_observed':True,'input_rectangles':0,'input_empty':True,'pid':987654321,'title':private}]}},
+            'regression':{'one_physical_click':True,'trusted_dom_click':True,'dialog_present':True},'path':private})
+    persist_route_open_report(saved,first)
+    persist_route_open_report(saved,SimpleNamespace(route_trace_device=held_device))  # Restart must not erase old proof.
+    persist_route_open_report(saved,None,held_device)  # Even a closed latest inspector retains the Device snapshot.
+    class Broken:
+        @property
+        def route_open_trace(self):raise RuntimeError('synthetic report failure')
+    persist_route_open_report({},Broken())
+    encoded=json.dumps(saved)
+    assert private not in encoded and '987654321' not in encoded and '"pid"' not in encoded
+    assert saved['route_open_diagnostic']['counts']['click']['trusted_route']==1
+    assert saved['route_open_native']['before']['hit_test']['mapped_owned_tooltips'][0]['input_rectangles']==0
+    assert saved['route_open_native']['regression']['dialog_present'] is True
     tooltip=dict(role='ownedApp',window_type='tooltip',mapped=True,override_redirect=True,covers_expected=True,
                  input_shape_supported=True,input_shape_observed=True,input_rectangles=0,input_empty=True)
     hit=dict(available=True,complete=True,visual_scan_complete=True,nonowned_cover=False,mapped_owned_tooltips=[tooltip])
@@ -1528,10 +1591,7 @@ def run(args):
             except Exception as diagnostic_error:
                 report['inspector_diagnostic_error'] = type(diagnostic_error).__name__
         if device and device.client:
-            if hasattr(device.client,'route_open_trace'):
-                report['route_open_diagnostic']=safe_route_open_trace(device.client.route_open_trace)
-            if hasattr(device.client,'route_open_native'):
-                report['route_open_native']=device.client.route_open_native
+            persist_route_open_report(report,device.client)
             try:
                 report['shell_text_on_failure'] = device.client.js('document.body.innerText').strip()[:12000]
                 report['session_on_failure'] = rows(device.client, 'routes-a')
@@ -1553,6 +1613,7 @@ def run(args):
         raise
     finally:
         if device:
+            persist_route_open_report(report,device.client,device)
             device.close()
         if socks:
             socks.close()
