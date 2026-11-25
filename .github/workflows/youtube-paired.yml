@@ -48,12 +48,15 @@ jobs:
               require(os.environ.get('GITHUB_ACTIONS')=='true','gha_only')
               raw=os.environ['EXPERIMENT_CONFIG'];require(len(raw.encode())<=2048,'configuration_bound')
               config=json.loads(raw,object_pairs_hook=unique)
-              require(isinstance(config,dict) and set(config)=={'platform','video_id','duration','fps','width','height'},'configuration_keys')
+              require(isinstance(config,dict),'configuration_keys')
+              metadata_only=config.get('metadata_only') is True
+              require(set(config)==({'platform','video_id','metadata_only'} if metadata_only else {'platform','video_id','duration','fps','width','height'}),'configuration_keys')
               require(config['platform'] in ('windows','linux'),'configuration_platform')
               require(isinstance(config['video_id'],str) and re.fullmatch('[A-Za-z0-9_-]{11}',config['video_id']),'configuration_video')
-              for key,minimum,maximum in [('duration',180,604800),('fps',1,120)]:
-                  value=config[key];require(type(value) in (int,float) and math.isfinite(value) and minimum<=value<=maximum,'configuration_numeric')
-              for key in ('width','height'):require(type(config[key]) is int and 1<=config[key]<=16384,'configuration_geometry')
+              if not metadata_only:
+                  for key,minimum,maximum in [('duration',180,604800),('fps',1,120)]:
+                      value=config[key];require(type(value) in (int,float) and math.isfinite(value) and minimum<=value<=maximum,'configuration_numeric')
+                  for key in ('width','height'):require(type(config[key]) is int and 1<=config[key]<=16384,'configuration_geometry')
               require((os.name=='nt')==(config['platform']=='windows'),'runner_platform')
               run,source,repo=os.environ['PRODUCER_RUN'],os.environ['PRODUCER_SOURCE'],os.environ['GITHUB_REPOSITORY']
               require(repo=='hipocrisle/nexusbro','own_repository_only')
@@ -181,7 +184,7 @@ jobs:
           try:main()
           except Exception:raise SystemExit('paired_installer_preparation_failed') from None
           PY
-      - name: Real public video ABBA experiment — blocked stays blocked
+      - name: Real public native observation or ABBA — blocked stays blocked
         id: measurement
         timeout-minutes: 40
         shell: bash
@@ -193,10 +196,12 @@ jobs:
           for key in tuple(env):
               if key in ('GH_TOKEN','GITHUB_TOKEN','CEF_PATH','LD_LIBRARY_PATH','NEXUSBRO_TEST_YOUTUBE_FEATURES','NEXUSBRO_TEST_YOUTUBE_DNS_GUARD') or key.startswith(('NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA','NEXUSBRO_TEST_YOUTUBE_CAPTIONS_CA','NEXUSBRO_TEST_YOUTUBE_MEDIA_SENTINEL','NEXUSBRO_TEST_TRANSLATE_')):env.pop(key,None)
           env['NEXUSBRO_TEST_COLD_CEF']='1';env['PYTHONUTF8']='1'
-          argv=[sys.executable,'tests/gui/youtube_paired_native.py','--exe',installed['exe'],'--cef',installed['cef'],'--components-manifest',installed['manifest'],'--route-config',str(private/'route.json'),'--video-id',config['video_id'],'--expected-duration',str(config['duration']),'--expected-fps',str(config['fps']),'--width',str(config['width']),'--height',str(config['height']),'--out',str(private/'measurement')]
+          metadata_only=config.get('metadata_only') is True
+          argv=[sys.executable,'tests/gui/youtube_reference_metadata_native.py' if metadata_only else 'tests/gui/youtube_paired_native.py','--exe',installed['exe'],'--cef',installed['cef'],'--route-config',str(private/'route.json'),'--video-id',config['video_id'],'--out',str(private/'measurement')]
+          if not metadata_only:argv+=['--components-manifest',installed['manifest'],'--expected-duration',str(config['duration']),'--expected-fps',str(config['fps']),'--width',str(config['width']),'--height',str(config['height'])]
           status=None;code='process_exit'
           try:
-              with (private/'measurement-console.txt').open('wb') as stream:status=subprocess.run(argv,env=env,stdout=stream,stderr=subprocess.STDOUT,timeout=2280).returncode
+              with (private/'measurement-console.txt').open('wb') as stream:status=subprocess.run(argv,env=env,stdout=stream,stderr=subprocess.STDOUT,timeout=300 if metadata_only else 2280).returncode
           except subprocess.TimeoutExpired:code='experiment_timeout'
           (root/'execution.json').write_text(json.dumps({'returncode':status,'status':code,'release_acceptance_passed':False})+'\n',encoding='utf-8')
           raise SystemExit(status if status is not None else 1)
@@ -220,7 +225,27 @@ jobs:
               except Exception:return {}
           def numeric(value):return type(value) in (int,float) and math.isfinite(value)
           def token(value):return value if isinstance(value,str) and re.fullmatch('[A-Za-z0-9_-]{1,96}',value) else 'unclassified'
-          raw=load(root/'private/measurement/result.json');result={'schema':1,'release_acceptance_passed':False,'measurement_completed':raw.get('completed') is True,'comparison_valid':raw.get('comparison_valid') is True,'measurement_acceptance_passed':raw.get('acceptance_passed') is True,'physical_audio_capture_proven':False,'arms':[]}
+          raw=load(root/'private/measurement/result.json');metadata_only=load(root/'config.json').get('metadata_only') is True
+          result={'schema':1,'release_acceptance_passed':False,'measurement_completed':not metadata_only and raw.get('completed') is True,'comparison_valid':not metadata_only and raw.get('comparison_valid') is True,'measurement_acceptance_passed':not metadata_only and raw.get('acceptance_passed') is True,'physical_audio_capture_proven':False,'arms':[]}
+          if metadata_only:
+              result['diagnostic_mode']='reference_metadata_only'
+              for key in ('metadata_observed','playback_observed','clock_advanced','cleanup_completed'):result[key]=raw.get(key) is True
+              result['metadata_completed']=raw.get('completed') is True
+              owned=raw.get('owned_exit',{})
+              result['parent_normal_exit']=isinstance(owned,dict) and owned.get('parent_normal_exit') is True
+              result['clean_shutdown_receipt_verified']=isinstance(owned,dict) and owned.get('clean_shutdown_receipt_verified') is True
+              value=raw.get('reference_metadata',{});result['reference_metadata']={}
+              if isinstance(value,dict):
+                  for key in ('duration','video_width','video_height','position','decoded','dropped','ready_state','volume','playback_rate','video_count'):
+                      if numeric(value.get(key)):result['reference_metadata'][key]=value[key]
+                  for key in ('playing','paused','ended','seeking','muted','default_sink'):
+                      if type(value.get(key)) is bool:result['reference_metadata'][key]=value[key]
+              value=raw.get('observed_playback',{});result['observed_playback']={}
+              if isinstance(value,dict):
+                  for key in ('wall_seconds','advanced_frames','advanced_media_seconds','observed_frames_per_media_second','observed_frames_per_wall_second'):
+                      if numeric(value.get(key)):result['observed_playback'][key]=value[key]
+                  for key in ('clock_advanced','decoded_advanced'):
+                      if type(value.get(key)) is bool:result['observed_playback'][key]=value[key]
           for key in ('improvement_observed','drop_regression_observed','audio_policy_proven'):result[key]=raw.get(key) is True
           for key in ('cpu_ratio','private_ratio'):
               if numeric(raw.get(key)):result[key]=raw[key]
