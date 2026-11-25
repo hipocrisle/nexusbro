@@ -8,7 +8,8 @@
     "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
     "status": "failure",
     "native_windows": "success",
-    "native_linux": "failure"
+    "native_linux": "failure",
+    "fresh_native_linux": "success"
   },
   "resource_soak": {
     "run": 45549296137,
@@ -107,12 +108,15 @@
     "release_acceptance": false
   },
   "linux_strict_routes": {
-    "run": 45605925274,
-    "status": "failure",
-    "reason": "owned_tooltip_not_observed",
-    "observations": 50,
-    "mapped_seen": 0,
-    "neutral_exit_hypothesis_proven": false
+    "run": 45651884307,
+    "status": "success",
+    "accepted": true,
+    "diagnostic_only": false,
+    "checks_count": 22,
+    "summary": "linux-strict-route-summary.json",
+    "actual_overlap": true,
+    "input_rectangles": 0,
+    "one_physical_trusted_click": true
   },
   "home_public_playback": {
     "producer_run": 45592261113,
@@ -162,9 +166,29 @@
     "run": 45640001478,
     "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
     "test_source": "4d66e17c6fe2a1ed8765041d94466f605e6716ab",
-    "status": "in_progress",
+    "status": "failure",
     "accepted": false,
     "precondition": "one native shell-focus command; require actual ownedApp focus before one natural hover",
-    "tooltip_contract_unchanged": true
+    "tooltip_contract_unchanged": true,
+    "reason": "50 mapped0 despite ownedApp focus"
+  },
+  "linux_strict_routes_previous": {
+    "run": 45605925274,
+    "status": "failure",
+    "reason": "owned_tooltip_not_observed",
+    "observations": 50,
+    "mapped_seen": 0,
+    "neutral_exit_hypothesis_proven": false
+  },
+  "linux_acceptance": {
+    "run": 45651884307,
+    "status": "success",
+    "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+    "all_native_steps_passed": true
+  },
+  "publication_preparation": {
+    "resource_gate_before_tag": true,
+    "missing_tag_and_draft_created_only_in_github_token_job": true,
+    "published": false
   }
 }

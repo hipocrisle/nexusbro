@@ -1,0 +1,150 @@
+{
+  "schema": 1,
+  "run": 45651884307,
+  "producer_run": 45592261113,
+  "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+  "test_source": "9c4361c731e4720af1ed6d72c2d66b3020565403",
+  "completed": true,
+  "diagnostic_only": false,
+  "tooltip_overlap_required": true,
+  "checks": [
+    "http_https_connect_same_effective_key_shares_different_key_isolates",
+    "owned_about_blank_actual_route_selector_b_ack_then_b_auth_storage_network",
+    "two_native_pages_concurrent_different_routes",
+    "cross_super_profile_isolation",
+    "direct_super_inherit_matches_explicit_direct_profile_and_network",
+    "direct_hostname_rtc_real_udp_and_srflx_positive_control",
+    "vpn_hostname_rtc_completed_no_udp_at_least_five_seconds",
+    "unknown_connection_id_fail_closed",
+    "actual_route_selector_native_ack_network_and_profile",
+    "actual_beforeunload_route_refusal_preserves_unsaved_page_and_shows_reason",
+    "interactive_page_with_form_canvas_session_storage_manual_path_change_and_auth_isolation",
+    "user_requested_media_route_reload_changes_only_target_not_protected_neighbor",
+    "manual_path_change_during_real_unfinished_load_no_direct_fallback",
+    "native_authenticated_socks5_http_https_hostname_and_profile_switch",
+    "native_socks5_down_no_direct_fallback_or_profile_change",
+    "restart_opaque_id_survives_connection_reorder",
+    "historical_unopened_route_cookies_clear_no_network_ls_preserved_neighbor_untouched",
+    "actual_service_worker_fetch_b_only_persisted_registration_after_restart",
+    "native_network_error_actual_route_selector_a_recovers_same_url_auth_storage",
+    "network_error_recovery_can_reselect_unavailable_b_without_direct",
+    "configured_transport_down_no_direct_fallback_unaffected_a_live",
+    "deleted_connection_cold_restore_fail_closed"
+  ],
+  "coverage": {
+    "http_ui": "passed",
+    "https_connect": "passed",
+    "refusal": "passed",
+    "cold_restore": "passed",
+    "transport_down": "passed",
+    "rtc_dns_udp": "passed",
+    "historical_cookies": "passed",
+    "worker_ready_context": "passed",
+    "worker_startup_pre_admission": "not_executed",
+    "native_tooltip_overlap": "passed"
+  },
+  "route_open_native": {
+    "hover": {
+      "move_count": 1,
+      "neutral_move_count": 1,
+      "neutral_exit_observed": true,
+      "observations": 7,
+      "mapped_covering_tooltip_observed": true,
+      "journal": {
+        "mapped_seen": 1,
+        "covering_seen": 1,
+        "incomplete": 0,
+        "scan_incomplete": 0,
+        "foreign_cover": 0
+      },
+      "neutral_quiescence_observed": true,
+      "neutral_wait_ms": 609,
+      "last_hit": {
+        "available": true,
+        "complete": true,
+        "chain": [
+          {
+            "role": "ownedApp",
+            "window_type": "normal",
+            "override_redirect": false,
+            "mapped": true
+          }
+        ],
+        "focus_role": "ownedApp",
+        "visual_scan_complete": true,
+        "mapped_owned_tooltips": [
+          {
+            "role": "ownedApp",
+            "window_type": "tooltip",
+            "override_redirect": true,
+            "mapped": true,
+            "input_shape_supported": true,
+            "input_shape_observed": true,
+            "input_rectangles": 0,
+            "input_empty": true,
+            "covers_expected": true
+          }
+        ],
+        "nonowned_cover": false,
+        "visual_top_role": "ownedApp",
+        "cursor_observed": true,
+        "cursor_delta_bounded": true,
+        "cursor_at_expected": false,
+        "pointer_buttons_down": false,
+        "cursor_dx": -42,
+        "cursor_dy": -43,
+        "query_error": false
+      }
+    },
+    "before": {
+      "available": true,
+      "crop_saved": true,
+      "expected_point_unchanged": true,
+      "hit_test": {
+        "available": true,
+        "complete": true,
+        "chain": [
+          {
+            "role": "ownedApp",
+            "window_type": "normal",
+            "override_redirect": false,
+            "mapped": true
+          }
+        ],
+        "focus_role": "ownedApp",
+        "visual_scan_complete": true,
+        "mapped_owned_tooltips": [
+          {
+            "role": "ownedApp",
+            "window_type": "tooltip",
+            "override_redirect": true,
+            "mapped": true,
+            "input_shape_supported": true,
+            "input_shape_observed": true,
+            "input_rectangles": 0,
+            "input_empty": true,
+            "covers_expected": true
+          }
+        ],
+        "nonowned_cover": false,
+        "visual_top_role": "ownedApp",
+        "cursor_observed": true,
+        "cursor_delta_bounded": true,
+        "cursor_at_expected": false,
+        "pointer_buttons_down": false,
+        "cursor_dx": -42,
+        "cursor_dy": -43,
+        "query_error": false
+      },
+      "crop_width": 1280,
+      "crop_height": 130
+    },
+    "regression": {
+      "mapped_tooltip_before_click": true,
+      "input_empty_before_click": true,
+      "one_physical_click": true,
+      "trusted_dom_click": true,
+      "dialog_present": true
+    }
+  }
+}
