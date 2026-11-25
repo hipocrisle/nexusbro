@@ -181,6 +181,9 @@ def failure_code(receipt):
 
 def initial_light_report():
     report = initial_local_report()
+    for key in ('trusted_play_click', 'os_paint_observed', 'ready', 'played', 'states_seen', 'errors_seen', 'api_clock_advanced_seconds', 'official_api_docs'):
+        report.pop(key, None)
+    report['allowed_stages'] = ['setup', 'preflight', 'private-root', 'startup', 'owned-window-manager', 'tab-live', 'light-entry', 'light-snapshot', 'physical-play', 'observation', 'local-normal-owned-exit', 'complete']
     report.update({'mode': 'local_home_light', 'video': VIDEO,
                    'position_delta_seconds': 0.0, 'decoded_frames_advanced': False,
                    'audio_policy_observed': False, 'playing_observed': False,
