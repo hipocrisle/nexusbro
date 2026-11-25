@@ -146,6 +146,90 @@ def native_owner(device):
     require(False,'Native minimize owner ambiguous')
 
 
+
+def valid_native_app_binding(pid,wrapper,family,exe_matches,args,birth_before,birth_after,
+                             wrapper_birth_before,wrapper_birth_after):
+    """Pure admission contract; only the exact native app may own its receipt."""
+    return (type(pid) is int and 0<pid<=0xffffffff and type(wrapper) is int and 0<wrapper<=0xffffffff
+            and isinstance(family,set) and 1<=len(family)<=128
+            and all(type(member) is int and 0<member<=0xffffffff for member in family)
+            and wrapper in family and pid in family
+            and exe_matches is True and isinstance(args,list) and 1<=len(args)<=128
+            and all(isinstance(arg,str) and len(arg)<=4096 for arg in args)
+            and not any(arg in ('--nb-dvizhok','--type') or arg.startswith(('--nb-dvizhok=','--type=')) for arg in args)
+            and isinstance(birth_before,str) and birth_before.isdigit() and birth_before==birth_after
+            and isinstance(wrapper_birth_before,str) and wrapper_birth_before.isdigit()
+            and wrapper_birth_before==wrapper_birth_after)
+
+
+def native_app_identity(device):
+    """Bind verified shell HWND/XID to the actual app, separately from its launcher."""
+    import psutil
+    require(device.app is not None and device.app.poll() is None,'Native app identity invalid')
+    clock='windows_filetime' if sys.platform=='win32' else 'linux_ticks'
+    wrapper=device.app.pid;wrapper_birth=kernel_birth(wrapper,clock)
+    owner=native_owner(device)
+    def window_pid():
+        if sys.platform=='win32':return owner.process_id()
+        result=subprocess.run(['xdotool','getwindowpid',str(owner)],env=device.player_wm.env,
+            capture_output=True,text=True,timeout=3,check=True)
+        require(len(result.stdout)<=32 and result.stdout.strip().isdecimal(),'Native app identity invalid')
+        return int(result.stdout.strip())
+    def family():
+        members={wrapper}|{p.pid for p in psutil.Process(wrapper).children(recursive=True)}
+        require(len(members)<=128,'Native app identity invalid')
+        return members
+    pid=window_pid();first_family=family();birth=kernel_birth(pid,clock)
+    process=psutil.Process(pid);args=process.cmdline()
+    exe_matches=pathlib.Path(process.exe()).resolve()==device.exe.resolve()
+    second_family=family();after=kernel_birth(pid,clock);wrapper_after=kernel_birth(wrapper,clock)
+    require(valid_native_app_binding(pid,wrapper,first_family,exe_matches,args,birth,after,
+                                    wrapper_birth,wrapper_after)
+            and pid in second_family and window_pid()==pid and device.app.poll() is None
+            and kernel_birth(pid,clock)==birth and kernel_birth(wrapper,clock)==wrapper_birth,
+            'Native app identity invalid')
+    return dict(pid=pid,birth=birth,wrapper_pid=wrapper,wrapper_birth=wrapper_birth,clock=clock)
+
+
+def native_app_execution_alive(identity):
+    import psutil
+    try:
+        process=psutil.Process(identity['pid'])
+        return (process.is_running() and process.status()!=psutil.STATUS_ZOMBIE
+                and kernel_birth(identity['pid'],identity['clock'])==identity['birth'])
+    except psutil.NoSuchProcess:return False
+
+
+def native_app_identity_alive(device,identity):
+    import psutil
+    if device.app is None or device.app.pid!=identity['wrapper_pid'] or device.app.poll() is not None:return False
+    try:
+        return (kernel_birth(identity['wrapper_pid'],identity['clock'])==identity['wrapper_birth']
+                and native_app_execution_alive(identity))
+    except psutil.NoSuchProcess:return False
+
+
+def native_app_identity_self_test():
+    args=['/fixture/nexusbro'];family={100,200,300}
+    assert valid_native_app_binding(200,100,family,True,args,'20','20','10','10')
+    assert valid_native_app_binding(100,100,{100},True,args,'10','10','10','10')
+    assert not valid_native_app_binding(999,100,family,True,args,'20','20','10','10')
+    assert not valid_native_app_binding(200,100,family,False,args,'20','20','10','10')
+    for flag in ('--nb-dvizhok','--nb-dvizhok=1','--type=renderer','--type'):
+        assert not valid_native_app_binding(200,100,family,True,args+[flag],'20','20','10','10')
+    assert not valid_native_app_binding(200,100,family,True,args,'20','21','10','10')
+    assert not valid_native_app_binding(200,100,family,True,args,'20','20','10','11')
+    assert not valid_native_app_binding(200,100,set(range(1,130)),True,args,'20','20','10','10')
+    assert not valid_native_app_binding(200,100,{100,200,'foreign'},True,args,'20','20','10','10')
+    receipt=dict(schema=1,prepared_update=True,parent_pid=200,owners=1,clean=1,forced=0,
+                 unacknowledged=0,unclean=0,pending_starts=0,complete=True)
+    assert parse_shutdown_receipt(receipt,200)==receipt
+    try:parse_shutdown_receipt(receipt,100)
+    except Exception:pass
+    else:raise AssertionError('Launcher PID accepted as native receipt owner')
+    return dict(self_test=True,synthetic_only=True,native_execution=False)
+
+
 def foreground(device):
     if sys.platform=='win32' or not getattr(device,'player_wm',None):return bare_foreground(device)
     owner=native_owner(device)
@@ -1246,10 +1330,14 @@ def shutdown_receipt_self_test():
 
 def close_for_privacy(client,device,report):
     report['stage']='privacy-normal-owned-exit'
+    identity=native_app_identity(device)
     witness=ExitWitness(device,client)
-    parent_pid=device.app.pid  # Held Popen identity, captured before actual close.
+    parent_pid=identity['pid']  # Receipt names NexusBro, not a dbus-run-session launcher.
+    with witness.lock:witness.identities[parent_pid]=identity['birth']
     try:
+        require(native_app_identity_alive(device,identity),'Native app identity invalid')
         foreground(device)
+        require(native_app_identity_alive(device,identity),'Native app identity invalid')
         if sys.platform=='win32':native_owner(device).close()
         else:
             # Ask the owned WM for normal window close, like its titlebar X.
@@ -1261,11 +1349,14 @@ def close_for_privacy(client,device,report):
         wait_for(witness.all_gone,'Privacy owned native processes did not exit',30)
         witness.close()
         require(witness.all_gone(),'Privacy owned native processes did not exit')
+        require(not native_app_execution_alive(identity),'Native app execution remained alive')
         report['owned_exit']={'parent_normal_exit':True,'native_members_observed':witness.native_members,
                               'os_identities_observed':len(witness.identities),'all_known_native_executions_exited':True,
                               'native_members_complete':True,'tracker_seconds':.02,
                               'scope':'bounded_owned_fixture_not_universal_noescape_proof','harness_kill_used_for_acceptance':False,
-                              'clean_shutdown_receipt_verified':False}
+                              'clean_shutdown_receipt_verified':False,'actual_app_identity_bound':True,
+                              'launcher_is_actual_app':identity['pid']==identity['wrapper_pid'],
+                              'actual_app_execution_exited':True,'launcher_exit_zero':True}
         # Prevent generic emergency cleanup from signalling an already reaped
         # PID/PGID that could later be reused while the disk scan runs.
         device.app=None
@@ -1464,6 +1555,8 @@ def run(args):
                'Cacheable control did not actually load through selected route':'privacy_canary_not_loaded',
                'Cacheable control did not actually paint':'privacy_canary_not_painted',
                'Native media privacy sentinel was not requested':'privacy_sentinel_not_requested',
+               'Native app identity invalid':'native_app_identity_invalid',
+               'Native app execution remained alive':'native_app_execution_alive',
                'Shutdown receipt missing':'shutdown_receipt_missing',
                'Shutdown receipt invalid':'shutdown_receipt_invalid',
                'Shutdown receipt unclean':'shutdown_receipt_unclean',
@@ -1527,6 +1620,7 @@ def run(args):
 
 
 if __name__=='__main__':
+    if sys.argv[1:]==['--self-test-native-app-identity']:print(json.dumps(native_app_identity_self_test()));raise SystemExit(0)
     if sys.argv[1:]==['--self-test-shutdown-receipt']:print(json.dumps(shutdown_receipt_self_test()));raise SystemExit(0)
     if sys.argv[1:]==['--self-test-restore-observer']:print(json.dumps(restore_observer_self_test()));raise SystemExit(0)
     if sys.argv[1:]==['--self-test-sidebar']:print(json.dumps(sidebar_self_test()));raise SystemExit(0)

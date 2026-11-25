@@ -20,7 +20,7 @@ from security_native import Device, call, js_wait, require, super_record, wait_f
 from tab_routes import WindowsDevice, switch_super, rows, click_control
 from youtube_player_native import (Fixture, Trust, certificates, observe, physical,
     foreground, HOST, kernel_birth, native_owner, OwnedWindowManager,
-    read_shutdown_receipt)
+    read_shutdown_receipt, native_app_identity, native_app_identity_alive, native_app_execution_alive)
 from hibernation_cookie_probe import tls_proxy_preflight
 
 OWNER = 'prepare-update-a'
@@ -55,9 +55,12 @@ class OwnedExecutions:
         self.device = device
         self.clock = 'windows_filetime' if sys.platform == 'win32' else 'linux_ticks'
         self.native, self.owners = parse_native_members(snapshot, self.clock)
-        self.parent = device.app.pid
-        self.parent_birth = kernel_birth(self.parent, self.clock)
-        self.whole = {self.parent: self.parent_birth}
+        self.app_identity = native_app_identity(device)
+        self.parent = self.app_identity['pid']
+        self.parent_birth = self.app_identity['birth']
+        self.wrapper = self.app_identity['wrapper_pid']
+        self.wrapper_birth = self.app_identity['wrapper_birth']
+        self.whole = {self.parent:self.parent_birth,self.wrapper:self.wrapper_birth}
         for pid, birth in self.native.items():
             try: actual = kernel_birth(pid, self.clock)
             except psutil.NoSuchProcess: continue
@@ -90,7 +93,7 @@ class OwnedExecutions:
             for pid, birth in list(self.native.items()):
                 self.remember_tree(pid, birth, self.native)
             self.whole.update(self.native)
-            self.remember_tree(self.parent, self.parent_birth, self.whole)
+            self.remember_tree(self.wrapper, self.wrapper_birth, self.whole)
 
     def run(self):
         while not self.done.is_set():
@@ -100,8 +103,7 @@ class OwnedExecutions:
 
     def parent_alive(self):
         require(not self.error, 'Prepare process observation incomplete')
-        return (self.device.app is not None and self.device.app.poll() is None
-                and kernel_birth(self.parent, self.clock) == self.parent_birth)
+        return native_app_identity_alive(self.device,self.app_identity)
 
     def gone(self, *, native):
         require(not self.error, 'Prepare process observation incomplete')
@@ -213,6 +215,8 @@ def run(args):
         receipt = read_shutdown_receipt(device.data, witness.parent)
         require(receipt['prepared_update'] is True, 'Prepare receipt mode invalid')
         report['prepared_receipt'] = receipt
+        report['app_identity_binding'] = dict(verified=True,launcher_is_actual_app=witness.parent==witness.wrapper,
+                                             actual_app_and_launcher_alive=True)
         for _ in range(5):
             require(witness.parent_alive() and witness.gone(native=True), 'Prepare parent or native state changed')
             time.sleep(.2)
@@ -224,12 +228,13 @@ def run(args):
         require(device.app.wait(timeout=30) == 0, 'Prepare final parent exit failed')
         wait_for(lambda: witness.gone(native=False), 'Prepare final owned executions remain', 30)
         witness.close()
+        require(not native_app_execution_alive(witness.app_identity),'Native app execution remained alive')
         # The parent is reaped and all known births are gone: emergency cleanup
         # must never signal a recycled PID or reinterpret this as a test kill.
         device.app = None
         report['final_receipt'] = read_shutdown_receipt(device.data, witness.parent)
         report['checks'].append(dict(name='ordinary-close-after-prepare', parent_exit_zero=True,
-                                     known_owned_executions_exited=witness.counts()[1]))
+                                     known_owned_executions_exited=witness.counts()[1],actual_app_execution_exited=True,launcher_exit_zero=True))
         report.update(completed=True, stage='complete'); code = 0
     except Exception as error:
         known = {'Prepare ownership invalid','Prepare ownership incomplete','Prepare identity changed',
@@ -239,7 +244,7 @@ def run(args):
             'Prepare physical playback unavailable','Prepare actual media geometry mismatch','Prepare actual route proof missing',
             'Prepare parent identity changed','Prepare exited parent prematurely','Prepare native executions remain',
             'Prepare receipt mode invalid','Prepare parent or native state changed','Prepare final parent exit failed',
-            'Prepare final owned executions remain','Shutdown receipt missing','Shutdown receipt invalid','Shutdown receipt unclean'}
+            'Prepare final owned executions remain','Native app identity invalid','Native app execution remained alive','Shutdown receipt missing','Shutdown receipt invalid','Shutdown receipt unclean'}
         report['failure_code'] = str(error).lower().replace(' ', '_') if str(error) in known else 'native_prepare_check_failed'
         report['failure_class'] = type(error).__name__ if type(error).__name__ in {'NativeFailure','AssertionError','TimeoutExpired','OSError'} else 'other'
     finally:
