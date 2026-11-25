@@ -281,6 +281,119 @@ def input_geometry(client,device,selector):
     return result
 
 
+def sidebar_crop_box(outer,screen,expected):
+    """Private sidebar only; never address bar or native page content."""
+    if not all(type(outer.get(k))is int for k in ('x','y','width','height')):return None
+    if outer['width']<176 or outer['height']<320:return None
+    x,y=outer['x'],outer['y'];sw,sh=screen
+    box=(max(0,x),max(0,y),min(sw,x+176),min(sh,y+320))
+    if not (0<=box[0]<box[2]<=sw and 0<=box[1]<box[3]<=sh):return None
+    if not (box[0]<=expected['x']<box[2] and box[1]<=expected['y']<box[3]):return None
+    return box
+
+
+def sidebar_frame(device,geometry):
+    from PIL import ImageGrab
+    require(sys.platform.startswith('linux') and os.environ.get('GITHUB_ACTIONS')=='true','Sidebar diagnostic gate closed')
+    require(getattr(device,'player_sidebar_testdata',None)==device.data.resolve()
+            and getattr(device,'player_sidebar_out',None) is not None,'Sidebar fixture gate closed')
+    require(getattr(device,'x',None) is not None and device.x.poll() is None,'Owned Xvfb unavailable')
+    pid=device.app.pid;birth=kernel_birth(pid,'linux_ticks')
+    require(device.app.poll() is None and birth is not None,'Sidebar owner unavailable')
+    owner=str(native_owner(device))
+    env=device.player_wm.env
+    text=subprocess.check_output(['xwininfo','-id',owner,'-stats'],env=env,text=True,stderr=subprocess.DEVNULL,timeout=3)
+    require(len(text)<=16384,'Sidebar geometry outside bounds')
+    outer=xwin_geometry(text);expected=geometry['expected_click']
+    children=geometry.get('native_children',[])
+    require(bool(children) and all(type(c.get('x_offset'))is int and c['x_offset']>=176 for c in children),
+            'Sidebar native content boundary unavailable')
+    require(geometry.get('inner_minus_outer',{}).get('x')==0 and geometry.get('dom_center',{}).get('scale')==1,
+            'Sidebar fixture scale unavailable')
+    with ImageGrab.grab(xdisplay=device.display) as image:
+        box=sidebar_crop_box(outer,image.size,expected)
+        require(box is not None,'Sidebar crop outside safe bounds')
+        cropped=image.crop(box)
+    try:
+        require(device.app.poll() is None and kernel_birth(pid,'linux_ticks')==birth
+                and str(native_owner(device))==owner,'Sidebar owner changed')
+        receipt={'width':cropped.width,'height':cropped.height,'owned_window_verified':True,
+                 'expected_point_inside':True,'expected_relative':{'x':expected['x']-box[0],'y':expected['y']-box[1]},
+                 'relative_box':{'x':box[0]-outer['x'],'y':box[1]-outer['y'],
+                                 'width':cropped.width,'height':cropped.height}}
+        return cropped,receipt,(pid,birth,owner)
+    except Exception:
+        cropped.close();raise
+
+
+def sidebar_before(device,case):
+    if not sys.platform.startswith('linux'):return None
+    try:
+        before=sidebar_frame(device,case['restore_geometry_before'])
+        case['sidebar_paint']={'available':False,'before_captured':True}
+        return before
+    except Exception:
+        case['sidebar_paint']={'available':False,'reason':'before_unavailable'}
+        return None
+
+
+def sidebar_failed(device,case,before):
+    """Never masks the actual restore failure; no input/focus/activation calls."""
+    if before is None:return
+    import io,hashlib
+    after=None
+    try:
+        after=sidebar_frame(device,case['restore_geometry_before'])
+        require(after[2]==before[2],'Sidebar owner changed between captures')
+        frames=[]
+        for name,item in [('before',before),('failure',after)]:
+            image,receipt,_identity=item
+            with io.BytesIO() as buffer:
+                image.save(buffer,format='PNG');data=buffer.getvalue()
+            require(len(data)<=256*1024,'Sidebar PNG outside bounds')
+            basename='background-super-B-'+name+'.png'
+            with (device.player_sidebar_out/basename).open('xb') as output:output.write(data)
+            frames.append({**receipt,'file':basename,'bytes':len(data),'sha256':hashlib.sha256(data).hexdigest()})
+        case['sidebar_paint']={'available':True,'failure_only':True,'frames':frames}
+    except Exception:
+        case['sidebar_paint']={'available':False,'reason':'failure_capture_unavailable'}
+    finally:
+        if after is not None:after[0].close()
+
+
+def sidebar_self_test():
+    assert sidebar_crop_box({'x':1,'y':20,'width':1280,'height':820},(1280,900),{'x':91,'y':176})==(1,20,177,340)
+    assert sidebar_crop_box({'x':-5,'y':-10,'width':1280,'height':820},(1280,900),{'x':90,'y':156})==(0,0,171,310)
+    assert sidebar_crop_box({'x':1200,'y':20,'width':1280,'height':820},(1280,900),{'x':1290,'y':176}) is None
+    assert sidebar_crop_box({'x':1,'y':20,'width':1280,'height':820},(1280,900),{'x':180,'y':176}) is None
+    assert sidebar_crop_box({'x':1,'y':20,'width':175,'height':820},(1280,900),{'x':91,'y':176}) is None
+    # Disabled/missing fixture authority yields no capture or output file.
+    class Empty:pass
+    case={};assert sidebar_before(Empty(),case) is None
+    import tempfile
+    class Frame:
+        def save(self,output,format):assert format=='PNG';output.write(b'fake-png')
+        def close(self):pass
+    global sidebar_frame
+    original=sidebar_frame
+    try:
+        with tempfile.TemporaryDirectory() as folder:
+            device=Empty();device.player_sidebar_out=pathlib.Path(folder)
+            before=(Frame(),{'width':176,'height':320},(1,2,3))
+            # Capturing RAM alone never persists the success path.
+            assert not list(device.player_sidebar_out.iterdir())
+            sidebar_frame=lambda *_:(Frame(),{'width':176,'height':320},(1,2,3))
+            case={'restore_geometry_before':{}};sidebar_failed(device,case,before)
+            assert case['sidebar_paint']['available'] is True
+            assert sorted(p.name for p in device.player_sidebar_out.iterdir())==[
+                'background-super-B-before.png','background-super-B-failure.png']
+            sidebar_frame=lambda *_:(_ for _ in ()).throw(ValueError('private-error-not-exported'))
+            failed={};sidebar_failed(device,failed,before)
+            assert failed=={'sidebar_paint':{'available':False,'reason':'failure_capture_unavailable'}}
+    finally:sidebar_frame=original
+    return {'crop_bounds':True,'expected_point_bound':True,'fixture_gate':True,'failure_only_save':True,'error_redacted':True}
+
+
 def restore_observer_begin(client,identifier,case,device=None):
     try:
         setup=client.js(RESTORE_OBSERVER_JS+'('+json.dumps(identifier)+')')
@@ -359,9 +472,11 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
         case['restore_callback_entered']=True
         observe_restore=kind.startswith('background-super-')
         if observe_restore:restore_observer_begin(client,identifier,case,device)
+        sidebar=sidebar_before(device,case) if kind=='background-super-B' else None
         try:
             restore();case['restore_complete']=True
         except Exception:
+            sidebar_failed(device,case,sidebar)
             try:
                 # Read-only shell identity/geometry; no retry or focus mutation.
                 selector='.vkladka[data-super-id="'+identifier+'"]'
@@ -375,6 +490,7 @@ def background_receipt(client,device,identifier,tab,hide,restore,kind,diagnostic
                 case['restore_diagnostic_incomplete']=True
             raise
         finally:
+            if sidebar is not None:sidebar[0].close()
             if observe_restore:restore_observer_finish(client,case,device,identifier)
         case['rows_restored']=row_record()
         restored=observe(client,identifier,tab,diagnostics=diagnostics)
@@ -1081,6 +1197,8 @@ def run(args):
             report['tls_handshake_preflight']=tls_proxy_preflight(fixture.proxies['A'],HOST,443,root/'tls'/'ca.crt',root/'tls'/'server.crt')
             exe,cef=pathlib.Path(args.exe).resolve(),pathlib.Path(args.cef).resolve()
             device=WindowsDevice(root/'device',exe,cef) if sys.platform=='win32' else Device('player',root/'device',exe,cef)
+            device.player_sidebar_out=out
+            device.player_sidebar_testdata=device.data.resolve()
             definitions=[]
             for lane in ('A','B'):
                 identifier='player-'+lane.lower();item=super_record(identifier,'Player '+lane,'about:blank',proxy='http://127.0.0.1:'+str(fixture.proxies[lane]));item['poryadok']=len(definitions);definitions.append(item)
@@ -1308,6 +1426,7 @@ def run(args):
 
 if __name__=='__main__':
     if sys.argv[1:]==['--self-test-restore-observer']:print(json.dumps(restore_observer_self_test()));raise SystemExit(0)
+    if sys.argv[1:]==['--self-test-sidebar']:print(json.dumps(sidebar_self_test()));raise SystemExit(0)
     parser=argparse.ArgumentParser(description=__doc__)
     for name in ('exe','cef','out','video-webm','audio-webm'):parser.add_argument('--'+name,required=True)
     sys.exit(run(parser.parse_args()))
