@@ -78,6 +78,21 @@ def color_kind(locator, expected):
  assert {'green':green>red*1.15 and green>blue*1.05,'red':red>green*1.25 and red>blue*1.15,
          'gray':max(rgb)-min(rgb)<=55}[expected],(expected,rgb)
 
+def super_hint(tab,name):
+ # Native title popups can intercept clicks in the embedded Linux shell.
+ # Require the actual DOM hint; absence is a regression, never an empty fallback.
+ hint=tab.get_attribute('data-super-hint')
+ assert isinstance(hint,str) and hint.startswith(name),hint
+ assert tab.get_attribute('title') is None
+ assert tab.locator('[title]').count()==0
+ aria=tab.get_attribute('aria-label')
+ assert isinstance(aria,str) and aria.startswith(name),aria
+ paint=tab.evaluate("e=>{const p=getComputedStyle(e,'::after');return {content:p.content,pointer:p.pointerEvents,background:p.backgroundColor}}")
+ assert name in paint['content'],paint
+ assert paint['pointer']=='none',paint
+ assert paint['background'] not in ('transparent','rgba(0, 0, 0, 0)'),paint
+ return hint
+
 def compact_header(page):
  no_row_clouds(page)
  header=page.get_by_test_id('cloud-last-account-sync')
@@ -126,7 +141,9 @@ try:
   assert page.locator('.vkladka[data-super-id="cloud-open"]').count()==1
   assert page.locator('.vkladka[data-super-id="pvt-saved"]').count()==0
   assert page.evaluate('window.__started.length')==0
-  assert 'Подтверждена' not in opened.get_attribute('title')
+  pending_hint=super_hint(opened,'Облачная открытая')
+  assert 'Ожидает' in pending_hint and 'Подтверждена' not in pending_hint
+  super_hint(saved,'Облачная сохранённая');super_hint(private,'Приватная Super')
   # Closing a modal restores CEF on the next animation frame. Deliberately
   # delay that frame and await its real IPC before attributing later commands
   # to the group-sync button. Keep the no-engine-side-effects assertion below.
@@ -134,6 +151,11 @@ try:
   dialog.get_by_role('button',name='Закрыть',exact=True).click()
   page.wait_for_function('!document.querySelector(".security-panel")&&window.__args.filter(c=>c.cmd==="pokazat_dvizhki").at(-1)?.args.vidno===true')
   page.evaluate('window.requestAnimationFrame=window.__restoreFrame;delete window.__restoreFrame')
+  # The actual shipped pseudo-tooltip paints on hover without a native TITLE
+  # or an input-catching DOM layer. This changes no cloud state or IPC.
+  opened.hover()
+  page.wait_for_function("(()=>{const e=document.querySelector('.vkladka[data-super-id=cloud-open]'),p=e&&getComputedStyle(e,'::after');return p?.visibility==='visible'&&Number(p.opacity)>.99})()")
+  super_hint(opened,'Облачная открытая')
   heading_sync=page.get_by_role('button',name='Синхронизировать выбранные данные',exact=True)
   selection_before=page.evaluate('JSON.stringify(window.__selection)')
   active_before=page.evaluate('window.__active');args_before=page.evaluate('window.__args.length')
@@ -215,6 +237,7 @@ try:
   expect(opened.locator('.imya')).not_to_be_visible()
   no_row_clouds(page);expect(heading_sync).to_be_visible()
   expect(page.locator('[data-cloud-group="cloud"] .super-cloud-heading-icon svg')).to_be_visible()
+  for button,name in [(opened,'Облачная открытая'),(local,'Локальная открытая'),(private,'Приватная Super')]:super_hint(button,name)
   for button,short in [(opened,'Обл'),(local,'Лок'),(private,'При')]:
    expect(button.locator('.kratkoe-imya')).to_have_text(short)
    box=button.locator('.kratkoe-imya').bounding_box();row=button.bounding_box()
@@ -251,7 +274,7 @@ try:
   # A conflict is per-record evidence; an account receipt alone never clears it.
   page.evaluate("window.__recordStates['cloud-open']='conflict';window.__report.conflicts=['nexusbro.v1/super/cloud-open'];window.__cloudChanged()")
   expect(opened).to_have_attribute('data-cloud-state','conflict')
-  assert 'Конфликт версий' in opened.get_attribute('title')
+  assert 'Конфликт версий' in super_hint(opened,'Облачная открытая')
   expect(receipt).to_have_attribute('data-cloud-state','error')
   no_row_clouds(page)
   color_kind(heading_sync,'red');color_kind(receipt.locator('.super-cloud-heading-icon'),'red')
