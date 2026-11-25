@@ -101,7 +101,7 @@ class WindowsClient(Client):
                         button={1: 'left', 2: 'middle', 3: 'right'}[button])
 
 
-def painted_interaction_point(client):
+def painted_interaction_point(client, *, offset=(50,30), color=(123,31,162)):
     """Wait for native CEF paint at the same physical point mouse() uses.
 
     A server/JS receipt proves loading, not compositor presentation. Read only
@@ -111,7 +111,7 @@ def painted_interaction_point(client):
     from PIL import ImageGrab
 
     def visible():
-        point = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x+50,r.y+30]})()')
+        point = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect(),p=' + json.dumps(offset) + ';return [r.x+p[0],r.y+p[1]]})()')
         label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
         origin = client.command('plugin:window|inner_position', label=label)
         scale = client.js('devicePixelRatio||1')
@@ -119,7 +119,7 @@ def painted_interaction_point(client):
         with ImageGrab.grab(**({'xdisplay': client.display} if sys.platform != 'win32' else {})) as shot:
             if not (0 <= pixel[0] < shot.width and 0 <= pixel[1] < shot.height):
                 return None
-            return point if shot.getpixel(pixel)[:3] == (123, 31, 162) else None
+            return point if shot.getpixel(pixel)[:3] == color else None
 
     return wait_for(visible, 'Actual CEF interaction button was not painted at the physical click point', 20)
 
@@ -861,6 +861,10 @@ def safe_route_open_native(value,depth=0):
         elif key in enums and isinstance(item,str) and item in enums[key]:result[key]=item
         elif key in {'before','failure','hover','regression','hit_test','last_hit'} and isinstance(item,dict):
             result[key]=safe_route_open_native(item,depth+1)
+        elif key=='journal' and isinstance(item,dict):
+            result[key]={name:count for name,count in item.items()
+                if name in {'mapped_seen','covering_seen','incomplete','scan_incomplete','foreign_cover'}
+                and type(count)is int and 0<=count<=50}
         elif key in {'chain','mapped_owned_tooltips'} and isinstance(item,list):
             result[key]=[safe_route_open_native(row,depth+1) for row in item[:16 if key=='chain' else 8] if isinstance(row,dict)]
     return result
@@ -973,6 +977,9 @@ def route_open_trace_self_test():
     assert facts['mapped'] is False and facts['foreign'] is True
     facts=tooltip_observation_facts(dict(complete=False,visual_scan_complete=False,nonowned_cover=False))
     assert facts['complete'] is False and facts['scan'] is False
+    journal=safe_route_open_native({'hover':{'journal':{'mapped_seen':50,'covering_seen':0,
+        'foreign_cover':True,'incomplete':51,'private':'secret'}}})
+    assert journal=={'hover':{'journal':{'mapped_seen':50,'covering_seen':0}}}
     private='https://private.invalid/secret title'
     receipt=safe_route_open_trace({'trace':[{'event':'invoke','command':'pokazat_dvizhki','phase':'resolved','visible':False,'url':private,'error':private},{'event':private}], 'counts':{'click':{'trusted_route':1,'secret':private}},'restore_verified':True})
     assert private not in json.dumps(receipt) and len(receipt['trace'])==1 and receipt['restore_verified']
@@ -1300,9 +1307,20 @@ def run(args):
         # automatic media protection is exercised independently by AUTO tests.
         select(client,'routes-a',9)
         assert_receipt(fixture,'media','A','A','A')
-        bounds=client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return [r.x,r.y]})()')
-        client.mouse(bounds[0]+50,bounds[1]+80)
-        wait_for(lambda:fixture.records('media-running'),'Actual CEF audio did not start')
+        # Loading receipts do not prove compositor presentation or delivery of
+        # the physical gesture to CEF. Observe paint, then click exactly once.
+        client.mouse(*painted_interaction_point(client,offset=(140,80),color=(24,85,65)))
+        try:
+            wait_for(lambda:fixture.records('media-running'),'Actual CEF audio did not start')
+        finally:
+            report['media_start']={
+                'physical_click_count':1,
+                'trusted_click_received':bool(fixture.records('media-trusted-click')),
+                'context_created':bool(fixture.records('media-context-created')),
+                'resume_resolved':bool(fixture.records('media-resume-resolved')),
+                'running_received':bool(fixture.records('media-running')),
+                'start_error_received':bool(fixture.records('media-start-error')),
+            }
         apply_route_ack(client,'routes-a',9,'Fixture B',connection('B'))
         call(client,'obychnaya_komanda',id='routes-a',komanda={'deystvie':'pereyti','id':9,'adres':fixture.url('media-reloaded')})
         assert_receipt(fixture,'media-reloaded','B','B','B')

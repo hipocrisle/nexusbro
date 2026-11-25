@@ -298,9 +298,13 @@ class Fixture:
         elif case == 'route-loading':
             controls = "<img id='route-pending' alt='' src='/route-pending?case=route-loading'>"
         elif case == 'media':
-            controls = "<button id='media' style='position:absolute;left:20px;top:70px'>Start media</button><audio id='audio' loop></audio>"
-            handlers = ("document.querySelector('#media').onclick=async()=>{const c=new AudioContext();await c.resume();"
-                        "const o=c.createOscillator(),g=c.createGain();g.gain.value=.02;o.connect(g);g.connect(c.destination);o.start();window.fixtureAudio=c;if(c.state==='running')fetch('/receipt/media-running')};")
+            controls = "<button id='media' style='position:absolute;left:20px;top:70px;width:140px;height:40px;border:0;padding:0;background:#185541;color:white'>Start media</button><audio id='audio' loop></audio>"
+            handlers = ("document.querySelector('#media').onclick=async event=>{if(!event.isTrusted)return;"
+                        "const mark=name=>fetch('/receipt/'+name,{cache:'no-store'});void mark('media-trusted-click');"
+                        "try{const c=new AudioContext();window.fixtureAudio=c;void mark('media-context-created');"
+                        "await c.resume();void mark('media-resume-resolved');"
+                        "const o=c.createOscillator(),g=c.createGain();g.gain.value=.02;o.connect(g);g.connect(c.destination);o.start();"
+                        "if(c.state==='running')void mark('media-running')}catch{void mark('media-start-error')}};")
         return ("<!doctype html><title>Route fixture</title><p>Owned route fixture</p>" + controls
                 + "<script>const q=new URLSearchParams(location.search);"
                 "if(q.has('seed'))localStorage.setItem('route-store',q.get('seed'));"
