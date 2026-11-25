@@ -43,24 +43,25 @@ def free_port():
         return sock.getsockname()[1]
 
 
-def close_owned_secondary(client, app, exe, display):
+def close_owned_window(client, app, exe, display, expected_label):
     """Send the same WM_DELETE_WINDOW client message a window manager sends.
 
     Xvfb intentionally has no window manager. Do not widen application IPC ACLs
     or use XDestroyWindow: the app must receive its actual close-request event.
     """
     label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
-    assert isinstance(label, str) and label.startswith('browser-'), 'Refusing to close a non-secondary window'
+    assert valid_close_label(expected_label) and label==expected_label, 'Refusing to close an unexpected window'
+    assert app.poll() is None, 'Owned app already exited'
     client.command('fokus_obolochke')
     xenv = {**os.environ, 'DISPLAY': display}
     focused = int(subprocess.check_output(['xdotool', 'getwindowfocus'], env=xenv, text=True).strip())
     assert focused not in (0, 1), 'Native secondary shell did not obtain X11 focus'
-    owned_shells = set()
+    owned_shells = {}
     for child in psutil.Process(app.pid).children(recursive=True):
         try:
             args = child.cmdline()
             if pathlib.Path(child.exe()) == exe and '--nb-dvizhok' not in args and not any(a.startswith('--type=') for a in args):
-                owned_shells.add(child.pid)
+                owned_shells[child.pid]=child.create_time()
         except psutil.NoSuchProcess:
             pass
     assert len(owned_shells) == 1, 'Isolated app shell PID is ambiguous'
@@ -115,7 +116,7 @@ def close_owned_secondary(client, app, exe, display):
                 pid = int(subprocess.check_output(['xdotool', 'getwindowpid', str(candidate)], env=xenv, text=True).strip())
                 assert pid in owned_shells, 'Focused X11 client does not belong to the isolated app shell'
                 title = subprocess.check_output(['xdotool', 'getwindowname', str(candidate)], env=xenv, text=True).strip()
-                assert title == 'NexusBro — Recovery', 'Focused X11 client is not the expected secondary shell'
+                assert title == ('NexusBro' if expected_label=='main' else 'NexusBro — Recovery'), 'Focused X11 client is not the expected shell'
                 raw = subprocess.check_output(['xdotool', 'getwindowgeometry', '--shell', str(candidate)], env=xenv, text=True)
                 geometry = dict(line.split('=', 1) for line in raw.splitlines() if '=' in line)
                 viewport = client.js('({width:innerWidth,height:innerHeight,scale:devicePixelRatio||1})')
@@ -134,6 +135,11 @@ def close_owned_secondary(client, app, exe, display):
                 break
             candidate = parent.value
         assert verified is not None, 'Owned secondary shell does not advertise WM_DELETE_WINDOW'
+        # Recheck the same live OS process identity immediately before close.
+        pid=int(subprocess.check_output(['xdotool','getwindowpid',str(verified)],env=xenv,text=True).strip())
+        process=psutil.Process(pid)
+        assert pid in owned_shells and process.create_time()==owned_shells[pid] and pathlib.Path(process.exe())==exe and app.poll() is None, 'Owned shell identity changed before close'
+        assert client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')==expected_label, 'Inspected window identity changed before close'
         event = Event()
         event.client.type = 33  # ClientMessage
         event.client.send_event = True
@@ -148,6 +154,65 @@ def close_owned_secondary(client, app, exe, display):
         x11.XSync(connection, False)
     finally:
         x11.XCloseDisplay(connection)
+
+
+def valid_close_label(label):
+    return isinstance(label,str) and (label=='main' or label.startswith('browser-'))
+
+
+def close_owned_secondary(client,app,exe,display):
+    label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    assert isinstance(label,str) and label.startswith('browser-'),'Refusing to close a non-secondary window'
+    close_owned_window(client,app,exe,display,label)
+
+
+def normal_close_order(clients,close,hidden):
+    assert 'main' in clients and len(clients)<=2 and all(valid_close_label(label) for label in clients),'Unexpected owned window set'
+    secondary=[label for label in clients if label!='main']
+    close(clients['main'],'main')
+    if secondary:
+        label=secondary[0]
+        hidden(clients[label])
+        close(clients[label],label)
+
+
+def known_execution_gone(process,birth):
+    try:
+        return not process.is_running() or process.create_time()!=birth or process.status()==psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return True
+
+
+def self_test():
+    events=[];clients={'main':'m','browser-fixture':'s'}
+    normal_close_order(clients,lambda client,label:events.append(('close',label)),lambda client:events.append(('hidden',client)))
+    assert events==[('close','main'),('hidden','s'),('close','browser-fixture')]
+    events=[];normal_close_order({'main':'m'},lambda client,label:events.append(label),lambda _:events.append('unexpected'))
+    assert events==['main']
+    for windows in ({'main':'m','foreign':'f'}, {'browser-fixture':'s'}):
+        events=[]
+        try:normal_close_order(windows,lambda *_:events.append('close'),lambda _:None)
+        except AssertionError:pass
+        else:raise AssertionError('Foreign window set accepted')
+        assert not events
+    events=[]
+    def rejected(*_):raise RuntimeError('Synthetic native close rejection')
+    try:normal_close_order(clients,rejected,lambda _:events.append('hidden'))
+    except RuntimeError:pass
+    else:raise AssertionError('Close failure swallowed')
+    assert not events
+    events=[]
+    try:normal_close_order(clients,lambda client,label:events.append(label),rejected)
+    except RuntimeError:pass
+    else:raise AssertionError('Visibility rejection swallowed')
+    assert events==['main']
+    class Process:
+        def is_running(self):return True
+        def create_time(self):return 5
+        def status(self):return psutil.STATUS_RUNNING
+    assert not known_execution_gone(Process(),5)
+    assert known_execution_gone(Process(),4)
+    print(json.dumps({'self_test':True,'native_execution':False}))
 
 
 def run(exe, cef, out, display=':97'):
@@ -265,29 +330,43 @@ def run(exe, cef, out, display=':97'):
             assert len(parents) == 1, 'Could not identify the isolated actual app process'
             parents[0].kill()
         else:
-            try:
-                clients['main'].js('window.__TAURI_INTERNALS__.invoke("plugin:process|exit",{code:0});true')
-            except WebSocketException:
-                pass
+            identities=[]
+            for process in owned:
+                try:identities.append((process,process.create_time()))
+                except psutil.NoSuchProcess:pass
+            def main_hidden(secondary):
+                deadline=time.monotonic()+10
+                while time.monotonic()<deadline:
+                    # This allowed read-only RPC is awaited; real rejection or
+                    # premature renderer disconnect propagates, never ignored.
+                    visible=secondary.command('plugin:window|is_visible',label='main')
+                    assert type(visible) is bool,'Main visibility receipt invalid'
+                    if not visible:return
+                    time.sleep(.1)
+                raise AssertionError('Main native close did not hide the owned window')
+            normal_close_order(clients,lambda client,label:close_owned_window(client,app,exe,display,label),main_hidden)
             app.wait(timeout=15)
             assert app.returncode == 0
+            wait(lambda:all(known_execution_gone(process,birth) for process,birth in identities),
+                 'Normal exit left an owned native execution alive',5)
         for c in clients.values():
             try:
                 c.close()
             except Exception:
                 pass
         clients = {}
-        try:
-            os.killpg(app.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        app.wait(timeout=10)
-        for child in owned:
+        if crash:
             try:
-                child.kill()
-            except psutil.NoSuchProcess:
+                os.killpg(app.pid, signal.SIGKILL)
+            except ProcessLookupError:
                 pass
-        psutil.wait_procs(owned, timeout=5)
+            app.wait(timeout=10)
+            for child in owned:
+                try:
+                    child.kill()
+                except psutil.NoSuchProcess:
+                    pass
+            psutil.wait_procs(owned, timeout=5)
         app = None
         time.sleep(.4)
 
@@ -349,6 +428,9 @@ def run(exe, cef, out, display=':97'):
 
 
 if __name__ == '__main__':
+    import sys
+    if sys.argv[1:]==['--self-test']:
+        self_test();raise SystemExit(0)
     parser = argparse.ArgumentParser()
     parser.add_argument('--exe', required=True)
     parser.add_argument('--cef', required=True)
