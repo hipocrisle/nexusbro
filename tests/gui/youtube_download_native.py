@@ -115,6 +115,16 @@ def dialogs(device):
 
 
 
+
+def classify_windows_edit_label(label):
+    if not isinstance(label,str) or len(label)>80:return 'other'
+    label=label.strip().rstrip(':').strip().lower()
+    if label in {'file name','имя файла'}:return 'file_name'
+    if label in {'address','адрес'}:return 'folder_address'
+    if label in {'search','search box','поиск'}:return 'search'
+    return 'other'
+
+
 def windows_dialog_observation(device,*,inspect_default=False):
     """Best-effort evidence must never replace the real native test outcome."""
     try:return _windows_dialog_observation(device,inspect_default=inspect_default)
@@ -145,7 +155,8 @@ def _windows_dialog_observation(device,*,inspect_default=False):
     for handle in handles:
         item={'owned_process':False,'process':'other','root_owner_match':False,
               'root_owner_depth':None,'owner_chain_complete':False,'known_save_as_title':False,
-              'filename_edit_1001':False,'filename_value_checked':False,'expected_fixture_filename':False,
+              'filename_edit_1001':False,'selected_edit_label':'other','filename_value_checked':False,
+              'expected_fixture_filename':False,'expected_video_prefix':False,'webm_suffix':False,
               'save_button':False,'cancel_button':False,'controls_complete':True}
         result['dialogs'].append(item)
         try:
@@ -179,9 +190,12 @@ def _windows_dialog_observation(device,*,inspect_default=False):
                 info=control.element_info;identity=info.automation_id;kind=info.control_type
                 if kind=='Edit' and identity=='1001':
                     item['filename_edit_1001']=True
+                    item['selected_edit_label']=classify_windows_edit_label(info.name)
                     if inspect_default:
                         value=control.get_value();item['filename_value_checked']=True
                         item['expected_fixture_filename']=isinstance(value,str) and len(value)<=256 and value==expected
+                        item['expected_video_prefix']=isinstance(value,str) and len(value)<=256 and value.startswith('YouTube-BaW_jenozKc-')
+                        item['webm_suffix']=isinstance(value,str) and len(value)<=256 and value.endswith('.webm')
                 if kind=='Button':
                     item['save_button'] |= identity=='1' or info.name in {'Save','Сохранить','Speichern'}
                     item['cancel_button'] |= identity=='2' or info.name in {'Cancel','Отмена','Abbrechen'}
@@ -348,7 +362,8 @@ def verify_windows_path_entry(device,dialog,target,expected,diagnostics):
     import ctypes
     from ctypes import wintypes
     receipt={'filename_checked':False,'filename_bounded':False,'filename_equals_expected_target':False,
-             'foreground_layout':windows_foreground_layout()}
+             'foreground_layout':windows_foreground_layout(),
+             'selected_edit_label':classify_windows_edit_label(target.element_info.name)}
     if diagnostics is not None:
         entries=diagnostics.setdefault('windows_path_entry',[])
         if len(entries)<8:entries.append(receipt)
@@ -678,6 +693,8 @@ def self_test():
     import inspect
     inspect.signature(Fixture).bind(Path("cert"),Path("key"),Path("video"),Path("audio"))
     require(backtabs()==5 and backtabs(audio=True)==4 and backtabs(busy=True)==4,'Shipped physical focus sequence mismatch')
+    for label,kind in [('File name:','file_name'),('Имя файла','file_name'),('Address','folder_address'),('Search','search'),('unknown','other'),('x'*81,'other')]:
+        require(classify_windows_edit_label(label)==kind,'Edit label classification mismatch')
     for texts,kind in [(['The file name is not valid.'],'invalid_name'),
                        (['The path does not exist.'],'path_missing'),
                        (['Access is denied.'],'permission_denied'),
