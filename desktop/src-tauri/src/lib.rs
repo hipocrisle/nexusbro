@@ -7,6 +7,8 @@
 #[cfg(target_os = "windows")]
 mod cef_events;
 mod popup_menu;
+#[cfg(target_os = "linux")]
+mod gtk_tooltip_input;
 mod browser_lock;
 mod browser_lock_intent;
 mod import_brauzera;
@@ -1368,6 +1370,8 @@ pub fn run() {
         // Размер, позиция и монитор окна запоминаются сами.
         .plugin(tauri_plugin_window_state::Builder::default().with_filter(|label|label=="main").build())
         .setup(|app| {
+            #[cfg(target_os = "linux")]
+            gtk_tooltip_input::install().map_err(std::io::Error::other)?;
             app_shutdown_parent::init(app.handle());
             passwords::setup(app.handle()).map_err(std::io::Error::other)?;
             browser_lock::setup(app.handle());
