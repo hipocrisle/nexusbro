@@ -83,6 +83,8 @@ html,body{margin:0;padding:0;background:#123}
     if(allowed.indexOf(value)<0){invalid=true;lastStage='unexpected_code';return;}
     if(list.length<512&&list.indexOf(value)<0)list.push(value);
   }
+  window.__embedApiLoad=function(ok){if(!ready&&!player)lastStage=ok?'api_loaded':'api_load_error';};
+  window.addEventListener('error',function(){if(!ready&&lastStage!=='api_load_error')lastStage='api_exception';});
   window.onYouTubeIframeAPIReady=function(){
     lastStage='api_ready';
     player=new YT.Player('yt',{
@@ -112,7 +114,7 @@ html,body{margin:0;padding:0;background:#123}
   },500);
 })();
 </script>
-<script src="https://www.youtube.com/iframe_api"></script>
+<script src="https://www.youtube.com/iframe_api" onload="window.__embedApiLoad(true)" onerror="window.__embedApiLoad(false)"></script>
 </body></html>
 """
 
@@ -127,6 +129,7 @@ class Fixture:
         self._thread = None
         self._lock = threading.Lock()
         self._latest = None
+        self.page_gets=0;self.receipt_posts=0
         self.origin = None
 
     def start(self):
@@ -140,7 +143,7 @@ class Fixture:
                 return None
             if set(data) != {'stage', 'ready', 'played', 'invalid', 'states', 'errors', 'time'}:
                 return None
-            if type(data.get('stage')) is not str or data['stage'] not in {'boot','api_ready','ready','play_command','error','invalid_event','unexpected_code','invalid_clock', 'state_-1','state_0','state_1','state_2','state_3','state_5'}:
+            if type(data.get('stage')) is not str or data['stage'] not in {'boot','api_loaded','api_load_error','api_exception','api_ready','ready','play_command','error','invalid_event','unexpected_code','invalid_clock', 'state_-1','state_0','state_1','state_2','state_3','state_5'}:
                 return None
             for key in ('ready', 'played', 'invalid'):
                 if type(data.get(key)) is not bool:
@@ -170,6 +173,7 @@ class Fixture:
                     return
                 if path != '/embed-probe.html':
                     self.send_response(404); self.end_headers(); return
+                with lock:owner.page_gets+=1
                 origin = f'http://127.0.0.1:{self.server.server_port}'
                 payload = (template.replace('__VIDEO__', video)
                            .replace('__ORIGIN__', origin)).encode('utf-8')
@@ -195,6 +199,7 @@ class Fixture:
                 except (ValueError, UnicodeError, OSError):
                     data = None
                 with lock:
+                    owner.receipt_posts+=1
                     owner._latest = {'invalid_receipt': True} if data is None else data
                 self.send_response(204); self.end_headers()
 
@@ -322,12 +327,17 @@ def run(args):
             time.sleep(.5)
         else:
             raise Blocked('embed_tab_not_live')
+        report['active_fixture_url_matches']=any(v.get('id')==tab and v.get('adres')==url for v in session.get('vkladki',[]))
         report['stage']='official-api-ready'
         deadline=time.monotonic()+remaining(60)
         while time.monotonic()<deadline:
             receipt=fixture.summary()
+            report['fixture_http_gets']=fixture.page_gets
+            report['fixture_receipt_posts']=fixture.receipt_posts
             if receipt is not None:
                 ready_state=summarize(receipt)
+                report['fixture_stage']=ready_state['stage']
+                report['states_seen']=ready_state['states_seen'];report['errors_seen']=ready_state['errors_seen']
                 if ready_state['errors_seen']:
                     raise Blocked('embed_error_'+'_'.join(str(e) for e in ready_state['errors_seen']))
                 if ready_state['ready']:
