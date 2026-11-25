@@ -9,6 +9,7 @@ Unexecuted/missing prerequisites always leave completed=false and exit nonzero.
 import argparse
 import json
 import os
+import re
 import pathlib
 import socket
 import subprocess
@@ -1050,6 +1051,13 @@ def route_open_trace_self_test():
     journal=safe_route_open_native({'hover':{'journal':{'mapped_seen':50,'covering_seen':0,
         'foreign_cover':True,'incomplete':51,'private':'secret'}}})
     assert journal=={'hover':{'journal':{'mapped_seen':50,'covering_seen':0}}}
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix='nb-tooltip-log-unit-') as folder:
+        log=pathlib.Path(folder)/'app-1.log'
+        log.write_text('private URL must not escape\nNB_TOOLTIP_TRACE event=trigger observed=1 requested=1 has=1 enabled=1 timeout_ms=500 browse_ms=60 text_present=0\n')
+        observed=tooltip_trace_records(SimpleNamespace(root=pathlib.Path(folder)))
+        assert observed==[{'event':'trigger','observed':1,'requested':1,'has':1,'enabled':1,'timeout_ms':500,'browse_ms':60,'text_present':0}]
+        assert 'private URL' not in json.dumps(observed)
     facts=safe_route_open_native({'hover':{'dom_pointer_on_svg':True,'gtk_settings':{'gtk_settings_observed':True,'gtk_enabled':False,'gtk_timeout_ms':500,'private':'secret'}}})
     assert facts=={'hover':{'dom_pointer_on_svg':True,'gtk_settings':{'gtk_settings_observed':True,'gtk_enabled':False,'gtk_timeout_ms':500}}}
     private='https://private.invalid/secret title'

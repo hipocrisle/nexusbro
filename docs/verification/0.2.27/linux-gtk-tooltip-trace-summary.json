@@ -1,0 +1,103 @@
+{
+  "schema": 1,
+  "run": 45646243444,
+  "test_source": "1df902e",
+  "desktop_source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
+  "producer_run": 45592261113,
+  "diagnostic_only": true,
+  "accepted": false,
+  "records": [
+    {
+      "event": "text",
+      "observed": 0,
+      "requested": 1,
+      "has": 0,
+      "enabled": 0,
+      "timeout_ms": 0,
+      "browse_ms": 0,
+      "text_present": 1
+    },
+    {
+      "event": "has",
+      "observed": 1,
+      "requested": 1,
+      "has": 1,
+      "enabled": 1,
+      "timeout_ms": 500,
+      "browse_ms": 60,
+      "text_present": 0
+    },
+    {
+      "event": "trigger",
+      "observed": 1,
+      "requested": 1,
+      "has": 1,
+      "enabled": 1,
+      "timeout_ms": 500,
+      "browse_ms": 60,
+      "text_present": 0
+    },
+    {
+      "event": "text",
+      "observed": 0,
+      "requested": 1,
+      "has": 0,
+      "enabled": 0,
+      "timeout_ms": 0,
+      "browse_ms": 0,
+      "text_present": 1
+    },
+    {
+      "event": "text",
+      "observed": 0,
+      "requested": 1,
+      "has": 0,
+      "enabled": 0,
+      "timeout_ms": 0,
+      "browse_ms": 0,
+      "text_present": 1
+    },
+    {
+      "event": "has",
+      "observed": 1,
+      "requested": 1,
+      "has": 1,
+      "enabled": 1,
+      "timeout_ms": 500,
+      "browse_ms": 60,
+      "text_present": 0
+    },
+    {
+      "event": "trigger",
+      "observed": 1,
+      "requested": 1,
+      "has": 1,
+      "enabled": 1,
+      "timeout_ms": 500,
+      "browse_ms": 60,
+      "text_present": 0
+    },
+    {
+      "event": "text",
+      "observed": 0,
+      "requested": 1,
+      "has": 0,
+      "enabled": 0,
+      "timeout_ms": 0,
+      "browse_ms": 0,
+      "text_present": 1
+    }
+  ],
+  "text_present_observed": true,
+  "widget_settings_observed": true,
+  "enabled_true_observed": true,
+  "native_tooltip_mapped_observed": false,
+  "original_failure": "50 observations, zero mapped owned tooltips",
+  "reporting_failure": "outer JSON formatter NameError re; corrected separately; native trace retained in exact artifact app-1.log",
+  "raw_log_sha256": "330d084261da6fff14e477fe459f03da78b273eac7c315228d955c5bceee6bc1",
+  "limitations": [
+    "Pass-through native observer changes timing; not release acceptance",
+    "No tooltip text exported",
+    "Separate GtkWindow lifetime observation still pending"
+  ]
+}
