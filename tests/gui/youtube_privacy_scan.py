@@ -67,6 +67,46 @@ def _windows_info(descriptor):
             'number_of_links':info.links,'attributes':info.attributes,'reparse':bool(info.attributes&0x400)}
 
 
+
+def _symlink_diagnostic(entry, root, media):
+    """Describe only the link itself. Never follow or stat its target."""
+    import re
+    code={'SingletonLock':'singleton_lock','SingletonCookie':'cookie',
+          'SingletonSocket':'socket','RunningChromeVersion':'running_chrome_version'}.get(entry.name,'other')
+    # Root-level links have depth zero. No other basename is returned.
+    result={'link_name_code':code,'link_depth':len(Path(entry.path).relative_to(root).parts)-1,
+            'target_kind':'unknown','readlink_bounded':False}
+    if os.name!='posix':return result
+    try:
+        import ctypes
+        libc=ctypes.CDLL(None,use_errno=True)
+        libc.readlink.argtypes=[ctypes.c_char_p,ctypes.c_void_p,ctypes.c_size_t]
+        libc.readlink.restype=ctypes.c_ssize_t
+        target=ctypes.create_string_buffer(1025)
+        count=libc.readlink(os.fsencode(entry.path),target,len(target))
+        if not 0<count<=1024:return result
+        raw=target.raw[:count]
+        result['readlink_bounded']=True
+        result['contains_media_marker']=any(pattern in raw for pattern in media)
+        value=raw.decode('utf-8')
+        kind='other'
+        if code=='singleton_lock' and re.fullmatch(r'[A-Za-z0-9_.-]{1,253}-[1-9][0-9]{0,9}',value):
+            kind='host_pid'
+        elif code=='cookie' and re.fullmatch(r'[A-Za-z0-9_-]{1,128}',value):
+            kind='opaque_token'
+        elif code=='running_chrome_version' and re.fullmatch(r'[0-9]{1,5}(?:\.[0-9]{1,5}){1,4}',value):
+            kind='version'
+        elif code=='socket':
+            # Lexical only: no resolve(), exists(), stat() or opening the target.
+            target_path=Path(value);temp=Path(tempfile.gettempdir()).absolute()
+            if target_path.is_absolute() and '..' not in target_path.parts and temp in target_path.parents and target_path.name=='SingletonSocket':
+                kind='system_temp_socket_path'
+        result['target_kind']=kind
+    except Exception:
+        pass  # Original fail-closed symlink result remains authoritative.
+    return result
+
+
 def scan_profile(sandbox_root, profile_root, media_sentinel, positive_body_sentinel, *,
                  max_files=8192, max_bytes=512*1024*1024, max_seconds=30):
     """Scan only a subtree of a system-temp nb-player-* sandbox; never follows
@@ -101,7 +141,9 @@ def scan_profile(sandbox_root, profile_root, media_sentinel, positive_body_senti
             with os.scandir(directory) as entries:
                 for entry in entries:
                     if time.monotonic()-started>max_seconds:fail('deadline')
-                    if entry.is_symlink():fail('symlink')
+                    if entry.is_symlink():
+                        receipt['symlink_diagnostic']=_symlink_diagnostic(entry,root,media)
+                        fail('symlink')
                     # Windows DirEntry.stat deliberately reports zero identity/link
                     # fields. Authoritative lstat and opened fstat remain strict.
                     cached=entry.stat(follow_symlinks=False)
@@ -198,7 +240,39 @@ def self_test():
         history=scan_profile(sandbox,root,media,positive);assert history['positive_other_files']==1 and not history['accepted']
         try:(cache/'link').symlink_to(root/'History')
         except OSError:pass  # Windows may not grant symlink creation to fixtures.
-        else:assert scan_profile(sandbox,root,media,positive)['failure']=='symlink'
+        else:
+            import json
+            refused=scan_profile(sandbox,root,media,positive)
+            assert refused['failure']=='symlink' and not refused['complete'] and not refused['accepted']
+            assert refused['symlink_diagnostic']['link_name_code']=='other'
+            assert refused['symlink_diagnostic']['link_depth']==3
+            assert str(root) not in json.dumps(refused) and 'History' not in json.dumps(refused)
+            (cache/'link').unlink()
+            if os.name=='posix':
+                cases=[('SingletonLock','private-host-4242','singleton_lock','host_pid'),
+                       ('SingletonCookie','opaqueFixture123','cookie','opaque_token'),
+                       ('SingletonSocket',str(Path(tempfile.gettempdir())/'private-fixture'/'SingletonSocket'),'socket','system_temp_socket_path'),
+                       ('RunningChromeVersion','156.0.8078.88','running_chrome_version','version')]
+                for name,target,name_code,target_kind in cases:
+                    link=root/name;link.symlink_to(target)
+                    receipt=scan_profile(sandbox,root,media,positive)
+                    detail=receipt['symlink_diagnostic']
+                    assert receipt['failure']=='symlink' and not receipt['complete'] and not receipt['accepted']
+                    assert detail=={'link_name_code':name_code,'link_depth':0,'target_kind':target_kind,
+                                    'readlink_bounded':True,'contains_media_marker':False}
+                    assert target not in json.dumps(receipt) and str(root) not in json.dumps(receipt)
+                    link.unlink()
+                (root/'SingletonCookie').symlink_to(media)
+                marked=scan_profile(sandbox,root,media,positive)
+                assert marked['symlink_diagnostic']['contains_media_marker'] is True
+                assert not marked['complete'] and not marked['accepted'] and media not in json.dumps(marked)
+                (root/'SingletonCookie').unlink()
+                (root/'SingletonCookie').symlink_to('x'*1100)
+                oversized=scan_profile(sandbox,root,media,positive)
+                assert oversized['symlink_diagnostic']['target_kind']=='unknown'
+                assert oversized['symlink_diagnostic']['readlink_bounded'] is False
+                assert not oversized['complete'] and not oversized['accepted']
+                (root/'SingletonCookie').unlink()
         try:scan_profile(Path.home(),root,media,positive)
         except ValueError as error:assert str(error)=='privacy_scan_not_disposable'
         else:raise AssertionError('owner root accepted')
