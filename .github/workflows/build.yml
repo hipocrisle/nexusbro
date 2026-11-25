@@ -1171,6 +1171,14 @@ jobs:
             python tests/gui/windows_physical.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/windows-render @extra
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
+      - name: Preserve physical interaction checkpoint before later native gates
+        uses: actions/upload-artifact@v4
+        if: ${{ always() && !inputs.runtime_memory_only }}
+        with:
+          name: windows-physical-checkpoint
+          path: .dev-check/windows-render/results.json
+          if-no-files-found: ignore
+          retention-days: 7
       - name: Native Windows per-tab routes and trusted HTTPS
         if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
         timeout-minutes: 10
