@@ -1111,7 +1111,7 @@ def run(args):
                           'const heading=document.querySelector(`[data-testid="cloud-last-account-sync"][data-cloud-state="error"]`);'
                           'const badge=heading?.querySelector(`button.super-cloud-heading-icon`);'
                           'if(!badge)return false;const r=badge.getBoundingClientRect(),style=getComputedStyle(badge);'
-                          'return row.dataset.cloudState==="conflict"&&row.title.includes("Конфликт версий")&&!document.querySelector(".super-cloud-badge")&&'
+                          'return row.dataset.cloudState==="conflict"&&row.getAttribute("data-super-hint")?.includes("Конфликт версий")&&!row.hasAttribute("title")&&!row.querySelector("[title]")&&!document.querySelector(".super-cloud-badge")&&'
                           'row.closest("[data-cloud-group]")?.dataset.cloudGroup==="cloud"&&'
                           'r.width>=10&&r.height>=10&&r.top>=0&&r.bottom<=innerHeight&&'
                           'style.display!=="none"&&style.visibility!=="hidden"&&Number(style.opacity)>0&&'
