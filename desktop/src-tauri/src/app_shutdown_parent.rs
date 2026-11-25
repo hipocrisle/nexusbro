@@ -653,6 +653,24 @@ fn drain(app: tauri::AppHandle) {
         // Fresh observation AFTER every owner completion catches pending starts.
         let pending = pending.max(discover(&app));
         if ready_to_exit(pending) {
+            // Official Windows updater install exits the process directly. Its
+            // prepare-only path must perform existing final cleanup NOW, after
+            // every owner completed, rather than relying on RunEvent::Exit.
+            let cleaned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                crate::perevod::otmenit_vse();
+                app.state::<crate::Sostoyanie>().routes.stop_all();
+                crate::privatnost::ochistit();
+                matches!(std::fs::symlink_metadata(crate::privatnost::papka("")),
+                    Err(error) if error.kind()==std::io::ErrorKind::NotFound)
+            }))
+            .unwrap_or(false);
+            if !cleaned {
+                blocked(&app);
+                if let Some(value) = receipt(0, false) {
+                    output.write(&value);
+                }
+                return;
+            }
             if let Some(value) = receipt(0, true) {
                 output.write(&value);
             }
