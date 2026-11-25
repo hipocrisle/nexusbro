@@ -163,8 +163,55 @@ jobs:
         run: python -m pip install Pillow pyautogui pywinauto psutil websocket-client cryptography
       - name: Verify strict scanner on real Windows filesystem before native playback
         run: python tests/gui/youtube_privacy_scan.py
+      - name: Native prepare-update clean drain on same Windows installer DIAGNOSTIC
+        id: shutdown
+        if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
+        timeout-minutes: 5
+        shell: pwsh
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: |
+          python tests/gui/app_shutdown_native.py --exe .dev-check/reuse-installed/nexusbro.exe --cef .dev-check/reuse-installed --out .dev-check/reuse-shutdown --video-webm .dev-check/reuse-media/video.webm --audio-webm .dev-check/reuse-media/audio.webm *> .dev-check/reuse-private/shutdown-console.txt
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve windows prepare-update checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() }}
+        shell: bash
+        env:
+          SHUTDOWN_OUTCOME: ${{ steps.shutdown.outcome }}
+        run: |
+          python - <<'PY'
+          import json,math,os,pathlib,re,stat
+          source=pathlib.Path('.dev-check/reuse-shutdown/result.json');report=None
+          def safe(value,key='',depth=0):
+              if depth>16:return None
+              if value is None or type(value)is bool:return value
+              if type(value)is int:return value if abs(value)<=2**63 else None
+              if type(value)is float:return value if math.isfinite(value) else None
+              if isinstance(value,list):return [safe(v,key,depth+1) for v in value[:64]]
+              if isinstance(value,dict):return {k:safe(v,k,depth+1) for k,v in value.items() if isinstance(k,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}',k)}
+              if isinstance(value,str) and (key in ('name','stage','failure_code','failure_class','native_scope') and re.fullmatch(r'[A-Za-z0-9_.-]{0,128}',value) or key.endswith('sha256') and re.fullmatch(r'[0-9a-fA-F]{64}',value)):return value
+              return 'redacted'
+          try:
+              metadata=os.lstat(source)
+              if stat.S_ISREG(metadata.st_mode) and not getattr(metadata,'st_file_attributes',0)&0x400 and 0<metadata.st_size<=65536:
+                  report=safe(json.loads(source.read_text(encoding='utf-8')))
+          except (OSError,ValueError):pass
+          source.parent.mkdir(parents=True,exist_ok=True)
+          outcome=os.environ.get("SHUTDOWN_OUTCOME", "unknown")
+          if outcome not in ("success","failure","skipped","cancelled"):outcome="unknown"
+          result=dict(diagnostic_only=True,acceptance_passed=False,release_acceptance_passed=False,current_binary=False,step_outcome=outcome,receipt_present=report is not None,result=report)
+          source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() }}
+        with:
+          name: app-shutdown-checkpoint-windows
+          path: .dev-check/reuse-shutdown/diagnostic-checkpoint.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Latest controlled player fixture on producer installer DIAGNOSTIC
         id: player
+        if: always() && !cancelled() && steps.installed.outcome == 'success' && steps.dependencies.outcome == 'success'
         timeout-minutes: 13
         shell: pwsh
         run: |
@@ -274,6 +321,7 @@ jobs:
         if: always() && !cancelled()
         shell: bash
         env:
+          SHUTDOWN_OUTCOME: ${{ steps.shutdown.outcome }}
           PLAYER_OUTCOME: ${{ steps.player.outcome }}
           DOWNLOAD_OUTCOME: ${{ steps.download.outcome }}
           FEATURES_OUTCOME: ${{ steps.features.outcome }}
@@ -291,7 +339,7 @@ jobs:
               if isinstance(value,dict):return {k:safe(v,k,depth+1) for k,v in value.items() if isinstance(k,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}',k)}
               if isinstance(value,str) and (key in ('stage','state','phase','platform','reason','mode') and re.fullmatch(r'[A-Za-z0-9_. -]{0,96}',value) or key.endswith('sha256') and re.fullmatch(r'[0-9a-fA-F]{64}',value)):return value
               return 'redacted'
-          for label in ('player','download','features','resume'):
+          for label in ('shutdown','player','download','features','resume'):
               path=pathlib.Path('.dev-check/reuse-'+label+'/result.json');report=None
               if path.is_file() and path.stat().st_size<=2*1024*1024:
                   try:report=safe(json.loads(path.read_text()))
@@ -300,7 +348,7 @@ jobs:
               (root/('diagnostic-'+label+'.json')).write_text(json.dumps(result,indent=2)+'\n')
           path=root/'provenance.json'
           if path.is_file():
-              data=json.loads(path.read_text());data.update(player_step_outcome=os.environ['PLAYER_OUTCOME'],download_step_outcome=os.environ['DOWNLOAD_OUTCOME'],features_step_outcome=os.environ['FEATURES_OUTCOME'],resume_step_outcome=os.environ['RESUME_OUTCOME'],acceptance_passed=False);path.write_text(json.dumps(data,indent=2)+'\n')
+              data=json.loads(path.read_text());data.update(shutdown_step_outcome=os.environ['SHUTDOWN_OUTCOME'],player_step_outcome=os.environ['PLAYER_OUTCOME'],download_step_outcome=os.environ['DOWNLOAD_OUTCOME'],features_step_outcome=os.environ['FEATURES_OUTCOME'],resume_step_outcome=os.environ['RESUME_OUTCOME'],acceptance_passed=False);path.write_text(json.dumps(data,indent=2)+'\n')
           PY
       - name: Preserve JSON diagnostics only; no engine logs or URLs
         if: always() && !cancelled()
@@ -309,6 +357,7 @@ jobs:
           name: youtube-native-reuse-diagnostic-windows
           path: |
             .dev-check/youtube-native-reuse/provenance.json
+            .dev-check/youtube-native-reuse/diagnostic-shutdown.json
             .dev-check/youtube-native-reuse/diagnostic-player.json
             .dev-check/youtube-native-reuse/diagnostic-download.json
             .dev-check/youtube-native-reuse/diagnostic-features.json
@@ -435,8 +484,51 @@ jobs:
           python3 tools/verify_youtube_bundle.py --expected .dev-check/layout-deb/usr/lib/NexusBro/binaries/youtube-light --actual /usr/lib/NexusBro/binaries/youtube-light --out .dev-check/linux-installed-closure.json
           echo "YOUTUBE_OLD_UNPRIVILEGED_PORT_START=$(sysctl -n net.ipv4.ip_unprivileged_port_start)" >> "$GITHUB_ENV"
           sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0
+      - name: Native prepare-update clean drain on same Linux installed binary DIAGNOSTIC
+        id: shutdown
+        if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
+        timeout-minutes: 5
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: python3 tests/gui/app_shutdown_native.py --exe /usr/bin/nexusbro --cef /usr/lib/NexusBro --out .dev-check/linux-reuse-shutdown --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Preserve linux prepare-update checkpoint without waiting for other suites
+        if: ${{ always() && !cancelled() && !inputs.layout_only }}
+        shell: bash
+        env:
+          SHUTDOWN_OUTCOME: ${{ steps.shutdown.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json,math,os,pathlib,re,stat
+          source=pathlib.Path('.dev-check/linux-reuse-shutdown/result.json');report=None
+          def safe(value,key='',depth=0):
+              if depth>16:return None
+              if value is None or type(value)is bool:return value
+              if type(value)is int:return value if abs(value)<=2**63 else None
+              if type(value)is float:return value if math.isfinite(value) else None
+              if isinstance(value,list):return [safe(v,key,depth+1) for v in value[:64]]
+              if isinstance(value,dict):return {k:safe(v,k,depth+1) for k,v in value.items() if isinstance(k,str) and re.fullmatch(r'[A-Za-z0-9_.-]{1,96}',k)}
+              if isinstance(value,str) and (key in ('name','stage','failure_code','failure_class','native_scope') and re.fullmatch(r'[A-Za-z0-9_.-]{0,128}',value) or key.endswith('sha256') and re.fullmatch(r'[0-9a-fA-F]{64}',value)):return value
+              return 'redacted'
+          try:
+              metadata=os.lstat(source)
+              if stat.S_ISREG(metadata.st_mode) and not getattr(metadata,'st_file_attributes',0)&0x400 and 0<metadata.st_size<=65536:
+                  report=safe(json.loads(source.read_text(encoding='utf-8')))
+          except (OSError,ValueError):pass
+          source.parent.mkdir(parents=True,exist_ok=True)
+          outcome=os.environ.get("SHUTDOWN_OUTCOME", "unknown")
+          if outcome not in ("success","failure","skipped","cancelled"):outcome="unknown"
+          result=dict(diagnostic_only=True,acceptance_passed=False,release_acceptance_passed=False,current_binary=False,step_outcome=outcome,receipt_present=report is not None,result=report)
+          source.with_name('diagnostic-checkpoint.json').write_text(json.dumps(result,indent=2)+'\n',encoding='utf-8')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: ${{ always() && !cancelled() && !inputs.layout_only }}
+        with:
+          name: app-shutdown-checkpoint-linux
+          path: .dev-check/linux-reuse-shutdown/diagnostic-checkpoint.json
+          if-no-files-found: warn
+          retention-days: 7
       - name: Linux same installed binary player DIAGNOSTIC
-        if: ${{ !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
+        if: ${{ always() && !cancelled() && !inputs.layout_only && steps.linux-ready.outcome == 'success' }}
         timeout-minutes: 13
         env:
           NEXUSBRO_TEST_COLD_CEF: '1'
@@ -544,7 +636,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import json,pathlib
-          for label in ('player','download','features','resume'):
+          for label in ('shutdown','player','download','features','resume'):
               path=pathlib.Path('.dev-check/linux-reuse-'+label+'/result.json')
               if path.is_file() and path.stat().st_size<=2*1024*1024:
                   data=json.loads(path.read_text());data.update(diagnostic_only=True,acceptance_passed=False,current_binary=False)
@@ -556,6 +648,7 @@ jobs:
           name: youtube-native-reuse-diagnostic-linux
           path: |
             .dev-check/linux-reuse-provenance.json
+            .dev-check/linux-reuse-shutdown/diagnostic-checkpoint.json
             .dev-check/linux-reuse-player/result.json
             .dev-check/linux-reuse-player/background-super-B-before.png
             .dev-check/linux-reuse-player/background-super-B-failure.png
