@@ -176,6 +176,7 @@ wrap_life_span_handler! {
                 crate::youtube_light_jobs::cancel(identity);
                 crate::youtube_light_aux::cancel(identity);
                 crate::cef_youtube_resume::closed(identity);
+                crate::cef_youtube_resume_fixture::closed(identity);
                 crate::cef_youtube_captions::closed(identity);
                 crate::cef_youtube_download::cancel(identity);
                 crate::cef_youtube::documents().revoke(identity);
@@ -830,7 +831,7 @@ impl Rabota {
             let identity=browser.identifier();
             crate::youtube_light_jobs::cancel(identity);
             crate::youtube_light_aux::cancel(identity);
-            crate::cef_youtube_resume_fixture::cancel(identity);
+            crate::cef_youtube_resume_fixture::closed(identity);
             crate::cef_youtube_download::cancel(identity);
             crate::cef_youtube::stop(browser,*tab,&self.tx);
             if let Some(host)=browser.host(){host.close_dev_tools();host.close_browser(1);}
