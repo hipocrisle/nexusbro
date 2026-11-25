@@ -667,9 +667,16 @@ def _natural_route_tooltip_hover(client):
         key,_,value=line.partition('=')
         if key in ('X','Y') and value.lstrip('-').isdecimal():cursor[key]=int(value)
     require(set(cursor)=={'X','Y'},'Route tooltip cursor unavailable')
-    center=(round(left+width/2),round(top+height/2))
-    candidates=[(round(origin['x']+(center[0]+offset)*geometry['scale']),
-                 round(origin['y']+center[1]*geometry['scale'])) for offset in (2,-2)]
+    # The title belongs to the entire tab row. Hover its lower edge nearest
+    # the toolbar target: hovering the row centre can put GTK's naturally
+    # positioned tooltip above the button (the native failure showed dy=-43).
+    # Keep one physical hover and require actual visual overlap below; never
+    # move/resize the tooltip or turn a non-overlap into a regression PASS.
+    target_x=(expected[0]-origin['x'])/geometry['scale']
+    hover_x=max(left+4,min(left+width-4,target_x-24))
+    hover_y=top+height-2
+    candidates=[(round(origin['x']+(hover_x+offset)*geometry['scale']),
+                 round(origin['y']+hover_y*geometry['scale'])) for offset in (1,-1)]
     hover=next((point for point in candidates if max(abs(point[0]-cursor['X']),abs(point[1]-cursor['Y']))>1),None)
     require(hover is not None,'Route tooltip hover point unavailable')
     receipt={'move_count':0,'observations':0,'mapped_covering_tooltip_observed':False}
