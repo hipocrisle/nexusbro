@@ -19,8 +19,8 @@ import psutil
 from security_native import Device, call, js_wait, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
 from youtube_player_native import (Fixture, Trust, certificates, observe, physical,
-    foreground, HOST, kernel_birth, native_owner, OwnedWindowManager,
-    read_shutdown_receipt, native_app_identity, native_app_identity_alive, native_app_execution_alive)
+    foreground, HOST, kernel_birth, OwnedWindowManager,
+    read_shutdown_receipt, native_app_identity, native_app_identity_alive, native_app_execution_alive, native_app_window)
 from hibernation_cookie_probe import tls_proxy_preflight
 
 OWNER = 'prepare-update-a'
@@ -144,11 +144,12 @@ def request_prepare(client):
     require(client.js('window.__prepareUpdateResult?.ok===true') is True, 'Prepare command refused')
 
 
-def normal_close(device):
-    # Reuse the same exact native owner identity as existing physical fixtures.
-    if sys.platform == 'win32': native_owner(device).close()
+def normal_close(device,identity):
+    # The verified main window was held BEFORE drain; no post-drain title IPC.
+    owner=native_app_window(device,identity)
+    if sys.platform == 'win32': owner.close()
     else:
-        subprocess.run(['wmctrl', '-ic', str(native_owner(device))], env=device.player_wm.env,
+        subprocess.run(['wmctrl', '-ic', str(owner)], env=device.player_wm.env,
                        check=True, timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
@@ -224,7 +225,7 @@ def run(args):
             clean=receipt['clean'], native_members_exited=witness.counts()[0], observed_alive_ms=1000,
             native_scope='receipt_plus_bounded_known_OS_births_not_universal_escape_proof'))
         report['stage'] = 'ordinary-close-after-prepare'
-        normal_close(device)
+        normal_close(device,witness.app_identity)
         require(device.app.wait(timeout=30) == 0, 'Prepare final parent exit failed')
         wait_for(lambda: witness.gone(native=False), 'Prepare final owned executions remain', 30)
         witness.close()
