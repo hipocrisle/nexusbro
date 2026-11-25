@@ -87,7 +87,7 @@ RESUME_FAILURE_CODES={
 
 
 def fixture_ack_class(error,code=None):
-    if code in RESUME_FAILURE_CODES:return code
+    if isinstance(code,str) and code in RESUME_FAILURE_CODES:return code
     if error is None: return 'accepted'
     return {'Подготовка позиции видео недоступна': 'resume_preparation_refused',
             'Позиция видео сейчас недоступна': 'resume_setup_refused',
@@ -394,6 +394,7 @@ def self_test():
     private = 'https://private.invalid/path secret'
     assert private not in fixture_ack_class(private)
     assert private not in fixture_ack_class(private,private)
+    assert private not in fixture_ack_class(private,{'unsafe':private})
     assert 'probe_document_not_admitted' in PROBE_CODES and 'probe_timeout' in PROBE_CODES
     assert different_process_identity((1, '10'), (2, '11'))
     assert different_process_identity((1, '10'), (1, '11'))  # PID reuse is a new OS identity.
