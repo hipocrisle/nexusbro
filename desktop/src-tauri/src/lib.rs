@@ -1535,7 +1535,7 @@ pub fn run() {
                 return true;
             }
             if browser_lock::locked_global() && !matches!(command,
-                "browser_lock_status" | "browser_lock" | "browser_unlock" |
+                "app_restart" | "browser_lock_status" | "browser_lock" | "browser_unlock" |
                 "browser_vault_backups" | "browser_vault_reset" | "browser_vault_restore")
             {
                 invoke.resolver.reject("Браузер заблокирован. Введите мастер-пароль.");
@@ -1568,7 +1568,15 @@ pub fn run() {
                         app_shutdown_parent::begin(app,0);
                     }
                 }
-                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label.starts_with("browser-")=>{if app_shutdown_parent::is_draining()&&!app_shutdown_parent::may_exit(){api.prevent_close();}else if okna_app::nachat_zakrytie(app,label){api.prevent_close();}}
+                tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::CloseRequested{api,..},..} if label.starts_with("browser-")=>{
+                    let s:State<Sostoyanie>=app.state();
+                    let last_secondary={let windows=s.okna.0.lock().unwrap();windows.len()==1&&windows.contains_key(label)};
+                    let hidden_main=app.get_webview_window("main").is_some_and(|w|!w.is_visible().unwrap_or(true));
+                    if !app_shutdown_parent::may_exit()&&(app_shutdown_parent::is_draining()||(last_secondary&&hidden_main)){
+                        api.prevent_close();
+                        if !app_shutdown_parent::is_draining(){app_shutdown_parent::begin(app,0);}
+                    }else if okna_app::nachat_zakrytie(app,label){api.prevent_close();}
+                }
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Destroyed,..} if label.starts_with("browser-")=>{okna_app::zakryt(app,label);}
                 tauri::RunEvent::WindowEvent{label,event:tauri::WindowEvent::Focused(true)|tauri::WindowEvent::Resized(_),..} if label.starts_with("browser-")=>{
                     let s:State<Sostoyanie>=app.state();okna_app::obolochka(app,&s,label);
