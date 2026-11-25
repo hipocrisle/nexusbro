@@ -12,9 +12,11 @@
   },
   "resource_soak": {
     "run": 45549296137,
-    "status": "in_progress",
+    "status": "success",
     "required_seconds": 7200,
-    "accepted": false
+    "accepted": true,
+    "actual_seconds": 7200.094,
+    "summary": "resource-summary.json"
   },
   "public_youtube": {
     "diagnostic_run": 45550180154,
@@ -38,7 +40,7 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-25T06:08:21.919918+00:00",
+  "observed_at_utc": "2026-11-25T06:59:24.407811+00:00",
   "native_summary": "native-summary.json",
   "frontend_recheck": {
     "run": 45554861820,

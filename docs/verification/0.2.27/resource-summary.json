@@ -1,0 +1,67 @@
+{
+  "schema": 1,
+  "completed": true,
+  "acceptance_passed": true,
+  "hibernation_acceptance": true,
+  "baseline": false,
+  "diagnostic_pilot": false,
+  "source": "7173361aed69d3587f0618b5e7b3ae88be23faef",
+  "test_source": "59a6a30bd473c756364ded99742ba3a681d740e3",
+  "build_run": "45544984950",
+  "platform": "win32",
+  "exe_sha256": "58bf4faae01573323c6656c00a86ee1433361c5bef65d5bca000fcfee784b51e",
+  "package_sha256": "8f1337457cedf43041391251db95dc5db6067c8bc61b6a7d850197ef296a246d",
+  "normal_idle_policy_minutes": 30,
+  "started_utc": "2026-11-25T04:50:08.652410+00:00",
+  "ended_utc": "2026-11-25T06:50:08.868024+00:00",
+  "wall_seconds": 7200.094,
+  "samples_count": 1438,
+  "native_ui_cycles": 15,
+  "lifecycle_transitions": 28,
+  "quiet_supers_observed_sleeping": 2,
+  "media_receipt_count": 1500,
+  "media_last_played_seconds": 6940.319058000047,
+  "private_metric": "windows_private_commit",
+  "workload": {
+    "supers": 8,
+    "saved_per_super": 125,
+    "saved_total": 1000,
+    "visited_limit": 24
+  },
+  "coverage": {
+    "writer_overlap": "readonly_lease_plus_verified_native_members_and_sampled_OS_identity_not_exhaustive",
+    "session_cookie_roundtrip": "separate_fast_native_gate_required"
+  },
+  "drift_limits": {
+    "parent_delta_mb": 64,
+    "parent_slope_mb_per_hour": 32
+  },
+  "drift": {
+    "comparable": true,
+    "matching_topology_samples": 551,
+    "span_hours": 0.6829,
+    "parent_private_delta_bytes": 339968.0,
+    "parent_private_slope_bytes_per_hour": 497853,
+    "first_parent_private_median_bytes": 15323136.0,
+    "last_parent_private_median_bytes": 15663104.0
+  },
+  "load_guard": {
+    "max_processes": 128,
+    "max_owned_private_bytes": 8589934592,
+    "minimum_system_available_bytes": 536870912,
+    "guard_metric": "windows_private_commit",
+    "sum_rss_is_physical_ram_usage": false
+  },
+  "run": 45549296137,
+  "ci_run": "https://github.com/hipocrisle/nexusbro/actions/runs/45549296137",
+  "media_scope": "controlled_fixture_not_public_youtube",
+  "public_youtube_accepted": false,
+  "resource_metrics": {
+    "sample_count_weighted_minute_cpu_core_percent": 1.881,
+    "peak_owned_private_bytes": 1427038208,
+    "last_minute_peak_owned_private_bytes": 827854848,
+    "peak_processes": 74,
+    "last_minute_peak_processes": 21,
+    "rss_sum_is_physical_ram_usage": false
+  }
+}
