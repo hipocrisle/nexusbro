@@ -165,6 +165,7 @@ pub struct Engine {
     flush: Arc<Mutex<bool>>,
     refusal: Option<&'static str>,
     aborting: bool,
+    app_closing: bool,
 }
 impl Default for Engine {
     fn default() -> Self {
@@ -184,10 +185,36 @@ impl Default for Engine {
             flush: Arc::new(Mutex::new(false)),
             refusal: None,
             aborting: false,
+            app_closing: false,
         }
     }
 }
 impl Engine {
+    /// A precommit carrier is a real Browser outside ordinary session rows.
+    /// App quit must close it and observe OnBeforeClose, never merely drop it.
+    pub fn app_shutdown_begin(&mut self) {
+        if !self.active()||self.committed()||self.app_closing{return;}
+        self.app_closing=true;
+        // No thaw/resume JS is needed when the application is closing all pages.
+        self.pages.clear();self.workers=None;self.cookies=None;
+        if let Some(host)=self.anchor.as_ref().and_then(|a|a.host()){host.close_browser(1);}
+    }
+    pub fn app_shutdown_event(&mut self,event:&Sobytie,k:&Konteyner)->bool {
+        if !self.app_closing{return false;}
+        #[cfg(target_os="windows")]
+        if matches!(event,Sobytie::ZakrytOkno(id,_) if *id==ANCHOR){
+            return native_close_event(event,k,&HashMap::new(),self.anchor.as_ref());
+        }
+        if let Sobytie::Zakryta(id,Some(identity))=event {
+            if *id==ANCHOR&&self.anchor.as_ref().is_some_and(|a|a.identifier()==*identity){
+                self.anchor_closed=true;k.routes.borrow_mut().forget_browser(*identity);
+                self.anchor=None; // Actual native OnBeforeClose receipt arrived.
+                return true;
+            }
+        }
+        false
+    }
+    pub fn app_shutdown_drained(&self)->bool {self.anchor.is_none()}
     pub fn active(&self) -> bool {
         self.request.is_some()
     }

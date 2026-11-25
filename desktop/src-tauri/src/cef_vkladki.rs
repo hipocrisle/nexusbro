@@ -839,7 +839,9 @@ impl Rabota {
         for extra in self.extras.values_mut(){extra.app_shutdown_close();}
     }
     fn app_shutdown_tick(&mut self,events:Vec<Sobytie>)->anyhow::Result<()>{
-        for event in events {match event {
+        for event in events {
+            if self.hibernate.app_shutdown_event(&event,&self.k){continue;}
+            match event {
             Sobytie::YoutubeReady(ready)=>{crate::youtube_light_jobs::finish(ready.browser,ready.operation);}
             Sobytie::YoutubeResumeFixtureReady(ready)=>crate::cef_youtube_resume_fixture::discard(ready),
             Sobytie::YoutubeFocus{..}=>crate::cef_youtube_focus::finish(),
@@ -879,7 +881,7 @@ impl Rabota {
     }
     fn app_shutdown_closed(&self)->bool{
         self.brauzery.is_empty()&&self.devtools.is_empty()&&self.devtools_pending.is_empty()
-            &&self.extras.values().all(|extra|extra.app_shutdown_closed())
+            &&self.hibernate.app_shutdown_drained()&&self.extras.values().all(|extra|extra.app_shutdown_closed())
     }
     fn hibernate_safe(&self)->bool{
         self.label.is_empty()&&self.extras.is_empty()&&!self.force_private&&!self.browser_locked&&!self.closing
@@ -1035,7 +1037,7 @@ impl Rabota {
         for event in &incoming {if let Sobytie::Komanda(Komanda::AppShutdown{request})=event {
             if self.label.is_empty()&&crate::cef_app_shutdown::begin(request){
                 // An irreversible hibernation already owns browser closure.
-                if !self.hibernate.committed(){self.hibernate.invalidate(&self.brauzery);self.app_shutdown_close();}
+                if !self.hibernate.committed(){self.hibernate.app_shutdown_begin();self.app_shutdown_close();}
             }
         }}
         if crate::cef_app_shutdown::active(){
