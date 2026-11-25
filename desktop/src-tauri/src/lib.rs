@@ -242,6 +242,16 @@ struct Sostoyanie {
 
 /// Выставляется при завершении программы: фоновые потоки (сторож окон)
 /// обязаны остановиться, чтобы не мешать гашению движков.
+// Rows removed by a user deletion still own live native writers in a worker.
+// Cancellation/panic without an actual joined completion must retain this gate.
+static OWNERSHIP_REMOVALS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+struct DeletionGuard { stopped: bool }
+impl DeletionGuard {
+    fn new() -> Self { OWNERSHIP_REMOVALS.fetch_add(1,std::sync::atomic::Ordering::SeqCst); Self { stopped:false } }
+}
+impl Drop for DeletionGuard {
+    fn drop(&mut self) { if self.stopped { OWNERSHIP_REMOVALS.fetch_sub(1,std::sync::atomic::Ordering::SeqCst); } }
+}
 static ZAVERSHENIE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Журнал сторожа и запусков — последние события с метками времени.
@@ -832,9 +842,9 @@ async fn ostanovit_vnutri(app:&tauri::AppHandle,s: &State<'_, Sostoyanie>, id: &
         vk.zapas_pid = None;
         (vk.proc.take(), vk.nash_proxy.take(), vk.tunnel.take(), vk.zapusk_id)
     };
-    let _ = tauri::async_runtime::spawn_blocking(move || {
+    if tauri::async_runtime::spawn_blocking(move || {
         ostanovit_resursy(resursy.0, resursy.1, resursy.2);
-    }).await;
+    }).await.is_err(){return;} // Keep pending ownership on an unproven worker failure.
     release_route_resources(app,s, id, resursy.3);
     if let Some(v)=s.vkladki.lock().unwrap().get_mut(id).filter(|v|v.zapusk_id==resursy.3){v.hibernate=Default::default();v.zapusk_idet=false;}
 }
@@ -961,19 +971,21 @@ async fn zakryt(app: tauri::AppHandle, s: State<'_, Sostoyanie>, id: String, soh
     okna_app::zakryt_super(&app,&s,&id);
     {let engine=s.vkladki.lock().unwrap().get(&id).map(|v|v.zapusk_id);if let Some(engine)=engine{youtube_fullscreen_parent::release_super(&app,&id,engine);}}
     perevod::otmenit_super(&id);
-    let udalena = {
+    let (udalena, mut deletion) = {
         let mut v = s.vkladki.lock().unwrap();
         if app_shutdown_parent::is_draining(){return Err("Браузер завершает работу".into());}
-        v.remove(&id)
+        let guard=v.contains_key(&id).then(DeletionGuard::new);
+        (v.remove(&id),guard)
     };
     let Some(vk) = udalena else {
         return Ok(net("такой супер-вкладки нет"));
     };
     v_zhurnal_granica("zakryt", &id, "останавливаю движок");
     let nastrojki = vk.nastrojki;
-    let _ = tauri::async_runtime::spawn_blocking(move || {
+    tauri::async_runtime::spawn_blocking(move || {
         ostanovit_resursy(vk.proc, vk.nash_proxy, vk.tunnel);
-    }).await;
+    }).await.map_err(|_|"Завершение удаляемой супервкладки не подтверждено")?;
+    if let Some(guard)=deletion.as_mut(){guard.stopped=true;}
     v_zhurnal_granica("zakryt", &id, "движок остановлен");
     {
         let v = s.vkladki.lock().unwrap();

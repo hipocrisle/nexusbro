@@ -442,7 +442,7 @@ fn discover(app: &tauri::AppHandle) -> usize {
     let Ok(mut state) = coordinator().lock() else {
         return 1;
     };
-    let mut pending = 0;
+    let mut pending = crate::OWNERSHIP_REMOVALS.load(Ordering::SeqCst);
     for (id, engine, owned, starting, sleeping, residual_network) in observed {
         if owned {
             state.unobserved_starts.remove(&(id.clone(), engine));
