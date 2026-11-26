@@ -90,6 +90,16 @@ class _Attributes(ctypes.Structure):
 IS_VIEWABLE = 2  # MapState: IsViewable
 
 
+class _XErrorEvent(ctypes.Structure):
+    _fields_ = [('type', ctypes.c_int), ('display', ctypes.c_void_p),
+                ('resourceid', ctypes.c_ulong), ('serial', ctypes.c_ulong),
+                ('error_code', ctypes.c_ubyte), ('request_code', ctypes.c_ubyte),
+                ('minor_code', ctypes.c_ubyte)]
+
+
+_XERRORHANDLER = ctypes.CFUNCTYPE(ctypes.c_int, ctypes.c_void_p, ctypes.POINTER(_XErrorEvent))
+
+
 class _ClientIdSpec(ctypes.Structure):
     _fields_ = [('client', ctypes.c_ulong), ('mask', ctypes.c_uint)]
 
@@ -102,6 +112,11 @@ class NativeX11:
     """Real libX11/libXres binding; every symbol typed for 64-bit ABI.
     Missing library/extension is a typed refusal, never a fallback."""
 
+    # ВНИМАНИЕ: XSetErrorHandler — process-global в libX11. Этот helper
+    # рассчитан на owner-only single-thread использование (один owned display
+    # в тестовом процессе); прежний handler сохраняется и восстанавливается
+    # в close(). Callback-ссылка удерживается в self._error_handler_ref,
+    # чтобы GC не собрал его, пока libX11 может его вызвать.
     def __init__(self, display_name):
         x11_path = ctypes.util.find_library('X11')
         xres_path = ctypes.util.find_library('XRes')
@@ -109,8 +124,9 @@ class NativeX11:
             raise FocusBlocked('x11_library_missing')
         if not xres_path:
             raise FocusBlocked('xres_library_missing')
-        x = ctypes.CDLL(x11_path)
-        r = ctypes.CDLL(xres_path)
+        self._bind(ctypes.CDLL(x11_path), ctypes.CDLL(xres_path), display_name)
+
+    def _bind(self, x, r, display_name):
         Display = ctypes.c_void_p
         Window = ctypes.c_ulong
         x.XOpenDisplay.argtypes = [ctypes.c_char_p]; x.XOpenDisplay.restype = Display
@@ -133,6 +149,8 @@ class NativeX11:
         x.XSetInputFocus.argtypes = [Display, Window, ctypes.c_int, ctypes.c_ulong]
         x.XGetInputFocus.argtypes = [Display, ctypes.POINTER(Window), ctypes.POINTER(ctypes.c_int)]
         x.XSync.argtypes = [Display, ctypes.c_int]
+        x.XSetErrorHandler.argtypes = [_XERRORHANDLER]
+        x.XSetErrorHandler.restype = _XERRORHANDLER
         r.XResQueryVersion.argtypes = [Display, ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int)]
         r.XResQueryVersion.restype = ctypes.c_int
         r.XResQueryClientIds.argtypes = [Display, ctypes.c_long, ctypes.POINTER(_ClientIdSpec),
@@ -141,17 +159,38 @@ class NativeX11:
         r.XResQueryClientIds.restype = ctypes.c_int
         r.XResGetClientPid.argtypes = [ctypes.POINTER(_ClientIdValue)]
         r.XResGetClientPid.restype = ctypes.c_int
-        r.XResQueryClientIdsDestroy.argtypes = [ctypes.c_long, ctypes.POINTER(_ClientIdValue)]
+        # Официальный XRes.h: имя именно XResClientIdsDestroy.
+        r.XResClientIdsDestroy.argtypes = [ctypes.c_long, ctypes.POINTER(_ClientIdValue)]
         self._x, self._r = x, r
+        self.error_code = None
+        self._previous_error_handler = None
+        self._error_handler_ref = _XERRORHANDLER(self._on_x_error)
         self.display = x.XOpenDisplay(display_name.encode() if display_name else None)
         if not self.display:
             raise FocusBlocked('display_unavailable')
+        self._previous_error_handler = x.XSetErrorHandler(self._error_handler_ref)
         major, minor = ctypes.c_int(), ctypes.c_int()
-        if r.XResQueryVersion(self.display, ctypes.byref(major), ctypes.byref(minor)) != 0 or major.value < 1:
+        # XRes.c: XResQueryVersion возвращает 1 при успехе (не 0).
+        if r.XResQueryVersion(self.display, ctypes.byref(major), ctypes.byref(minor)) != 1 or major.value < 1:
+            self.close()
             raise FocusBlocked('xres_extension_missing')
+
+    def _on_x_error(self, _display, event):
+        # Bounded: запоминаем только первый код (0..255); ничего не печатаем,
+        # управление возвращаем — процесс не умирает мимо finally.
+        if self.error_code is None and event:
+            self.error_code = int(event.contents.error_code)
+        return 0
+
+    def _check_error(self):
+        if self.error_code is not None:
+            raise FocusBlocked('x_protocol_error')
 
     def close(self):
         if self.display:
+            if self._previous_error_handler is not None:
+                self._x.XSetErrorHandler(self._previous_error_handler)
+                self._previous_error_handler = None
             self._x.XCloseDisplay(self.display)
             self.display = None
 
@@ -167,6 +206,7 @@ class NativeX11:
         if not x.XQueryTree(self.display, xid, ctypes.byref(root), ctypes.byref(parent),
                             ctypes.byref(children), ctypes.byref(count)):
             raise FocusBlocked('query_tree_failed')
+        self._check_error()
         try:
             if count.value > MAX_CHILDREN:
                 raise FocusBlocked('tree_bound_exceeded')
@@ -183,12 +223,15 @@ class NativeX11:
                               ctypes.byref(w), ctypes.byref(h), ctypes.byref(border), ctypes.byref(depth)):
             raise FocusBlocked('geometry_failed')
         dx = ctypes.c_int(); dy = ctypes.c_int(); child = ctypes.c_ulong()
-        # Экранные координаты: translate (0,0) окна в root.
-        x.XTranslateCoordinates(self.display, xid, root.value, 0, 0,
-                                ctypes.byref(dx), ctypes.byref(dy), ctypes.byref(child))
+        # Экранные координаты: translate (0,0) окна в root; возврат проверяется.
+        if not x.XTranslateCoordinates(self.display, xid, root.value, 0, 0,
+                                       ctypes.byref(dx), ctypes.byref(dy), ctypes.byref(child)):
+            raise FocusBlocked('translate_failed')
+        self._check_error()
         attrs = _Attributes()
         if not x.XGetWindowAttributes(self.display, xid, ctypes.byref(attrs)):
             raise FocusBlocked('attributes_failed')
+        self._check_error()
         return {'x': dx.value, 'y': dy.value, 'w': w.value, 'h': h.value,
                 'viewable': attrs.map_state == IS_VIEWABLE}
 
@@ -205,7 +248,7 @@ class NativeX11:
         try:
             return int(r.XResGetClientPid(ctypes.byref(values[0])))
         finally:
-            r.XResQueryClientIdsDestroy(count.value, values)
+            r.XResClientIdsDestroy(count.value, values)
 
     def walk(self, shell_xid):
         """Bounded BFS внутри held shell: узлы с реальными фактами."""
@@ -231,6 +274,7 @@ class NativeX11:
     def set_focus(self, xid):
         self._x.XSetInputFocus(self.display, xid, REVERT_TO_PARENT, CURRENT_TIME)
         self._x.XSync(self.display, 0)
+        self._check_error()
 
     def input_focus(self):
         x = self._x
