@@ -31,7 +31,7 @@ def run(a):
   client=device.start();report['stage']='blank-native-frame'
   wm=LocalWindowManager(device,out/'wm');device.player_wm=wm
   switch_super(client,identifier)
-  if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',10)
+  click_control(client,'.obychnaya[aria-selected="true"]',10)
   wait_for(lambda:any(t.get('browser_id',0)>0 for t in rows(client,identifier)['vkladki']),'Native blank frame missing',30)
   local_close(client,device,report);report['preflight_complete']=True;report['stage']='complete'
  except Exception as error:

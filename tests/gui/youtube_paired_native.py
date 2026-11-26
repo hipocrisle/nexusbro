@@ -217,7 +217,9 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         js_wait(client,'window.__pairedReady','Native paired listener missing')
         snapshot=(lambda kind: state_probe(client,identifier,tab,kind)) if state_probe else (lambda kind: probe(client,identifier,tab,kind,args.video_id))
         switch_super(client,identifier)
-        if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',20)
+        # Explicitly wake the selected saved tab. A one-shot placeholder query
+        # races React's deferred-content portal and can leave browser_id==0.
+        click_control(client,'.obychnaya[aria-selected="true"]',20)
         session=wait_for(lambda:rows(client,identifier) if any(v.get('browser_id',0)>0 and not v.get('zagruzka') for v in rows(client,identifier)['vkladki']) else None,'Public native page not ready',45);tab=session['aktivnaya']
         result['stage']='content-admission'
         if mode=='light':
