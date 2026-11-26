@@ -100,6 +100,13 @@ def main():
 
     final, result, io = run(happy)
     checks['happy_path'] = final['playing'] is True
+    late = state(reject_present=True, reject=REJECT)
+    late_final, late_result, _ = run(happy[:5] + [late, late, base] + happy[6:])
+    checks['late_consent_handled_once'] = (
+        late_final['playing'] is True
+        and late_result['normal_ui_actions']['ledger'].count('reject_all_click') == 1
+        and late_result['normal_ui_actions']['reject_all_clicked'] is True)
+
     receipt = result['normal_ui_actions']
     checks['ledger_order'] = receipt['ledger'] == ['pause_click', 'settings_click', 'quality_click',
         'p720_click', 'play_click', 'playback_started']

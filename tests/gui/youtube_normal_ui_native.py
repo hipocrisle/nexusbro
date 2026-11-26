@@ -195,7 +195,7 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
     def reveal(rect_key):
         """Controls may be autohidden: one real mousemove over the CEF center,
         then bounded observation; never a click just to unhide."""
-        state = current()
+        state = consent(current())
         if state['controls'][rect_key] is not None:
             return state
         pole = io.pole()
@@ -205,11 +205,15 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
         after('hover')
         receipt['hover_reveals'] += 1
         ledger.append('hover_reveal')
-        return observe(lambda s: s if s['controls'][rect_key] is not None else None,
-                       rect_key + '_unavailable', 5)
+        def revealed(s):
+            s = consent(s)
+            return s if s['controls'][rect_key] is not None else None
+        return observe(revealed, rect_key + '_unavailable', 5)
 
     def click(rect_key, ledger_name):
         state = current()
+        if rect_key != 'reject_all':
+            state = consent(state)
         rect = state['controls'][rect_key]
         if rect is None:
             raise UiBlocked(rect_key + '_not_actionable')
@@ -220,10 +224,16 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
         after(ledger_name)
         ledger.append(ledger_name)
 
-    # 1) Reject-all: один scroll при недоступной кнопке, один клик.
-    state = current()
-    if state['controls']['reject_all_present']:
+    def consent(state):
+        # The real consent modal can arrive after the first player snapshot.
+        # React to its known native marker once; never click through an overlay.
+        if not state['controls']['reject_all_present']:
+            return state
+        if receipt['reject_all_clicked']:
+            raise UiBlocked('reject_all_reappeared')
         if state['controls']['reject_all'] is None:
+            if receipt['scrolls']:
+                raise UiBlocked('reject_all_unreachable')
             pole = io.pole()
             checked('reject_scroll')
             spend()
@@ -231,12 +241,15 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
             after('reject_scroll')
             receipt['scrolls'] += 1
             ledger.append('reject_scroll')
-            state = observe(lambda s: s if s['controls']['reject_all'] is not None else None,
-                            'reject_all_unreachable', 5)
+            observe(lambda s: s if s['controls']['reject_all'] is not None else None,
+                    'reject_all_unreachable', 5)
         click('reject_all', 'reject_all_click')
         receipt['reject_all_clicked'] = True
-        observe(lambda s: s if s['controls']['reject_all_present'] is False else None,
-                'reject_all_still_present', 5)
+        return observe(lambda s: s if s['controls']['reject_all_present'] is False else None,
+                       'reject_all_still_present', 5)
+
+    # 1) Known consent only, including late arrival during control revelation.
+    consent(current())
 
     # 2) Pause при playing; позиция до старта не позже 29с.
     state = current()
