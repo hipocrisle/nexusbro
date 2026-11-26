@@ -13,6 +13,7 @@ or environment-file changes to force a PASS.
 """
 import argparse
 import json
+import math
 import os
 import re
 import shutil
@@ -326,10 +327,12 @@ def window_handles_snapshot():
                 continue
     except Exception:
         com = None
-    uia = set()
+    uia = None
     try:
         from pywinauto import Desktop
-        for win in Desktop(backend='uia').windows():
+        windows = Desktop(backend='uia').windows()
+        uia = set()
+        for win in windows:
             try:
                 uia.add(int(win.handle))
             except Exception:
@@ -345,6 +348,7 @@ def file_url_to_path(url):
     if not isinstance(url, str) or not url.lower().startswith('file:'):
         return None
     parsed = urllib.parse.urlparse(url)
+    if parsed.netloc.lower() not in ('','localhost') or parsed.query or parsed.fragment:return None
     path = urllib.parse.unquote(parsed.path)
     if len(path) > 2 and path[0] == '/' and path[2] == ':':
         path = path[1:]
@@ -354,8 +358,11 @@ def file_url_to_path(url):
 def explorer_hwnd_pid(hwnd):
     """ctypes GetWindowThreadProcessId — the real owner PID of a handle."""
     import ctypes
-    pid = ctypes.c_ulong()
-    ctypes.windll.user32.GetWindowThreadProcessId(int(hwnd), ctypes.byref(pid))
+    from ctypes import wintypes
+    pid = wintypes.DWORD()
+    function=ctypes.windll.user32.GetWindowThreadProcessId
+    function.argtypes=[wintypes.HWND,ctypes.POINTER(wintypes.DWORD)];function.restype=wintypes.DWORD
+    function(wintypes.HWND(hwnd),ctypes.byref(pid))
     return pid.value
 
 
@@ -377,9 +384,9 @@ def _known_explorer(info, recheck=None):
     if normalize_win_path(info.get('exe') or '') != windir + '\\explorer.exe':
         return False
     birth = info.get('birth')
-    if not isinstance(birth, (int, float)) or birth > time.time() + 1:
+    if type(birth) not in (int,float) or not math.isfinite(birth) or birth<=0 or birth > time.time() + 1:
         return False
-    if recheck is not None and recheck != birth:
+    if recheck is None or recheck != birth:
         return False
     return True
 
@@ -398,6 +405,7 @@ def explorer_folder_proof(before, folder, *, shell_windows=None, pid_of=None,
     pid_of = pid_of or explorer_hwnd_pid
     info_of = process_info or _process_info
     try:
+        if before.get('com') is None:raise RuntimeError('COM snapshot unavailable')
         windows = shell_windows
         if windows is None:
             import win32com.client
@@ -422,6 +430,7 @@ def explorer_folder_proof(before, folder, *, shell_windows=None, pid_of=None,
     except Exception:
         pass
     try:
+        if before.get('uia') is None:raise RuntimeError('UIA snapshot unavailable')
         if uia_windows is not None:
             candidates = uia_windows
         else:
