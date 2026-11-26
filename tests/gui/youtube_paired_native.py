@@ -144,6 +144,41 @@ def focus_normal_cef(client,device):
     return focus_cef(device.display,int(str(window),0),viewport,engines,alive)
 
 
+def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result):
+    if sys.platform!='linux':raise Blocked('normal_native_ui_linux_only')
+    from youtube_normal_ui_native import prepare_normal_playback,UiBlocked
+    from youtube_player_native import native_app_identity,native_app_window,native_app_identity_alive
+    owner=native_app_identity(device);native_app_window(device,owner)
+    def engine_record():
+        value=call(client,'super_lifecycle_snapshot')
+        matches=[e for e in value.get('engines',[]) if e.get('id')==identifier]
+        if value.get('schema')!=1 or len(matches)!=1:raise Blocked('normal_ui_engine_unproven')
+        return matches[0]
+    engine=engine_record();pid=engine.get('pid');generation=engine.get('generation')
+    if type(pid)is not int or pid<=0 or type(generation)is not int:raise Blocked('normal_ui_engine_unproven')
+    birth=kernel_birth(pid,'linux_ticks')
+    initial=next((v for v in rows(client,identifier)['vkladki'] if v.get('id')==tab),None)
+    if not initial or initial.get('browser_id',0)<=0:raise Blocked('normal_ui_browser_unproven')
+    def binding():
+        try:
+            native_app_window(device,owner)
+            if not native_app_identity_alive(device,owner) or kernel_birth(pid,'linux_ticks')!=birth:return False
+            process=psutil.Process(pid)
+            if Path(process.exe()).resolve()!=device.exe.resolve() or '--nb-dvizhok' not in process.cmdline():return False
+            if pid not in {p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}:return False
+            current=engine_record()
+            if current.get('phase')!='Running' or current.get('pid')!=pid or current.get('generation')!=generation:return False
+            session=rows(client,identifier)
+            row=next((v for v in session['vkladki'] if v.get('id')==tab),None)
+            return (call(client,'aktivnaya')==identifier and session.get('aktivnaya')==tab and row is not None
+                    and row.get('browser_id')==initial['browser_id'] and row.get('route_generation')==initial.get('route_generation')
+                    and row.get('route_pending') is not True and not row.get('route_error'))
+        except Exception:return False
+    try:
+        return prepare_normal_playback(client,device,snapshot,args.width,args.height,result,binding)
+    except UiBlocked as error:raise Blocked('normal_ui_'+str(error)) from None
+
+
 def normal_key(device,key,client=None,receipt=None):
     if key not in ('k','m'):raise Blocked('normal_key_invalid')
     if sys.platform=='linux':
@@ -279,6 +314,9 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
             result['stage']='normal-manual-ui-setup'
             setup_hook(client,device,out,index,result)
             state=snapshot(mode)
+        elif mode=='normal' and getattr(args,'native_normal_ui',False):
+            result['stage']='normal-native-physical-ui'
+            state=prepare_normal_native_ui(client,device,lambda:snapshot(mode),identifier,tab,args,result)
         reference_preflight=getattr(args,'normal_reference_preflight',False)
         if reference_preflight:
             if mode!='normal':raise Blocked('reference_preflight_mode_invalid')

@@ -128,6 +128,7 @@ if __name__=='__main__':
     p.add_argument('--producer-run',type=int,required=True);p.add_argument('--expect-uid',type=int,required=True)
     p.add_argument('--normal-reference-preflight',action='store_true')
     p.add_argument('--manual-ui-setup',action='store_true')
+    p.add_argument('--native-normal-ui',action='store_true')
     p.add_argument('--allow-local-virtual-display',action='store_true');p.add_argument('--video-id',default='M7lc1UVf-VE')
     p.add_argument('--expected-duration',type=float,default=1343.6);p.add_argument('--expected-fps',type=float,default=30)
     p.add_argument('--width',type=int,default=1280);p.add_argument('--height',type=int,default=720);p.add_argument('--memory-cap-mib',type=int,default=1024)
