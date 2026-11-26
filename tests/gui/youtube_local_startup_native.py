@@ -39,6 +39,19 @@ def run(a):
    report['native_tabs']=[{k:v for k,v in t.items() if k in ('id','browser_id','otlozhena','zagruzka','memory_pending','route_pending','route_generation')}|{'route_error_present':bool(t.get('route_error'))} for t in current['vkladki']]
    return any(t.get('browser_id',0)>0 for t in current['vkladki'])
   wait_for(frame_ready,'Native blank frame missing',30)
+  # Read-only OS topology of the owned fixture, never the owner's desktop.
+  import subprocess
+  from youtube_player_native import native_app_identity,native_app_window
+  identity=native_app_identity(device);window=native_app_window(device,identity)
+  env={**os.environ,'DISPLAY':device.display}
+  tree=subprocess.check_output(['xwininfo','-id',str(window),'-tree'],env=env,text=True,timeout=3)
+  (out/'owned-window-tree.txt').write_text(tree[:16384])
+  report['os_focus']={}
+  for flag,command in [('class_ancestor',['xdotool','getwindowfocus']),('exact',['xdotool','getwindowfocus','-f'])]:
+   focused=subprocess.check_output(command,env=env,text=True,timeout=3).strip()
+   proc=subprocess.run(['xdotool','getwindowpid',focused],env=env,capture_output=True,text=True,timeout=3)
+   report['os_focus'][flag]={'xid':focused,'pid':proc.stdout.strip() if proc.returncode==0 else None,'is_shell_window':focused==str(window)}
+  report['native_identity_pid']=identity['pid']
   local_close(client,device,report);report['preflight_complete']=True;report['stage']='complete'
  except Exception as error:
   codes={'Tauri IPC did not initialize under the preserved sandbox':'tauri_ipc_not_ready','Sandboxed native application exited during startup':'app_exited','Native blank frame missing':'blank_frame_missing','sandbox_startup_blocked':'inspector_not_ready'}
