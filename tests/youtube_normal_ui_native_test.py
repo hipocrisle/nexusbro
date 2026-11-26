@@ -107,7 +107,17 @@ def main():
         'paused_once', 'quality_720_clicked', 'played_once', 'hover_reveals', 'scrolls'} \
         and receipt['ui_actions'] == 5 and receipt['scrolls'] == 0
     checks['receipt_no_raw'] = 'http' not in json.dumps(result) and 'url' not in json.dumps(result)
-    checks['physical_clicks_mapped'] = ('click', 36, 664) in io.actions
+    checks['control_center_forwarded'] = ('click', 36, 664) in io.actions
+
+    # Exercise the real adapter mapping, which the controller's fake IO cannot prove.
+    class Client:
+        def js(self, _):return {'x':10,'y':200,'w':1280,'h':720}
+        def mouse(self,x,y):self.clicked=(x,y)
+    client=Client();adapter=m.RealIO(client,None);adapter.click_css(36,664)
+    checks['real_adapter_includes_pole_offset']=client.clicked==(46,864)
+    transition=happy[:14]+[playing(play=PLAY,settings=SETTINGS,position=11,width=854,height=480),started]
+    final,_,_=run(transition)
+    checks['quality_transition_waits_for_actual_target']=final['video_height']==720
 
     # Hover-reveal: play скрыт автогашением -> один mousemove, клика для показа нет
     p_hidden = playing(play=None, settings=SETTINGS)

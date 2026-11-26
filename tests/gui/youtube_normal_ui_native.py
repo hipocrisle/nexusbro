@@ -113,7 +113,8 @@ class RealIO:
                 round(origin['y'] + (pole['y'] + css_y) * scale))
 
     def click_css(self, css_x, css_y):
-        self.client.mouse(css_x, css_y)
+        pole = self.pole()
+        self.client.mouse(pole['x'] + css_x, pole['y'] + css_y)
 
     def move_css(self, css_x, css_y):
         x, y = self._screen(css_x, css_y)
@@ -155,6 +156,7 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
         return left
 
     def checked(action):
+        deadline_left()
         if binding_check() is not True:
             raise UiBlocked('binding_unproven_before_' + action)
         io.foreground()
@@ -162,6 +164,7 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
         return yield_io
 
     def after(action):
+        deadline_left()
         if binding_check() is not True:
             raise UiBlocked('binding_unproven_after_' + action)
 
@@ -174,6 +177,7 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
         deadline = io.monotonic() + min(budget, deadline_left())
         while io.monotonic() < deadline:
             state = snapshot()
+            deadline_left()
             validate_controls(state)
             value = predicate(state)
             if value:
@@ -264,15 +268,22 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
         state = reveal('play')
         click('play', 'play_click')
         receipt['played_once'] = True
+    last_state = {}
     def started_playback(s):
+        last_state.clear()
+        last_state.update(s)
         if (s.get('playing') is True and (s.get('position') or 0) > 0
                 and s.get('video_width') == expected_width
                 and s.get('video_height') == expected_height):
             return s
-        if (s.get('video_width') not in (0, expected_width)
-                or s.get('video_height') not in (0, expected_height)):
-            raise UiBlocked('resolution_mismatch')
         return None
-    final = observe(started_playback, 'playback_not_started', 20)
+    try:
+        final = observe(started_playback, 'playback_not_started', 20)
+    except UiBlocked as error:
+        if str(error) == 'playback_not_started' and (
+                last_state.get('video_width') not in (0, expected_width)
+                or last_state.get('video_height') not in (0, expected_height)):
+            raise UiBlocked('resolution_mismatch') from None
+        raise
     ledger.append('playback_started')
     return final
