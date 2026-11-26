@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from security_native import require, wait_for
+from download_startup_facts import collect_startup_facts, owned_failure_screenshot
 from download_page_input import (TILES, tile_center, url_kind, tab_facts,
     painted_tile, trusted_tile_click, wait_counter)
 from youtube_player_native import native_app_identity, native_app_identity_alive
@@ -202,7 +203,7 @@ def initial_report():
 
 
 def run(args):
-    report = initial_report(); device = wm = None; root = None; client = None
+    report = initial_report(); device = wm = None; root = None; client = None; identity = None
     fixture = Fixture(); close_attempted = False; identifier = None; tab = None; origin = None
     out = Path(args.out).resolve(); out.mkdir(parents=True, exist_ok=False)
     started = time.monotonic(); work_deadline = started + 240
@@ -405,6 +406,21 @@ def run(args):
     finally:
         # Preserve the reached phase even if setup fails before the first click.
         report['fixture_counters_final'] = fixture.counts()
+        # Санитизированные native-факты ДО cleanup: app-N.log + profil/cef.log
+        # (engine stderr, cef_dvizhok.rs:272). Только allowlisted префиксы.
+        if device is not None:
+            try:
+                report['startup_facts'] = collect_startup_facts(device, 'downloads')
+            except Exception:
+                report['startup_facts'] = {'error': 'collect_failed'}
+            if not report.get('completed') and client is not None and identity is not None:
+                try:
+                    def _identity_ok():
+                        return native_app_identity_alive(device, identity)
+                    _identity_ok.identity = identity
+                    report['owned_failure_capture'] = owned_failure_screenshot(device, out, _identity_ok)
+                except Exception:
+                    report['owned_failure_capture'] = {'saved': False, 'reason': 'capture_failed'}
         if client is not None and identifier is not None and origin is not None:
             try:
                 current = rows(client, identifier, timeout=3)
