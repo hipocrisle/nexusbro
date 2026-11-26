@@ -4,8 +4,8 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
-    "build_run": 45815639753,
+    "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
+    "build_run": 45817692476,
     "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending",
@@ -41,8 +41,8 @@
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
-    "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
-    "build_run": 45815639753
+    "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
+    "build_run": 45817692476
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -247,8 +247,8 @@
   "page_save": {
     "implemented": true,
     "native_acceptance": false,
-    "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
-    "build_run": 45815639753,
+    "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
+    "build_run": 45817692476,
     "required": [
       "real_ctrl_s_native_dialog",
       "cancel_dialog",
@@ -273,6 +273,17 @@
       "build_run": 45814785978,
       "status": "cancelled_by_root_before_compilation",
       "reason": "preemptively fixed invalid borrowed HashMap lookup in native save parent, plus hidden-consent reader fix",
+      "accepted_for_current_source": false
+    },
+    {
+      "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
+      "build_run": 45815639753,
+      "status": "linux_unit_test_failed_windows_cancelled_by_root",
+      "compiled_linux": true,
+      "page_save_unit_tests_passed": 10,
+      "page_save_unit_tests_failed": 1,
+      "failure": "test expected18 but fixed literalactual19 bytes; corrected7c08ed3",
+      "native_page_save_executed": false,
       "accepted_for_current_source": false
     }
   ]
