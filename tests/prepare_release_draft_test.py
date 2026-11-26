@@ -2,9 +2,17 @@
 import pathlib,tempfile,unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from prepare_release_draft import ensure_draft,validate_resource,validate_paired,optional_api
+from prepare_release_draft import ensure_draft,validate_resource,validate_paired,optional_api,validate_native_jobs,NATIVE_REQUIRED
 SOURCE='a'*40
 class Evidence(unittest.TestCase):
+ def test_successful_job_without_new_native_steps_never_accepts(self):
+  jobs=[dict(name=name,status='completed',conclusion='success',steps=[dict(name=title,status='completed',conclusion='success') for title in titles]) for name,titles in NATIVE_REQUIRED.items()]
+  validate_native_jobs(jobs)
+  import copy
+  missing=copy.deepcopy(jobs);missing[0]['steps'].pop(2)
+  with self.assertRaisesRegex(AssertionError,'Mandatory native check'):validate_native_jobs(missing)
+  skipped=copy.deepcopy(jobs);skipped[0]['steps'][2]['conclusion']='skipped'
+  with self.assertRaisesRegex(AssertionError,'Mandatory native check'):validate_native_jobs(skipped)
  def test_missing_or_diagnostic_paired_blocks_release(self):
   good=dict(accepted=True,source=SOURCE,build_run='123',diagnostic_only=False,comparison_valid=True,measurement_valid=True,order=['light','normal','normal','light'],normal_owned_exit_all=True,same_video_quality_decoder=True,raw_report_sha256='d'*64)
   validate_paired(good,SOURCE,'123')

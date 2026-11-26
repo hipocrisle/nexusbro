@@ -860,40 +860,15 @@ jobs:
           path: .dev-check/hibernation-cookie/results.json
           retention-days: 14
 
-      - name: Fetch controlled media for exact Windows package acceptance
-        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
-        uses: actions/download-artifact@v4
-        with:
-          name: youtube-controlled-media
-          path: .dev-check/youtube-media-fixture
-          run-id: ${{ inputs.runtime_build }}
-          github-token: ${{ github.token }}
-      - name: Native Windows media playback lock and normal exit
-        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
-        timeout-minutes: 10
-        shell: pwsh
-        env:
-          NEXUSBRO_TEST_COLD_CEF: '1'
-        run: |
-          python tests/gui/youtube_player_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Preserve Windows media unlock and exit receipts
-        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
-        uses: actions/upload-artifact@v4
-        with:
-          name: youtube-native-player-windows-reuse
-          path: .dev-check/youtube-player/result.json
-          retention-days: 7
-
       - name: Native Windows saved-download open and folder actions
-        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        if: matrix.os == 'windows-latest'
         timeout-minutes: 6
         shell: pwsh
         run: |
           python tests/gui/downloads_windows_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/downloads-windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Upload Windows downloads action evidence
-        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
+        if: always() && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: downloads-windows-verification
@@ -1259,6 +1234,46 @@ jobs:
           path: .dev-check/windows-render/results.json
           if-no-files-found: ignore
           retention-days: 7
+      - name: Fetch controlled media for exact Windows package acceptance
+        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture
+          run-id: ${{ inputs.runtime_build }}
+          github-token: ${{ github.token }}
+      - name: Native Windows media playback lock and normal exit
+        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        timeout-minutes: 10
+        shell: pwsh
+        env:
+          NEXUSBRO_TEST_COLD_CEF: '1'
+        run: |
+          python tests/gui/youtube_player_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Preserve Windows media unlock and exit receipts
+        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-native-player-windows-reuse
+          path: .dev-check/youtube-player/result.json
+          retention-days: 7
+
+      - name: Native Windows saved-download open and folder actions
+        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          python tests/gui/downloads_windows_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/downloads-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows downloads action evidence
+        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloads-windows-verification
+          path: .dev-check/downloads-windows/*.json
+          retention-days: 14
+
       - name: Native Windows per-tab routes and trusted HTTPS
         if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
         timeout-minutes: 10

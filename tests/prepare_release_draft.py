@@ -82,6 +82,19 @@ def validate_paired_report(value, source, build):
     assert min(starts)>=60 and max(starts)<=62 and max(starts)-min(starts)<=2, 'Paired video sections differ'
 
 
+NATIVE_REQUIRED={
+ 'runtime':('Extract installer and check actual Windows screen','Native Windows media playback lock and normal exit','Native Windows saved-download open and folder actions','Native Windows per-tab routes and trusted HTTPS'),
+ 'Native Linux from existing matching binary':('Verify native media and normal owned exit with typed diagnostics','Verify ordinary download status and saved-file actions','Native per-tab routes, isolated profiles and trusted HTTPS','Native encrypted vault, UI lock and two-device sync','Native browser essentials from exact existing binary'),
+}
+def validate_native_jobs(jobs):
+    for name,required in NATIVE_REQUIRED.items():
+        matches=[j for j in jobs if j.get('name')==name]
+        assert len(matches)==1 and matches[0].get('status')=='completed' and matches[0].get('conclusion')=='success', 'Fresh native job incomplete: '+name
+        for title in required:
+            steps=[s for s in matches[0].get('steps',[]) if s.get('name')==title]
+            assert len(steps)==1 and steps[0].get('status')=='completed' and steps[0].get('conclusion')=='success', 'Mandatory native check missing or skipped: '+title
+
+
 def ensure_draft(repo,tag,source,notes,invoke=gh,read=optional_api):
     assert re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo) and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag)
     assert re.fullmatch(r'[0-9a-f]{40}',source) and pathlib.Path(notes).is_file()
@@ -110,6 +123,10 @@ def main():
     metadata=json.loads(gh('run','view',build,'--repo',repo,'--json','status,headSha'))
     assert metadata['status']=='completed' and state['candidate']['source']==metadata['headSha'] and str(state['candidate']['build_run'])==build
     source=metadata['headSha']
+    current=os.environ['GITHUB_RUN_ID'];assert re.fullmatch('[1-9][0-9]*',current)
+    native=json.loads(gh('api',f'repos/{repo}/actions/runs/{current}/jobs?filter=latest&per_page=100'))
+    assert native.get('total_count',101)<=100, 'Native job listing incomplete'
+    validate_native_jobs(native['jobs'])
     validate_paired(state.get('paired_public_measurement',{}),source,build)
     paired_path=pathlib.Path('docs/verification',version,'paired-home-result.json')
     assert paired_path.is_file() and not paired_path.is_symlink() and paired_path.stat().st_size<=1024*1024, 'Raw paired report missing'
