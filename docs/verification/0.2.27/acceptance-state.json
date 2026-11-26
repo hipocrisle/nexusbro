@@ -4,9 +4,9 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
-    "build_run": 45814785978,
-    "status": "queued",
+    "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
+    "build_run": 45815639753,
+    "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending",
     "page_save": "pending_real_native_ctrl_s_menu_and_offline_archive"
@@ -41,8 +41,8 @@
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
-    "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
-    "build_run": 45814785978
+    "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
+    "build_run": 45815639753
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -247,8 +247,8 @@
   "page_save": {
     "implemented": true,
     "native_acceptance": false,
-    "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
-    "build_run": 45814785978,
+    "source": "00ab97554d003b3a4098eca0d7b69a22954f940c",
+    "build_run": 45815639753,
     "required": [
       "real_ctrl_s_native_dialog",
       "cancel_dialog",
@@ -266,6 +266,13 @@
       "windows_failure_stage": "saved_download_test_cleanup",
       "windows_open_and_folder_real_actions_passed": true,
       "windows_download_result_sha256": "347b5af14dd3a3c36b0b24893aed7a72fdf3357bb41d2ebae3261ad4a47abf32",
+      "accepted_for_current_source": false
+    },
+    {
+      "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
+      "build_run": 45814785978,
+      "status": "cancelled_by_root_before_compilation",
+      "reason": "preemptively fixed invalid borrowed HashMap lookup in native save parent, plus hidden-consent reader fix",
       "accepted_for_current_source": false
     }
   ]
