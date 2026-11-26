@@ -47,7 +47,7 @@ def make_state_probe(video_id):
                     if data.get('start') is False and data.get('error') is None:
                         time.sleep(.1)
                         continue
-                    raise Blocked('native_light_' + sidecar_enum(data.get('error')))
+                    raise Blocked('sidecar_failure_' + sidecar_enum(data.get('error')))
                 state = data.get('state')
                 if isinstance(state, dict):
                     return state

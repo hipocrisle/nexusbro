@@ -194,7 +194,7 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
                         state=observed;break
                     time.sleep(.2)
                 except (Blocked,NativeFailure) as error:
-                    if isinstance(error,Blocked) and str(error).startswith('native_light_') and str(error)!='native_light_unavailable':raise
+                    if isinstance(error,Blocked) and str(error).startswith('sidecar_failure_'):raise
                     time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
         else:state=snapshot(mode)
