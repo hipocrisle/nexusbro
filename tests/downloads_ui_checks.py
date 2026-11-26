@@ -26,7 +26,7 @@ checks = {}
 checks['open_action_exists'] = 'if action=="open"' in rs
 checks['open_uses_policy'] = 'crate::downloads_open_policy::check_open_target' in rs
 checks['open_requires_done'] = 'status != "Готово"' in policy
-checks['open_regular_file_only'] = 'is_symlink() || !meta.is_file()' in policy
+checks['open_regular_file_only'] = 'is_symlink()' in policy and '!meta.is_file()' in policy and 'symlink_metadata(path)' in policy
 checks['open_blocklist_present'] = '"exe"' in policy and '"hta"' in policy and 'DANGEROUS' in policy
 checks['open_absolute_canonical'] = 'is_absolute()' in policy and 'canonicalize' in policy
 checks['open_trailing_ads_guard'] = "ends_with('.')" in policy and "contains(':')" in policy

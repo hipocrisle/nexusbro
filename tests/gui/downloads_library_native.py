@@ -174,9 +174,12 @@ def run(args):
         else:
             raise Blocked('downloads_tab_not_live')
         report['stage'] = 'downloads-start'
-        # Реальные скачивания через обычную навигацию на attachment-ссылки.
-        for anchor in ('#doc', '#known', '#unknown'):
-            click_control(client, anchor, remaining(10))
+        # Реальные скачивания: обычная нативная команда Pereyti на attachment URL
+        # в том же CEF-табе (DOM оболочки не содержит этих ссылок — клики по ней
+        # были бы ложными). Никакого synthetic download state.
+        for path in ('/note.txt', '/file-known.bin', '/file-unknown.bin'):
+            call(client, 'obychnaya_komanda', id=identifier,
+                 komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + path})
             time.sleep(.3)
         report['stage'] = 'progress-observation'
         active_known = wait_download(client, 'file-known.bin',
@@ -198,19 +201,28 @@ def run(args):
                 lambda d: d['status'] == 'Готово' and (download_dir / name).is_file(),
                 f'{name} did not complete with a real file', remaining(60))
             require((download_dir / name).stat().st_size > 0, f'{name} file empty')
+        require((download_dir / 'note.txt').stat().st_size == 5, 'note.txt size mismatch')
+        require((download_dir / 'file-known.bin').stat().st_size == KNOWN_TOTAL, 'known size mismatch')
+        require((download_dir / 'file-unknown.bin').stat().st_size == KNOWN_TOTAL, 'unknown size mismatch')
         report['checks'].append('real_files_completed')
         report['stage'] = 'library-ui'
         ctrl_j(client, device)
         js_ok = wait_for(lambda: client.js('!!document.querySelector(".library-panel .download-row")'),
                          'Downloads library did not open via Ctrl+J', remaining(15))
         require(js_ok, 'library_missing')
+        require(client.js('document.querySelector(".library-panel")?.matches(":focus-within")||document.activeElement?.closest(".library-panel")!==null') is True,
+                'Library panel did not take real focus')
         require(client.js('!!Array.from(document.querySelectorAll(".download-actions button")).find(b=>b.textContent.trim()==="Открыть файл")'),
                 'Open file button missing for finished download')
         require(client.js('!!Array.from(document.querySelectorAll(".download-actions button")).find(b=>b.textContent.trim()==="Показать в папке")'),
                 'Folder button missing for finished download')
         report['checks'].append('library_rows_and_actions_real')
         report['stage'] = 'open-file-shim'
-        click_control(client, '.download-actions .download-primary', remaining(10))
+        # Точно статья note.txt: первая .download-primary может быть у .bin
+        # (заблокированного политикой) — клик только по нужной записи.
+        targeted = client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=a?.querySelector(".download-actions .download-primary");if(!b)return false;b.setAttribute("data-nb-open-target","1");return true})()')
+        require(targeted is True, 'note.txt open button not found')
+        click_control(client, '[data-nb-open-target="1"]', remaining(10))
         deadline = time.monotonic() + remaining(10); opened = None
         while time.monotonic() < deadline:
             if receipt.is_file() and receipt.read_text().strip():
@@ -221,13 +233,28 @@ def run(args):
         report['checks'].append('open_file_uses_saved_safe_path')
         report['stage'] = 'record-removal'
         before = (download_dir / 'note.txt').is_file()
-        client.js('Array.from(document.querySelectorAll(".download-actions button")).find(b=>b.textContent.includes("Убрать из списка"))?.click();true')
+        targeted = client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=Array.from(a?.querySelectorAll(".download-actions button")||[]).find(x=>x.textContent.includes("Убрать из списка"));if(!b)return false;b.setAttribute("data-nb-remove-target","1");return true})()')
+        require(targeted is True, 'note.txt remove button not found')
+        click_control(client, '[data-nb-remove-target="1"]', remaining(10))
         wait_for(lambda: not any(d['name'] == 'note.txt' for d in downloads(client, None)),
                  'Record removal did not update the list', remaining(15))
         require(before and (download_dir / 'note.txt').is_file(), 'Record removal deleted the file')
         report['checks'].append('record_removal_keeps_file')
         report['stage'] = 'isolation'
-        require(not client.js('Array.from(document.querySelectorAll(".library-list article")).some(a=>a.textContent.includes("file-known"))') is None, 'library state unreadable')
+        # Реальное переключение разделов библиотеки: закладки/история не должны
+        # содержать записей загрузок, а раздел загрузок — вернуться к своим.
+        for section, label in (('zakladki', 'Закладки'), ('istoriya', 'История')):
+            clicked = client.js('(()=>{const b=Array.from(document.querySelectorAll(".library-panel nav button")).find(x=>x.textContent.trim()===' + json.dumps(label) + ');if(!b)return false;b.click();return true})()')
+            require(clicked is True, f'library section {label} unavailable')
+            wait_for(lambda: client.js('!document.querySelector(".library-list")?.getAttribute("aria-busy")||document.querySelector(".library-list")?.getAttribute("aria-busy")==="false"'),
+                     f'{label} section did not settle', remaining(10))
+            leaked = client.js('Array.from(document.querySelectorAll(".library-list article")).some(a=>a.textContent.includes("file-known.bin")||a.textContent.includes("file-unknown.bin"))')
+            require(leaked is not True, f'download records leaked into {label}')
+        back = client.js('(()=>{const b=Array.from(document.querySelectorAll(".library-panel nav button")).find(x=>x.textContent.trim()==="Загрузки");if(!b)return false;b.click();return true})()')
+        require(back is True, 'downloads section unavailable')
+        wait_for(lambda: client.js('Array.from(document.querySelectorAll(".library-list article")).some(a=>a.textContent.includes("file-known.bin"))'),
+                 'Downloads section did not restore its own records', remaining(10))
+        report['checks'].append('sections_isolated_real')
         report['stage'] = 'normal-owned-exit'; close_attempted = True
         close_for_privacy(client, device, report)
         report['completed'] = True; report['stage'] = 'complete'
