@@ -63,6 +63,7 @@ def make_state_probe(video_id):
 class BenchmarkDevice(SandboxedDevice):
     def __init__(self, root, exe, cef):
         super().__init__('paired-local',root,exe,cef)
+        self.root.chmod(0o700)
         self.data.chmod(0o700)
         marker=self.data/'.youtube-benchmark-opt-in'
         with marker.open('xb') as stream:stream.write(b'nexusbro-local-youtube-benchmark-v1\n')

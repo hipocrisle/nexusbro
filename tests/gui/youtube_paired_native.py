@@ -159,7 +159,7 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
     # below preserves the existing GHA behavior (temp root, stock
     # Device/OwnedWindowManager, close_for_privacy, shared probe()).
     root=(Path(private_parent)/('arm-'+str(index))) if private_parent else Path(tempfile.mkdtemp(prefix='nb-player-'))
-    if private_parent:root.mkdir(parents=True,exist_ok=False)
+    if private_parent:root.mkdir(parents=True,mode=0o700,exist_ok=False)
     device=wm=sampler=None;result={'index':index,'mode':mode,'stage':'startup'}
     started=time.monotonic()
     try:
