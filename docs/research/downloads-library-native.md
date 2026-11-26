@@ -81,3 +81,34 @@ status из allowlist, ограниченные скаляры received/total/pe
 съём sanitize-снимка и typed-кодов — все PASS (tests/downloads_library_contract_test.py).
 Какая именно ветка сработала в 45787393628 (таймаут known vs отсутствие записи) станет
 видно по typed-коду следующего прогона; app-bug не угадывается.
+
+
+## Trusted page click (26.11, после 45791564388: doc_complete_timeout/0 записей)
+
+Прежний прогон: pereyti на attachment не создал запись загрузки вообще (count=0).
+Гипотеза user-gesture/route НЕ объявляется доказанной причиной; следующий прогон
+проверяет РЕАЛЬНЫЙ пользовательский flow:
+
+- Плитки fixture: три раздельные области фиксированных координат с уникальным
+  RGB (#c02020/#20c020/#2020c0) на фоне #123456; центры (140,80)/(140,200)/(140,320).
+- Проверяемая gesture: ОДИН настоящий OS-клик (xdotool) по плитке в owned CEF-
+  регионе: реальный OS-paint пикселя перед кликом (точное попадание цвета),
+  owner PID/birth/окно перепроверяются, foreground возвращается. Никаких
+  JS anchor.click/CEF-скриптов/выдуманных rect/native callbacks. Клик не
+  повторяется; API-retry постфактум нет.
+- Доказательство ветки: threadsafe-счётчики fixture (page/doc/known/unknown GET)
+  обязаны вырасти после клика (http_branch_reached); typed tab facts до/после
+  (browser_positive/route_pending/route_error_present/zagruzka/url_kind только
+  по 4 известным URL — без raw url/path).
+- Tab-live ждёт browser_id>0 И !zagruzka И !route_pending + факт page GET.
+- Setup-навигация страницы — штатный seed (IPC допустим для setup); проверяемая
+  download-gesture — только trusted. Attachment не заменяет документ — плитки
+  остаются кликабельными для следующих загрузок (сериализация сохранена).
+- Отчёт: observed_at_utc через datetime.now(timezone.utc); kind/status/bytes
+  только safe-поля; openShim по note.txt остаётся честной delegation-проверкой.
+
+Offline-проверки (без GUI, не string-assert): реальный localhost-прогон —
+счётчики растут по каждому GET, плитки в HTML; чистая математика точек
+(scale/rounding), color-match позитив/негатив, url_kind mapping, tab_facts
+typed; отсутствие pereyti-загрузок в исходнике; wiring trusted_download ×3;
+требование http_branch_reached. Все PASS (+ policy 10/10).
