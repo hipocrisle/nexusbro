@@ -234,6 +234,7 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         # Sampler.sample is synchronous here; avoid a competing unrefreshed
         # thread. Persist only its existing safe OS-metrics record format.
         sampler.destination.write_text(''.join(json.dumps(v)+'\n' for v in samples));result['metrics']=metrics(samples,video,args);result['route_generation']=route_generation
+        result['first_video_state']=video[0];result['last_video_state']=video[-1];result['measurement_samples']=len(samples)
         if decode_state(snapshot('decode'))!=decode:raise Blocked('decoder_changed')
         (close_owned or close_for_privacy)(client,device,result)
         result['stage']='complete';return result
