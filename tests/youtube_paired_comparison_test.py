@@ -8,7 +8,7 @@ class Comparison(unittest.TestCase):
  def report(self):
   arms=[]
   for mode in ORDER:
-   arms.append(dict(mode=mode,stage='complete',cleanup_completed=True,owned_exit={'parent_normal_exit':True,'all_known_native_executions_exited':True},decode={'codec':'vp9','decoder':'vpx','decode_mode':'software'},audio_policy_proven=True,audio_policy={'volume':1,'muted':False,'default_sink':True},metrics={'measurement_start_position':31,'cpu_core_percent':10,'peak_private_bytes':100,'peak_rss_bytes':140,'dropped_ratio':0,'observed_fps':30}))
+   arms.append(dict(mode=mode,stage='complete',cleanup_completed=True,owned_exit={'parent_normal_exit':True,'all_known_native_executions_exited':True},decode={'codec':'vp9','decoder':'vpx','decode_mode':'software'},audio_policy_proven=True,audio_policy={'volume':1,'muted':False,'default_sink':True},metrics={'measurement_start_position':60.25,'cpu_core_percent':10,'peak_private_bytes':100,'peak_rss_bytes':140,'dropped_ratio':0,'observed_fps':30}))
   return {'provenance':{},'arms':arms}
  def test_complete_comparison_can_accept_without_improvement(self):
   r=self.report();summarize_comparison(r,SimpleNamespace(expected_fps=30))

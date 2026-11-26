@@ -154,6 +154,46 @@ def metrics(samples,video,args):
                 measurement_start_position=video[0]['position'],measurement_end_position=video[-1]['position'],peak_processes=max(r['owned']['processes'] for r in samples),observed_fps=fps,dropped_ratio=drops/frames,measurement_seconds=elapsed,media_seconds=media)
 
 
+MEASUREMENT_START_POSITION=60
+MIN_STABLE_WARMUP_SECONDS=30
+WARMUP_MAX_SECONDS=90
+
+def warmup_to_segment(snapshot,args,result,*,clock=time.monotonic,sleep=time.sleep):
+    """One predeclared segment; no seeking, user actions, retries or best-arm selection."""
+    began=clock();stable_wall=began;stable_position=None;previous=None;previous_wall=None
+    events=[];buffer_start=None
+    while True:
+        state=snapshot();now=clock();video_state(state,args)
+        result['last_player_state']={k:v for k,v in state.items() if k in ('position','duration','decoded','dropped','playing','video_width','video_height','audio_position','audio_paused','video_paused','hidden')}
+        result['warmup_wall_seconds']=now-began;result['warmup_buffer_events']=events
+        if now-began>WARMUP_MAX_SECONDS:raise Blocked('warmup_deadline')
+        playing=state.get('playing') is True
+        if previous is not None and playing and previous.get('playing') is True:
+            delta=state['position']-previous['position'];elapsed=now-previous_wall
+            if delta<0 or delta>elapsed+1:raise Blocked('warmup_clock_discontinuity')
+            if delta<=0:playing=False
+        if not playing:
+            stable_wall=None;stable_position=None
+            if buffer_start is None:
+                buffer_start=now
+                events.append({'position':state['position'],'elapsed_seconds':now-began,'duration_seconds':0,'resumed_without_input':False})
+                if len(events)>64:raise Blocked('warmup_event_bound')
+            events[-1]['duration_seconds']=now-buffer_start
+        else:
+            if buffer_start is not None:
+                events[-1]['duration_seconds']=now-buffer_start;events[-1]['resumed_without_input']=True;buffer_start=None
+            if stable_wall is None:stable_wall=now;stable_position=state['position']
+            elif stable_position is None:stable_position=state['position']
+        if state['position']>=MEASUREMENT_START_POSITION:
+            if state['position']>MEASUREMENT_START_POSITION+.5:raise Blocked('fixed_segment_start_missed')
+            if not playing or stable_wall is None or now-stable_wall<MIN_STABLE_WARMUP_SECONDS or state['position']-stable_position<MIN_STABLE_WARMUP_SECONDS:raise Blocked('continuous_warmup_incomplete_at_fixed_segment')
+            result['warmup_continuous_seconds']=now-stable_wall
+            result['warmup_continuous_media_seconds']=state['position']-stable_position
+            return state
+        previous=state;previous_wall=now
+        sleep(.1 if state['position']>=58 else .5)
+
+
 def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private_parent=None,window_manager_factory=None,state_probe=None):
     # Optional dependency injection for the local Home entry: every default
     # below preserves the existing GHA behavior (temp root, stock
@@ -227,12 +267,9 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
                 if current.get('playing') and current.get('position',0)>value.get('position',0)+1:
                     result['resumed_without_input']=True;break
             raise Blocked('public_playback_stalled')
-        result['stage']='warmup';warm=time.monotonic()
-        while time.monotonic()-warm<30:
-            state=snapshot(mode);video_state(state,args)
-            result['last_player_state']=playback_observation(state)
-            if not state.get('playing'):stalled(state)
-            time.sleep(min(5,max(0,30-(time.monotonic()-warm))))
+        result['stage']='warmup'
+        warmup_to_segment(lambda:snapshot(mode),args,result)
+        result['preparation_wall_seconds']=time.monotonic()-started
         result['stage']='measurement';sampler=Sampler(device.app.pid,out/('arm-'+str(index)+'-samples.jsonl'),args.memory_cap_mib*1024*1024);sampler.started=time.monotonic()
         samples=[];video=[];stable_identities=None;route_generation=None;began=time.monotonic()
         for step in range(19):
@@ -287,7 +324,7 @@ def summarize_comparison(report,args):
     decoders=[a['decode'] for a in report['arms']]
     if any(d!=decoders[0] for d in decoders):raise Blocked('codec_or_software_decoder_mismatch')
     starts=[a['metrics']['measurement_start_position'] for a in report['arms']]
-    if min(starts)<30 or max(starts)-min(starts)>2:raise Blocked('same_content_playback_segment_unproven')
+    if min(starts)<MEASUREMENT_START_POSITION or max(starts)>MEASUREMENT_START_POSITION+2 or max(starts)-min(starts)>2:raise Blocked('same_content_playback_segment_unproven')
     observed=[a['metrics']['observed_fps'] for a in report['arms']]
     if max(observed)-min(observed)>max(1,args.expected_fps*.05):raise Blocked('paired_observed_fps_mismatch')
     grouped={mode:[a['metrics'] for a in report['arms'] if a['mode']==mode] for mode in ('light','normal')}
@@ -312,7 +349,7 @@ def run(args):
     if manifest.is_symlink() or not manifest.is_file() or manifest.stat().st_size>131072:raise Blocked('component_manifest_input_invalid')
     manifest_sha=digest(manifest)
     exe=Path(args.exe).resolve();cef=Path(args.cef).resolve()/('libcef.dll' if sys.platform=='win32' else 'libcef.so')
-    provenance={'component_manifest_input_sha256':manifest_sha,'exe_sha256':digest(exe),'cef_sha256':digest(cef),'system':platform.system(),'machine':platform.machine(),'logical_cpus':psutil.cpu_count(),'video_id':args.video_id,'route_mode':'proxy' if proxy else 'direct','hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'normal_guard_scope':'observed_ad_markers_and_public_player_id_not_universal_ad_proof','order':list(ORDER),'warmup_seconds':30,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'windows_private_commit' if sys.platform=='win32' else 'linux_uss'}
+    provenance={'component_manifest_input_sha256':manifest_sha,'exe_sha256':digest(exe),'cef_sha256':digest(cef),'system':platform.system(),'machine':platform.machine(),'logical_cpus':psutil.cpu_count(),'video_id':args.video_id,'route_mode':'proxy' if proxy else 'direct','hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'normal_guard_scope':'observed_ad_markers_and_public_player_id_not_universal_ad_proof','order':list(ORDER),'warmup_seconds':30,'min_continuous_stable_seconds':30,'warmup_max_elapsed_seconds':90,'measurement_start_content_position':60,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'windows_private_commit' if sys.platform=='win32' else 'linux_uss'}
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'provenance':provenance,'arms':[]}
     try:
         for index,mode in enumerate(ORDER):

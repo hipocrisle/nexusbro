@@ -50,6 +50,7 @@ def validate_paired_report(value, source, build):
     provenance=value.get('provenance',{})
     assert provenance.get('order')==['light','normal','normal','light'] and provenance.get('video_id')=='M7lc1UVf-VE', 'Wrong paired protocol'
     assert provenance.get('warmup_seconds')==30 and provenance.get('measurement_seconds')==90 and provenance.get('sample_period_seconds')==5, 'Paired windows shortened'
+    assert provenance.get('min_continuous_stable_seconds')==30 and provenance.get('warmup_max_elapsed_seconds')==90 and provenance.get('measurement_start_content_position')==60, 'Fixed segment warmup protocol missing'
     assert provenance.get('audio_output_policy_match_proven') is True, 'Paired audio policy unknown'
     assert re.fullmatch('[0-9a-f]{64}',provenance.get('exe_sha256','')), 'Paired binary digest missing'
     assert provenance.get('expected_width')==1280 and provenance.get('expected_height')==720, 'Paired quality differs from declared 720p protocol'
@@ -60,6 +61,8 @@ def validate_paired_report(value, source, build):
     decoder=arms[0].get('decode');assert isinstance(decoder,dict) and decoder.get('decode_mode')=='software' and decoder.get('platform_decoder') is False, 'Paired decoder unknown'
     starts=[]
     for arm in arms:
+        assert arm.get('warmup_continuous_seconds',0)>=30 and arm.get('warmup_continuous_media_seconds',0)>=30 and 30<=arm.get('warmup_wall_seconds',0)<=90, 'Continuous warmup incomplete'
+        assert type(arm.get('preparation_wall_seconds')) in (int,float) and math.isfinite(arm['preparation_wall_seconds']) and arm['preparation_wall_seconds']>=arm['warmup_wall_seconds'], 'Preparation cost omitted'
         assert arm.get('stage')=='complete' and arm.get('cleanup_completed') is True and arm.get('decode')==decoder, 'Paired arm incomplete or decoder mismatch'
         exit=arm.get('owned_exit',{})
         assert exit.get('parent_normal_exit') is True and exit.get('all_known_native_executions_exited') is True, 'Paired exit incomplete'
@@ -76,7 +79,7 @@ def validate_paired_report(value, source, build):
             assert type(snapshot.get('duration')) in (int,float) and math.isfinite(snapshot['duration']) and abs(snapshot['duration']-duration)<=2, 'Actual paired duration mismatch'
         assert last.get('decoded',0)>first.get('decoded',0) and last.get('position',0)-first.get('position',0)>=89, 'Paired frame/clock advancement missing'
         starts.append(metrics['measurement_start_position'])
-    assert min(starts)>=30 and max(starts)-min(starts)<=2, 'Paired video sections differ'
+    assert min(starts)>=60 and max(starts)<=62 and max(starts)-min(starts)<=2, 'Paired video sections differ'
 
 
 def ensure_draft(repo,tag,source,notes,invoke=gh,read=optional_api):
