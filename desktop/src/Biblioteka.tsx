@@ -14,7 +14,7 @@ function fmtBytes(n:number){if(!Number.isFinite(n)||n<0)return '—';if(n<1024)r
 function downloadLabel(status:string){switch(status){case 'Прервана':return 'Прервана при закрытии';case 'Ошибка':return 'Ошибка загрузки';default:return status;}}
 function downloadMeta(d:Download){
  if(d.status==='Загружается'||d.status==='Приостановлена'){
-  const parts=[fmtBytes(d.received)];
+  const parts=[downloadLabel(d.status),fmtBytes(d.received)];
   if(d.total>0)parts.push(`из ${fmtBytes(d.total)}`);
   if(d.total>0&&d.percent>=0)parts.push(`${d.percent}%`);
   if(d.status==='Загружается'&&d.speed>0)parts.push(`${fmtBytes(d.speed)}/с`);
