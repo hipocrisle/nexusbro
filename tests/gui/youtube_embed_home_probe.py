@@ -155,6 +155,7 @@ class SandboxedDevice(Device):
                 except OSError:
                     pass
             raise
+        runtime=self.root/'runtime';runtime.mkdir(mode=0o700,exist_ok=True);runtime.chmod(0o700)
         self.launches += 1
         # Same environment as the shared Device.start EXCEPT the GHA-only
         # WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS=1 override, which must not
@@ -163,6 +164,7 @@ class SandboxedDevice(Device):
                'LD_LIBRARY_PATH': os.pathsep.join((str(self.cef), str(self.cef.parent / 'tools/usr/lib/x86_64-linux-gnu'), str(self.cef.parent / 'tools/usr/lib/x86_64-linux-gnu/openbox'))), 'NEXUSBRO_TEST_DATA': str(self.data),
                'NEXUSBRO_PROBA': '0',
                'WEBKIT_INSPECTOR_HTTP_SERVER': '127.0.0.1:' + str(self.inspector),
+               'XDG_RUNTIME_DIR':str(runtime),'GTK_USE_PORTAL':'0','GIO_USE_VFS':'local',
                'XDG_CONFIG_HOME': str(self.root / 'config'),
                'XDG_DATA_HOME': str(self.root / 'xdg-data'),
                'XDG_CACHE_HOME': str(self.root / 'cache'),
