@@ -184,8 +184,18 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
             call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_light','id':tab})
             deadline=time.monotonic()+60;state=None
             while time.monotonic()<deadline:
-                try:state=snapshot(mode);break
-                except (Blocked,NativeFailure):time.sleep(.5)
+                try:
+                    observed=snapshot(mode)
+                    result['admission_video_state']={k:v for k,v in observed.items() if k in ('configured','playing','position','duration','decoded','dropped','video_width','video_height','volume','muted','default_sink') and (type(v) is bool or type(v) in (int,float) and math.isfinite(v))}
+                    # The shipped document can answer before media metadata is
+                    # ready. Observe the SAME extraction; never start another.
+                    duration=observed.get('duration')
+                    if observed.get('configured') is True and type(duration) in (int,float) and math.isfinite(duration) and duration>0:
+                        state=observed;break
+                    time.sleep(.2)
+                except (Blocked,NativeFailure) as error:
+                    if isinstance(error,Blocked) and str(error).startswith('native_light_') and str(error)!='native_light_unavailable':raise
+                    time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
         else:state=snapshot(mode)
         video_state(state,args,require_audio=False)
