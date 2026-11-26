@@ -144,6 +144,7 @@ struct Evidence {
 struct Player {
     id: Zeroizing<String>,
     node: Option<i64>,
+    destroyed: bool,
     decoder_unknown: bool,
     codec: Option<Codec>,
     decoder: Option<Decoder>,
@@ -163,6 +164,7 @@ struct State {
     final_described: bool,
     final_node: Option<i64>,
     players: Vec<Player>,
+    destroyed_total: u8,
 }
 impl State {
     fn player(&mut self, id: &str) -> Result<&mut Player, &'static str> {
@@ -173,11 +175,18 @@ impl State {
             return Ok(&mut self.players[index]);
         }
         if self.players.len() >= 4 {
-            return Err("decode_players_bound");
+            // Authoritatively destroyed players (kWebMediaPlayerDestroyed) no
+            // longer occupy live slots; historical evidence stays counted in
+            // destroyed_total.
+            self.players.retain(|p| !p.destroyed);
+            if self.players.len() >= 4 {
+                return Err("decode_players_bound");
+            }
         }
         self.players.push(Player {
             id: Zeroizing::new(id.to_owned()),
             node: None,
+            destroyed: false,
             decoder_unknown: false,
             codec: None,
             decoder: None,
@@ -185,6 +194,16 @@ impl State {
             tracks: None,
         });
         Ok(self.players.last_mut().unwrap())
+    }
+    fn ambiguity(&self) -> bool {
+        let Some(node) = self.node else {
+            return false;
+        };
+        self.players
+            .iter()
+            .filter(|p| p.node == Some(node) && !p.destroyed)
+            .count()
+            > 1
     }
     fn event(&mut self, method: &str, bytes: &[u8]) -> Result<(), &'static str> {
         let tree = parse(bytes)?;
@@ -202,6 +221,32 @@ impl State {
                     return Err("decode_node_changed");
                 }
                 p.node = Some(node);
+            }
+        } else if method == "Media.playerEventsAdded" {
+            let id = value["playerId"].as_str().ok_or("decode_player_invalid")?;
+            let events = value["events"]
+                .as_array()
+                .filter(|a| a.len() <= 64)
+                .ok_or("decode_events_bound")?;
+            let mut mark = false;
+            {
+                let p = self.player(id)?;
+                for event in events {
+                    let kind = event["type"]
+                        .as_str()
+                        .filter(|t| t.len() <= 64)
+                        .ok_or("decode_event_invalid")?;
+                    // Only the authoritative terminal lifecycle event is
+                    // consumed (media_log_events.h: no events can come after
+                    // it). All other types/values are ignored without copying.
+                    if kind == "kWebMediaPlayerDestroyed" && !p.destroyed {
+                        p.destroyed = true;
+                        mark = true;
+                    }
+                }
+            }
+            if mark {
+                self.destroyed_total = self.destroyed_total.saturating_add(1);
             }
         } else if method == "Media.playerPropertiesChanged" {
             let id = value["playerId"].as_str().ok_or("decode_player_invalid")?;
@@ -301,10 +346,15 @@ impl State {
         let candidates: Vec<_> = self
             .players
             .iter()
-            .filter(|p| p.node == Some(node))
+            .filter(|p| p.node == Some(node) && !p.destroyed)
             .collect();
         if candidates.len() > 1 {
-            return Err("decode_pipeline_ambiguous");
+            // A quality switch recreates the player on the same DOM node; the
+            // old one is authoritatively destroyed via Media.playerEventsAdded
+            // (possibly still in flight after the enable() history replay).
+            // Wait bounded by the probe deadline instead of failing instantly;
+            // poll converts a persistent ambiguity into the typed refusal.
+            return Ok(None);
         }
         let Some(p) = candidates.first() else {
             return Ok(None);
@@ -396,7 +446,7 @@ wrap_dev_tools_message_observer! {
    if let Err(code)=parsed{state.error=Some(code);}
   }
   fn on_dev_tools_event(&self,browser:Option<&mut Browser>,method:Option<&CefString>,params:Option<&[u8]>){
-   let Some(method)=method.map(|m|m.to_string()).filter(|m|matches!(m.as_str(),"Media.playerCreated"|"Media.playerPropertiesChanged"))else{return};
+   let Some(method)=method.map(|m|m.to_string()).filter(|m|matches!(m.as_str(),"Media.playerCreated"|"Media.playerPropertiesChanged"|"Media.playerEventsAdded"))else{return};
    let valid=browser.is_some_and(|b|admitted(b,self.identity,&self.frame_id,&self.document,&self.expected));
    let Ok(mut state)=self.state.lock()else{return};if state.done{return;}
    if !valid{state.error=Some("decode_document_changed");return;}
@@ -425,8 +475,7 @@ pub struct Probe {
 }
 impl Probe {
     pub fn start(browser: &Browser, expected: &VideoId) -> Result<Self, &'static str> {
-        if !crate::youtube_benchmark_fixture::allowed()
-        {
+        if !crate::youtube_benchmark_fixture::allowed() {
             return Err("decode_fixture_only");
         }
         if currently_on(ThreadId::UI) == 0 {
@@ -508,7 +557,12 @@ impl Probe {
             return self.finish(Err("decode_document_changed"));
         }
         if self.started.elapsed() >= DEADLINE {
-            return self.finish(Err("decode_timeout"));
+            let ambiguous = self.state.lock().map(|s| s.ambiguity()).unwrap_or(false);
+            return self.finish(Err(if ambiguous {
+                "decode_pipeline_ambiguous"
+            } else {
+                "decode_timeout"
+            }));
         }
         let mut object = None;
         let mut final_evaluate = false;
@@ -584,6 +638,32 @@ impl Probe {
             }
         }
         None
+    }
+    /// Safe typed refusal diagnostics for the owner: counts and bools only,
+    /// never player ids, event strings, URLs, or page data.
+    pub fn diagnostic(&self) -> Value {
+        let Ok(state) = self.state.lock() else {
+            return json!({"stage":"state_unavailable"});
+        };
+        let live = state
+            .node
+            .map(|node| {
+                state
+                    .players
+                    .iter()
+                    .filter(|p| p.node == Some(node) && !p.destroyed)
+                    .count()
+            })
+            .unwrap_or(0);
+        json!({
+            "players_total": state.players.len(),
+            "live_for_node": live,
+            "destroyed_known": state.destroyed_total,
+            "node_known": state.node.is_some(),
+            "enabled": state.enabled,
+            "final_started": state.final_started,
+            "consumed": self.consumed,
+        })
     }
     fn finish(&mut self, result: Reply) -> Option<Reply> {
         self.consumed = true;
@@ -736,7 +816,10 @@ mod tests {
             json!({"player":{"playerId":"second","domNodeId":5}}),
         )
         .unwrap();
-        assert!(s.evidence().is_err());
+        // Two LIVE players on the same node: bounded wait (Ok(None)) with the
+        // ambiguity flag set; the typed refusal happens at the probe deadline.
+        assert!(s.evidence().unwrap().is_none());
+        assert!(s.ambiguity());
         for n in 2..4 {
             event(
                 &mut s,
@@ -777,5 +860,104 @@ mod tests {
         drop(first);
         assert!(Lease::take(995).is_ok());
         drop((second, third, fourth));
+    }
+    fn destroyed_event(state: &mut State, id: &str) -> Result<(), &'static str> {
+        event(
+            state,
+            "Media.playerEventsAdded",
+            json!({"playerId":id,"events":[{"type":"kPause","timestamp":1.0},{"type":"kWebMediaPlayerDestroyed","timestamp":2.0}]}),
+        )
+    }
+    #[test]
+    fn destroyed_player_is_excluded_and_live_one_wins() {
+        let mut s = software();
+        event(
+            &mut s,
+            "Media.playerCreated",
+            json!({"player":{"playerId":"old","domNodeId":5}}),
+        )
+        .unwrap();
+        assert!(s.evidence().unwrap().is_none());
+        assert!(s.ambiguity());
+        destroyed_event(&mut s, "old").unwrap();
+        assert_eq!(s.destroyed_total, 1);
+        assert!(!s.ambiguity());
+        let result = s.evidence().unwrap().unwrap();
+        assert_eq!(result["decode_mode"], "software");
+        assert_eq!(result["video_pipelines"], 1);
+    }
+    #[test]
+    fn destroyed_is_sticky_and_terminal() {
+        let mut s = software();
+        destroyed_event(&mut s, "opaque").unwrap();
+        assert!(s.players[0].destroyed);
+        // Properties after the terminal event never resurrect the player.
+        event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"opaque","properties":[{"name":"kVideoDecoderName","value":"VpxVideoDecoder"}]})).unwrap();
+        assert!(s.players[0].destroyed);
+        assert!(s.evidence().unwrap().is_none());
+        // Replayed duplicate destroyed events are counted once.
+        destroyed_event(&mut s, "opaque").unwrap();
+        assert_eq!(s.destroyed_total, 1);
+    }
+    #[test]
+    fn player_events_bounds_and_unknown_types() {
+        let mut s = software();
+        assert!(event(
+            &mut s,
+            "Media.playerEventsAdded",
+            json!({"playerId":"opaque","events":(0..65).map(|_|json!({"type":"kPause"})).collect::<Vec<_>>()})
+        )
+        .is_err());
+        assert!(event(
+            &mut s,
+            "Media.playerEventsAdded",
+            json!({"playerId":"opaque","events":[{"type":"x".repeat(65)}]})
+        )
+        .is_err());
+        assert!(event(
+            &mut s,
+            "Media.playerEventsAdded",
+            json!({"playerId":"opaque","events":[{"type":"kSomeFutureEvent","timestamp":1.0}]})
+        )
+        .is_ok());
+        assert!(!s.players[0].destroyed);
+        assert_eq!(s.destroyed_total, 0);
+    }
+    #[test]
+    fn destroyed_players_free_live_slots() {
+        let mut s = software();
+        for n in 0..3 {
+            event(
+                &mut s,
+                "Media.playerCreated",
+                json!({"player":{"playerId":format!("d{n}"),"domNodeId":50+n}}),
+            )
+            .unwrap();
+            destroyed_event(&mut s, &format!("d{n}")).unwrap();
+        }
+        // 4 entries exist but 3 are destroyed: a new player must fit.
+        event(
+            &mut s,
+            "Media.playerCreated",
+            json!({"player":{"playerId":"fresh","domNodeId":60}}),
+        )
+        .unwrap();
+        assert!(s.players.iter().any(|p| p.id.as_str() == "fresh"));
+        assert_eq!(s.destroyed_total, 3);
+        // Four LIVE players still refuse a fifth (opaque+fresh+l0+l1 = 4).
+        for n in 0..2 {
+            event(
+                &mut s,
+                "Media.playerCreated",
+                json!({"player":{"playerId":format!("l{n}"),"domNodeId":70+n}}),
+            )
+            .unwrap();
+        }
+        assert!(event(
+            &mut s,
+            "Media.playerCreated",
+            json!({"player":{"playerId":"overflow","domNodeId":80}}),
+        )
+        .is_err());
     }
 }
