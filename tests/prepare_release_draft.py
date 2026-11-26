@@ -52,6 +52,9 @@ def validate_paired_report(value, source, build):
     assert provenance.get('warmup_seconds')==30 and provenance.get('measurement_seconds')==90 and provenance.get('sample_period_seconds')==5, 'Paired windows shortened'
     assert provenance.get('audio_output_policy_match_proven') is True, 'Paired audio policy unknown'
     assert re.fullmatch('[0-9a-f]{64}',provenance.get('exe_sha256','')), 'Paired binary digest missing'
+    assert provenance.get('expected_width')==1280 and provenance.get('expected_height')==720, 'Paired quality differs from declared 720p protocol'
+    duration=provenance.get('expected_duration');fps=provenance.get('expected_fps')
+    assert type(duration) in (int,float) and math.isfinite(duration) and duration>=180 and type(fps) in (int,float) and math.isfinite(fps) and 1<=fps<=120, 'Paired media metadata missing'
     arms=value.get('arms',[])
     assert [a.get('mode') for a in arms]==provenance['order'], 'Missing paired arms'
     decoder=arms[0].get('decode');assert isinstance(decoder,dict) and decoder.get('decode_mode')=='software' and decoder.get('platform_decoder') is False, 'Paired decoder unknown'
@@ -65,6 +68,13 @@ def validate_paired_report(value, source, build):
         for key in ('measurement_seconds','media_seconds','measurement_start_position','measurement_end_position','observed_fps','cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio'):
             v=metrics.get(key);assert type(v) in (int,float) and math.isfinite(v) and v>=0, 'Paired metric absent or invalid'
         assert metrics['measurement_seconds']>=89 and metrics['media_seconds']>=89, 'Paired measurement too short'
+        assert type(arm.get('measurement_samples')) is int and arm['measurement_samples']>=19, 'Paired samples missing'
+        assert abs(metrics['observed_fps']-fps)<=max(2,fps*.1), 'Paired frame rate mismatch'
+        first,last=arm.get('first_video_state',{}),arm.get('last_video_state',{})
+        for snapshot in (first,last):
+            assert snapshot.get('video_width')==1280 and snapshot.get('video_height')==720 and snapshot.get('playing') is True, 'Actual paired geometry or playback mismatch'
+            assert type(snapshot.get('duration')) in (int,float) and math.isfinite(snapshot['duration']) and abs(snapshot['duration']-duration)<=2, 'Actual paired duration mismatch'
+        assert last.get('decoded',0)>first.get('decoded',0) and last.get('position',0)-first.get('position',0)>=89, 'Paired frame/clock advancement missing'
         starts.append(metrics['measurement_start_position'])
     assert min(starts)>=30 and max(starts)-min(starts)<=2, 'Paired video sections differ'
 

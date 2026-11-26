@@ -85,7 +85,7 @@ def run(args):
     parent=out/'arms';parent.mkdir(mode=0o700)
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'arms':[],
       'desktop_source':args.desktop_source,'producer_run':args.producer_run,'sandbox_preserved':True,'local_execution':True,
-      'provenance':{'exe_sha256':digest(exe),'cef_sha256':digest(cef/'libcef.so'),'video_id':args.video_id,'route_mode':'direct','order':list(ORDER),'hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'warmup_seconds':30,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'linux_uss'}}
+      'provenance':{'exe_sha256':digest(exe),'cef_sha256':digest(cef/'libcef.so'),'video_id':args.video_id,'expected_width':args.width,'expected_height':args.height,'expected_duration':args.expected_duration,'expected_fps':args.expected_fps,'route_mode':'direct','order':list(ORDER),'hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'warmup_seconds':30,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'linux_uss'}}
     began=time.monotonic()
     def expired(signum,frame):raise Blocked('bounded_arm_deadline')
     previous=signal.signal(signal.SIGALRM,expired)
