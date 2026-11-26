@@ -393,14 +393,30 @@ try:
     gui.press('escape')
     results.append({'native_new_tab_and_super_menus_keep_cef_visible':True})
     def link_session():
-        return json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
-    source_tab=link_session()['aktivnaya']
+        # The app atomically replaces this profile file while we poll it; a
+        # transient Windows sharing violation (PermissionError, errno 13 /
+        # winerror 32) is retried inside the existing bounded loops. Every
+        # other error (missing file, malformed JSON, permissions policy)
+        # stays fatal on purpose.
+        try:
+            return json.loads((data/'profili/proba/obychnye.json').read_text(encoding='utf-8'))
+        except PermissionError:
+            return None
+    deadline=time.monotonic()+15
+    source_session=None
+    while time.monotonic()<deadline:
+        source_session=link_session()
+        if source_session is not None:break
+        time.sleep(.1)
+    assert source_session is not None,'Profile session file stayed transiently locked past the bounded deadline'
+    source_tab=source_session['aktivnaya']
     r=rect(container);gui.click(r.left+100,r.top+50,button='middle')
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:
         linked=link_session()
-        if any(t['adres'].endswith('/middle-target') and not t['zagruzka'] for t in linked['vkladki']):break
+        if linked is not None and any(t['adres'].endswith('/middle-target') and not t['zagruzka'] for t in linked['vkladki']):break
         time.sleep(.1)
+    assert linked is not None,'Profile session file stayed transiently locked past the bounded deadline'
     assert any(t['adres'].endswith('/middle-target') for t in linked['vkladki']),'Middle click did not create link tab'
     assert linked['aktivnaya']==source_tab,'Middle click unexpectedly replaced or activated the source tab'
     ui('LinkTargetFixture',['TabItem']).click_input(button='middle');time.sleep(.3)
@@ -411,8 +427,9 @@ try:
     deadline=time.monotonic()+15
     while time.monotonic()<deadline:
         linked=link_session()
-        if any(t['adres'].endswith('/context-target') and not t['zagruzka'] for t in linked['vkladki']):break
+        if linked is not None and any(t['adres'].endswith('/context-target') and not t['zagruzka'] for t in linked['vkladki']):break
         time.sleep(.1)
+    assert linked is not None,'Profile session file stayed transiently locked past the bounded deadline'
     assert any(t['adres'].endswith('/context-target') for t in linked['vkladki']),'Context menu did not create link tab'
     assert linked['aktivnaya']==source_tab,'Context open replaced or unexpectedly activated the source tab'
     ui('LinkTargetFixture',['TabItem']).click_input(button='middle');time.sleep(.3)
