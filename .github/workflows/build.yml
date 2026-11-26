@@ -496,6 +496,8 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_reference_probe::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_decode_probe::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_benchmark::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib youtube_benchmark_fixture::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib downloads_open_policy::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib youtube_download_diagnostics::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_focus_diagnostics::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_focus::tests -- --test-threads=1
@@ -965,6 +967,19 @@ jobs:
             .dev-check/windows-render/data/zhurnal.log
             .dev-check/windows-render/data/profili/*/cef*.log
             .dev-check/windows-render/data/profili/*/obychnye.json
+          retention-days: 14
+
+      - name: Native downloads library status and saved-file actions
+        if: runner.os == 'Linux'
+        run: |
+          python3 tests/gui/downloads_library_native.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/downloads-library
+
+      - name: Upload native downloads library evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloads-library-verification
+          path: .dev-check/downloads-library/*.json
           retention-days: 14
 
       - name: Native search task metrics and network retry

@@ -34,7 +34,7 @@ from youtube_paired_native import (
 
 CHUNK = 64 * 1024
 CHUNKS = 12
-CHUNK_DELAY = 0.15
+CHUNK_DELAY = 1.0
 KNOWN_TOTAL = CHUNK * CHUNKS
 
 

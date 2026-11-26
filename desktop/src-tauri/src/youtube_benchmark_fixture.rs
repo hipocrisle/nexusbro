@@ -23,13 +23,18 @@ fn local_root_allowed(root: &std::path::Path, home: &std::path::Path, uid: u32) 
     let Ok(canonical) = root.canonicalize() else { return false; };
     let Ok(ai) = home.join("AI").canonicalize() else { return false; };
     if canonical != root || canonical == ai || !canonical.starts_with(&ai) { return false; }
-    // Every directory from the fixture root through AI belongs to the caller
-    // and cannot be changed by another local user. Symlink roots are rejected.
+    // The private fixture ancestry belongs to the caller and is not writable
+    // by others. AI may be a shared same-group workspace; only the private
+    // descendants grant admission, never AI itself. Symlink roots are rejected.
     let mut current = Some(canonical.as_path());
     while let Some(path) = current {
         let Ok(meta) = std::fs::symlink_metadata(path) else { return false; };
-        if !meta.is_dir() || meta.uid() != uid || meta.mode() & 0o022 != 0 { return false; }
-        if path == ai { break; }
+        if !meta.is_dir() || meta.uid() != uid { return false; }
+        if path == ai {
+            if meta.mode() & 0o002 != 0 { return false; }
+            break;
+        }
+        if meta.mode() & 0o022 != 0 { return false; }
         current = path.parent();
         if current.is_none() { return false; }
     }
@@ -65,6 +70,11 @@ mod tests {
             fs::write(&opt_in, b"nexusbro-local-youtube-benchmark-v1\n").unwrap();
             fs::set_permissions(&opt_in, fs::Permissions::from_mode(0o600)).unwrap();
             assert!(local_root_allowed(&root, &home, uid));
+            fs::set_permissions(home.join("AI"), fs::Permissions::from_mode(0o775)).unwrap();
+            assert!(local_root_allowed(&root, &home, uid));
+            fs::set_permissions(home.join("AI"), fs::Permissions::from_mode(0o777)).unwrap();
+            assert!(!local_root_allowed(&root, &home, uid));
+            fs::set_permissions(home.join("AI"), fs::Permissions::from_mode(0o700)).unwrap();
             fs::set_permissions(&root, fs::Permissions::from_mode(0o755)).unwrap();
             assert!(!local_root_allowed(&root, &home, uid));
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();

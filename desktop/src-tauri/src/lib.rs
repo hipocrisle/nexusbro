@@ -100,6 +100,7 @@ mod browser_sync;
 mod password_cef;
 mod passwords;
 mod zagruzki;
+mod downloads_open_policy;
 mod set_status;
 mod supervkladki;
 
