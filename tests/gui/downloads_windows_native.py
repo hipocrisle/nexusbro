@@ -167,6 +167,7 @@ def run(args):
     try:
         if os.environ.get('GITHUB_ACTIONS') != 'true' or sys.platform != 'win32':
             raise Blocked('gha_windows_only')
+        report['preparation'] = False  # real native run passed preflight
         root = Path(tempfile.mkdtemp(prefix='nb-dlwin-')).resolve(strict=True)
         exe = Path(args.exe).resolve(strict=True); cef = Path(args.cef).resolve(strict=True)
         origin = fixture.start()
@@ -241,18 +242,18 @@ def run(args):
         report['stage'] = 'folder'
         folder_point = client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=Array.from(a?.querySelectorAll(".download-actions button")||[]).find(x=>x.textContent.includes("Показать в папке"));if(!b)return null;const r=b.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()')
         if isinstance(folder_point, list):
-            before_explorer = processes_snapshot()
+            before_windows = window_handles_snapshot()
             client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=Array.from(a.querySelectorAll("button")).find(b=>b.textContent.includes("Показать в папке"));b.setAttribute("data-nb-folder-target","1");return true})()')
             click_control(client,'[data-nb-folder-target="1"]',remaining(10))
             try:
                 def observe_folder():
-                    try:return explorer_folder_proof(before_explorer, download_dir)
+                    try:return explorer_folder_proof(before_windows, download_dir)
                     except Blocked:return None
                 proof = wait_for(observe_folder,
                                  'Explorer folder proof unavailable', remaining(20))
                 report['folder_proof'] = proof
                 report['folder_completed'] = True
-                report['checks'].append('folder_opened_uia_proof')
+                report['checks'].append('folder_new_window_exact_address')
             except Exception:
                 report['folder_proof'] = 'unclosed'
         report['stage'] = 'normal-owned-exit'; close_attempted = True
@@ -309,44 +310,156 @@ def run(args):
     return 0 if report['completed'] and report['full_acceptance'] else 1
 
 
-def explorer_folder_proof(before, folder, snapshot=None):
-    """Proof that an OWN-BORN Explorer window shows OUR EXACT folder address:
-    the window PID must be in the fresh-explorer set (PID-birth via snapshot
-    diff) and a UIA address/edit control must contain the exact normalized
-    folder path. A basename in a window title is never proof. Raises Blocked
-    (honest unclosed) when evidence is unavailable; never touches foreign
-    Explorer windows."""
-    now = snapshot if snapshot is not None else processes_snapshot()
-    fresh = {pid for pid, info in now.items()
-             if pid not in before and info['name'] == 'explorer.exe'}
-    if not fresh:
-        raise Blocked('explorer_not_own_born')
-    wanted = normalize_win_path(folder)
+def window_handles_snapshot():
+    """Snapshot of existing Explorer window handles. COM Shell.Application is
+    preferred; when COM is unavailable the set is None and only the strict UIA
+    fallback can prove a NEW window. Availability is never fabricated."""
+    com = None
+    try:
+        import win32com.client
+        shell_windows = win32com.client.Dispatch('Shell.Application').Windows()
+        com = set()
+        for index in range(shell_windows.Count):
+            try:
+                com.add(int(shell_windows.Item(index).HWND))
+            except Exception:
+                continue
+    except Exception:
+        com = None
+    uia = set()
     try:
         from pywinauto import Desktop
         for win in Desktop(backend='uia').windows():
             try:
-                pid = win.process_id()
+                uia.add(int(win.handle))
             except Exception:
                 continue
-            if pid not in fresh:
-                continue
+    except Exception:
+        pass
+    return {'com': com, 'uia': uia}
+
+
+def file_url_to_path(url):
+    """file:///C:/a%20b -> exact normalized Windows path; None otherwise."""
+    import urllib.parse
+    if not isinstance(url, str) or not url.lower().startswith('file:'):
+        return None
+    parsed = urllib.parse.urlparse(url)
+    path = urllib.parse.unquote(parsed.path)
+    if len(path) > 2 and path[0] == '/' and path[2] == ':':
+        path = path[1:]
+    return normalize_win_path(path)
+
+
+def explorer_hwnd_pid(hwnd):
+    """ctypes GetWindowThreadProcessId — the real owner PID of a handle."""
+    import ctypes
+    pid = ctypes.c_ulong()
+    ctypes.windll.user32.GetWindowThreadProcessId(int(hwnd), ctypes.byref(pid))
+    return pid.value
+
+
+def _process_info(pid):
+    import psutil
+    try:
+        proc = psutil.Process(pid)
+        return {'exe': proc.exe(), 'birth': proc.create_time(), 'name': proc.name().lower()}
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        return None
+
+
+def _known_explorer(info, recheck=None):
+    """Owner must be the canonical %WINDIR%\\explorer.exe; the PID birth is
+    re-read and must be stable (defeats PID reuse) and not in the future."""
+    if not info:
+        return False
+    windir = normalize_win_path(os.environ.get('WINDIR', 'C:\\Windows'))
+    if normalize_win_path(info.get('exe') or '') != windir + '\\explorer.exe':
+        return False
+    birth = info.get('birth')
+    if not isinstance(birth, (int, float)) or birth > time.time() + 1:
+        return False
+    if recheck is not None and recheck != birth:
+        return False
+    return True
+
+
+def explorer_folder_proof(before, folder, *, shell_windows=None, pid_of=None,
+                          process_info=None, uia_windows=None):
+    """Prove a NEW Explorer WINDOW (handle absent from the pre-click snapshot)
+    whose address is EXACTLY our private folder, owned by the real Windows
+    explorer.exe with a stable PID birth. Explorer usually opens a new window
+    in an EXISTING process, so a fresh PID is never required. COM
+    Shell.Application.Windows() LocationURL is the preferred evidence; the UIA
+    fallback demands a NEW hwnd + owning PID + exact address value. Substring
+    or title-only matches are never acceptance. Foreign Explorer windows are
+    never terminated or controlled. Raises Blocked (honest unclosed)."""
+    wanted = normalize_win_path(folder)
+    pid_of = pid_of or explorer_hwnd_pid
+    info_of = process_info or _process_info
+    try:
+        windows = shell_windows
+        if windows is None:
+            import win32com.client
+            windows = win32com.client.Dispatch('Shell.Application').Windows()
+        for index in range(windows.Count):
+            item = windows.Item(index)
             try:
-                controls = win.descendants(control_type='Edit') + win.descendants(control_type='ToolBar')
+                hwnd = int(item.HWND)
             except Exception:
                 continue
-            for control in controls:
-                try:
-                    text = control.window_text() or ''
-                except Exception:
-                    continue
-                if normalize_win_path(text.removeprefix('Address: ').removeprefix('Адрес: ')) == wanted:
-                    return {'explorer_pid': pid, 'address_match': 'uia_exact_path'}
+            if hwnd in (before.get('com') or set()):
+                continue
+            if file_url_to_path(getattr(item, 'LocationURL', None)) != wanted:
+                continue
+            pid = pid_of(hwnd)
+            info = info_of(pid)
+            recheck = (info_of(pid) or {}).get('birth')
+            if _known_explorer(info, recheck):
+                return {'hwnd': hwnd, 'pid': pid, 'proof': 'com_locationurl_exact'}
     except Blocked:
         raise
     except Exception:
         pass
-    raise Blocked('explorer_folder_uia_unavailable')
+    try:
+        if uia_windows is not None:
+            candidates = uia_windows
+        else:
+            from pywinauto import Desktop
+            candidates = []
+            for win in Desktop(backend='uia').windows():
+                try:
+                    addresses = []
+                    for control in win.descendants(control_type='Edit') + win.descendants(control_type='ToolBar'):
+                        try:
+                            addresses.append(control.window_text() or '')
+                        except Exception:
+                            continue
+                    candidates.append({'hwnd': int(win.handle), 'pid': win.process_id(),
+                                       'addresses': addresses})
+                except Exception:
+                    continue
+        for candidate in candidates:
+            hwnd = candidate.get('hwnd')
+            if hwnd is None or hwnd in before.get('uia', set()):
+                continue
+            pid = candidate.get('pid')
+            info = info_of(pid)
+            recheck = (info_of(pid) or {}).get('birth')
+            if not _known_explorer(info, recheck):
+                continue
+            for text in candidate.get('addresses') or []:
+                cleaned = str(text)
+                for prefix in ('Address: ', 'Адрес: '):
+                    if cleaned.startswith(prefix):
+                        cleaned = cleaned[len(prefix):]
+                if normalize_win_path(cleaned) == wanted:
+                    return {'hwnd': hwnd, 'pid': pid, 'proof': 'uia_new_hwnd_exact'}
+    except Blocked:
+        raise
+    except Exception:
+        pass
+    raise Blocked('explorer_folder_proof_unavailable')
 
 
 def self_test():
