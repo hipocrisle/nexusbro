@@ -51,3 +51,33 @@ inline-списков не осталось).
 
 Границы: workflows/desktop UI не менялись (кроме своего zagruzki.rs); запусков/CI/сети
 кроме loopback-fixture в самом тесте нет; отчёт честно называет подготовку подготовкой.
+
+
+## Прогон 45787393628: разбор и исправления фактов (26.11)
+
+Факт из result.json: stage=progress-observation, blocked_reason=downloads_native_unavailable,
+checks=[]. Разбор кода выявил ДВА дефекта самого скрипта (не app):
+
+1. **Потеря причины**: wait_for/require бросают NativeFailure (AssertionError), а не Blocked —
+   таймаут первого ожидания попадал в generic-ветку `downloads_native_unavailable`, сообщение
+   терялось. Исправлено: allowlist фиксированных сообщений → typed-коды
+   (known_progress_timeout / unknown_total_timeout / received_stall_timeout /
+   *_complete_timeout / library_open_timeout), прочее — `native_assertion` с
+   failure_type из allowlist; сырые строки не пишутся.
+2. **Гонка навигаций**: три pereyti подряд с паузой 0.3с — новая навигация могла отменить
+   предыдущую ДО on_before_download, и записи загрузки могло вовсе не появиться.
+   Исправлено сериализацией: note.txt → подтверждение «Готово»+файл → known → наблюдение
+   активного прогресса → «Готово» → unknown → наблюдение. Вложения остаются РЕАЛЬНЫМИ
+   CEF attachment, требование активного прогресса не ослаблено.
+
+Плюс санитизированные снимки: `downloads_before_wait` (до первого ожидания) и
+`downloads_at_failure` (в отказе) — только file_kind (known/unknown/doc/other),
+status из allowlist, ограниченные скаляры received/total/percent/speed; никаких
+сырых url/path/id/name. preparation=false при реальном прогоне; open/folder shim
+явно не OS-association proof.
+
+Проверки: реальный localhost-прогон собственной Fixture без браузера (Content-Length
+786432, Content-Disposition attachment, точные байты known/unknown/doc) + FakeClient
+съём sanitize-снимка и typed-кодов — все PASS (tests/downloads_library_contract_test.py).
+Какая именно ветка сработала в 45787393628 (таймаут known vs отсутствие записи) станет
+видно по typed-коду следующего прогона; app-bug не угадывается.
