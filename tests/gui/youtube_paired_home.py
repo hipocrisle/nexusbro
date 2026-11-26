@@ -90,6 +90,10 @@ def run(args):
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'arms':[],
       'desktop_source':args.desktop_source,'producer_run':args.producer_run,'sandbox_preserved':True,'local_execution':True,
       'provenance':{'exe_sha256':digest(exe),'cef_sha256':digest(cef/'libcef.so'),'video_id':args.video_id,'expected_width':args.width,'expected_height':args.height,'expected_duration':args.expected_duration,'expected_fps':args.expected_fps,'route_mode':'direct','order':list(ORDER),'hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'warmup_seconds':30,'min_continuous_stable_seconds':30,'warmup_max_elapsed_seconds':90,'measurement_start_content_position':60,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'linux_uss'}}
+    if getattr(args,'manual_ui_setup',False):
+        require(args.normal_reference_preflight,'Manual UI controller is diagnostic only')
+        from youtube_manual_ui_setup import manual_setup
+        args.normal_setup_hook=manual_setup
     began=time.monotonic()
     def expired(signum,frame):raise Blocked('bounded_arm_deadline')
     previous=signal.signal(signal.SIGALRM,expired)
@@ -123,6 +127,7 @@ if __name__=='__main__':
     for name in ('private-root','exe','cef','exe-sha256','desktop-source'):p.add_argument('--'+name,required=True)
     p.add_argument('--producer-run',type=int,required=True);p.add_argument('--expect-uid',type=int,required=True)
     p.add_argument('--normal-reference-preflight',action='store_true')
+    p.add_argument('--manual-ui-setup',action='store_true')
     p.add_argument('--allow-local-virtual-display',action='store_true');p.add_argument('--video-id',default='M7lc1UVf-VE')
     p.add_argument('--expected-duration',type=float,default=1343.6);p.add_argument('--expected-fps',type=float,default=30)
     p.add_argument('--width',type=int,default=1280);p.add_argument('--height',type=int,default=720);p.add_argument('--memory-cap-mib',type=int,default=1024)

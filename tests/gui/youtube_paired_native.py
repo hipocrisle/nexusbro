@@ -274,6 +274,11 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
                     time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
         else:state=snapshot(mode)
+        setup_hook=getattr(args,'normal_setup_hook',None)
+        if mode=='normal' and setup_hook is not None:
+            result['stage']='normal-manual-ui-setup'
+            setup_hook(client,device,out,index,result)
+            state=snapshot(mode)
         reference_preflight=getattr(args,'normal_reference_preflight',False)
         if reference_preflight:
             if mode!='normal':raise Blocked('reference_preflight_mode_invalid')
@@ -293,6 +298,8 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
             elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_key(device,'k',client,result)
             else:raise Blocked('normal_user_play_required')
         state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(snapshot(mode)),'Real public playback missing',15)
+        result['public_playback_before_decode']={k:state.get(k) for k in ('playing','position','duration','decoded','dropped','video_width','video_height','volume','muted','default_sink')}
+        result['stage']='native-decode'
         decode=decode_state(snapshot('decode'));result['decode']=decode
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
