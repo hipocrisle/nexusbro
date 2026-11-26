@@ -2,7 +2,7 @@
 import base64,json,unittest
 from pathlib import Path
 from unittest.mock import patch
-from controlled_media_provider import verify
+from controlled_media_provider import verify,request_run
 SOURCE='a'*40
 class Provider(unittest.TestCase):
  def records(self):
@@ -15,6 +15,14 @@ class Provider(unittest.TestCase):
  def call(self,records):
   with patch('controlled_media_provider.subprocess.check_output',side_effect=[json.dumps(v).encode() for v in records]):
    return verify('123','hipocrisle/nexusbro')
+ def test_json_request_and_dispatch_capacity(self):
+  self.assertEqual(request_run('{"controlled_media_build":"123"}'),'123')
+  for value in ('{}','{"controlled_media_build":123}','{"controlled_media_build":"123","extra":true}'):
+   with self.subTest(value=value),self.assertRaises(AssertionError):request_run(value)
+  import yaml
+  config=yaml.safe_load((Path(__file__).parents[1]/'.github/workflows/build.yml').read_text())
+  event=config.get('on',config.get(True))
+  self.assertLessEqual(len(event['workflow_dispatch']['inputs']),25)
  def test_owned_successful_generation_is_reusable(self):
   self.assertTrue(self.call(self.records())['provenance_verified'])
  def test_foreign_source_and_incomplete_generation_are_refused(self):

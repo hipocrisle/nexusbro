@@ -10,6 +10,12 @@ def recipe(text):
  assert len(commands)==3,'controlled_media_recipe_missing'
  return '\n'.join(commands)
 
+def request_run(text):
+ assert isinstance(text,str) and len(text)<=512,'controlled_media_request_invalid'
+ value=json.loads(text)
+ assert type(value) is dict and set(value)=={'controlled_media_build'} and type(value['controlled_media_build']) is str,'controlled_media_request_invalid'
+ return value['controlled_media_build']
+
 def verify(run_id,repository):
  assert re.fullmatch(r'[1-9][0-9]{0,19}',run_id),'controlled_media_run_invalid'
  assert repository=='hipocrisle/nexusbro','controlled_media_repository_invalid'
@@ -36,11 +42,11 @@ def verify(run_id,repository):
          'artifact_digest':matches[0]['digest'],'recipe_sha256':hashlib.sha256(old_recipe.encode()).hexdigest(),'provenance_verified':True}
 
 if __name__=='__main__':
- p=argparse.ArgumentParser();p.add_argument('--run',required=True);p.add_argument('--repository',required=True);p.add_argument('--out',required=True);a=p.parse_args()
+ p=argparse.ArgumentParser();g=p.add_mutually_exclusive_group(required=True);g.add_argument('--run');g.add_argument('--request');p.add_argument('--repository',required=True);p.add_argument('--out',required=True);a=p.parse_args()
  try:
-  result=verify(a.run,a.repository);Path(a.out).parent.mkdir(parents=True,exist_ok=True);Path(a.out).write_text(json.dumps(result,indent=2)+'\n')
+  result=verify(request_run(a.request) if a.request is not None else a.run,a.repository);Path(a.out).parent.mkdir(parents=True,exist_ok=True);Path(a.out).write_text(json.dumps(result,indent=2)+'\n')
  except Exception as error:
-  allowed={'controlled_media_run_invalid','controlled_media_repository_invalid','controlled_media_metadata_bound','controlled_media_foreign_source','controlled_media_untrusted_event','controlled_media_wrong_workflow','controlled_media_source_invalid','controlled_media_job_not_verified','controlled_media_artifact_unverified','controlled_media_source_encoding','controlled_media_recipe_changed','controlled_media_recipe_missing'}
+  allowed={'controlled_media_request_invalid','controlled_media_run_invalid','controlled_media_repository_invalid','controlled_media_metadata_bound','controlled_media_foreign_source','controlled_media_untrusted_event','controlled_media_wrong_workflow','controlled_media_source_invalid','controlled_media_job_not_verified','controlled_media_artifact_unverified','controlled_media_source_encoding','controlled_media_recipe_changed','controlled_media_recipe_missing'}
   reason=str(error) if str(error) in allowed else 'controlled_media_provenance_unavailable'
   print(json.dumps({'provenance_verified':False,'reason':reason}));raise SystemExit(1)
  print(json.dumps({'provenance_verified':True,'provider_run':result['provider_run']}))

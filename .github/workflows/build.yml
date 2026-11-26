@@ -8,10 +8,6 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
-      controlled_media_build:
-        description: Reuse verified synthetic streams from an owned run with identical generation commands
-        type: string
-        default: ""
       youtube_deno_cache_probe:
         description: Observe Deno cache fallback on disposable unprivileged runner
         type: boolean
@@ -25,7 +21,7 @@ on:
         type: boolean
         default: false
       youtube_muxer_reuse:
-        description: Reviewed immutable minimal muxer run to verify without rebuilding
+        description: Reviewed muxer run, or JSON containing controlled_media_build for a full build
         type: string
         default: ""
       youtube_native_reuse:
@@ -241,6 +237,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+    env:
+      CONTROLLED_MEDIA_BUILD: ${{ startsWith(inputs.youtube_muxer_reuse, '{') && fromJSON(inputs.youtube_muxer_reuse).controlled_media_build || '' }}
     if: >-
       inputs.youtube_native_reuse == '' && ((inputs.youtube_muxer_only || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
@@ -248,21 +246,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Verify existing controlled media provenance and recipe
-        if: inputs.controlled_media_build != ''
+        if: startsWith(inputs.youtube_muxer_reuse, '{')
         env:
           GH_TOKEN: ${{ github.token }}
-          MEDIA_BUILD: ${{ inputs.controlled_media_build }}
-        run: python3 tests/controlled_media_provider.py --run "$MEDIA_BUILD" --repository "$GITHUB_REPOSITORY" --out .dev-check/youtube-media-source.json
+          MEDIA_REQUEST: ${{ inputs.youtube_muxer_reuse }}
+        run: python3 tests/controlled_media_provider.py --request "$MEDIA_REQUEST" --repository "$GITHUB_REPOSITORY" --out .dev-check/youtube-media-source.json
       - name: Download verified existing synthetic streams
-        if: inputs.controlled_media_build != ''
+        if: startsWith(inputs.youtube_muxer_reuse, '{')
         uses: actions/download-artifact@v4
         with:
           name: youtube-controlled-media
           path: .dev-check/youtube-media-fixture
-          run-id: ${{ inputs.controlled_media_build }}
+          run-id: ${{ env.CONTROLLED_MEDIA_BUILD }}
           github-token: ${{ github.token }}
       - name: Generate controlled real VP9 and Opus streams (runner only)
-        if: inputs.controlled_media_build == ''
+        if: env.CONTROLLED_MEDIA_BUILD == ''
         shell: bash
         run: |
           set -euo pipefail
