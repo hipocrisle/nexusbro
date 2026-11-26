@@ -104,13 +104,13 @@ def owned_failure_screenshot(device, out_dir, identity_check):
     try:
         from PIL import ImageGrab
         from youtube_player_native import native_app_window
-        import subprocess
+        import subprocess, os
         if not identity_check():
             return {'saved': False, 'reason': 'identity_unproven_before'}
         window = native_app_window(device, identity_check.identity)
         geometry = subprocess.check_output(
             ['xdotool', 'getwindowgeometry', '--shell', str(window)],
-            env={'DISPLAY': device.display, 'PATH': '/usr/bin:/bin'},
+            env={**os.environ, 'DISPLAY': device.display},
             text=True, timeout=5)
         values = {}
         for line in geometry.splitlines():

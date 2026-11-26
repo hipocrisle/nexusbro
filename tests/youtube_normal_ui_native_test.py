@@ -14,13 +14,13 @@ def rect(x, y, w=48, h=48):
 
 def state(*, playing=False, paused=True, position=10.0, vw=1280, vh=720,
           reject_present=False, reject=None, play=None, settings=None,
-          quality=None, p720=None, width=1280, height=720):
+          quality=None, p720=None, settings_menu=None, width=1280, height=720):
     return {'playing': playing, 'paused': paused, 'position': position,
             'video_width': width, 'video_height': height,
             'controls': {'viewport': {'width': vw, 'height': vh},
                          'reject_all_present': reject_present,
                          'play': play, 'settings': settings,
-                         'quality': quality, 'p720': p720, 'reject_all': reject}}
+                         'quality': quality, 'p720': p720, 'settings_menu':settings_menu, 'reject_all': reject}}
 
 
 class FakeIO:
@@ -100,6 +100,9 @@ def main():
 
     final, result, io = run(happy)
     checks['happy_path'] = final['playing'] is True
+    scrolled_final, scrolled_result, _ = run(happy[:7]+[state(settings_menu=rect(800,200,300,300)),with_quality,with_quality]+happy[9:])
+    checks['scrolled_quality_real_wheel_once'] = (scrolled_final['playing'] is True and scrolled_result['normal_ui_actions']['ledger'].count('quality_menu_scroll')==1)
+
     late = state(reject_present=True, reject=REJECT)
     late_final, late_result, _ = run(happy[:5] + [late, late, base] + happy[6:])
     checks['late_consent_handled_once'] = (
@@ -111,7 +114,7 @@ def main():
     checks['ledger_order'] = receipt['ledger'] == ['pause_click', 'settings_click', 'quality_click',
         'p720_click', 'play_click', 'playback_started']
     checks['receipt_shape'] = set(receipt) == {'ledger', 'ui_actions', 'reject_all_clicked',
-        'paused_once', 'quality_720_clicked', 'played_once', 'hover_reveals', 'scrolls'} \
+        'paused_once', 'quality_720_clicked', 'played_once', 'hover_reveals', 'scrolls', 'menu_scrolls'} \
         and receipt['ui_actions'] == 5 and receipt['scrolls'] == 0
     checks['receipt_no_raw'] = 'http' not in json.dumps(result) and 'url' not in json.dumps(result)
     checks['control_center_forwarded'] = ('click', 36, 664) in io.actions

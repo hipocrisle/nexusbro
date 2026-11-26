@@ -70,6 +70,7 @@ const SCRIPT: &str = r#"(()=>{
   viewport:{width:innerWidth,height:innerHeight},reject_all_present:rejects.length>0,
   play:autohide?null:uniqueRect(player.querySelectorAll('.ytp-play-button')),
   settings:autohide?null:uniqueRect(player.querySelectorAll('.ytp-settings-button')),
+  settings_menu:uniqueRect(player.querySelectorAll('.ytp-settings-menu')),
   quality:uniqueRect(menuItems.filter(e=>['Quality','Качество','Qualität'].includes(menuLabel(e)))),
   p720:uniqueRect(menuItems.filter(e=>menuLabel(e).startsWith('720p'))),
   reject_all:uniqueRect(rejects)
@@ -204,11 +205,12 @@ fn rect(value: &Value, vw: f64, vh: f64) -> Result<Value, &'static str> {
 }
 
 fn sanitize_controls(value: &Value) -> Result<Value, &'static str> {
-    const KEYS: [&str; 7] = [
+    const KEYS: [&str; 8] = [
         "viewport",
         "reject_all_present",
         "play",
         "settings",
+        "settings_menu",
         "quality",
         "p720",
         "reject_all",
@@ -236,7 +238,7 @@ fn sanitize_controls(value: &Value) -> Result<Value, &'static str> {
     let mut clean = serde_json::Map::new();
     clean.insert("viewport".into(), json!({"width":vw,"height":vh}));
     clean.insert("reject_all_present".into(), json!(present));
-    for key in ["play", "settings", "quality", "p720", "reject_all"] {
+    for key in ["play", "settings", "settings_menu", "quality", "p720", "reject_all"] {
         let rect = rect(map.get(key).ok_or(FAILED)?, vw, vh)?;
         clean.insert(key.into(), rect);
     }
@@ -420,7 +422,7 @@ mod tests {
         json!({"viewport":{"width":854,"height":480},"reject_all_present":true,
             "play":{"x":12.0,"y":430.0,"width":48.0,"height":48.0},
             "settings":{"x":700.0,"y":430.0,"width":48.0,"height":48.0},
-            "quality":null,"p720":null,
+            "settings_menu":null,"quality":null,"p720":null,
             "reject_all":{"x":300.0,"y":240.0,"width":120.0,"height":36.0}})
     }
     #[test]
@@ -432,7 +434,7 @@ mod tests {
         assert_eq!(controls["reject_all_present"], true);
         assert_eq!(controls["play"]["width"], 48.0);
         assert!(controls["quality"].is_null() && controls["p720"].is_null());
-        assert_eq!(controls.as_object().unwrap().len(), 7);
+        assert_eq!(controls.as_object().unwrap().len(), 8);
     }
     #[test]
     fn controls_reject_left_keys_bad_bool_bad_geometry_and_overflow() {

@@ -144,7 +144,12 @@ fn finish(browser: &Browser, setup: &Bootstrap, approved: bool) {
     }
     if !target.is_empty() && target != "about:blank" {
         if let Some(frame) = browser.main_frame() {
-            if CefString::from(&frame.url()).to_string() == "about:blank" {
+            // Local files must be opened by the native host. JavaScript from
+            // the opaque bootstrap blank is correctly forbidden to navigate
+            // to file://; do not weaken Chromium's file-access protections.
+            if reqwest::Url::parse(&target).ok().is_some_and(|u|u.scheme()=="file") {
+                frame.load_url(Some(&CefString::from(target.as_str())));
+            } else if CefString::from(&frame.url()).to_string() == "about:blank" {
                 // The blank exists only to start Chromium, not as a user history
                 // entry. Replace it rather than append a second navigation.
                 let script = format!("location.replace({});", serde_json::json!(target));

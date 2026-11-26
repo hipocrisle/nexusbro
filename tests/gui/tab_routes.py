@@ -1372,47 +1372,23 @@ def run(args):
             import pyautogui
             pyautogui.write('synthetic unsaved draft',interval=.04)
         else:
-            # The suite's only keyboard input needs proven native delivery:
-            # the click point (inside the .pole CEF viewport, +50/+30 — page
-            # area, not shell header/buttons) must be covered by a window of
-            # the app process family, and after the single physical click the
-            # focused window must belong to the same family. Typed facts
-            # only; fail closed on a wrong owner. No JS focus/click/typing,
-            # no skipped or repeated input.
-            env = {**os.environ, 'DISPLAY': device.display}
-            label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
-            origin = client.command('plugin:window|inner_position', label=label)
-            scale = client.js('devicePixelRatio||1')
-            point = (round(origin['x'] + (bounds[0] + 50) * scale), round(origin['y'] + (bounds[1] + 30) * scale))
-
-            def app_family():
-                try:
-                    return {device.app.pid} | {p.pid for p in psutil.Process(device.app.pid).children(recursive=True)}
-                except psutil.NoSuchProcess:
-                    return set()
-
-            def window_owner(xid):
-                try:
-                    return int(subprocess.check_output(['xdotool', 'getwindowpid', xid], env=env, text=True, timeout=3))
-                except (subprocess.SubprocessError, ValueError):
-                    return None
-
-            def covered_by_app():
-                subprocess.run(['xdotool', 'mousemove', str(point[0]), str(point[1])], env=env, check=True, timeout=5)
-                location = subprocess.check_output(['xdotool', 'getmouselocation', '--shell'], env=env, text=True, timeout=3)
-                window = re.search(r'^WINDOW=(\d+)$', location, re.M)
-                pid = window_owner(window.group(1)) if window else None
-                return (pid is not None and pid in app_family()) or None
-
-            wait_for(covered_by_app, 'Draft input point is not covered by an app-owned window', 20)
-            client.mouse(bounds[0]+50,bounds[1]+30)
-
-            def focused_by_app():
-                xid = subprocess.check_output(['xdotool', 'getwindowfocus'], env=env, text=True, timeout=3).strip()
-                pid = window_owner(xid)
-                return (pid is not None and pid in app_family()) or None
-
-            wait_for(focused_by_app, 'Draft typing focus owner is outside the app process family', 10)
+            # Require the actual synthetic input's pixels and a held native
+            # CEF identity, not only a successful HTTP receipt or shell PID.
+            from youtube_paired_native import focus_normal_cef
+            from x11_owned_cef_focus import NativeX11
+            from resource_soak import kernel_birth
+            report['draft_focus_setup']=focus_normal_cef(client,device)
+            point=painted_interaction_point(client,offset=(50,30),color=(227,242,253))
+            client.mouse(*point)
+            def focused_selected_engine():
+                native=NativeX11(device.display)
+                try:pid=native.pid_of(native.input_focus())
+                finally:native.close()
+                state=client.command('super_lifecycle_snapshot')
+                engines=[e for e in state.get('engines',[]) if e.get('id')=='routes-a']
+                if state.get('schema')!=1 or len(engines)!=1 or engines[0].get('owned_complete') is not True:return False
+                return any(m.get('pid')==pid and m.get('clock')=='linux_ticks' and m.get('birth')==kernel_birth(pid,'linux_ticks') for m in engines[0].get('owned',[]))
+            wait_for(focused_selected_engine,'Draft keyboard focus not bound to selected native engine',10)
             subprocess.run(['xdotool','type','--clearmodifiers','--','synthetic unsaved draft'],env={**os.environ,'DISPLAY':device.display},check=True)
         wait_for(lambda:fixture.records('draft-typed'),'Real draft input did not reach the page')
         before_draft=row(client,'routes-a',8)

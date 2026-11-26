@@ -140,7 +140,8 @@ function baseFixture(opts) {
   const playerClasses = ['html5-video-player'];
   if (opts.autohide) playerClasses.push('ytp-autohide');
   if (opts.ad) playerClasses.push('ad-showing');
-  const playerChildren = [video, play, settings, quality, p720];
+  const panel = opts.panel ? node({classes:['ytp-settings-menu'],rect:{x:840,y:480,width:320,height:200},children:[quality,p720]}) : null;
+  const playerChildren = panel ? [video,play,settings,panel] : [video, play, settings, quality, p720];
   if (opts.twoVideos) playerChildren.push(videoNode({ x: 0, y: 0, width: 640, height: 360 }));
   const player = node({ id: 'movie_player', classes: playerClasses, rect: { x: 0, y: 0, width: 1280, height: 800 },
     videoData: { video_id: opts.videoId || VID }, children: playerChildren });
@@ -168,6 +169,7 @@ function runCase(opts, hits) {
 const overlay = node({ rect: { x: 0, y: 700, width: 1280, height: 100 } });
 const cases = {
   happy: runCase({}),
+  scroll_panel:runCase({panel:true}),
   hidden_consent: runCase({rejectDisplay:'none'}),
   collapsed_consent: runCase({rejectRect:{x:0,y:0,width:0,height:0}}),
   offscreen_consent: runCase({rejectRect:{x:24,y:1200,width:120,height:32}}),
@@ -262,6 +264,9 @@ class ReferenceControlsJsTest(unittest.TestCase):
         self.assertEqual(
             r["controls"]["reject_all"], {"x": 24, "y": 24, "width": 120, "height": 32}
         )
+
+    def test_settings_scroll_region_bound_to_target_player(self):
+        self.assertEqual(self.case('scroll_panel')['controls']['settings_menu'],{'x':840,'y':480,'width':320,'height':200})
 
     def test_hidden_consent_template_is_not_an_open_modal(self):
         for case in ('hidden_consent','collapsed_consent'):

@@ -26,7 +26,7 @@ MAX_POSITION_BEFORE_PLAY = 29.0
 VIEWPORT_TOLERANCE = 2.0
 OBSERVE_STEP = 0.25
 
-CONTROL_KEYS = {'viewport', 'reject_all_present', 'play', 'settings', 'quality', 'p720', 'reject_all'}
+CONTROL_KEYS = {'viewport', 'reject_all_present', 'play', 'settings', 'settings_menu', 'quality', 'p720', 'reject_all'}
 
 
 class UiBlocked(Exception):
@@ -62,7 +62,7 @@ def validate_controls(state):
             raise UiBlocked('controls_invalid')
     if type(controls['reject_all_present']) is not bool:
         raise UiBlocked('controls_invalid')
-    for key in ('play', 'settings', 'quality', 'p720', 'reject_all'):
+    for key in ('play', 'settings', 'settings_menu', 'quality', 'p720', 'reject_all'):
         rect = _rect(controls[key])
         if rect is not None and (rect['x'] + rect['width'] > viewport['width']
                                  or rect['y'] + rect['height'] > viewport['height']):
@@ -145,7 +145,7 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
     ledger = []
     receipt = {'ledger': ledger, 'ui_actions': 0, 'reject_all_clicked': False,
                'paused_once': False, 'quality_720_clicked': False, 'played_once': False,
-               'hover_reveals': 0, 'scrolls': 0}
+               'hover_reveals': 0, 'scrolls': 0, 'menu_scrolls': 0}
     result['normal_ui_actions'] = receipt
     started = io.monotonic()
 
@@ -262,14 +262,27 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
                         'pause_not_observed', 5)
         receipt['paused_once'] = True
 
+    def menu_item(key, code):
+        state=current()
+        if state['controls'][key] is not None:return state
+        if state['controls']['settings_menu'] is None:
+            state=observe(lambda s:s if s['controls'][key] is not None or s['controls']['settings_menu'] is not None else None,code,5)
+        if state['controls'][key] is not None:return state
+        scroll=state['controls']['settings_menu']
+        if scroll is None or receipt['menu_scrolls']>=2:raise UiBlocked(code)
+        checked(key+'_menu_scroll');spend()
+        io.scroll_css(*center(scroll),4)
+        after(key+'_menu_scroll')
+        receipt['menu_scrolls']+=1
+        ledger.append(key+'_menu_scroll')
+        return observe(lambda s:s if s['controls'][key] is not None else None,code,5)
+
     # 3) Settings -> Quality -> 720p, без fallback-качества.
     state = reveal('settings')
     click('settings', 'settings_click')
-    observe(lambda s: s if s['controls']['quality'] is not None else None,
-            'quality_menu_unavailable', 5)
+    menu_item('quality','quality_menu_unavailable')
     click('quality', 'quality_click')
-    observe(lambda s: s if s['controls']['p720'] is not None else None,
-            'p720_unavailable', 5)
+    menu_item('p720','p720_unavailable')
     click('p720', 'p720_click')
     receipt['quality_720_clicked'] = True
 

@@ -282,7 +282,7 @@ class Fixture:
         # uses ordinary page APIs without dirty input; other cases stay plain.
         controls = handlers = ''
         if case == 'draft':
-            controls = "<input id='draft' style='position:absolute;left:20px;top:20px'>"
+            controls = "<input id='draft' style='position:absolute;left:20px;top:20px;background:#e3f2fd'>"
             handlers = ("document.querySelector('#draft').oninput=()=>fetch('/receipt/draft-typed');"
                         "addEventListener('beforeunload',event=>{if(document.querySelector('#draft').value){"
                         "event.preventDefault();event.returnValue='';}});")
