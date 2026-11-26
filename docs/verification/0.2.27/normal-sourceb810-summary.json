@@ -1,0 +1,51 @@
+{
+  "schema": 1,
+  "source": "b81058db248379408fcc465afc24e3d970f35328",
+  "build_run": 45823253972,
+  "exe_sha256": "945952592bbbac21048318df7acc5bfae45eb7922e7e4b6cfcb442972ea2b68b",
+  "raw_report_sha256": "14e73b02107817e72870817536a17a16752629dd48294ecfd2888d5029f209da",
+  "observed_at_utc": "2026-11-26T13:02:42.399143+00:00",
+  "diagnostic_only": true,
+  "paired_accepted": false,
+  "long_playback_accepted": false,
+  "native_control_actions": {
+    "ledger": [
+      "reject_scroll",
+      "reject_all_click",
+      "pause_click",
+      "settings_click",
+      "quality_menu_scroll",
+      "quality_click",
+      "p720_click",
+      "play_click",
+      "playback_started"
+    ],
+    "ui_actions": 8,
+    "reject_all_clicked": true,
+    "paused_once": true,
+    "quality_720_clicked": true,
+    "played_once": true,
+    "hover_reveals": 0,
+    "scrolls": 1,
+    "menu_scrolls": 1
+  },
+  "observed_metadata": {
+    "duration": 1343.661,
+    "width": 1280,
+    "height": 720
+  },
+  "playback_point_observation": {
+    "playing": true,
+    "position": 0.247806,
+    "duration": 1343.661,
+    "decoded": 12,
+    "dropped": 0,
+    "video_width": 1280,
+    "video_height": 720,
+    "volume": 1,
+    "muted": false,
+    "default_sink": true
+  },
+  "blocked_reason": "native_decode_decode_pipeline_ambiguous",
+  "cleanup_completed": true
+}

@@ -37,12 +37,14 @@
     "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
-    "status": "normal_quality_row_offscreen_owned_menu_scroll_prepared_new_native_pending",
+    "status": "native_quality_setup_passed_then_decode_pipeline_ambiguous",
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
     "source": "b81058db248379408fcc465afc24e3d970f35328",
-    "build_run": 45823253972
+    "build_run": 45823253972,
+    "diagnostic_summary": "normal-sourceb810-summary.json",
+    "long_playback_accepted": false
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -257,7 +259,10 @@
     ],
     "test": "tests/gui/page_save_native.py",
     "previous_diagnostic": "page-save-source7c-diagnostic.json",
-    "direct_file_bootstrap_fix": "native host navigation instead of blocked JS file navigation"
+    "direct_file_bootstrap_fix": "native host navigation instead of blocked JS file navigation",
+    "home_native_acceptance": true,
+    "home_native_summary": "page-save-home-summary.json",
+    "status": "home_real_pass_windows_and_fresh_linux_ci_pending"
   },
   "previous_candidates": [
     {
