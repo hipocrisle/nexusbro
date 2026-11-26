@@ -232,14 +232,24 @@ impl State {
             {
                 let p = self.player(id)?;
                 for event in events {
-                    let kind = event["type"]
+                    // Pinned 156.0.8078.88 wire form: PlayerEvent{timestamp,
+                    // value} (Media.pdl:41-45); value is the JSON string of the
+                    // media log params dict (inspector_media_event_handler.cc:
+                    // ToString(event.params) via base::WriteJson), whose
+                    // "event" key carries the event name (media_log.cc
+                    // kEventKey). Only the authoritative terminal name is
+                    // consumed; the exact key is parsed, never
+                    // substring-matched against URLs or error text.
+                    let raw = event["value"]
                         .as_str()
-                        .filter(|t| t.len() <= 64)
+                        .filter(|v| v.len() <= 1024)
                         .ok_or("decode_event_invalid")?;
-                    // Only the authoritative terminal lifecycle event is
-                    // consumed (media_log_events.h: no events can come after
-                    // it). All other types/values are ignored without copying.
-                    if kind == "kWebMediaPlayerDestroyed" && !p.destroyed {
+                    let params = parse(raw.as_bytes())?;
+                    let name = params.0["event"]
+                        .as_str()
+                        .filter(|n| !n.is_empty() && n.len() <= 64)
+                        .ok_or("decode_event_invalid")?;
+                    if name == "kWebMediaPlayerDestroyed" && !p.destroyed {
                         p.destroyed = true;
                         mark = true;
                     }
@@ -865,7 +875,10 @@ mod tests {
         event(
             state,
             "Media.playerEventsAdded",
-            json!({"playerId":id,"events":[{"type":"kPause","timestamp":1.0},{"type":"kWebMediaPlayerDestroyed","timestamp":2.0}]}),
+            json!({"playerId":id,"events":[
+                {"timestamp":1.0,"value":"{\"event\":\"kPause\"}"},
+                {"timestamp":2.0,"value":"{\"event\":\"kWebMediaPlayerDestroyed\"}"}
+            ]}),
         )
     }
     #[test]
@@ -905,19 +918,37 @@ mod tests {
         assert!(event(
             &mut s,
             "Media.playerEventsAdded",
-            json!({"playerId":"opaque","events":(0..65).map(|_|json!({"type":"kPause"})).collect::<Vec<_>>()})
+            json!({"playerId":"opaque","events":(0..65).map(|_|json!({"timestamp":1.0,"value":"{\"event\":\"kPause\"}"})).collect::<Vec<_>>()})
         )
         .is_err());
+        // value обязан быть JSON-строкой params с ключом "event" (pinned 156).
+        for bad in [
+            json!({"timestamp":1.0}),
+            json!({"timestamp":1.0,"value":7}),
+            json!({"timestamp":1.0,"value":"x".repeat(1025)}),
+            json!({"timestamp":1.0,"value":"not json"}),
+            json!({"timestamp":1.0,"value":"{\"other\":\"kWebMediaPlayerDestroyed\"}"}),
+            json!({"timestamp":1.0,"value":"{\"event\":\"x\"".repeat(30)}),
+        ] {
+            assert!(
+                event(
+                    &mut s,
+                    "Media.playerEventsAdded",
+                    json!({"playerId":"opaque","events":[bad]})
+                )
+                .is_err(),
+                "bad event must fail closed: {bad}"
+            );
+        }
+        // Unknown будущий event игнорируется; имя ищется ТОЛЬКО в ключе
+        // "event" — подстрока в другом значении не считается destroyed.
         assert!(event(
             &mut s,
             "Media.playerEventsAdded",
-            json!({"playerId":"opaque","events":[{"type":"x".repeat(65)}]})
-        )
-        .is_err());
-        assert!(event(
-            &mut s,
-            "Media.playerEventsAdded",
-            json!({"playerId":"opaque","events":[{"type":"kSomeFutureEvent","timestamp":1.0}]})
+            json!({"playerId":"opaque","events":[
+                {"timestamp":1.0,"value":"{\"event\":\"kSomeFutureEvent\"}"},
+                {"timestamp":2.0,"value":"{\"event\":\"kLoad\",\"url\":\"https://x/kWebMediaPlayerDestroyed\"}"}
+            ]})
         )
         .is_ok());
         assert!(!s.players[0].destroyed);
