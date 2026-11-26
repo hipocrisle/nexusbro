@@ -13,7 +13,7 @@ import re
 from pathlib import Path
 
 STAGES = ('observer_ready', 'deadline', 'command_rejected', 'timer_rejected',
-          'host_missing', 'owned_blank')
+          'host_missing', 'owned_blank', 'page_enable', 'method_result')
 MAX_LINES = 4000
 MAX_EVENTS = 64
 
@@ -66,7 +66,8 @@ def _read_log(path):
         if not path.is_file() or path.is_symlink():
             return result
         result['available'] = True
-        raw = path.read_bytes()[:512 * 1024]
+        with path.open('rb') as stream:
+            raw = stream.read(512 * 1024)
         result['readable'] = True
         facts = parse_native_facts(raw.decode('utf-8', errors='replace'))
         result.update(facts)
@@ -124,6 +125,8 @@ def owned_failure_screenshot(device, out_dir, identity_check):
             return {'saved': False, 'reason': 'identity_unproven_after'}
         target = Path(out_dir) / 'owned-failure.png'
         with ImageGrab.grab(bbox=box, xdisplay=device.display) as image:
+            if not identity_check():
+                return {'saved': False, 'reason': 'identity_changed_after_capture'}
             image.save(target, format='PNG')
         payload = target.read_bytes()
         if len(payload) > 3 * 1024 * 1024:

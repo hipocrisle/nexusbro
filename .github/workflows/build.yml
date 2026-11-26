@@ -1577,7 +1577,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: downloads-library-linux-reuse
-          path: .dev-check/downloads-library/*.json
+          path: |
+            .dev-check/downloads-library/*.json
+            .dev-check/downloads-library/owned-failure.png
           retention-days: 7
       - name: Native Linux smoke from exact existing binary
         if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}

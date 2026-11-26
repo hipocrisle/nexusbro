@@ -233,6 +233,7 @@ def run(args):
         (device.data / 'nastrojki.json').write_text(json.dumps({'avtoobnovleniya': False, 'apparatnoe_uskorenie': False, 'memory_saver': False}))
         report['stage'] = 'startup'; client = device.start()
         wm = OwnedWindowManager(device, root / 'wm'); device.player_wm = wm
+        identity = native_app_identity(device)
         switch_super(client, identifier, timeout=remaining(10))
         # Fixture setup uses the ordinary selection command. Download
         # acceptance below still requires the actual painted page OS clicks.
@@ -255,7 +256,6 @@ def run(args):
         require(wait_counter(fixture, 'page', 1, remaining(15)) is not None,
                 'Fixture page GET not observed')
         report['fixture_counters_after_load'] = fixture.counts()
-        identity = native_app_identity(device)
         def owned_alive():
             return native_app_identity_alive(device, identity)
         pole = None
