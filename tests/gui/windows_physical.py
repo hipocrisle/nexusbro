@@ -183,8 +183,12 @@ try:
         initial_address.click_input()
         # Тест-предусловие: РЕАЛЬНЫЙ клавиатурный фокус именно в этом поле
         # (тот же UIA-API, что :284/:636). Без фокуса ввод не отправляется.
+        u.GetForegroundWindow.argtypes = []
         u.GetForegroundWindow.restype = wintypes.HWND
+        u.GetAsyncKeyState.argtypes = [ctypes.c_int]
         u.GetAsyncKeyState.restype = wintypes.SHORT
+        u.GetWindowThreadProcessId.argtypes = [wintypes.HWND,ctypes.POINTER(wintypes.DWORD)]
+        u.GetWindowThreadProcessId.restype = wintypes.DWORD
         focus_deadline=time.monotonic()+3;focus_ready=False
         while time.monotonic()<focus_deadline:
             try:
@@ -212,11 +216,15 @@ try:
         if not focus_ready:
             results.append({'initial_address_entry':entry})
             raise AssertionError('Initial address control did not take keyboard focus')
+        if (entry.get('owned_foreground') is not True or entry.get('ctrl_released') is not True
+                or entry.get('shift_released') is not True):
+            results.append({'initial_address_entry':entry})
+            raise AssertionError('Initial physical input ownership or released modifiers unproven')
     gui.hotkey('ctrl','a')
     fixture = base+'/page'
     # ОДИН humanlike ввод (20мс/символ вместо нереалистичных 333 симв/с);
     # критерий exact не ослаблен, повторной печати нет.
-    gui.write(fixture, interval=.02)
+    gui.write(fixture, interval=.003 if a.baseline else .02)
     if not a.baseline:
         deadline=time.monotonic()+3
         while time.monotonic()<deadline and initial_address.iface_value.CurrentValue!=fixture:time.sleep(.05)
@@ -226,6 +234,15 @@ try:
             entry['value_check']=classify_value(actual_value,fixture)
             entry['owned_input_focus']=True
             if actual_value!=fixture:
+                try:
+                    fg=u.GetForegroundWindow();fg_pid=wintypes.DWORD()
+                    if fg:u.GetWindowThreadProcessId(fg,ctypes.byref(fg_pid))
+                    entry['focus_after_failed_input']={
+                        'field_has_focus':bool(initial_address.element_info.element.CurrentHasKeyboardFocus),
+                        'owned_foreground':bool(fg) and fg_pid.value in family,
+                        'ctrl_released':(u.GetAsyncKeyState(0x11)&0x8000)==0,
+                        'shift_released':(u.GetAsyncKeyState(0x10)&0x8000)==0}
+                except Exception:entry['focus_after_failed_input']={'available':False}
                 time.sleep(1)
                 try:
                     entry['late_exact']=initial_address.iface_value.CurrentValue==fixture

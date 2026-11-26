@@ -51,8 +51,19 @@ def main():
     checks['focus_wait_bounded'] = 'CurrentHasKeyboardFocus' in block and 'focus_deadline=time.monotonic()+3' in block
     checks['focus_typed_failure'] = "raise AssertionError('Initial address control did not take keyboard focus')" in block
     checks['modifiers_checked'] = 'ctrl_released' in block and 'shift_released' in block
-    checks['humanlike_interval'] = 'gui.write(fixture, interval=.02)' in block and "entry={'focus_ready':focus_ready,'interval':0.02}" in block
-    checks['old_rate_not_in_initial'] = 'interval=.003' not in block  # исторические кейсы не тронуты
+    checks['humanlike_interval'] = 'gui.write(fixture, interval=.003 if a.baseline else .02)' in block and "entry={'focus_ready':focus_ready,'interval':0.02}" in block
+    # Baseline reference timing stays unchanged; the stronger current test is slower.
+    import ast
+    tree=ast.parse(SRC)
+    fixture_writes=[node for node in ast.walk(tree) if isinstance(node,ast.Call)
+        and isinstance(node.func,ast.Attribute) and node.func.attr=='write'
+        and node.args and isinstance(node.args[0],ast.Name) and node.args[0].id=='fixture']
+    fixture_writes.sort(key=lambda n:n.lineno)
+    rate=next((v.value for v in fixture_writes[0].keywords if v.arg=='interval'),None)
+    checks['baseline_rate_preserved']=(bool(fixture_writes) and isinstance(rate,ast.IfExp)
+        and isinstance(rate.test,ast.Attribute) and rate.test.attr=='baseline'
+        and isinstance(rate.body,ast.Constant) and rate.body.value==.003
+        and isinstance(rate.orelse,ast.Constant) and rate.orelse.value==.02)
     checks['receipt_before_assert'] = block.index("results.append({'initial_address_entry':entry})") < block.index(
         "assert actual_value==fixture,'Initial physical address entry failed'")
     checks['exact_assert_kept'] = "assert actual_value==fixture,'Initial physical address entry failed'" in block
