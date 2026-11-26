@@ -71,7 +71,7 @@ pub fn receive(
                 .vkladki
                 .lock()
                 .unwrap()
-                .get(&super_id)
+                .get(super_id)
                 .and_then(|v| v.obychnye.as_ref())
                 .is_some_and(matches)
     } else {

@@ -57,7 +57,14 @@ const SCRIPT: &str = r#"(()=>{
  const uniqueRect=elements=>{const rects=Array.from(elements).map(rectOf).filter(Boolean);return rects.length===1?rects[0]:null;};
  const menuLabel=el=>norm((el.querySelector('.ytp-menuitem-label')||el).textContent);
  const menuItems=Array.from(player.querySelectorAll('[role=menuitem],[role=menuitemradio]'));
- const rejects=Array.from(document.querySelectorAll('button,[role=button]')).filter(e=>['Reject all','Alle ablehnen','Отклонить все'].includes(norm(e.textContent)));
+ // Hidden consent templates stay in YouTube's DOM after dismissal. Keep
+ // offscreen visible buttons (one real scroll may reach them), but never
+ // interpret a non-rendered template as a still-open consent modal.
+ const rejects=Array.from(document.querySelectorAll('button,[role=button]')).filter(e=>{
+  if(!['Reject all','Alle ablehnen','Отклонить все'].includes(norm(e.textContent)))return false;
+  const st=getComputedStyle(e),r=e.getBoundingClientRect();
+  return st.display!=='none'&&st.visibility!=='hidden'&&st.visibility!=='collapse'&&r.width>0&&r.height>0;
+ });
  const autohide=player.classList.contains('ytp-autohide');
  const controls={
   viewport:{width:innerWidth,height:innerHeight},reject_all_present:rejects.length>0,

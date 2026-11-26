@@ -144,7 +144,7 @@ function baseFixture(opts) {
   if (opts.twoVideos) playerChildren.push(videoNode({ x: 0, y: 0, width: 640, height: 360 }));
   const player = node({ id: 'movie_player', classes: playerClasses, rect: { x: 0, y: 0, width: 1280, height: 800 },
     videoData: { video_id: opts.videoId || VID }, children: playerChildren });
-  const reject = node({ tag: 'button', text: 'Reject all', rect: { x: 24, y: 24, width: 120, height: 32 } });
+  const reject = node({ tag: 'button', text: 'Reject all', display: opts.rejectDisplay || 'block', visibility: opts.rejectVisibility || 'visible', rect: opts.rejectRect || { x: 24, y: 24, width: 120, height: 32 } });
   const bodyChildren = [player, reject];
   if (opts.extraDocSettings) bodyChildren.push(node({ tag: 'button', classes: ['ytp-settings-button'], rect: { x: 600, y: 24, width: 40, height: 32 } }));
   if (opts.markerButton) bodyChildren.push(node({ tag: 'button', text: 'PRIVATE_MARKER_QQ77', rect: { x: 200, y: 24, width: 100, height: 32 } }));
@@ -168,6 +168,9 @@ function runCase(opts, hits) {
 const overlay = node({ rect: { x: 0, y: 700, width: 1280, height: 100 } });
 const cases = {
   happy: runCase({}),
+  hidden_consent: runCase({rejectDisplay:'none'}),
+  collapsed_consent: runCase({rejectRect:{x:0,y:0,width:0,height:0}}),
+  offscreen_consent: runCase({rejectRect:{x:24,y:1200,width:120,height:32}}),
   overlay_blocks_play: runCase({}, { '40,774': overlay }),
   offscreen_settings: runCase({ settingsRect: { x: 1240, y: 756, width: 70, height: 36 } }),
   autohide: runCase({ autohide: true }),
@@ -259,6 +262,18 @@ class ReferenceControlsJsTest(unittest.TestCase):
         self.assertEqual(
             r["controls"]["reject_all"], {"x": 24, "y": 24, "width": 120, "height": 32}
         )
+
+    def test_hidden_consent_template_is_not_an_open_modal(self):
+        for case in ('hidden_consent','collapsed_consent'):
+            with self.subTest(case=case):
+                controls=self.case(case)['controls']
+                self.assertFalse(controls['reject_all_present'])
+                self.assertIsNone(controls['reject_all'])
+
+    def test_offscreen_visible_consent_still_requires_real_scroll(self):
+        controls=self.case('offscreen_consent')['controls']
+        self.assertTrue(controls['reject_all_present'])
+        self.assertIsNone(controls['reject_all'])
 
     def test_05_partly_offscreen_rect_is_null_even_if_center_inside(self):
         # settings: right = 1240+70 = 1310 > innerWidth 1280, центр (1275,774)
