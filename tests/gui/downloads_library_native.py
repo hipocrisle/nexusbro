@@ -143,6 +143,10 @@ WAIT_MESSAGES = {
     'file-known.bin did not complete with a real file': 'known_complete_timeout',
     'file-unknown.bin did not complete with a real file': 'unknown_complete_timeout',
     'Downloads library did not open via Ctrl+J': 'library_open_timeout',
+    'Fixture page GET not observed': 'initial_page_http_not_reached',
+    'CEF area (.pole) unavailable for trusted clicks': 'initial_viewport_not_ready',
+    'Tile not painted or ownership lost before click': 'download_tile_paint_or_owner_missing',
+    'Trusted click did not reach the fixture HTTP branch': 'download_click_http_not_reached',
 }
 
 
@@ -199,7 +203,7 @@ def initial_report():
 
 def run(args):
     report = initial_report(); device = wm = None; root = None; client = None
-    fixture = Fixture(); close_attempted = False
+    fixture = Fixture(); close_attempted = False; identifier = None; tab = None; origin = None
     out = Path(args.out).resolve(); out.mkdir(parents=True, exist_ok=False)
     started = time.monotonic(); work_deadline = started + 240
     def remaining(cap):
@@ -395,6 +399,14 @@ def run(args):
         except Exception:
             pass
     finally:
+        # Preserve the reached phase even if setup fails before the first click.
+        report['fixture_counters_final'] = fixture.counts()
+        if client is not None and identifier is not None and origin is not None:
+            try:
+                current = rows(client, identifier, timeout=3)
+                report['tab_facts_final'] = tab_facts(current, current.get('aktivnaya'), origin)
+            except Exception:
+                report['tab_facts_unavailable'] = True
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']
             try:
