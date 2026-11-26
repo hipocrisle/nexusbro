@@ -29,13 +29,13 @@ try:
   context=browser.new_context(permissions=['clipboard-read','clipboard-write'],viewport={'width':1280,'height':820})
   page=context.new_page();errors=[];page.on('pageerror',lambda e:errors.append(str(e)));page.add_init_script(mock);page.goto(f'http://127.0.0.1:{server.server_port}')
   page.get_by_role('tab',name='One',exact=True).wait_for()
-  address=page.get_by_label('Адрес страницы',exact=True);address.fill('https://example.test/enter');address.press('Enter');expect(page.get_by_role('dialog',name='Сетевой выход',exact=True)).not_to_be_visible();assert page.evaluate("window.__args.some(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti')")
+  address=page.get_by_label('Адрес страницы',exact=True);address.fill('https://example.test/enter');address.press('Enter');expect(page.get_by_role('dialog',name='Сеть вкладки',exact=True)).not_to_be_visible();assert page.evaluate("window.__args.some(x=>x.cmd==='obychnaya_komanda'&&x.args.komanda.deystvie==='pereyti')")
   assert page.locator('.library-shortcuts').count()==0
-  network=page.get_by_role('button',name='Сетевой выход супер-вкладки',exact=True);expect(network).to_have_class('network-button network-up')
+  network=page.get_by_role('button',name='Сеть вкладки',exact=True);expect(network).to_have_class('tab-route-button')
   buttons=[network,page.get_by_role('button',name='Защита супер-вкладки',exact=True),page.get_by_role('button',name='Меню NexusBro',exact=True)]
   boxes=[b.bounding_box() for b in buttons];assert all(b['width']==30 and b['height']==30 for b in boxes),boxes;assert boxes[0]['x']<boxes[1]['x']<boxes[2]['x'],boxes
   assert network.inner_text()==''
-  page.evaluate('window.__health=false');expect(network).to_have_class('network-button network-down');page.evaluate('window.__health=true')
+  assert page.locator('.network-button').count()==0
 
   page.evaluate("""()=>window.__callbacks[window.__events['obychnye-izmenilis']]({payload:{id:'layout',sessiya:{aktivnaya:1,vkladki:[{id:1,adres:'https://example.test/word/next',zagolovok:'Fixture',privatnaya:true}]}}})""")
   page.get_by_role('tab',name='Fixture',exact=True).wait_for()

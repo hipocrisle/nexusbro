@@ -21,7 +21,7 @@ export function TabRouteButton({tab,choices,onOpen}:{tab:TabRouteTarget|undefine
  const state=tab?.route_pending?'pending':tab?.route_error||tab?.route?.kind==='blocked'?'error':known?'applied':'unknown';
  const label=routeLabel(tab?.route,choices);
  const detail=state==='pending'?'Применяем путь. Подтверждённый: '+label:tab?.route_error?'Путь не применён. '+tab.route_error+' Подтверждённый: '+label:label;
- return <button type="button" className="tab-route-button" data-route-state={state} aria-label="Путь вкладки" aria-busy={!!tab?.route_pending} title={'Путь вкладки: '+detail} disabled={!known||!!tab?.memory_pending||!!tab?.route_pending} onClick={onOpen}>
+ return <button type="button" className="tab-route-button" data-route-state={state} aria-label="Сеть вкладки" aria-busy={!!tab?.route_pending} title={'Сеть вкладки: '+detail} disabled={!known||!!tab?.memory_pending||!!tab?.route_pending} onClick={onOpen}>
   <Icon name="globe" size={17}/><i aria-hidden="true"/>
  </button>;
 }
@@ -50,6 +50,15 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
 }){
  const [ready,setReady]=useState(false),[draft,setDraft]=useState(routeKey(tab.route));
  const [applying,setApplying]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
+ const [checking,setChecking]=useState(false),[exit,setExit]=useState<{ip:string;ms:number;checked:number}|null>(null),[exitError,setExitError]=useState('');
+ const probe=useRef(0);
+ useEffect(()=>{++probe.current;setExit(null);setExitError('');setChecking(false);return()=>{++probe.current;};},[owner,tab.id,tab.route_generation]);
+ async function checkExit(){
+  if(checking||busy)return;const token=++probe.current;setChecking(true);setExit(null);setExitError('');
+  try{const value=await invoke<{ip:string;ms:number;checked:number}>('tab_route_check_ip',{id:owner,tabId:tab.id,expectedGeneration:tab.route_generation});if(alive.current&&token===probe.current)setExit(value);}
+  catch(value){if(alive.current&&token===probe.current)setExitError(String(value));}
+  finally{if(alive.current&&token===probe.current)setChecking(false);}
+ }
  const running=useRef(false),alive=useRef(true),cancel=useRef<HTMLButtonElement>(null),dialog=useRef<HTMLElement>(null);
  const callbacks=useRef({onClose,onError});callbacks.current={onClose,onError};
  const previousGeneration=useRef(tab.route_generation);
@@ -89,7 +98,7 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
  if(!ready)return null;
  const missing=draft.startsWith('connection:')&&!choices?.connections.some(value=>'connection:'+value.id===draft);
  return createPortal(<div className="zatemnenie" data-tab-route-root="true" onClick={()=>{if(!busy)onClose();}}>
-  <section className="dialog tab-route-dialog" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Путь вкладки" aria-describedby="tab-route-profile-warning" onClick={event=>event.stopPropagation()} onKeyDown={event=>{
+  <section className="dialog tab-route-dialog" ref={dialog} tabIndex={-1} role="dialog" aria-modal="true" aria-label="Сеть вкладки" aria-describedby={draft!==routeKey(tab.route)?"tab-route-profile-warning":undefined} onClick={event=>event.stopPropagation()} onKeyDown={event=>{
    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();if(!busy)onClose();}
    if(event.key==='Tab'){
     const controls=Array.from(event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),[tabindex="0"]'));
@@ -99,7 +108,7 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
     if(controls.length)controls[(current+(event.shiftKey?-1:1)+controls.length)%controls.length]?.focus();else dialog.current?.focus();
    }
   }}>
-   <header><h2>Путь вкладки</h2><button type="button" aria-label="Закрыть выбор пути вкладки" disabled={busy} onClick={onClose}><Icon name="close" size={17}/></button></header>
+   <header><h2>Сеть вкладки</h2><button type="button" aria-label="Закрыть выбор пути вкладки" disabled={busy} onClick={onClose}><Icon name="close" size={17}/></button></header>
    <strong className="tab-route-tab-title">{tab.zagolovok||'Новая вкладка'}</strong>
    <p className="tab-route-current">Текущий путь: {routeStateKnown(tab)?routeLabel(tab.route,choices):'ещё не получен'}</p>
    <label className="tab-route-choice">Подключение<Vybor aria-label="Выберите путь вкладки" value={draft} disabled={busy||!choices} onChange={event=>{setDraft(event.target.value);setError('');setNotice('');}}>
@@ -109,7 +118,10 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
     <option value="direct">Прямое соединение</option>
     {choices?.connections.map(value=><option key={value.id} value={'connection:'+value.id}>{value.name}</option>)}
    </Vybor></label>
-   <p id="tab-route-profile-warning" className="tab-route-warning">Страница перезагрузится. Может понадобиться повторный вход.</p>
+   {draft!==routeKey(tab.route)&&<p id="tab-route-profile-warning" className="tab-route-warning">Страница перезагрузится. У другого пути отдельный профиль — может понадобиться повторный вход.</p>}
+   <div className="tab-route-exit"><span>Фактический выход: {checking?'проверяется…':exit?exit.ip:exitError?'ошибка проверки':'не проверен'}</span><button type="button" disabled={checking||busy} onClick={()=>void checkExit()}>{checking?'Проверяю…':'Проверить IP'}</button></div>
+   {exit&&<small className="muted">{exit.ms} мс · {new Date(exit.checked*1000).toLocaleTimeString()}</small>}
+   {exitError&&<p className="tab-route-error" role="alert">{exitError}</p>}
    {!choices&&!choicesError&&<p role="status">Загружаю сохранённые подключения…</p>}
    {choicesError&&<div className="tab-route-error" role="alert"><span>{choicesError}</span><button type="button" disabled={busy} onClick={onRefresh}>Повторить получение подключений</button></div>}
    {(error||tab.route_error)&&<p className="tab-route-error" role="alert">{error||tab.route_error}</p>}

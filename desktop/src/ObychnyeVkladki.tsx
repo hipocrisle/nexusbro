@@ -8,7 +8,6 @@ import BrowserMenu from "./BrowserMenu";
 import {shortcutKey} from "./shortcuts";
 import {addressDown,addressUp,type AddressPointer} from "./addressSelection";
 import {addressCompletion} from "./addressCompletion";
-import SetStatus from "./SetStatus";
 import {TabRouteButton,TabRouteDialog,useTabRouteChoices} from "./TabRouteSelector";
 import {routeLabel,routeStateKnown,type SelectableTabRoute,type TabRouteState} from "./tabRouteTypes";
 import { ReactNode, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -208,7 +207,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       {text:"Обновить",action:action({deystvie:"obnovit",id:v.id})},
       {text:"Дублировать",action:action({deystvie:"novaya",adres:v.adres})},
       ...(youtubeCandidate(v)?[{text:"Открыть в лёгком режиме YouTube",enabled:!youtubeBusy,action:action({deystvie:"youtube_light",id:v.id})}]:[]),
-      {text:"Путь вкладки…",enabled:routeStateKnown(v)&&!v.memory_pending&&!v.route_pending,action:()=>openTabRoute(v)},
+      {text:"Сеть вкладки…",enabled:routeStateKnown(v)&&!v.memory_pending&&!v.route_pending,action:()=>openTabRoute(v)},
       {text:v.zakreplena?"Открепить":"Закрепить",action:action({deystvie:"zakrepit",id:v.id,zakreplena:!v.zakreplena})},
       {text:"Исходный код страницы",action:action({deystvie:"iskhodnik",id:v.id})},
       {text:"Инструменты разработчика",action:action({deystvie:"instrumenty",id:v.id})},null,
@@ -373,7 +372,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
         onChange={e=>{setPravka(true);setSuggestionIndex(-1);completedValue.current=null;completionAllowed.current=(e.nativeEvent as InputEvent).inputType==='insertText';setAdres(e.target.value);}} />
 
       <button type="button" title={(bookmarked?"Удалить закладку":"Добавить в закладки")+" · Ctrl+D"} aria-label={bookmarked?"Удалить закладку":"Добавить в закладки"} aria-pressed={bookmarked} className={bookmarked?"bookmark-star selected":"bookmark-star"} disabled={!aktivnaya} onClick={()=>{void toggleBookmark();}}>{bookmarked?"★":"☆"}</button>
-      <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/><SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
+      <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/>{children}<BrowserMenu label="Меню NexusBro" items={[
        ...(youtubeCandidate(aktivnaya)?[{label:"Открыть в лёгком режиме YouTube",disabled:youtubeBusy,action:()=>poslat({deystvie:"youtube_light",id:aktivnaya!.id})},null]:[]),
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
        {label:"Сохранить страницу…",shortcut:"Ctrl+S",disabled:!aktivnaya,action:()=>{if(aktivnaya)void poslat({deystvie:"sohranit_stranitsu",id:aktivnaya.id});}},

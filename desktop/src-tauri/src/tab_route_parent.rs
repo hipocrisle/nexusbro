@@ -271,6 +271,35 @@ async fn prepare(
         .await
 }
 
+/// Probe the tab's confirmed route, never the super-tab's default by accident.
+#[tauri::command]
+pub async fn tab_route_check_ip(
+    app: tauri::AppHandle,
+    window: tauri::WebviewWindow,
+    s: State<'_, crate::Sostoyanie>,
+    id: String,
+    tab_id: u64,
+    expected_generation: u64,
+) -> Result<serde_json::Value, String> {
+    if crate::browser_lock::locked_global() { return Err("Браузер заблокирован".into()); }
+    crate::okna_app::kanal(&s, window.label(), &id)?;
+    let (engine, tab) = session_tab(&s, window.label(), &id, tab_id)?;
+    if tab.route_pending || tab.route_generation != expected_generation || tab.browser_id <= 0 {
+        return Err("Путь меняется или вкладка ещё не загружена".into());
+    }
+    let route = prepare(&app, &id, engine, &tab.route).await?;
+    let port = route.proxy.strip_prefix("http://127.0.0.1:")
+        .filter(|_| route.validate()).and_then(|v| v.parse::<u16>().ok())
+        .ok_or("Выбранный путь недоступен")?;
+    let result = crate::set_status::proverit_ip_port(port).await?;
+    let (current_engine, current) = session_tab(&s, window.label(), &id, tab_id)?;
+    if crate::browser_lock::locked_global() || current_engine != engine || current.route_pending
+        || current.route_generation != expected_generation || current.browser_id != tab.browser_id {
+        return Err("Вкладка или путь изменились. Проверьте выход заново.".into());
+    }
+    Ok(result)
+}
+
 pub fn translation_port(
     s: &crate::Sostoyanie,
     super_id: &str,

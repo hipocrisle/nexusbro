@@ -13,6 +13,10 @@ pub async fn set_status(s:tauri::State<'_,crate::Sostoyanie>,id:String)->Result<
 #[tauri::command]
 pub async fn set_proverit_ip(s:tauri::State<'_,crate::Sostoyanie>,id:String)->Result<Value,String>{
     let port={let v=s.vkladki.lock().map_err(|e|e.to_string())?;v.get(&id).and_then(|v|v.nash_proxy.as_ref()).map(|p|p.port).ok_or("Сначала откройте супер-вкладку")?};
+    proverit_ip_port(port).await
+}
+
+pub(crate) async fn proverit_ip_port(port:u16)->Result<Value,String>{
     let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).map_err(|_|"Ошибка прокси")?).timeout(std::time::Duration::from_secs(8)).build().map_err(|_|"Ошибка проверки")?;
     for url in ["https://api.ipify.org?format=json","https://api64.ipify.org?format=json"]{
         let start=std::time::Instant::now();

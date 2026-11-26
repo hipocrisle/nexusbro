@@ -1356,7 +1356,7 @@ pub fn run() {
             supervkladki::sohranit_vkladku, supervkladki::peremestit_super,
             browser_backup::security_backup, browser_tasks::browser_tasks_snapshot,
             super_hibernation_parent::super_lifecycle_snapshot, tab_search::tab_search_snapshot, tab_search::tab_search_activate, fokus_obolochke, obychnye_spisok, obychnaya_komanda, spisok, aktivnaya, schet_rezki, zhurnal_rezki, otkryt, pereklyuchit, zakryt, izmenit,
-            tab_route_parent::tab_route_choices, tab_route_parent::tab_route_set,
+            tab_route_parent::tab_route_choices, tab_route_parent::tab_route_set, tab_route_parent::tab_route_check_ip,
             zadat_mesto, dvizhok_est, pokazat_dvizhki, nuzhno_sohranenie,
             bufer_chitat,bufer_zapisat,sohranennye, vosstanovit, udalit_sohranennuyu, diagnostika, perezagruzit
 

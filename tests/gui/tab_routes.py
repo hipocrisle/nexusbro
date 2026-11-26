@@ -409,7 +409,7 @@ def target_dom(client, owner, identifier, timeout=20, route_button=False):
     expression = ('(()=>{const s=document.querySelector(' + json.dumps(super_selector) + '),'
                   't=document.querySelector(' + json.dumps(tab_selector) + ');'
                   'return !!s&&!!t&&(t.getAttribute("title")||"").includes(' + json.dumps(expected_url) + ')'
-                  + ('&&!!document.querySelector(' + json.dumps('button[aria-label="Путь вкладки"]:not(:disabled)') + ')' if route_button else '')
+                  + ('&&!!document.querySelector(' + json.dumps('button[aria-label="Сеть вкладки"]:not(:disabled)') + ')' if route_button else '')
                   + '})()')
     js_wait(client, expression, 'Shell owner/tab/document does not match the intended native target', remaining())
 
@@ -1124,7 +1124,7 @@ def apply_ui(client, label, owner, identifier, screenshot=None):
         client.route_open_native['before']=route_toolbar_observation(client,'before')
         route_open_trace_begin(client,owner,identifier)
     try:
-        client.click('button[aria-label="Путь вкладки"]')
+        client.click('button[aria-label="Сеть вкладки"]')
         js_wait(client, '!!document.querySelector("[data-tab-route-root] [role=combobox]")', 'Actual route dialog absent')
         if tracing:
             require(client.js('window.__routeOpenDiagnostic?.state?.counts?.click?.trusted_route??-1')==1,

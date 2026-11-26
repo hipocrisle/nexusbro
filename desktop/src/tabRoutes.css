@@ -18,3 +18,5 @@
 .tab-route-warning{padding:10px 12px;border:1px solid var(--kraj);border-radius:8px;background:var(--fon2)}
 .tab-route-error{display:flex;flex-direction:column;gap:8px;color:#ee7279;overflow-wrap:anywhere}
 .tab-route-dialog .knopki{margin-top:2px}
+
+.tab-route-exit{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}.tab-route-exit span{overflow-wrap:anywhere}
