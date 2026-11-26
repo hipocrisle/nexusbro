@@ -16,6 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 rs = (ROOT / 'desktop/src-tauri/src/zagruzki.rs').read_text(encoding='utf-8')
+policy = (ROOT / 'desktop/src-tauri/src/downloads_open_policy.rs').read_text(encoding='utf-8')
 tsx = (ROOT / 'desktop/src/Biblioteka.tsx').read_text(encoding='utf-8')
 css = (ROOT / 'desktop/src/downloads.css').read_text(encoding='utf-8')
 
@@ -23,13 +24,19 @@ checks = {}
 
 # Backend guards
 checks['open_action_exists'] = 'if action=="open"' in rs
-checks['open_requires_done'] = 'item.status!="Готово"' in rs
-checks['open_regular_file_only'] = 'meta.file_type().is_symlink()||!meta.is_file()' in rs
-checks['open_blocklist_present'] = '"exe"' in rs and '"bat"' in rs and '"sh"' in rs and 'DANGEROUS' in rs
+checks['open_uses_policy'] = 'crate::downloads_open_policy::check_open_target' in rs
+checks['open_requires_done'] = 'status != "Готово"' in policy
+checks['open_regular_file_only'] = 'is_symlink() || !meta.is_file()' in policy
+checks['open_blocklist_present'] = '"exe"' in policy and '"hta"' in policy and 'DANGEROUS' in policy
+checks['open_absolute_canonical'] = 'is_absolute()' in policy and 'canonicalize' in policy
+checks['open_trailing_ads_guard'] = "ends_with('.')" in policy and "contains(':')" in policy
+checks['open_linux_exec_bit'] = '0o111' in policy
 checks['no_shell_invocation'] = 'sh -c' not in rs and 'cmd /C' not in rs and 'std::process::Command::new("sh")' not in rs
 checks['no_frontend_path_arg'] = 'args(' not in rs.split('if action=="open"')[1].split('return Ok(())')[0] if 'if action=="open"' in rs else False
-checks['folder_parent_dir'] = 'path.parent()' in rs and 'is_dir()' in rs
-checks['folder_clear_error'] = 'Папка загрузки не найдена' in rs
+checks['folder_uses_policy'] = 'crate::downloads_open_policy::check_folder_target' in rs
+checks['folder_parent_dir'] = '.parent()' in policy and 'is_dir()' in policy
+checks['folder_option_like_rejected'] = 'starts_with(\'-\')' in policy
+checks['folder_clear_error'] = 'Папка загрузки не найдена' in policy
 
 # UI behavior
 checks['indeterminate_progress'] = '<progress/>' in tsx
