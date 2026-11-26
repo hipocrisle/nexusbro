@@ -94,7 +94,7 @@ def video_state(state,args,*,require_audio=True):
 
 
 def decode_state(state):
-    if (state.get('codec') not in ('vp8','vp9','av1','h264','hevc') or state.get('decoder') not in ('ffmpeg','vpx','aom')
+    if (state.get('codec') not in ('vp8','vp9','av1','h264','hevc') or state.get('decoder') not in ('ffmpeg','vpx','aom','dav1d')
             or state.get('platform_decoder') is not False or state.get('decode_mode')!='software'
             or state.get('hardware_activity_proven') is not False or state.get('video_pipelines')!=1):
         raise Blocked('same_known_software_decoder_not_proven')
