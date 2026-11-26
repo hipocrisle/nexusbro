@@ -169,7 +169,17 @@ class SandboxedDevice(Device):
                'XDG_DATA_HOME': str(self.root / 'xdg-data'),
                'XDG_CACHE_HOME': str(self.root / 'cache'),
                'NO_PROXY': '127.0.0.1,localhost,::1', 'no_proxy': '127.0.0.1,localhost,::1'}
-        self.app = subprocess.Popen(['dbus-run-session', '--', str(self.exe)], env=env,
+        # Private benchmark bus: no desktop-service activation or owner keyring.
+        # Both public-video arms use this identical fresh-session policy.
+        # Missing Secret Service is explicit; no password-store/sandbox override.
+        from xml.sax.saxutils import escape
+        bus_config = self.root / 'private-session-bus.conf'
+        bus_config.write_text('<busconfig><type>session</type><auth>EXTERNAL</auth>'
+                              '<listen>unix:tmpdir=' + escape(str(runtime)) + '</listen>'
+                              '<policy context="default"><allow send_destination="*"/>'
+                              '<allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
+        bus_config.chmod(0o600)
+        self.app = subprocess.Popen(['dbus-run-session', '--config-file', str(bus_config), '--', str(self.exe)], env=env,
                                     stdout=self.log('app-' + str(self.launches) + '.log'),
                                     stderr=subprocess.STDOUT, start_new_session=True)
         deadline = time.monotonic() + 45
