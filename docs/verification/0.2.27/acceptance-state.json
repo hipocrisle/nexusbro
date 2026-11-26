@@ -4,11 +4,12 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "7a28b51b5e2a6f2f852d777d6c1ba9a000489063",
-    "build_run": 45809541954,
-    "status": "in_progress",
+    "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
+    "build_run": 45814785978,
+    "status": "queued",
     "native_windows": "pending",
-    "native_linux": "pending"
+    "native_linux": "pending",
+    "page_save": "pending_real_native_ctrl_s_menu_and_offline_archive"
   },
   "resource_soak": {
     "run": 45549296137,
@@ -36,12 +37,12 @@
     "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
-    "status": "new_control_reader_and_physical_driver_awaiting_actual_binary",
+    "status": "not_accepted_new_source_requires_actual_measurement",
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
-    "source": "7a28b51b5e2a6f2f852d777d6c1ba9a000489063",
-    "build_run": 45809541954
+    "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
+    "build_run": 45814785978
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -242,5 +243,30 @@
     "reason": "invalid_quoted_string_in_new_probe_unit_test",
     "first_attempt_cancelled": "8_minute_apt_ffmpeg_setup_timeout",
     "second_attempt_compiler_failed_both_os": true
-  }
+  },
+  "page_save": {
+    "implemented": true,
+    "native_acceptance": false,
+    "source": "e6e853b95f5c5d6e34161e0475b16ea2240cf9c1",
+    "build_run": 45814785978,
+    "required": [
+      "real_ctrl_s_native_dialog",
+      "cancel_dialog",
+      "menu_save_and_confirm_overwrite",
+      "fresh_profile_offline_css_image_and_frame"
+    ],
+    "test": "tests/gui/page_save_native.py"
+  },
+  "previous_candidates": [
+    {
+      "source": "7a28b51b5e2a6f2f852d777d6c1ba9a000489063",
+      "build_run": 45809541954,
+      "linux_job": "success",
+      "windows_job": "failure",
+      "windows_failure_stage": "saved_download_test_cleanup",
+      "windows_open_and_folder_real_actions_passed": true,
+      "windows_download_result_sha256": "347b5af14dd3a3c36b0b24893aed7a72fdf3357bb41d2ebae3261ad4a47abf32",
+      "accepted_for_current_source": false
+    }
+  ]
 }

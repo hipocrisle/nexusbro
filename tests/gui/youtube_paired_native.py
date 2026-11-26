@@ -308,7 +308,28 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
                     if isinstance(error,Blocked) and str(error).startswith('sidecar_failure_'):raise
                     time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
-        else:state=snapshot(mode)
+        else:
+            if getattr(args,'native_normal_ui',False):
+                # A late initial redirect/history update can invalidate a
+                # correctly bound CDP observation. Synchronize on the actual
+                # native session before taking the first observation; never
+                # retry an already-refused probe or re-extract public media.
+                quiet_since=None; previous=None; deadline=time.monotonic()+15
+                while time.monotonic()<deadline:
+                    current=rows(client,identifier)
+                    row=next((r for r in current['vkladki'] if r.get('id')==tab),None)
+                    key=(row.get('browser_id'),row.get('route_generation'),row.get('adres')) if row else None
+                    if not row or row.get('zagruzka') or row.get('route_pending') or not row.get('browser_id'):
+                        quiet_since=None
+                    elif key!=previous or quiet_since is None:
+                        quiet_since=time.monotonic()
+                    elif time.monotonic()-quiet_since>=2:
+                        result['normal_initial_document_quiet_seconds']=2
+                        break
+                    previous=key
+                    time.sleep(.25)
+                else:raise Blocked('normal_initial_document_not_stable')
+            state=snapshot(mode)
         setup_hook=getattr(args,'normal_setup_hook',None)
         if mode=='normal' and setup_hook is not None:
             result['stage']='normal-manual-ui-setup'
