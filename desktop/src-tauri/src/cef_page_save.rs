@@ -1,10 +1,16 @@
 //! Native-only page save: Ctrl+S -> parent-owned save dialog -> CDP
-//! `Page.captureSnapshot` (format mhtml) -> bounded atomic file write.
-//! The renderer never supplies a path, HTML, or a URL. Only the single
-//! active owned browser is admitted; generation/document/browser binding is
-//! re-verified after the dialog returns and before any byte is published.
-//! Nothing here logs paths, URLs, HTML, titles, or secrets: the UI learns
-//! only compact typed state events.
+//! `Page.captureSnapshot` (format mhtml) -> bounded temp write -> atomic
+//! publish. The renderer never supplies a path, HTML, or a URL. Only the
+//! single active owned browser is admitted; generation/document/browser
+//! binding is re-verified on the CEF UI thread after the dialog returns and
+//! again immediately before the atomic rename, with no UI loop in between.
+//! The worker thread writes only a private temp file; the rename that
+//! publishes bytes to the user path happens exclusively in poll on the UI
+//! thread. Lock/navigation/close cancellation is owned by the Root process
+//! (on_before_browse / BrowserLocked / close call [`cancel`]); this module
+//! deliberately does not treat `locked_global` as shared state inside the
+//! CEF engine process. Nothing here logs paths, URLs, HTML, titles, or
+//! secrets: the UI learns only compact typed state events.
 use crate::cdp;
 use crate::cef_vkladki::Sobytie;
 use cef::*;
@@ -24,7 +30,11 @@ use zeroize::Zeroizing;
 const MAX_JOBS: usize = 2;
 const MAX_DOCUMENT_BYTES: usize = 8192;
 const MAX_PATH_BYTES: usize = 4096;
+/// Cap for the decoded MHTML payload itself.
 const MAX_MHTML_BYTES: usize = 128 * 1024 * 1024;
+/// Cap for the raw CDP JSON payload, checked before parsing; the small
+/// allowance above the payload cap covers JSON framing/escapes.
+const MAX_RESULT_BYTES: usize = MAX_MHTML_BYTES + 64 * 1024;
 const DIALOG_TIMEOUT: Duration = Duration::from_secs(120);
 const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 
@@ -32,7 +42,6 @@ const CAPTURE_TIMEOUT: Duration = Duration::from_secs(60);
 enum SaveError {
     Cancelled,
     Busy,
-    Locked,
     PageChanged,
     WrongThread,
     CdpMethodFailed,
@@ -40,6 +49,7 @@ enum SaveError {
     CdpResultAbsent,
     InvalidResult,
     TooLarge,
+    Exists,
     Storage,
     CaptureTimeout,
     StateUnavailable,
@@ -50,7 +60,6 @@ impl SaveError {
         match self {
             SaveError::Cancelled => "cancelled",
             SaveError::Busy => "busy",
-            SaveError::Locked => "locked",
             SaveError::PageChanged => "page_changed",
             SaveError::WrongThread => "wrong_thread",
             SaveError::CdpMethodFailed => "cdp_method_failed",
@@ -58,6 +67,7 @@ impl SaveError {
             SaveError::CdpResultAbsent => "cdp_result_absent",
             SaveError::InvalidResult => "invalid_result",
             SaveError::TooLarge => "too_large",
+            SaveError::Exists => "exists",
             SaveError::Storage => "storage",
             SaveError::CaptureTimeout => "capture_timeout",
             SaveError::StateUnavailable => "state_unavailable",
@@ -68,7 +78,7 @@ impl SaveError {
 
 struct Completion {
     done: bool,
-    reply: Option<Result<String, SaveError>>,
+    reply: Option<Result<Zeroizing<String>, SaveError>>,
 }
 
 struct Entry {
@@ -82,7 +92,7 @@ struct Entry {
     cancel: watch::Sender<bool>,
     completion: Option<Arc<Mutex<Completion>>>,
     path: Option<PathBuf>,
-    result: Option<Result<u64, SaveError>>,
+    result: Option<Result<(PathBuf, u64), SaveError>>,
 }
 
 fn jobs() -> &'static Mutex<HashMap<i32, Entry>> {
@@ -93,6 +103,11 @@ fn jobs() -> &'static Mutex<HashMap<i32, Entry>> {
 thread_local! {
     /// CDP observer registrations live on the creating CEF UI thread only.
     static REGISTRATIONS: RefCell<HashMap<i32, Registration>> = RefCell::new(HashMap::new());
+}
+
+/// Shutdown/hibernation gate for the owner: true while any save is pending.
+pub fn any_active() -> bool {
+    jobs().lock().map_or(true, |all| !all.is_empty())
 }
 
 fn unix_now() -> u64 {
@@ -116,7 +131,7 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
     (if m <= 2 { y + 1 } else { y }, m, d)
 }
 
-/// Privacy-safe default name: no title, no URL, only the UTC timestamp.
+/// Privacy-safe suggested name: no title, no URL, only the UTC timestamp.
 fn make_filename(unix_secs: u64) -> String {
     let (y, mo, d) = civil_from_days((unix_secs / 86400) as i64);
     let secs = unix_secs % 86400;
@@ -135,13 +150,25 @@ fn valid_request(request: &str) -> bool {
     request.len() == 32 && request.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
-fn valid_filename(name: &str) -> bool {
+/// Validation for the suggested default name only.
+fn valid_suggested_filename(name: &str) -> bool {
     name.len() <= 64
         && name.starts_with("page-")
         && name.ends_with(".mhtml")
         && name
             .bytes()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'_' | b'-'))
+}
+
+/// The user may pick any ordinary .mhtml name in the native dialog; only
+/// shape checks apply to the chosen basename.
+fn valid_chosen_filename(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 255
+        && !name.starts_with('.')
+        && name
+            .rsplit_once('.')
+            .is_some_and(|(_, ext)| ext.eq_ignore_ascii_case("mhtml"))
 }
 
 fn document_matches(browser: &Browser, identity: i32, frame_id: &str, document: &str) -> bool {
@@ -157,11 +184,16 @@ fn document_matches(browser: &Browser, identity: i32, frame_id: &str, document: 
 }
 
 /// The CDP result must be a real MHTML archive, never a bare HTML dump.
-fn extract_mhtml_with_cap(bytes: &[u8], cap: usize) -> Result<String, SaveError> {
+/// The raw payload length is capped before JSON parsing.
+fn extract_mhtml_with_caps(
+    bytes: &[u8],
+    raw_cap: usize,
+    data_cap: usize,
+) -> Result<Zeroizing<String>, SaveError> {
     if bytes.is_empty() {
         return Err(SaveError::CdpResultAbsent);
     }
-    if bytes.len() > cap {
+    if bytes.len() > raw_cap {
         return Err(SaveError::TooLarge);
     }
     let raw = Zeroizing::new(bytes.to_vec());
@@ -170,40 +202,41 @@ fn extract_mhtml_with_cap(bytes: &[u8], cap: usize) -> Result<String, SaveError>
         .get("data")
         .and_then(Value::as_str)
         .ok_or(SaveError::InvalidResult)?;
-    if data.is_empty() || data.len() > cap {
-        return Err(if data.is_empty() {
-            SaveError::InvalidResult
-        } else {
-            SaveError::TooLarge
-        });
+    if data.is_empty() {
+        return Err(SaveError::InvalidResult);
+    }
+    if data.len() > data_cap {
+        return Err(SaveError::TooLarge);
     }
     let head = &data[..data.len().min(4096)];
     if !head.contains("MIME-Version") {
         return Err(SaveError::InvalidResult);
     }
-    Ok(data.to_owned())
+    Ok(Zeroizing::new(data.to_owned()))
 }
 
-fn extract_mhtml(bytes: &[u8]) -> Result<String, SaveError> {
-    extract_mhtml_with_cap(bytes, MAX_MHTML_BYTES)
+fn extract_mhtml(bytes: &[u8]) -> Result<Zeroizing<String>, SaveError> {
+    extract_mhtml_with_caps(bytes, MAX_RESULT_BYTES, MAX_MHTML_BYTES)
 }
 
-/// Atomic publish: write a sibling temp file, fsync, rename over the target.
-/// A cancel observed before the rename removes the temp and reports Cancelled.
-fn atomic_write(
-    path: &Path,
+/// Worker stage: write only a private sibling temp file (create_new, 0600 on
+/// unix, fsync). A cancel observed before returning removes the temp. The
+/// temp path is published to the user path exclusively by poll on the UI
+/// thread after fresh ownership checks.
+fn write_temp(
+    target: &Path,
     bytes: &[u8],
     cancel: &watch::Receiver<bool>,
-) -> Result<u64, SaveError> {
-    if !path.is_absolute() {
+) -> Result<(PathBuf, u64), SaveError> {
+    if !target.is_absolute() {
         return Err(SaveError::Storage);
     }
-    let name = path
+    let name = target
         .file_name()
         .and_then(|n| n.to_str())
-        .filter(|n| valid_filename(n))
+        .filter(|n| valid_chosen_filename(n))
         .ok_or(SaveError::Storage)?;
-    let parent = path
+    let parent = target
         .parent()
         .filter(|p| p.is_dir())
         .ok_or(SaveError::Storage)?;
@@ -212,13 +245,20 @@ fn atomic_write(
         .try_fill_bytes(&mut nonce)
         .map_err(|_| SaveError::RandomUnavailable)?;
     let temp = parent.join(format!(
-        "{}.part-{}-{}",
+        ".{}.part-{}-{}",
         name,
         std::process::id(),
         nonce.iter().map(|b| format!("{b:02x}")).collect::<String>()
     ));
     let written = (|| -> Result<u64, SaveError> {
-        let mut file = std::fs::File::create(&temp).map_err(|_| SaveError::Storage)?;
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = options.open(&temp).map_err(|_| SaveError::Storage)?;
         file.write_all(bytes).map_err(|_| SaveError::Storage)?;
         file.sync_all().map_err(|_| SaveError::Storage)?;
         Ok(bytes.len() as u64)
@@ -234,16 +274,25 @@ fn atomic_write(
         let _ = std::fs::remove_file(&temp);
         return Err(SaveError::Cancelled);
     }
-    if std::fs::rename(&temp, path).is_err() {
-        // Windows rename does not replace an existing file the user confirmed
-        // overwriting in the native dialog: remove then rename, honestly
-        // non-atomic only for that replacement instant.
-        if std::fs::remove_file(path).is_err() || std::fs::rename(&temp, path).is_err() {
-            let _ = std::fs::remove_file(&temp);
-            return Err(SaveError::Storage);
-        }
+    Ok((temp, bytes_written))
+}
+
+/// UI-thread publish: atomic rename of the prepared temp onto the chosen
+/// path. On unix rename replaces atomically. On Windows std rename cannot
+/// replace; we refuse with a typed error rather than deleting user data in a
+/// non-atomic gap (a ReplaceFileW primitive needs a windows crate feature
+/// this module is not allowed to add).
+#[cfg(not(windows))]
+fn publish_replace(temp: &Path, target: &Path) -> Result<(), SaveError> {
+    std::fs::rename(temp, target).map_err(|_| SaveError::Storage)
+}
+
+#[cfg(windows)]
+fn publish_replace(temp: &Path, target: &Path) -> Result<(), SaveError> {
+    if target.exists() {
+        return Err(SaveError::Exists);
     }
-    Ok(bytes_written)
+    std::fs::rename(temp, target).map_err(|_| SaveError::Storage)
 }
 
 wrap_dev_tools_message_observer! {
@@ -297,10 +346,6 @@ fn send_state(sender: &Sender<Sobytie>, tab: u64, state: Value) {
 /// browser and asks the parent for a native save path.
 pub fn request(browser: &Browser, tab: u64, route_generation: u64, sender: &Sender<Sobytie>) {
     let identity = browser.identifier();
-    if crate::browser_lock::locked_global() {
-        send_state(sender, tab, json!({"error":SaveError::Locked.code()}));
-        return;
-    }
     if currently_on(ThreadId::UI) == 0 || browser.is_valid() == 0 {
         send_state(
             sender,
@@ -418,9 +463,6 @@ pub fn target(
         send_state(sender, tab, json!({"cancelled":true}));
         return;
     };
-    if crate::browser_lock::locked_global() {
-        return fail(SaveError::Locked);
-    }
     if currently_on(ThreadId::UI) == 0 {
         return fail(SaveError::WrongThread);
     }
@@ -474,17 +516,25 @@ pub fn target(
     }
 }
 
-/// Called where cef_youtube_download::cancel is called (lock/close/nav/route
-/// change). A pending dialog entry is dropped silently; a running writer
-/// observes the cancel flag before the atomic rename.
+/// Called by the owner for lock/close/navigation/route-change cancellation
+/// (including same-URL reload via on_before_browse). A pending dialog entry
+/// is dropped silently; a running writer observes the flag before finishing;
+/// an already-written temp is removed here.
 pub fn cancel(browser: i32) {
+    let mut stale_temp: Option<PathBuf> = None;
     if let Ok(mut all) = jobs().lock() {
         if let Some(entry) = all.get_mut(&browser) {
             let _ = entry.cancel.send(true);
+            if let Some(Ok((temp, _))) = entry.result.take() {
+                stale_temp = Some(temp);
+            }
         }
         if all.get(&browser).is_some_and(|e| e.started.is_none()) {
             all.remove(&browser);
         }
+    }
+    if let Some(temp) = stale_temp {
+        let _ = std::fs::remove_file(temp);
     }
     REGISTRATIONS.with(|regs| regs.borrow_mut().remove(&browser));
 }
@@ -492,8 +542,8 @@ pub fn cancel(browser: i32) {
 fn spawn_writer(
     identity: i32,
     request: String,
-    path: PathBuf,
-    data: String,
+    target: PathBuf,
+    data: Zeroizing<String>,
     cancel: watch::Receiver<bool>,
 ) -> bool {
     std::thread::Builder::new()
@@ -501,7 +551,7 @@ fn spawn_writer(
         .stack_size(512 * 1024)
         .spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                atomic_write(&path, data.as_bytes(), &cancel)
+                write_temp(&target, data.as_bytes(), &cancel)
             }))
             .unwrap_or(Err(SaveError::Storage));
             if let Ok(mut all) = jobs().lock() {
@@ -514,7 +564,9 @@ fn spawn_writer(
 }
 
 /// Called from the owner cycle next to cef_youtube_download::poll on the CEF
-/// UI thread: dialog timeout, CDP completion, writer results, typed events.
+/// UI thread: dialog timeout, CDP completion, temp publish, typed events. A
+/// browser absent from this local map belongs to another window's cycle and
+/// is skipped untouched, never cancelled by this one.
 pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
     let mut updates: Vec<(u64, Value)> = Vec::new();
     let mut drop_registration: Vec<i32> = Vec::new();
@@ -525,16 +577,63 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
         let mut remove: Vec<i32> = Vec::new();
         for (&identity, entry) in all.iter_mut() {
             if let Some(result) = entry.result.take() {
-                updates.push((
-                    entry.tab,
-                    match result {
-                        Ok(bytes) => json!({"done":true,"bytes":bytes}),
-                        Err(SaveError::Cancelled) => json!({"cancelled":true}),
-                        Err(error) => json!({"error":error.code()}),
-                    },
-                ));
-                remove.push(identity);
-                drop_registration.push(identity);
+                match result {
+                    Err(SaveError::Cancelled) => {
+                        updates.push((entry.tab, json!({"cancelled":true})));
+                        remove.push(identity);
+                        drop_registration.push(identity);
+                    }
+                    Err(error) => {
+                        updates.push((entry.tab, json!({"error":error.code()})));
+                        remove.push(identity);
+                        drop_registration.push(identity);
+                    }
+                    Ok((temp, bytes)) => {
+                        if *entry.cancel.borrow() {
+                            let _ = std::fs::remove_file(&temp);
+                            updates.push((entry.tab, json!({"cancelled":true})));
+                            remove.push(identity);
+                            drop_registration.push(identity);
+                            continue;
+                        }
+                        let Some(owner) = browsers.values().find(|b| b.identifier() == identity)
+                        else {
+                            // Owned by another window's cycle: put the result
+                            // back untouched and let that cycle publish it.
+                            entry.result = Some(Ok((temp, bytes)));
+                            continue;
+                        };
+                        if !document_matches(owner, identity, &entry.frame_id, &entry.document) {
+                            let _ = std::fs::remove_file(&temp);
+                            updates
+                                .push((entry.tab, json!({"error":SaveError::PageChanged.code()})));
+                            remove.push(identity);
+                            drop_registration.push(identity);
+                            continue;
+                        }
+                        let Some(target) = entry.path.take() else {
+                            let _ = std::fs::remove_file(&temp);
+                            updates.push((
+                                entry.tab,
+                                json!({"error":SaveError::StateUnavailable.code()}),
+                            ));
+                            remove.push(identity);
+                            drop_registration.push(identity);
+                            continue;
+                        };
+                        // Fresh checks above; the atomic publish follows with
+                        // no UI loop in between.
+                        match publish_replace(&temp, &target) {
+                            Ok(()) => updates.push((entry.tab, json!({"done":true,"bytes":bytes}))),
+                            Err(error) => {
+                                let _ = std::fs::remove_file(&temp);
+                                updates.push((entry.tab, json!({"error":error.code()})));
+                            }
+                        }
+                        remove.push(identity);
+                        drop_registration.push(identity);
+                    }
+                }
                 continue;
             }
             let Some(started) = entry.started else {
@@ -552,15 +651,24 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
             });
             match reply {
                 Some(Ok(data)) => {
-                    let still = browsers
-                        .values()
-                        .any(|b| document_matches(b, identity, &entry.frame_id, &entry.document));
-                    let path = entry.path.take();
-                    if !still {
+                    let Some(owner) = browsers.values().find(|b| b.identifier() == identity) else {
+                        // Owned by another window's cycle: put the reply back
+                        // untouched and let that cycle drive the writer.
+                        if let Some(completion) = entry.completion.as_ref() {
+                            if let Ok(mut c) = completion.lock() {
+                                c.reply = Some(Ok(data));
+                            }
+                        }
+                        continue;
+                    };
+                    if !document_matches(owner, identity, &entry.frame_id, &entry.document) {
                         updates.push((entry.tab, json!({"error":SaveError::PageChanged.code()})));
                         remove.push(identity);
                         drop_registration.push(identity);
-                    } else if let Some(path) = path {
+                        continue;
+                    }
+                    let path = entry.path.take();
+                    if let Some(path) = path {
                         let (cancel_tx, cancel_rx) = watch::channel(false);
                         std::mem::swap(&mut entry.cancel, &mut cancel_tx);
                         if !spawn_writer(identity, entry.request.clone(), path, data, cancel_rx) {
@@ -610,17 +718,34 @@ mod tests {
         assert_eq!(make_filename(951782400), "page-20000229-000000.mhtml");
         // 2038-01-19T03:14:07Z
         assert_eq!(make_filename(2147483647), "page-20380119-031407.mhtml");
-        assert!(valid_filename(&make_filename(unix_now())));
+        assert!(valid_suggested_filename(&make_filename(unix_now())));
     }
 
     #[test]
-    fn filename_validation_bounds() {
-        assert!(valid_filename("page-20261126-114530.mhtml"));
-        assert!(!valid_filename("page-.mhtmlx"));
-        assert!(!valid_filename("evil.mhtml"));
-        assert!(!valid_filename("page-a b.mhtml"));
-        assert!(!valid_filename("page-../x.mhtml"));
-        assert!(!valid_filename(&format!("page-{}.mhtml", "a".repeat(64))));
+    fn suggested_filename_bounds() {
+        assert!(valid_suggested_filename("page-20261126-114530.mhtml"));
+        assert!(!valid_suggested_filename("page-.mhtmlx"));
+        assert!(!valid_suggested_filename("evil.mhtml"));
+        assert!(!valid_suggested_filename("page-a b.mhtml"));
+        assert!(!valid_suggested_filename("page-../x.mhtml"));
+        assert!(!valid_suggested_filename(&format!(
+            "page-{}.mhtml",
+            "a".repeat(64)
+        )));
+    }
+
+    #[test]
+    fn chosen_filename_accepts_ordinary_names() {
+        assert!(valid_chosen_filename("page-20261126-114530.mhtml"));
+        assert!(valid_chosen_filename("Отчёт за ноябрь.mhtml"));
+        assert!(valid_chosen_filename("a b (final).MHTML"));
+        assert!(!valid_chosen_filename("noext"));
+        assert!(!valid_chosen_filename(".hidden.mhtml"));
+        assert!(!valid_chosen_filename("x.html"));
+        assert!(!valid_chosen_filename(&format!(
+            "{}.mhtml",
+            "a".repeat(255)
+        )));
     }
 
     #[test]
@@ -632,33 +757,49 @@ mod tests {
     }
 
     #[test]
-    fn mhtml_extraction() {
+    fn mhtml_extraction_caps() {
         let good = br#"{"data":"From: <Saved by Blink>\nMIME-Version: 1.0\nContent-Type: multipart/related\n\nbody"}"#;
-        assert!(extract_mhtml_with_cap(good, 1 << 20).is_ok());
+        assert!(extract_mhtml_with_caps(good, 1 << 20, 1 << 20).is_ok());
         assert_eq!(
-            extract_mhtml_with_cap(b"not json", 1 << 20),
-            Err(SaveError::InvalidResult)
+            extract_mhtml_with_caps(b"not json", 1 << 20, 1 << 20).unwrap_err(),
+            SaveError::InvalidResult
         );
         assert_eq!(
-            extract_mhtml_with_cap(br#"{"data":""}"#, 1 << 20),
-            Err(SaveError::InvalidResult)
+            extract_mhtml_with_caps(br#"{"data":""}"#, 1 << 20, 1 << 20).unwrap_err(),
+            SaveError::InvalidResult
         );
         assert_eq!(
-            extract_mhtml_with_cap(br#"{"other":1}"#, 1 << 20),
-            Err(SaveError::InvalidResult)
+            extract_mhtml_with_caps(br#"{"other":1}"#, 1 << 20, 1 << 20).unwrap_err(),
+            SaveError::InvalidResult
         );
         // bare HTML is not an MHTML archive
         assert_eq!(
-            extract_mhtml_with_cap(br#"{"data":"<html><body>hi</body></html>"}"#, 1 << 20),
-            Err(SaveError::InvalidResult)
+            extract_mhtml_with_caps(
+                br#"{"data":"<html><body>hi</body></html>"}"#,
+                1 << 20,
+                1 << 20
+            )
+            .unwrap_err(),
+            SaveError::InvalidResult
+        );
+        // raw payload cap fires before JSON parsing
+        assert_eq!(
+            extract_mhtml_with_caps(good, 8, 1 << 20).unwrap_err(),
+            SaveError::TooLarge
+        );
+        // decoded payload cap
+        assert_eq!(
+            extract_mhtml_with_caps(
+                br#"{"data":"MIME-Version: 1.0 xxxxxxxxxxxxxxxx"}"#,
+                1 << 20,
+                32
+            )
+            .unwrap_err(),
+            SaveError::TooLarge
         );
         assert_eq!(
-            extract_mhtml_with_cap(br#"{"data":"MIME-Version: 1.0 xxxxxxxxxxxxxxxx"}"#, 32),
-            Err(SaveError::TooLarge)
-        );
-        assert_eq!(
-            extract_mhtml_with_cap(b"", 1 << 20),
-            Err(SaveError::CdpResultAbsent)
+            extract_mhtml_with_caps(b"", 1 << 20, 1 << 20).unwrap_err(),
+            SaveError::CdpResultAbsent
         );
     }
 
@@ -676,27 +817,45 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_publishes_and_cleans_temp() {
+    fn write_temp_then_publish_roundtrip() {
         let dir = temp_dir("ok");
+        let target = dir.join("Отчёт.mhtml");
+        let (_tx, rx) = watch::channel(false);
+        let (temp, n) = write_temp(&target, b"MIME-Version: 1.0\nx", &rx).unwrap();
+        assert_eq!(n, 18);
+        assert!(temp.exists());
+        assert!(!target.exists(), "worker must not publish by itself");
+        publish_replace(&temp, &target).unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"MIME-Version: 1.0\nx");
+        assert!(!temp.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 1);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_temp_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = temp_dir("mode");
         let target = dir.join("page-20261126-000000.mhtml");
         let (_tx, rx) = watch::channel(false);
-        let n = atomic_write(&target, b"MIME-Version: 1.0\nx", &rx).unwrap();
-        assert_eq!(n, 18);
-        assert_eq!(std::fs::read(&target).unwrap(), b"MIME-Version: 1.0\nx");
-        let leftovers = std::fs::read_dir(&dir).unwrap().count();
-        assert_eq!(leftovers, 1);
+        let (temp, _) = write_temp(&target, b"MIME-Version: 1.0", &rx).unwrap();
+        assert_eq!(
+            std::fs::metadata(&temp).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
-    fn atomic_write_cancel_removes_temp() {
+    fn write_temp_cancel_removes_temp() {
         let dir = temp_dir("cancel");
         let target = dir.join("page-20261126-000000.mhtml");
         let (tx, rx) = watch::channel(false);
         tx.send(true).unwrap();
         assert_eq!(
-            atomic_write(&target, b"MIME-Version: 1.0", &rx),
-            Err(SaveError::Cancelled)
+            write_temp(&target, b"MIME-Version: 1.0", &rx).unwrap_err(),
+            SaveError::Cancelled
         );
         assert!(!target.exists());
         assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
@@ -704,32 +863,50 @@ mod tests {
     }
 
     #[test]
-    fn atomic_write_rejects_bad_targets() {
+    fn write_temp_rejects_bad_targets() {
         let dir = temp_dir("bad");
         let (_tx, rx) = watch::channel(false);
         assert_eq!(
-            atomic_write(Path::new("relative/page-1.mhtml"), b"x", &rx),
-            Err(SaveError::Storage)
+            write_temp(Path::new("relative/page-1.mhtml"), b"x", &rx).unwrap_err(),
+            SaveError::Storage
         );
         assert_eq!(
-            atomic_write(&dir.join("not-a-page.html"), b"x", &rx),
-            Err(SaveError::Storage)
+            write_temp(&dir.join("not-a-page.html"), b"x", &rx).unwrap_err(),
+            SaveError::Storage
         );
         assert_eq!(
-            atomic_write(&dir.join("missing").join("page-1.mhtml"), b"x", &rx),
-            Err(SaveError::Storage)
+            write_temp(&dir.join("missing").join("page-1.mhtml"), b"x", &rx).unwrap_err(),
+            SaveError::Storage
         );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
+    #[cfg(not(windows))]
     #[test]
-    fn atomic_write_overwrites_existing() {
+    fn publish_replaces_existing_atomically() {
         let dir = temp_dir("overwrite");
         let target = dir.join("page-20261126-000000.mhtml");
         std::fs::write(&target, b"old").unwrap();
         let (_tx, rx) = watch::channel(false);
-        atomic_write(&target, b"MIME-Version: 1.0\nnew", &rx).unwrap();
+        let (temp, _) = write_temp(&target, b"MIME-Version: 1.0\nnew", &rx).unwrap();
+        publish_replace(&temp, &target).unwrap();
         assert_eq!(std::fs::read(&target).unwrap(), b"MIME-Version: 1.0\nnew");
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn publish_refuses_existing_without_touching_it() {
+        let dir = temp_dir("exists");
+        let target = dir.join("page-20261126-000000.mhtml");
+        std::fs::write(&target, b"user data").unwrap();
+        let (_tx, rx) = watch::channel(false);
+        let (temp, _) = write_temp(&target, b"MIME-Version: 1.0\nnew", &rx).unwrap();
+        assert_eq!(
+            publish_replace(&temp, &target).unwrap_err(),
+            SaveError::Exists
+        );
+        assert_eq!(std::fs::read(&target).unwrap(), b"user data");
         std::fs::remove_dir_all(&dir).unwrap();
     }
 }

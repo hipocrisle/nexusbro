@@ -9,7 +9,9 @@ fn valid_request(request: &str) -> bool {
     request.len() == 32 && request.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
-fn valid_filename(name: &str) -> bool {
+/// Validation for the suggested default name only; the user-chosen path
+/// from the native dialog is never restricted to this pattern.
+fn valid_suggested_filename(name: &str) -> bool {
     name.len() <= 64
         && name.starts_with("page-")
         && name.ends_with(".mhtml")
@@ -39,7 +41,7 @@ pub fn receive(
     ) else {
         return true;
     };
-    if !valid_request(request) || !valid_filename(filename) {
+    if !valid_request(request) || !valid_suggested_filename(filename) {
         return true;
     }
     let label = data["label"]
