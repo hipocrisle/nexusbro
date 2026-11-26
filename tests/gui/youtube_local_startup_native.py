@@ -17,7 +17,7 @@ def run(a):
  out=parent/('startup-'+str(time.time_ns()));out.mkdir(mode=0o700)
  class Page(BaseHTTPRequestHandler):
   def do_GET(self):
-   body=b'<!doctype html><meta charset=utf-8><title>Private preflight</title><p>Local page</p>';self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+   body=b'<!doctype html><meta charset=utf-8><title>Private preflight</title><p>Local page</p>';self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8');self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
   def log_message(self,*args):pass
  server=ThreadingHTTPServer(('127.0.0.1',0),Page);threading.Thread(target=server.serve_forever,daemon=True).start();url='http://127.0.0.1:'+str(server.server_port)+'/'
  report={'preflight_complete':False,'public_playback_acceptance':False,'paired_acceptance':False,'stage':'startup','sandbox_preserved':True};device=wm=None
