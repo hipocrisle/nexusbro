@@ -73,6 +73,27 @@ group-write внутри private fixture — зафиксировано как �
   проверок (exact path vs .extra, foreign PID, reused-PID birth, unknown notepad
   location, foreign explorer, missing UIA) — PASS без GUI.
 
+## Доказательство папки — NEW WINDOW (правка по pragmatic blocker ROOT)
+
+Explorer обычно открывает НОВОЕ окно в УЖЕ существующем процессе — критерий
+«свежий PID» всегда отрицательный. Доказательство переработано:
+- снимок handles ДО клика (COM Shell.Application.Windows(), при недоступности
+  COM — UIA handles; доступность не выдумывается: COM=None → только UIA-путь);
+- после физического клика ищется НОВЫЙ hwnd (отсутствовал в снимке), чей
+  LocationURL file:/// после percent-decode ТОЧНО равен нашей приватной папке
+  (нормализация Windows); ctypes GetWindowThreadProcessId → владелец обязан
+  быть каноническим %WINDIR%\explorer.exe со стабильным повторным чтением
+  birth (защита от PID reuse) и не из будущего;
+- UIA fallback: только НОВЫЙ hwnd + owning PID + точное значение адреса;
+  подстрока/только title никогда не приёмка;
+- чужой Explorer никогда не завершается и не управляется; нет доказательства →
+  честный unclosed (folder_completed=false, full_acceptance=false, exit 1).
+- preparation=true до реального прогона; false после preflight нативного run.
+- Опрос папки возвращает None до дедлайна (wait_for не ловит Blocked) —
+  мгновенного падения нет.
+Offline-контракт дополнен: new-hwnd+exact URL (percent-encoding), old hwnd,
+URL .extra, wrong exe, future birth, UIA exact vs substring/old — PASS.
+
 ## Незакрытые критерии
 
 1. Реальный запуск на GHA Windows — за ROOT (после review).

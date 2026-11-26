@@ -64,22 +64,63 @@ def main():
     finally:
         psutil.Process = real_process
 
-    # explorer proof: foreign window / no fresh explorer -> Blocked (unclosed)
-    class BlockedExc(Exception):
-        pass
+    # Shell-window proof via DI fakes (no GUI)
+    import time as _time
+    class FakeItem:
+        def __init__(self, hwnd, url): self.HWND = hwnd; self.LocationURL = url
+    class FakeWindows:
+        def __init__(self, items): self._items = items; self.Count = len(items)
+        def Item(self, i): return self._items[i]
+    folder = 'C:\\AI\\dl folder'
+    url = 'file:///C:/AI/dl%20folder'
+    now = _time.time()
+    good_info = lambda pid: {'exe': 'C:\\Windows\\explorer.exe', 'birth': now - 5000, 'name': 'explorer.exe'}
+    before = {'com': {111}, 'uia': {111}}
+    proof = m.explorer_folder_proof(before, folder,
+        shell_windows=FakeWindows([FakeItem(111, url), FakeItem(222, url)]),
+        pid_of=lambda hwnd: 900, process_info=good_info, uia_windows=[])
+    checks['new_hwnd_exact_url_proof'] = proof['hwnd'] == 222 and proof['proof'] == 'com_locationurl_exact'
     try:
-        m.explorer_folder_proof(fake_snapshot([(1, 'explorer.exe', 'C:\\Windows\\explorer.exe', [], 1.0)]),
-                                Path('C:\\dl'), snapshot=fake_snapshot([(1, 'explorer.exe', 'C:\\Windows\\explorer.exe', [], 1.0)]))
-        checks['foreign_explorer_rejected'] = False
-    except Exception as error:
-        checks['foreign_explorer_rejected'] = 'own_born' in str(error) or 'explorer' in str(error)
-    try:
-        m.explorer_folder_proof(fake_snapshot([]), Path('C:\\dl'),
-                                snapshot=fake_snapshot([(9, 'explorer.exe', 'C:\\Windows\\explorer.exe', [], 5.0)]))
-        # fresh explorer exists but no UIA address proof on this host -> must be Blocked, not proof
-        checks['missing_uia_unclosed'] = False
+        m.explorer_folder_proof(before, folder,
+            shell_windows=FakeWindows([FakeItem(111, url)]), pid_of=lambda h: 900,
+            process_info=good_info, uia_windows=[])
+        checks['old_hwnd_rejected'] = False
     except Exception:
-        checks['missing_uia_unclosed'] = True
+        checks['old_hwnd_rejected'] = True
+    try:
+        m.explorer_folder_proof(before, folder,
+            shell_windows=FakeWindows([FakeItem(222, url + '.extra')]), pid_of=lambda h: 900,
+            process_info=good_info, uia_windows=[])
+        checks['url_extra_rejected'] = False
+    except Exception:
+        checks['url_extra_rejected'] = True
+    try:
+        m.explorer_folder_proof(before, folder,
+            shell_windows=FakeWindows([FakeItem(222, url)]), pid_of=lambda h: 900,
+            process_info=lambda pid: {'exe': 'C:\\Tools\\explorer.exe', 'birth': now - 5000}, uia_windows=[])
+        checks['wrong_exe_rejected'] = False
+    except Exception:
+        checks['wrong_exe_rejected'] = True
+    try:
+        m.explorer_folder_proof(before, folder,
+            shell_windows=FakeWindows([FakeItem(222, url)]), pid_of=lambda h: 900,
+            process_info=lambda pid: {'exe': 'C:\\Windows\\explorer.exe', 'birth': now + 5000}, uia_windows=[])
+        checks['future_birth_rejected'] = False
+    except Exception:
+        checks['future_birth_rejected'] = True
+    # UIA fallback: NEW hwnd + exact address; substring-only rejected
+    proof = m.explorer_folder_proof(before, folder, shell_windows=FakeWindows([]),
+        pid_of=lambda h: 900, process_info=good_info,
+        uia_windows=[{'hwnd': 333, 'pid': 901, 'addresses': ['Address: ' + folder]}])
+    checks['uia_new_hwnd_exact'] = proof['proof'] == 'uia_new_hwnd_exact'
+    try:
+        m.explorer_folder_proof(before, folder, shell_windows=FakeWindows([]),
+            pid_of=lambda h: 900, process_info=good_info,
+            uia_windows=[{'hwnd': 333, 'pid': 901, 'addresses': ['Address: ' + folder + ' extra']},
+                         {'hwnd': 111, 'pid': 901, 'addresses': [folder]}])
+        checks['uia_substring_and_old_rejected'] = False
+    except Exception:
+        checks['uia_substring_and_old_rejected'] = True
 
     # report contract
     report = m.initial_report()
