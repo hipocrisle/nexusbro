@@ -252,6 +252,29 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         if not cleanup:result['stage']='cleanup';result['blocked_reason']='cleanup_failed'
 
 
+def summarize_comparison(report,args):
+    if [a.get('mode') for a in report['arms']]!=list(ORDER):raise Blocked('four_ordered_arms_required')
+    if not all(a.get('stage')=='complete' and a.get('cleanup_completed') is True and a.get('owned_exit',{}).get('parent_normal_exit') is True and a['owned_exit'].get('all_known_native_executions_exited') is True for a in report['arms']):raise Blocked('normal_owned_exit_unproven')
+    decoders=[a['decode'] for a in report['arms']]
+    if any(d!=decoders[0] for d in decoders):raise Blocked('codec_or_software_decoder_mismatch')
+    starts=[a['metrics']['measurement_start_position'] for a in report['arms']]
+    if min(starts)<30 or max(starts)-min(starts)>2:raise Blocked('same_content_playback_segment_unproven')
+    observed=[a['metrics']['observed_fps'] for a in report['arms']]
+    if max(observed)-min(observed)>max(1,args.expected_fps*.05):raise Blocked('paired_observed_fps_mismatch')
+    grouped={mode:[a['metrics'] for a in report['arms'] if a['mode']==mode] for mode in ('light','normal')}
+    summary={mode:{key:statistics.median(r[key] for r in values) for key in ('cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio','observed_fps')} for mode,values in grouped.items()}
+    if summary['normal']['cpu_core_percent']<=0 or summary['normal']['peak_private_bytes']<=0:raise Blocked('baseline_metrics_invalid')
+    cpu=summary['light']['cpu_core_percent']/summary['normal']['cpu_core_percent'];memory=summary['light']['peak_private_bytes']/summary['normal']['peak_private_bytes']
+    if not all(a.get('audio_policy_proven') is True and a.get('audio_policy')=={'volume':1,'muted':False,'default_sink':True} for a in report['arms']):raise Blocked('audio_output_policy_unproven')
+    report['provenance']['audio_output_policy_match_proven']=True
+    report.update(completed=True,measurement_valid=True,comparison_valid=True,accepted_measurement=True,
+                  diagnostic_only=False,acceptance_passed=True,audio_policy_proven=True,physical_audio_capture_proven=False,
+                  audio_evidence_scope='actual_element_volume_unmuted_default_sink_policy_not_physical_speaker_or_PCM_proof',summary=summary,cpu_ratio=cpu,private_ratio=memory,
+                  improvement_observed=cpu<1 and memory<1,
+                  drop_regression_observed=summary['light']['dropped_ratio']>summary['normal']['dropped_ratio']+.01,
+                  claim_scope='observed_software_same_vm_four_arms_audio_policy_matched_not_general_hardware_performance')
+
+
 def run(args):
     require(os.environ.get('GITHUB_ACTIONS')=='true','Real GHA runner required')
     if not re.fullmatch('[A-Za-z0-9_-]{11}',args.video_id) or not math.isfinite(args.expected_duration) or not 180<=args.expected_duration<=604800 or not 1<=args.expected_fps<=120 or not 1<=args.width<=16384 or not 1<=args.height<=16384 or not 256<=args.memory_cap_mib<=4096:raise Blocked('experiment_arguments_invalid')
@@ -267,24 +290,7 @@ def run(args):
             if digest(exe)!=provenance['exe_sha256'] or digest(cef)!=provenance['cef_sha256'] or digest(manifest)!=manifest_sha:raise Blocked('same_binary_changed')
             result=arm(args,proxy,mode,index,out);report['arms'].append(result)
             if result['stage']!='complete' or not result.get('cleanup_completed') or not result.get('owned_exit',{}).get('parent_normal_exit'):raise Blocked(result.get('blocked_reason','normal_owned_exit_unproven'))
-        decoders=[a['decode'] for a in report['arms']]
-        if any(d!=decoders[0] for d in decoders):raise Blocked('codec_or_software_decoder_mismatch')
-        starts=[a['metrics']['measurement_start_position'] for a in report['arms']]
-        if min(starts)<30 or max(starts)-min(starts)>2:raise Blocked('same_content_playback_segment_unproven')
-        observed=[a['metrics']['observed_fps'] for a in report['arms']]
-        if max(observed)-min(observed)>max(1,args.expected_fps*.05):raise Blocked('paired_observed_fps_mismatch')
-        grouped={mode:[a['metrics'] for a in report['arms'] if a['mode']==mode] for mode in ('light','normal')}
-        summary={mode:{key:statistics.median(r[key] for r in values) for key in ('cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio','observed_fps')} for mode,values in grouped.items()}
-        if summary['normal']['cpu_core_percent']<=0 or summary['normal']['peak_private_bytes']<=0:raise Blocked('baseline_metrics_invalid')
-        cpu=summary['light']['cpu_core_percent']/summary['normal']['cpu_core_percent'];memory=summary['light']['peak_private_bytes']/summary['normal']['peak_private_bytes']
-        if not all(a.get('audio_policy_proven') is True and a.get('audio_policy')=={'volume':1,'muted':False,'default_sink':True} for a in report['arms']):raise Blocked('audio_output_policy_unproven')
-        report['provenance']['audio_output_policy_match_proven']=True
-        report.update(completed=True,measurement_valid=True,comparison_valid=True,accepted_measurement=True,
-                      diagnostic_only=False,acceptance_passed=True,audio_policy_proven=True,physical_audio_capture_proven=False,
-                      audio_evidence_scope='actual_element_volume_unmuted_default_sink_policy_not_physical_speaker_or_PCM_proof',summary=summary,cpu_ratio=cpu,private_ratio=memory,
-                      improvement_observed=cpu<1 and memory<1,
-                      drop_regression_observed=summary['light']['dropped_ratio']>summary['normal']['dropped_ratio']+.01,
-                      claim_scope='observed_software_same_vm_four_arms_audio_policy_matched_not_general_hardware_performance')
+        summarize_comparison(report,args)
     except Exception as error:report['blocked_reason']=str(error) if isinstance(error,Blocked) else 'paired_experiment_unavailable';report['failure_class']=type(error).__name__
     (out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
     # Honest policy-matched measurements succeed even without a resource win.
