@@ -38,7 +38,37 @@ impl Drop for Clear {
         wipe(&mut self.0)
     }
 }
-const SCRIPT: &str = "(()=>{const list=document.querySelectorAll('video');if(list.length!==1)return null;const player=document.querySelector('#movie_player.html5-video-player');if(!player||player.classList.contains('ad-showing')||player.classList.contains('ad-interrupting'))return null;const data=typeof player.getVideoData==='function'?player.getVideoData():null;if(!data||data.video_id!==new URL(location.href).searchParams.get('v'))return null;const v=list[0],q=v.getVideoPlaybackQuality();const norm=t=>(t||'').replace(/\s+/g,' ').trim();const vis=el=>{const st=getComputedStyle(el);return st.display!=='none'&&st.visibility!=='hidden';};const rectOf=el=>{if(!el||!vis(el))return null;const r=el.getBoundingClientRect();if(!(r.width>0&&r.height>0))return null;const cx=r.x+r.width/2,cy=r.y+r.height/2;if(cx<0||cy<0||cx>=innerWidth||cy>=innerHeight)return null;const hit=document.elementFromPoint(cx,cy);if(!(hit===el||el.contains(hit)))return null;return {x:r.x,y:r.y,width:r.width,height:r.height};};const one=sel=>{const l=document.querySelectorAll(sel);return l.length===1?l[0]:null;};const byLabel=(sel,test)=>{const m=Array.from(document.querySelectorAll(sel)).filter(e=>test(norm(e.textContent)));return m.length===1?m[0]:null;};const autohide=player.classList.contains('ytp-autohide');const reject=byLabel('button,[role=button]',t=>t==='Reject all'||t==='Alle ablehnen'||t==='\u041e\u0442\u043a\u043b\u043e\u043d\u0438\u0442\u044c \u0432\u0441\u0435');const controls={viewport:{width:innerWidth,height:innerHeight},reject_all_present:!!reject,play:autohide?null:rectOf(one('.ytp-play-button')),settings:autohide?null:rectOf(one('.ytp-settings-button')),quality:rectOf(byLabel('[role=menuitem]',t=>t==='Quality'||t==='\u041a\u0430\u0447\u0435\u0441\u0442\u0432\u043e'||t==='Qualit\u00e4t')),p720:rectOf(byLabel('[role=menuitem]',t=>t.indexOf('720p')===0)),reject_all:rectOf(reject)};return {volume:v.volume,muted:v.muted,default_sink:v.sinkId==='',playing:!v.paused&&!v.ended,paused:v.paused,ended:v.ended,seeking:v.seeking,ready_state:v.readyState,position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,video_width:v.videoWidth,video_height:v.videoHeight,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,playback_rate:v.playbackRate,video_count:list.length,controls:controls};})()";
+const SCRIPT: &str = r#"(()=>{
+ const list=document.querySelectorAll('video');if(list.length!==1)return null;
+ const player=document.querySelector('#movie_player.html5-video-player');
+ if(!player||player.classList.contains('ad-showing')||player.classList.contains('ad-interrupting'))return null;
+ const data=typeof player.getVideoData==='function'?player.getVideoData():null;
+ if(!data||data.video_id!==new URL(location.href).searchParams.get('v'))return null;
+ const v=list[0],q=v.getVideoPlaybackQuality(),norm=t=>(t||'').replace(/\s+/g,' ').trim();
+ const rectOf=el=>{
+  if(!el)return null;const st=getComputedStyle(el);
+  if(st.display==='none'||st.visibility==='hidden'||st.visibility==='collapse')return null;
+  const r=el.getBoundingClientRect();
+  if(!(r.width>0&&r.height>0)||r.x<0||r.y<0||r.right>innerWidth||r.bottom>innerHeight)return null;
+  const hit=document.elementFromPoint(r.x+r.width/2,r.y+r.height/2);
+  if(!(hit===el||el.contains(hit)))return null;
+  return {x:r.x,y:r.y,width:r.width,height:r.height};
+ };
+ const uniqueRect=elements=>{const rects=Array.from(elements).map(rectOf).filter(Boolean);return rects.length===1?rects[0]:null;};
+ const menuLabel=el=>norm((el.querySelector('.ytp-menuitem-label')||el).textContent);
+ const menuItems=Array.from(player.querySelectorAll('[role=menuitem]'));
+ const rejects=Array.from(document.querySelectorAll('button,[role=button]')).filter(e=>['Reject all','Alle ablehnen','Отклонить все'].includes(norm(e.textContent)));
+ const autohide=player.classList.contains('ytp-autohide');
+ const controls={
+  viewport:{width:innerWidth,height:innerHeight},reject_all_present:rejects.length>0,
+  play:autohide?null:uniqueRect(player.querySelectorAll('.ytp-play-button')),
+  settings:autohide?null:uniqueRect(player.querySelectorAll('.ytp-settings-button')),
+  quality:uniqueRect(menuItems.filter(e=>['Quality','Качество','Qualität'].includes(menuLabel(e)))),
+  p720:uniqueRect(menuItems.filter(e=>menuLabel(e).startsWith('720p'))),
+  reject_all:uniqueRect(rejects)
+ };
+ return {volume:v.volume,muted:v.muted,default_sink:v.sinkId==='',playing:!v.paused&&!v.ended,paused:v.paused,ended:v.ended,seeking:v.seeking,ready_state:v.readyState,position:v.currentTime,duration:Number.isFinite(v.duration)?v.duration:0,video_width:v.videoWidth,video_height:v.videoHeight,decoded:q.totalVideoFrames,dropped:q.droppedVideoFrames,playback_rate:v.playbackRate,video_count:list.length,controls};
+})()"#;
 fn watch_id(document: &str) -> Option<crate::youtube_light::VideoId> {
     if document.len() > crate::youtube_light::MAX_INPUT_URL_BYTES {
         return None;
