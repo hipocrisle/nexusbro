@@ -3,7 +3,7 @@
 The workflow supplies its repository GITHUB_TOKEN, preventing a recursive tag
 build. This helper never publishes or edits an existing public release.
 """
-import json,math,os,pathlib,re,subprocess,tempfile,time
+import hashlib,json,math,os,pathlib,re,subprocess,tempfile,time
 
 
 def gh(*args):
@@ -42,6 +42,33 @@ def validate_paired(value, source, build):
     assert value.get('raw_report_sha256') and re.fullmatch('[0-9a-f]{64}', value['raw_report_sha256']), 'Paired evidence digest missing'
 
 
+
+def validate_paired_report(value, source, build):
+    assert all(value.get(k) is True for k in ('completed','measurement_valid','comparison_valid','accepted_measurement','acceptance_passed')), 'Raw paired report incomplete'
+    assert value.get('diagnostic_only') is False and value.get('fixture_used') is False, 'Raw diagnostic cannot substitute for public playback'
+    assert value.get('desktop_source')==source and str(value.get('producer_run'))==build, 'Raw paired source mismatch'
+    provenance=value.get('provenance',{})
+    assert provenance.get('order')==['light','normal','normal','light'] and provenance.get('video_id')=='M7lc1UVf-VE', 'Wrong paired protocol'
+    assert provenance.get('warmup_seconds')==30 and provenance.get('measurement_seconds')==90 and provenance.get('sample_period_seconds')==5, 'Paired windows shortened'
+    assert provenance.get('audio_output_policy_match_proven') is True, 'Paired audio policy unknown'
+    assert re.fullmatch('[0-9a-f]{64}',provenance.get('exe_sha256','')), 'Paired binary digest missing'
+    arms=value.get('arms',[])
+    assert [a.get('mode') for a in arms]==provenance['order'], 'Missing paired arms'
+    decoder=arms[0].get('decode');assert isinstance(decoder,dict) and decoder.get('decode_mode')=='software' and decoder.get('platform_decoder') is False, 'Paired decoder unknown'
+    starts=[]
+    for arm in arms:
+        assert arm.get('stage')=='complete' and arm.get('cleanup_completed') is True and arm.get('decode')==decoder, 'Paired arm incomplete or decoder mismatch'
+        exit=arm.get('owned_exit',{})
+        assert exit.get('parent_normal_exit') is True and exit.get('all_known_native_executions_exited') is True, 'Paired exit incomplete'
+        assert arm.get('audio_policy_proven') is True and arm.get('audio_policy')=={'volume':1,'muted':False,'default_sink':True}, 'Paired audio mismatch'
+        metrics=arm.get('metrics',{})
+        for key in ('measurement_seconds','media_seconds','measurement_start_position','measurement_end_position','observed_fps','cpu_core_percent','peak_private_bytes','peak_rss_bytes','dropped_ratio'):
+            v=metrics.get(key);assert type(v) in (int,float) and math.isfinite(v) and v>=0, 'Paired metric absent or invalid'
+        assert metrics['measurement_seconds']>=89 and metrics['media_seconds']>=89, 'Paired measurement too short'
+        starts.append(metrics['measurement_start_position'])
+    assert min(starts)>=30 and max(starts)-min(starts)<=2, 'Paired video sections differ'
+
+
 def ensure_draft(repo,tag,source,notes,invoke=gh,read=optional_api):
     assert re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo) and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag)
     assert re.fullmatch(r'[0-9a-f]{40}',source) and pathlib.Path(notes).is_file()
@@ -71,6 +98,11 @@ def main():
     assert metadata['status']=='completed' and state['candidate']['source']==metadata['headSha'] and str(state['candidate']['build_run'])==build
     source=metadata['headSha']
     validate_paired(state.get('paired_public_measurement',{}),source,build)
+    paired_path=pathlib.Path('docs/verification',version,'paired-home-result.json')
+    assert paired_path.is_file() and not paired_path.is_symlink() and paired_path.stat().st_size<=1024*1024, 'Raw paired report missing'
+    paired_bytes=paired_path.read_bytes()
+    assert hashlib.sha256(paired_bytes).hexdigest()==state['paired_public_measurement']['raw_report_sha256'], 'Raw paired evidence digest mismatch'
+    validate_paired_report(json.loads(paired_bytes),source,build)
     light=json.loads(pathlib.Path('docs/verification',version,'light-home-summary.json').read_text())
     assert light.get('desktop_source')==source and str(light.get('producer_run'))==build
     assert light.get('completed') is True and light.get('playing_observed') is True and light.get('extraction_completed') is True and light.get('decoded_frames_advanced') is True and light.get('position_delta_seconds',0)>=8
