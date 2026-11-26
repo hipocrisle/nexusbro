@@ -233,18 +233,28 @@ def run(args):
         report['stage'] = 'progress-observation'
         report['downloads_before_wait'] = download_summary(client)
         active_known = wait_download(client, 'file-known.bin',
-            lambda d: d.get('status') == 'Загружается' and d.get('total') == KNOWN_TOTAL and 0 <= (d.get('percent') or 0) <= 100,
+            lambda d: d.get('status') == 'Загружается' and d.get('total') == KNOWN_TOTAL and type(d.get('percent')) is int and 0 <= d['percent'] <= 100,
             'Known-length download did not report real progress', remaining(40))
         report['checks'].append('known_length_progress_real')
+        ctrl_j(client,device)
+        wait_for(lambda:client.js('Array.from(document.querySelectorAll(".download-row")).some(r=>r.textContent.includes("file-known.bin")&&r.textContent.includes("Загружается")&&!!r.querySelector("progress[value]"))'),'Known progress not visible in the real library',remaining(10))
+        report['checks'].append('known_progress_visible_in_library')
+        click_control(client,'.library-panel header button[aria-label="Закрыть библиотеку"]',remaining(10))
+        wait_for(lambda:not client.js('!!document.querySelector(".library-panel")'),'Library did not close',remaining(10))
         wait_download(client, 'file-known.bin',
             lambda d: d.get('status') == 'Готово' and (download_dir / 'file-known.bin').is_file(),
             'file-known.bin did not complete with a real file', remaining(60))
         call(client, 'obychnaya_komanda', id=identifier,
              komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/file-unknown.bin'})
         active_unknown = wait_download(client, 'file-unknown.bin',
-            lambda d: d.get('status') == 'Загружается' and (d.get('total') or 0) <= 0,
+            lambda d: d.get('status') == 'Загружается' and type(d.get('total')) is int and d['total'] <= 0,
             'Unknown-length download did not report unknown total', remaining(40))
         report['checks'].append('unknown_length_indeterminate_state')
+        ctrl_j(client,device)
+        wait_for(lambda:client.js('Array.from(document.querySelectorAll(".download-row")).some(r=>r.textContent.includes("file-unknown.bin")&&r.textContent.includes("размер неизвестен")&&!!r.querySelector("progress:not([value])"))'),'Unknown progress not visible in the real library',remaining(10))
+        report['checks'].append('unknown_progress_visible_indeterminate')
+        click_control(client,'.library-panel header button[aria-label="Закрыть библиотеку"]',remaining(10))
+        wait_for(lambda:not client.js('!!document.querySelector(".library-panel")'),'Library did not close',remaining(10))
         first_received = active_unknown['received']
         wait_download(client, 'file-unknown.bin',
             lambda d: (d.get('received') or 0) > first_received,
@@ -265,7 +275,7 @@ def run(args):
         js_ok = wait_for(lambda: client.js('!!document.querySelector(".library-panel .download-row")'),
                          'Downloads library did not open via Ctrl+J', remaining(15))
         require(js_ok, 'library_missing')
-        require(client.js('document.querySelector(".library-panel")?.matches(":focus-within")||document.activeElement?.closest(".library-panel")!==null') is True,
+        require(client.js('!!document.querySelector(".library-panel")?.matches(":focus-within")') is True,
                 'Library panel did not take real focus')
         require(client.js('!!Array.from(document.querySelectorAll(".download-actions button")).find(b=>b.textContent.trim()==="Открыть файл")'),
                 'Open file button missing for finished download')

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Local isolated about:blank preflight: no public media requests or readiness claim."""
-import argparse,json,os,sys,time
+import argparse,json,os,sys,time,threading
+from http.server import BaseHTTPRequestHandler,ThreadingHTTPServer
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from youtube_paired_home import BenchmarkDevice
@@ -14,12 +15,17 @@ def run(a):
  require(digest(exe)==a.exe_sha256,'Binary mismatch')
  parent=root/'out';parent.mkdir(mode=0o700,exist_ok=True);require(not parent.is_symlink(),'Output symlink');parent.chmod(0o700)
  out=parent/('startup-'+str(time.time_ns()));out.mkdir(mode=0o700)
+ class Page(BaseHTTPRequestHandler):
+  def do_GET(self):
+   body=b'<!doctype html><meta charset=utf-8><title>Private preflight</title><p>Local page</p>';self.send_response(200);self.send_header('Content-Length',str(len(body)));self.end_headers();self.wfile.write(body)
+  def log_message(self,*args):pass
+ server=ThreadingHTTPServer(('127.0.0.1',0),Page);threading.Thread(target=server.serve_forever,daemon=True).start();url='http://127.0.0.1:'+str(server.server_port)+'/'
  report={'preflight_complete':False,'public_playback_acceptance':False,'paired_acceptance':False,'stage':'startup','sandbox_preserved':True};device=wm=None
  try:
   device=BenchmarkDevice(out/'device',exe,cef);identifier='startup-blank'
-  item=super_record(identifier,'Blank preflight','about:blank',proxy='')
+  item=super_record(identifier,'Local preflight',url,proxy='')
   profile=device.data/'profili'/identifier;profile.mkdir(parents=True)
-  (profile/'obychnye.json').write_text(json.dumps({'vkladki':[{'id':1,'adres':'about:blank','zagolovok':'Blank','otlozhena':True}],'aktivnaya':1,'sleduyushchaya':2}))
+  (profile/'obychnye.json').write_text(json.dumps({'vkladki':[{'id':1,'adres':url,'zagolovok':'Blank','otlozhena':True}],'aktivnaya':1,'sleduyushchaya':2}))
   for name in ('vkladki.json','sohranennye.json'):(device.data/name).write_text(json.dumps([item]))
   (device.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False,'memory_saver':False}))
   client=device.start();report['stage']='blank-native-frame'
@@ -37,6 +43,7 @@ def run(a):
    if obj:
     try:obj.close()
     except Exception:clean=False
+  server.shutdown();server.server_close()
   report['cleanup_completed']=clean
   if not clean:report['preflight_complete']=False
   (out/'result.json').write_text(json.dumps(report,indent=2)+'\n')
