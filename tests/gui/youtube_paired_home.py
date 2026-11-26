@@ -4,7 +4,7 @@ No GHA spoofing, owner cookies, real desktop or sandbox override. The native
 opt-in is an owned 0600 marker inside an owned 0700 test profile under ~/AI.
 Unknown codec, quality, audio policy, process ownership or blocked YouTube fails.
 """
-import argparse, hashlib, json, math, os, signal, sys, time
+import argparse, hashlib, json, math, os, re, signal, sys, time
 from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from security_native import NativeFailure, require
@@ -51,6 +51,8 @@ def make_state_probe(video_id):
                 state = data.get('state')
                 if isinstance(state, dict):
                     return state
+                code=data.get('code')
+                if isinstance(code,str) and re.fullmatch('[a-z][a-z0-9_]{0,95}',code):raise Blocked('native_'+kind+'_'+code)
                 raise Blocked('native_' + kind + '_unavailable')
             time.sleep(.1)
         raise Blocked('native_' + kind + '_unavailable')

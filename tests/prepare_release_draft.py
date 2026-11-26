@@ -103,6 +103,14 @@ def main():
     paired_bytes=paired_path.read_bytes()
     assert hashlib.sha256(paired_bytes).hexdigest()==state['paired_public_measurement']['raw_report_sha256'], 'Raw paired evidence digest mismatch'
     validate_paired_report(json.loads(paired_bytes),source,build)
+    # Bind the measured ELF to the actual producer artifact, not just a SHA
+    # string supplied by the measurement report. Download only on the CI VM.
+    paired_report=json.loads(paired_bytes)
+    with tempfile.TemporaryDirectory(prefix='nb-paired-binary-') as directory:
+        gh('run','download',build,'--repo',repo,'--name','nexusbro-linux-runtime','--dir',directory)
+        binaries=[p for p in pathlib.Path(directory).rglob('*') if p.is_file()]
+        assert len(binaries)==1 and binaries[0].name=='nexusbro' and binaries[0].stat().st_size<=128*1024*1024, 'Unexpected producer binary artifact'
+        assert hashlib.sha256(binaries[0].read_bytes()).hexdigest()==paired_report['provenance']['exe_sha256'], 'Measured binary differs from actual build artifact'
     light=json.loads(pathlib.Path('docs/verification',version,'light-home-summary.json').read_text())
     assert light.get('desktop_source')==source and str(light.get('producer_run'))==build
     assert light.get('completed') is True and light.get('playing_observed') is True and light.get('extraction_completed') is True and light.get('decoded_frames_advanced') is True and light.get('position_delta_seconds',0)>=8
