@@ -994,7 +994,9 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: downloads-library-verification
-          path: .dev-check/downloads-library/*.json
+          path: |
+            .dev-check/downloads-library/*.json
+            .dev-check/downloads-library/owned-failure.png
           retention-days: 14
 
       - name: Native search task metrics and network retry

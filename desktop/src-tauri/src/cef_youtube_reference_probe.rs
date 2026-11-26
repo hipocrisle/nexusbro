@@ -56,7 +56,7 @@ const SCRIPT: &str = r#"(()=>{
  };
  const uniqueRect=elements=>{const rects=Array.from(elements).map(rectOf).filter(Boolean);return rects.length===1?rects[0]:null;};
  const menuLabel=el=>norm((el.querySelector('.ytp-menuitem-label')||el).textContent);
- const menuItems=Array.from(player.querySelectorAll('[role=menuitem]'));
+ const menuItems=Array.from(player.querySelectorAll('[role=menuitem],[role=menuitemradio]'));
  const rejects=Array.from(document.querySelectorAll('button,[role=button]')).filter(e=>['Reject all','Alle ablehnen','Отклонить все'].includes(norm(e.textContent)));
  const autohide=player.classList.contains('ytp-autohide');
  const controls={
