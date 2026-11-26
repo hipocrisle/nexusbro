@@ -181,13 +181,60 @@ try:
             time.sleep(.1)
         assert initial_address is not None,'Initial native address control unavailable or ambiguous'
         initial_address.click_input()
+        # Тест-предусловие: РЕАЛЬНЫЙ клавиатурный фокус именно в этом поле
+        # (тот же UIA-API, что :284/:636). Без фокуса ввод не отправляется.
+        u.GetForegroundWindow.restype = wintypes.HWND
+        u.GetAsyncKeyState.restype = wintypes.SHORT
+        focus_deadline=time.monotonic()+3;focus_ready=False
+        while time.monotonic()<focus_deadline:
+            try:
+                if initial_address.element_info.element.CurrentHasKeyboardFocus:
+                    focus_ready=True;break
+            except Exception:pass
+            time.sleep(.05)
+        entry={'focus_ready':focus_ready,'interval':0.02}
+        try:
+            app_pid=wintypes.DWORD()
+            u.GetWindowThreadProcessId(hwnd,ctypes.byref(app_pid))
+            family={app_pid.value}
+            try:
+                parent=psutil.Process(app_pid.value)
+                family|={child.pid for child in parent.children(recursive=True)}
+            except (psutil.NoSuchProcess,psutil.AccessDenied):
+                pass
+            fg=u.GetForegroundWindow();fg_pid=wintypes.DWORD()
+            if fg:u.GetWindowThreadProcessId(fg,ctypes.byref(fg_pid))
+            entry['owned_foreground']=bool(fg) and fg_pid.value in family
+            entry['ctrl_released']=(u.GetAsyncKeyState(0x11)&0x8000)==0
+            entry['shift_released']=(u.GetAsyncKeyState(0x10)&0x8000)==0
+        except Exception:
+            entry['focus_facts']='unavailable'
+        if not focus_ready:
+            results.append({'initial_address_entry':entry})
+            raise AssertionError('Initial address control did not take keyboard focus')
     gui.hotkey('ctrl','a')
     fixture = base+'/page'
-    gui.write(fixture, interval=.003)
+    # ОДИН humanlike ввод (20мс/символ вместо нереалистичных 333 симв/с);
+    # критерий exact не ослаблен, повторной печати нет.
+    gui.write(fixture, interval=.02)
     if not a.baseline:
         deadline=time.monotonic()+3
         while time.monotonic()<deadline and initial_address.iface_value.CurrentValue!=fixture:time.sleep(.05)
-        assert initial_address.iface_value.CurrentValue==fixture,'Initial physical address entry failed'
+        actual_value=initial_address.iface_value.CurrentValue
+        try:
+            from windows_input_receipt import classify_value
+            entry['value_check']=classify_value(actual_value,fixture)
+            entry['owned_input_focus']=True
+            if actual_value!=fixture:
+                time.sleep(1)
+                try:
+                    entry['late_exact']=initial_address.iface_value.CurrentValue==fixture
+                except Exception:
+                    entry['late_exact']=False
+        except Exception:
+            entry['value_check']='unavailable'
+        results.append({'initial_address_entry':entry})
+        assert actual_value==fixture,'Initial physical address entry failed'
         results.append({'initial_address_native_uia':True,'physical_entry_verified':True})
     gui.press('enter')
     if a.baseline:
