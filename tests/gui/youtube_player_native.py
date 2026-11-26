@@ -1174,7 +1174,7 @@ class ExitWitness:
         self.psutil=psutil;self.clock='windows_filetime' if sys.platform=='win32' else 'linux_ticks'
         require(device.app.poll() is None,'Privacy parent already exited')
         self.identities={device.app.pid:kernel_birth(device.app.pid,self.clock)};self.roots={device.app.pid};self.lock=threading.Lock()
-        self.done=threading.Event();self.error=False
+        self.done=threading.Event();self.error=False;self.error_info=None;self.samples=0
         native=call(client,'super_lifecycle_snapshot')
         require(native.get('schema')==1 and isinstance(native.get('engines'),list),'Privacy native ownership schema invalid')
         members=[]
@@ -1210,12 +1210,31 @@ class ExitWitness:
                             self.identities[process.pid]=birth
                     except self.psutil.NoSuchProcess:pass
             except self.psutil.NoSuchProcess:pass
+    def _record_error(self,exc,where):
+        # Санитизированная typed-квитанция: только allowlisted класс, числовой
+        # errno и собственная функция/место. Никаких строк exception, путей,
+        # аргументов или PID — причина больше не теряется, но ничего не утекает.
+        allowed={'RuntimeError','OSError','FileNotFoundError','PermissionError',
+                 'ProcessLookupError','AccessDenied','NoSuchProcess','ZombieProcess',
+                 'TimeoutExpired','AssertionError','NativeFailure','NativeError'}
+        name=type(exc).__name__
+        code=getattr(exc,'errno',None)
+        if not isinstance(code,int) or isinstance(code,bool) or not 0<=code<4096:code=None
+        with self.lock:
+            self.error_info={'error_class':name if name in allowed else 'Other',
+                             'where':where,'errno':code,
+                             'samples_seen':self.samples,
+                             'identities_known':len(self.identities),
+                             'roots':len(self.roots)}
     def run(self):
         while not self.done.is_set():
-            try:self.sample()
-            except Exception:self.error=True;return
+            try:self.sample();self.samples+=1
+            except Exception as exc:
+                self.error=True;self._record_error(exc,'run.sample');return
             self.done.wait(.02)
     def all_gone(self):
+        if self.error and self.error_info is None:
+            self._record_error(RuntimeError('observation_failed'),'all_gone')
         require(not self.error,'Privacy process observation incomplete')
         with self.lock:rows=list(self.identities.items())
         for pid,birth in rows:
@@ -1227,6 +1246,8 @@ class ExitWitness:
         return True
     def close(self):
         self.done.set();self.thread.join(timeout=3)
+        if self.thread.is_alive() and self.error_info is None:
+            self._record_error(TimeoutError('witness_thread_alive'),'close')
         require(not self.thread.is_alive() and not self.error,'Privacy process observation incomplete')
 
 
@@ -1387,7 +1408,12 @@ def close_for_privacy(client,device,report):
         report['app_shutdown_receipt']=read_shutdown_receipt(device.data,parent_pid)
         report['owned_exit']['clean_shutdown_receipt_verified']=True
     finally:
-        witness.close()
+        try:witness.close()
+        finally:
+            # Квитанция о причине наблюдения гарантированно попадает в отчёт
+            # даже при падении require() выше; без неё failure_code терялся.
+            if getattr(witness,'error_info',None):
+                report['exit_witness_error']=witness.error_info
 
 
 def run(args):
