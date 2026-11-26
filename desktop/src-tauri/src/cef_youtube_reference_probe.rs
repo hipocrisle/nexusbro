@@ -452,7 +452,7 @@ mod tests {
         data["controls"] = controls_fixture();
         let raw = serde_json::to_string(&json!({"result":{"type":"object","value":data}}))
             .unwrap()
-            .replace(""x":12.0", ""x":1e999");
+            .replace(r#""x":12.0"#, r#""x":1e999"#);
         assert!(decode(raw.as_bytes()).is_err());
     }
     #[test]
