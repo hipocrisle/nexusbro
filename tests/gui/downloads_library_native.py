@@ -108,6 +108,47 @@ def downloads(client, super_id):
     return call(client, 'zagruzki_spisok')
 
 
+STATUS_ENUM = ('Загружается', 'Приостановлена', 'Готово', 'Отменена', 'Ошибка', 'Прервана')
+FILE_KINDS = {'file-known.bin': 'known', 'file-unknown.bin': 'unknown', 'note.txt': 'doc'}
+WAIT_MESSAGES = {
+    'Known-length download did not report real progress': 'known_progress_timeout',
+    'Unknown-length download did not report unknown total': 'unknown_total_timeout',
+    'Received bytes did not advance': 'received_stall_timeout',
+    'note.txt did not complete with a real file': 'doc_complete_timeout',
+    'file-known.bin did not complete with a real file': 'known_complete_timeout',
+    'file-unknown.bin did not complete with a real file': 'unknown_complete_timeout',
+    'Downloads library did not open via Ctrl+J': 'library_open_timeout',
+}
+
+
+def bounded_scalar(value):
+    if type(value) in (int, float) and not isinstance(value, bool) and value == value and 0 <= value <= 10 ** 12:
+        return value
+    return None
+
+
+def download_summary(client):
+    """Санитизированный снимок записей: file_kind/status из allowlist и
+    ограниченные скаляры. Никаких сырых url/path/id/name."""
+    try:
+        records = call(client, 'zagruzki_spisok')
+    except Exception:
+        return {'available': False}
+    summary = []
+    for record in records if isinstance(records, list) else []:
+        if not isinstance(record, dict):
+            continue
+        summary.append({
+            'file_kind': FILE_KINDS.get(record.get('name'), 'other'),
+            'status': record.get('status') if record.get('status') in STATUS_ENUM else 'other',
+            'received': bounded_scalar(record.get('received')),
+            'total': bounded_scalar(record.get('total')),
+            'percent': bounded_scalar(record.get('percent')),
+            'speed': bounded_scalar(record.get('speed')),
+        })
+    return {'available': True, 'count': len(summary), 'records': summary[:16]}
+
+
 def wait_download(client, name, predicate, message, timeout=40):
     def check():
         for d in downloads(client, None):
@@ -143,6 +184,7 @@ def run(args):
     try:
         if os.environ.get('GITHUB_ACTIONS') != 'true' or sys.platform != 'linux':
             raise Blocked('gha_linux_only')
+        report['preparation'] = False  # реальный native-прогон прошёл preflight
         root = Path(tempfile.mkdtemp(prefix='nb-downloads-')).resolve(strict=True)
         exe = Path(args.exe).resolve(strict=True); cef = Path(args.cef).resolve(strict=True)
         origin = fixture.start()
@@ -177,28 +219,41 @@ def run(args):
         # Реальные скачивания: обычная нативная команда Pereyti на attachment URL
         # в том же CEF-табе (DOM оболочки не содержит этих ссылок — клики по ней
         # были бы ложными). Никакого synthetic download state.
-        for path in ('/note.txt', '/file-known.bin', '/file-unknown.bin'):
-            call(client, 'obychnaya_komanda', id=identifier,
-                 komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + path})
-            time.sleep(.3)
+        # Сериализация: три навигации по 0.3с создавали гонку — новая
+        # навигация могла отменить предыдущую ДО on_before_download. Каждая
+        # загрузка стартует после подтверждения предыдущей; сами вложения и
+        # требование активного прогресса не ослаблены.
+        call(client, 'obychnaya_komanda', id=identifier,
+             komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/note.txt'})
+        wait_download(client, 'note.txt',
+            lambda d: d.get('status') == 'Готово' and (download_dir / 'note.txt').is_file(),
+            'note.txt did not complete with a real file', remaining(30))
+        call(client, 'obychnaya_komanda', id=identifier,
+             komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/file-known.bin'})
         report['stage'] = 'progress-observation'
+        report['downloads_before_wait'] = download_summary(client)
         active_known = wait_download(client, 'file-known.bin',
-            lambda d: d['status'] == 'Загружается' and d['total'] == KNOWN_TOTAL and 0 <= d['percent'] <= 100,
+            lambda d: d.get('status') == 'Загружается' and d.get('total') == KNOWN_TOTAL and 0 <= (d.get('percent') or 0) <= 100,
             'Known-length download did not report real progress', remaining(40))
         report['checks'].append('known_length_progress_real')
+        wait_download(client, 'file-known.bin',
+            lambda d: d.get('status') == 'Готово' and (download_dir / 'file-known.bin').is_file(),
+            'file-known.bin did not complete with a real file', remaining(60))
+        call(client, 'obychnaya_komanda', id=identifier,
+             komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/file-unknown.bin'})
         active_unknown = wait_download(client, 'file-unknown.bin',
-            lambda d: d['status'] == 'Загружается' and d['total'] <= 0,
+            lambda d: d.get('status') == 'Загружается' and (d.get('total') or 0) <= 0,
             'Unknown-length download did not report unknown total', remaining(40))
         report['checks'].append('unknown_length_indeterminate_state')
         first_received = active_unknown['received']
         wait_download(client, 'file-unknown.bin',
-            lambda d: d['received'] > first_received,
+            lambda d: (d.get('received') or 0) > first_received,
             'Received bytes did not advance', remaining(30))
         report['checks'].append('received_bytes_advance')
         report['stage'] = 'completion'
         for name in ('note.txt', 'file-known.bin', 'file-unknown.bin'):
             done = wait_download(client, name,
-                lambda d: d['status'] == 'Готово' and (download_dir / name).is_file(),
+                lambda d: d.get('status') == 'Готово' and (download_dir / name).is_file(),
                 f'{name} did not complete with a real file', remaining(60))
             require((download_dir / name).stat().st_size > 0, f'{name} file empty')
         require((download_dir / 'note.txt').stat().st_size == 5, 'note.txt size mismatch')
@@ -260,8 +315,20 @@ def run(args):
         report['completed'] = True; report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
-    except Exception:
-        report['blocked_reason'] = 'downloads_native_unavailable'
+    except Exception as error:
+        # wait_for/require бросают NativeFailure (AssertionError), не Blocked —
+        # раньше это терялось в generic. Фиксированные наши сообщения мапятся
+        # в allowlist-коды; чужие строки не пишутся.
+        message = str(error)
+        report['blocked_reason'] = WAIT_MESSAGES.get(message,
+            'native_assertion' if type(error).__name__ in ('NativeFailure', 'AssertionError') else 'downloads_native_unavailable')
+        report['failure_type'] = type(error).__name__ if type(error).__name__ in (
+            'NativeFailure', 'AssertionError', 'RuntimeError', 'OSError', 'KeyError', 'TypeError') else 'Other'
+        try:
+            if client is not None:
+                report['downloads_at_failure'] = download_summary(client)
+        except Exception:
+            pass
     finally:
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']
