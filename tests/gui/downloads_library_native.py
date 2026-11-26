@@ -233,8 +233,12 @@ def run(args):
         report['stage'] = 'startup'; client = device.start()
         wm = OwnedWindowManager(device, root / 'wm'); device.player_wm = wm
         switch_super(client, identifier, timeout=remaining(10))
-        if client.js('!!document.querySelector(".pusto button")'):
-            click_control(client, '.pusto button', remaining(10))
+        # Fixture setup uses the ordinary selection command. Download
+        # acceptance below still requires the actual painted page OS clicks.
+        selected = rows(client, identifier, timeout=remaining(3))['aktivnaya']
+        call(client, 'obychnaya_komanda', id=identifier,
+             komanda={'deystvie': 'vybrat', 'id': selected})
+        report['fixture_wake'] = 'ordinary_native_command_not_UI_acceptance'
         report['stage'] = 'tab-live'
         deadline = time.monotonic() + remaining(60); tab = None
         while time.monotonic() < deadline:
