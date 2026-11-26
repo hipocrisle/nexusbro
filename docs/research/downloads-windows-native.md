@@ -54,6 +54,25 @@ verbatim-путь вида `\\?\C:\...`. `zagruzka_deystvie` передаёт е
 переносится. Gate допускает owned AI 0775 (group), запрещает world-write AI и
 group-write внутри private fixture — зафиксировано как факт от ROOT.
 
+## Исправления по ROOT review (33805bb)
+
+- own_born_editor: ТОЧНОЕ совпадение отдельного argv-элемента после нормализации
+  (кавычки/verbatim-префикс/слэши/регистр); note.txt.extra и substring никогда не
+  засчитываются; exe только из известных каталогов Notepad (System32/Windows/
+  WindowsApps Microsoft.WindowsNotepad_*), не «любая программа с именем notepad».
+- explorer_folder_proof: PID окна обязан входить в fresh-explorer множество
+  (снимок до/после), UIA-адрес сравнивается как точный нормализованный путь;
+  basename в заголовке — не доказательство; нет UIA → честный unclosed.
+- Отчёт: раздельные open_completed/folder_completed; full_acceptance=false, если
+  folder unclosed.
+- Перед кликом по папке: own-born редактор закрывается (terminate+wait), возврат
+  foreground(device) и проверка присутствия панели — клик не попадёт в редактор.
+- Cleanup: terminate+wait с проверкой is_running; cleanup не True, пока процесс жив.
+- Строгий focus-guard: булево matches(":focus-within") без truthy-undefined.
+- Offline-контракт: tests/downloads_windows_contract_test.py — 17 негативных/позитивных
+  проверок (exact path vs .extra, foreign PID, reused-PID birth, unknown notepad
+  location, foreign explorer, missing UIA) — PASS без GUI.
+
 ## Незакрытые критерии
 
 1. Реальный запуск на GHA Windows — за ROOT (после review).

@@ -94,10 +94,38 @@ def processes_snapshot():
     return result
 
 
+def normalize_win_path(value):
+    """Pure normalization for exact comparisons: strip quotes and the \\?\
+    verbatim prefix, unify separators, lowercase. No filesystem access."""
+    text = str(value).strip().strip('"')
+    if text.startswith('\\\\?\\'):
+        text = text[4:]
+    return text.replace('/', '\\').rstrip('\\').lower()
+
+
+def argv_has_exact_path(cmdline, target):
+    """True only when ONE separate argv element equals the exact target after
+    normalization. Substring matches (note.txt.extra) never count."""
+    wanted = normalize_win_path(target)
+    return any(normalize_win_path(arg) == wanted for arg in cmdline or [])
+
+
+KNOWN_NOTEPAD_DIRS = ('c:\\windows\\system32\\', 'c:\\windows\\', 'c:\\program files\\windowsapps\\microsoft.windowsnotepad_')
+
+
+def is_known_notepad(exe_path):
+    """Exact known Windows Notepad locations, not any program named notepad."""
+    normalized = normalize_win_path(exe_path)
+    if not normalized.endswith('\\notepad.exe'):
+        return False
+    return any(normalized.startswith(prefix) for prefix in KNOWN_NOTEPAD_DIRS)
+
+
 def own_born_editor(before, target_path, started_after):
-    """New process born after the click whose cmdline carries the EXACT private
-    file path and whose executable is a known text editor. Never matches by
-    name alone; foreign Notepad instances are excluded by the before-snapshot."""
+    """New process born after the click whose SEPARATE argv element equals the
+    EXACT private file path and whose executable is a known Windows Notepad.
+    Foreign Notepad instances are excluded by the before-snapshot; a reused PID
+    fails the birth comparison."""
     import psutil
     now = processes_snapshot()
     for pid, info in now.items():
@@ -105,16 +133,14 @@ def own_born_editor(before, target_path, started_after):
             continue
         if info['birth'] < started_after - 1:
             continue
-        cmd = ' '.join(info['cmdline'])
-        if str(target_path) not in cmd:
+        if not argv_has_exact_path(info['cmdline'], target_path):
             continue
-        if not info['name'].endswith('notepad.exe') and 'notepad' not in info['name']:
+        if not is_known_notepad(info['exe']):
             continue
         try:
             proc = psutil.Process(pid)
             return {'pid': pid, 'exe': info['exe'], 'birth': info['birth'],
-                    'exe_known': Path(info['exe']).name.lower() == 'notepad.exe',
-                    'process': proc}
+                    'exe_known': True, 'process': proc}
         except psutil.NoSuchProcess:
             continue
     return None
@@ -122,8 +148,10 @@ def own_born_editor(before, target_path, started_after):
 
 def initial_report():
     return {'schema': 1, 'diagnostic_only': True, 'preparation': True, 'completed': False,
+            'open_completed': False, 'folder_completed': False,
             'checks': [], 'stage': 'setup', 'editor_proof': None, 'folder_proof': 'unclosed',
-            'real_os_associations': 'ghа_default_txt_only', 'cleanup_completed': False}
+            'full_acceptance': False, 'real_os_associations': 'gha_default_txt_only',
+            'cleanup_completed': False}
 
 
 def run(args):
@@ -181,7 +209,7 @@ def run(args):
         pyautogui.hotkey('ctrl', 'j')
         wait_for(lambda: client.js('!!document.querySelector(".library-panel .download-row")'),
                  'Downloads library did not open via Ctrl+J', remaining(15))
-        require(client.js('document.querySelector(".library-panel")?.matches(":focus-within")||document.activeElement?.closest(".library-panel")!==null') is True,
+        require(client.js('!!(document.querySelector(".library-panel")&&document.querySelector(".library-panel").matches(":focus-within"))') is True,
                 'Library panel did not take real focus')
         report['checks'].append('library_opened_real_ctrl_j')
         report['stage'] = 'open-file'
@@ -196,6 +224,18 @@ def run(args):
                                   'birth_after_click': editor['birth'] >= click_time - 1,
                                   'exact_private_path_in_cmdline': True}
         report['checks'].append('open_file_own_born_editor_exact_path')
+        report['open_completed'] = True
+        # Вернуть фокус нашему окну до клика по папке: редактор мог стать
+        # foreground, и клик не должен попасть в него. Редактор закрывается
+        # здесь же (только own-born, с ожиданием выхода), чтобы не мешать.
+        try:
+            editor['process'].terminate()
+            editor['process'].wait(timeout=10)
+        except Exception:
+            report['editor_cleanup'] = 'incomplete'
+        foreground(device)
+        require(client.js('!!document.querySelector(".library-panel")') is True,
+                'Library panel lost before folder action')
         report['stage'] = 'folder'
         folder_point = client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=Array.from(a?.querySelectorAll(".download-actions button")||[]).find(x=>x.textContent.includes("Показать в папке"));if(!b)return null;const r=b.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()')
         if isinstance(folder_point, list):
@@ -205,21 +245,33 @@ def run(args):
                 proof = wait_for(lambda: explorer_folder_proof(before_explorer, download_dir),
                                  'Explorer folder proof unavailable', remaining(20))
                 report['folder_proof'] = proof
+                report['folder_completed'] = True
                 report['checks'].append('folder_opened_uia_proof')
             except Blocked:
                 report['folder_proof'] = 'unclosed'
         report['stage'] = 'normal-owned-exit'; close_attempted = True
         close_for_privacy(client, device, report)
-        report['completed'] = True; report['stage'] = 'complete'
+        report['completed'] = True
+        report['full_acceptance'] = bool(report['open_completed'] and report['folder_completed'])
+        report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
     except Exception:
         report['blocked_reason'] = 'downloads_windows_unavailable'
     finally:
+        editor_gone = True
         if editor and editor.get('process') is not None:
             try:
-                # Close ONLY the exact self-identified own-born editor.
+                # Close ONLY the exact self-identified own-born editor and wait
+                # with a birth check; cleanup is not True while it lives.
                 editor['process'].terminate()
+                editor['process'].wait(timeout=10)
+            except Exception:
+                editor_gone = False
+            try:
+                import psutil
+                if editor['process'].is_running():
+                    editor_gone = False
             except Exception:
                 pass
         if client is not None and not close_attempted and device is not None and device.app is not None:
@@ -242,6 +294,7 @@ def run(args):
             except OSError:
                 cleanup = False
         os.environ.pop('NEXUSBRO_TEST_DOWNLOAD_DIR', None)
+        cleanup = cleanup and editor_gone
         report['cleanup_completed'] = cleanup
         if not cleanup: report['completed'] = False; report['blocked_reason'] = 'cleanup_failed'
         if not report.get('owned_exit', {}).get('clean_shutdown_receipt_verified'): report['completed'] = False
@@ -250,24 +303,41 @@ def run(args):
     return 0 if report['completed'] else 1
 
 
-def explorer_folder_proof(before, folder):
-    """UIA proof that an own-born Explorer window shows OUR folder address.
-    Returns a small receipt or raises Blocked; never touches foreign Explorer."""
-    import psutil
-    now = processes_snapshot()
-    fresh = [pid for pid, info in now.items()
-             if pid not in before and info['name'] == 'explorer.exe']
+def explorer_folder_proof(before, folder, snapshot=None):
+    """Proof that an OWN-BORN Explorer window shows OUR EXACT folder address:
+    the window PID must be in the fresh-explorer set (PID-birth via snapshot
+    diff) and a UIA address/edit control must contain the exact normalized
+    folder path. A basename in a window title is never proof. Raises Blocked
+    (honest unclosed) when evidence is unavailable; never touches foreign
+    Explorer windows."""
+    now = snapshot if snapshot is not None else processes_snapshot()
+    fresh = {pid for pid, info in now.items()
+             if pid not in before and info['name'] == 'explorer.exe'}
     if not fresh:
         raise Blocked('explorer_not_own_born')
+    wanted = normalize_win_path(folder)
     try:
         from pywinauto import Desktop
         for win in Desktop(backend='uia').windows():
             try:
-                title = win.window_text()
+                pid = win.process_id()
             except Exception:
                 continue
-            if folder.name in title or str(folder) in title:
-                return {'explorer_pids': len(fresh), 'address_match': 'title'}
+            if pid not in fresh:
+                continue
+            try:
+                controls = win.descendants(control_type='Edit') + win.descendants(control_type='ToolBar')
+            except Exception:
+                continue
+            for control in controls:
+                try:
+                    text = control.window_text() or ''
+                except Exception:
+                    continue
+                if wanted in normalize_win_path(text):
+                    return {'explorer_pid': pid, 'address_match': 'uia_exact_path'}
+    except Blocked:
+        raise
     except Exception:
         pass
     raise Blocked('explorer_folder_uia_unavailable')
