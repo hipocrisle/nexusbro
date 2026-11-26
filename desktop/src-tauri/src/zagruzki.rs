@@ -75,29 +75,20 @@ pub async fn zagruzki_spisok()->Vec<Zapis>{let mut items:Vec<_>=spisok().lock().
 pub async fn zagruzka_deystvie(app:tauri::AppHandle,window:tauri::WebviewWindow,s:tauri::State<'_,crate::Sostoyanie>,super_id:String,id:String,action:String)->Result<(),String>{
     let item=spisok().lock().unwrap().get(&id).filter(|i|i.super_id==super_id).cloned().ok_or("Загрузка не найдена")?;
     if action=="folder"{
-        let path=std::path::PathBuf::from(&item.path);
-        if item.path.is_empty(){return Err("Путь к файлу неизвестен".into());}
-        let parent=path.parent().filter(|p|p.is_dir()).ok_or("Папка загрузки не найдена: файла могло уже не быть на диске")?;
-        #[cfg(target_os="windows")]std::process::Command::new("explorer.exe").arg(parent).spawn().map_err(|e|format!("Не удалось открыть папку: {e}"))?;
-        #[cfg(target_os="linux")]std::process::Command::new("xdg-open").arg(parent).spawn().map_err(|e|format!("Не удалось открыть папку: {e}"))?;
+        // Только существующая абсолютная папка из записи; выделение файла не
+        // обещаем, опции командной строки отсечены политикой.
+        let parent=crate::downloads_open_policy::check_folder_target(&item.path)?;
+        #[cfg(target_os="windows")]std::process::Command::new("explorer.exe").arg(&parent).spawn().map_err(|_|"Не удалось открыть папку".to_string())?;
+        #[cfg(target_os="linux")]std::process::Command::new("xdg-open").arg(&parent).spawn().map_err(|_|"Не удалось открыть папку".to_string())?;
         return Ok(());
     }
     if action=="open"{
-        // Открываем только сохранённую завершённую запись и только обычный
-        // существующий файл. Никакого shell и произвольных аргументов от
-        // frontend: приложение выбирает путь само, исполняемые типы блокируем.
-        if item.status!="Готово"{return Err("Файл ещё не загружен полностью".into());}
-        if item.path.is_empty(){return Err("Путь к файлу неизвестен".into());}
-        let path=std::path::PathBuf::from(&item.path);
-        let meta=std::fs::symlink_metadata(&path).map_err(|_|"Файл не найден: возможно, он был удалён или перемещён".to_string())?;
-        if meta.file_type().is_symlink()||!meta.is_file(){return Err("Открыть можно только обычный файл".into());}
-        let ext=path.extension().and_then(|e|e.to_str()).unwrap_or("").to_lowercase();
-        const DANGEROUS:&[&str]=&["exe","msi","msix","bat","cmd","com","scr","ps1","vbs","vbe","js","jse","wsf","wsh","jar","sh","app","lnk","dll","sys","apk","desktop","appimage","run","bin"];
-        if DANGEROUS.contains(&ext.as_str()){
-            return Err(format!("Открытие .{ext} заблокировано как потенциально опасное. Если доверяете источнику, откройте файл вручную из папки."));
-        }
-        #[cfg(target_os="windows")]std::process::Command::new("explorer.exe").arg(&path).spawn().map_err(|e|format!("Не удалось открыть файл: {e}"))?;
-        #[cfg(target_os="linux")]std::process::Command::new("xdg-open").arg(&path).spawn().map_err(|e|format!("Не удалось открыть файл: {e}"))?;
+        // Путь только из сохранённой записи; политика проверяет статус,
+        // канонический обычный файл, опасные типы, trailing dot/space, NTFS ADS
+        // и execute-бит на Linux. Никакого shell и аргументов от frontend.
+        let target=crate::downloads_open_policy::check_open_target(&item.status,&item.path)?;
+        #[cfg(target_os="windows")]std::process::Command::new("explorer.exe").arg(&target).spawn().map_err(|_|"Не удалось открыть файл".to_string())?;
+        #[cfg(target_os="linux")]std::process::Command::new("xdg-open").arg(&target).spawn().map_err(|_|"Не удалось открыть файл".to_string())?;
         return Ok(());
     }
     if action=="retry"{
