@@ -40,6 +40,12 @@ enum Probe {
     Decode(crate::cef_youtube_decode_probe::Probe),
 }
 impl Probe {
+    fn diagnostic(&self) -> Option<serde_json::Value> {
+        match self {
+            Self::Decode(p) => Some(p.diagnostic()),
+            Self::Reference(_) => None,
+        }
+    }
     fn poll(&mut self) -> Option<Result<serde_json::Value, &'static str>> {
         match self {
             Self::Reference(p) => p.poll(),
@@ -62,8 +68,7 @@ struct State {
 }
 thread_local! {static STATE:RefCell<State>=RefCell::new(State::default());}
 fn gate() -> Result<(), &'static str> {
-    if !crate::youtube_benchmark_fixture::allowed()
-    {
+    if !crate::youtube_benchmark_fixture::allowed() {
         return Err("benchmark_fixture_only");
     }
     if currently_on(ThreadId::UI) == 0 {
@@ -160,9 +165,14 @@ pub fn poll() {
                     STATE.with(|s| s.borrow_mut().reservations.retire(p.browser, p.token));
                 if current {
                     let value = match reply {
-                        Ok(state) => serde_json::json!({"tip":p.tip,"id":p.tab,"state":state}),
+                        Ok(mut state) => {
+                            if let Some(diagnostic) = p.probe.diagnostic() {
+                                state["native_diagnostic"] = diagnostic;
+                            }
+                            serde_json::json!({"tip":p.tip,"id":p.tab,"state":state})
+                        }
                         Err(code) => {
-                            serde_json::json!({"tip":p.tip,"id":p.tab,"error":"Нативное наблюдение недоступно","code":code})
+                            serde_json::json!({"tip":p.tip,"id":p.tab,"error":"Нативное наблюдение недоступно","code":code,"diagnostic":p.probe.diagnostic()})
                         }
                     };
                     let _ = p.tx.send(Sobytie::Sluzhebnoe(value));

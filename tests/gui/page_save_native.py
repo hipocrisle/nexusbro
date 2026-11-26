@@ -112,7 +112,8 @@ def paint_matches(client, device):
 
 def focus_page(client,device,identifier):
     if sys.platform=='linux':
-        receipt=focus_normal_cef(client,device)
+        from x11_owned_cef_focus import focus_selected_cef
+        receipt=focus_selected_cef(client,device,identifier)
         pole=client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return {x:r.x,y:r.y}})()')
         # A normal user click gives WebContents input focus in addition to
         # X11's focus on the owned outer CEF window. Fixture tile has no action.

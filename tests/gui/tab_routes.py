@@ -1374,10 +1374,9 @@ def run(args):
         else:
             # Require the actual synthetic input's pixels and a held native
             # CEF identity, not only a successful HTTP receipt or shell PID.
-            from youtube_paired_native import focus_normal_cef
-            from x11_owned_cef_focus import NativeX11
+            from x11_owned_cef_focus import focus_selected_cef,NativeX11
             from resource_soak import kernel_birth
-            report['draft_focus_setup']=focus_normal_cef(client,device)
+            report['draft_focus_setup']=focus_selected_cef(client,device,'routes-a')
             point=painted_interaction_point(client,offset=(50,30),color=(227,242,253))
             client.mouse(*point)
             def focused_selected_engine():

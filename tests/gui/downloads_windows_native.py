@@ -210,6 +210,11 @@ def run(args):
         report['checks'].append('real_download_completed')
         report['stage'] = 'library-ui'
         foreground(device)
+        # A real click binds WebContents keyboard focus, rather than merely
+        # putting the containing HWND in the foreground. The fixture body
+        # has no interactive element at this fixed point.
+        from page_save_native import focus_page
+        focus_page(client,device,identifier)
         import pyautogui
         pyautogui.hotkey('ctrl', 'j')
         wait_for(lambda: client.js('!!document.querySelector(".library-panel .download-row")'),
@@ -266,8 +271,11 @@ def run(args):
         report['stage'] = 'complete'
     except Blocked as error:
         report['blocked_reason'] = str(error)
-    except Exception:
+    except Exception as error:
         report['blocked_reason'] = 'downloads_windows_unavailable'
+        report['exception_type'] = type(error).__name__
+        import traceback
+        report['exception_sites'] = [{'file':Path(frame.filename).name[:100],'line':frame.lineno,'function':frame.name[:100]} for frame in traceback.extract_tb(error.__traceback__)[-4:]]
     finally:
         report['cleanup_components'] = {}
         folder_gone = True

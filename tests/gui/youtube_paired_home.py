@@ -52,7 +52,17 @@ def make_state_probe(video_id):
                 if isinstance(state, dict):
                     return state
                 code=data.get('code')
-                if isinstance(code,str) and re.fullmatch('[a-z][a-z0-9_]{0,95}',code):raise Blocked('native_'+kind+'_'+code)
+                if isinstance(code,str) and re.fullmatch('[a-z][a-z0-9_]{0,95}',code):
+                    error=Blocked('native_'+kind+'_'+code)
+                    diagnostic=data.get('diagnostic')
+                    counts=('players_total','live_for_node','destroyed_known')
+                    flags=('node_known','enabled','final_started','consumed')
+                    if (kind=='decode' and isinstance(diagnostic,dict)
+                            and set(diagnostic)==set(counts+flags)
+                            and all(type(diagnostic[k]) is int and 0<=diagnostic[k]<=4 for k in counts)
+                            and all(type(diagnostic[k]) is bool for k in flags)):
+                        error.native_decode_diagnostic=diagnostic
+                    raise error
                 raise Blocked('native_' + kind + '_unavailable')
             time.sleep(.1)
         raise Blocked('native_' + kind + '_unavailable')

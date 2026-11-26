@@ -359,7 +359,10 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(snapshot(mode)),'Real public playback missing',15)
         result['public_playback_before_decode']={k:state.get(k) for k in ('playing','position','duration','decoded','dropped','video_width','video_height','volume','muted','default_sink')}
         result['stage']='native-decode'
-        decode=decode_state(snapshot('decode'));result['decode']=decode
+        decode_raw=snapshot('decode')
+        if isinstance(decode_raw.get('native_diagnostic'),dict):
+            result['native_decode_diagnostic']=decode_raw['native_diagnostic']
+        decode=decode_state(decode_raw);result['decode']=decode
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
@@ -422,6 +425,8 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         (close_owned or close_for_privacy)(client,device,result)
         result['stage']='complete';return result
     except Exception as error:
+        if isinstance(getattr(error,'native_decode_diagnostic',None),dict):
+            result['native_decode_diagnostic']=error.native_decode_diagnostic
         result['blocked_reason']=str(error) if isinstance(error,Blocked) else 'native_acceptance_unavailable'
         result['failure_class']=type(error).__name__
         if private_parent and device and wm:

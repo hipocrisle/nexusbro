@@ -350,3 +350,78 @@ def inspect_tree(display, shell_xid):
         return x11.walk(shell_xid)
     finally:
         x11.close()
+
+
+def focus_selected_cef(client, device, super_id):
+    """Bind the selected native engine without requiring a WM/EWMH list."""
+    import os
+    import re
+    import subprocess
+    from pathlib import Path
+    import psutil
+    from resource_soak import kernel_birth
+
+    def require(value, code):
+        if not value:
+            raise FocusBlocked(code)
+
+    family = [psutil.Process(device.app.pid),
+              *psutil.Process(device.app.pid).children(recursive=True)]
+    require(len(family) <= 128, 'owner_family_bound')
+    mains = []
+    for process in family:
+        try:
+            argv = process.cmdline()
+            if (Path(process.exe()).resolve() == device.exe.resolve()
+                    and '--nb-dvizhok' not in argv
+                    and not any(a.startswith('--type=') for a in argv)):
+                mains.append(process)
+        except psutil.NoSuchProcess:
+            continue
+    require(len(mains) == 1, 'shell_identity_ambiguous')
+    main = mains[0]
+    main_birth = kernel_birth(main.pid, 'linux_ticks')
+    lifecycle = client.command('super_lifecycle_snapshot')
+    engines = [e for e in lifecycle.get('engines', []) if e.get('id') == super_id]
+    require(lifecycle.get('schema') == 1 and len(engines) == 1
+            and type(engines[0].get('pid')) is int, 'selected_engine_unavailable')
+    engine_pid = engines[0]['pid']
+    engine_birth = kernel_birth(engine_pid, 'linux_ticks')
+    require(bool(main_birth) and bool(engine_birth), 'owner_birth_unavailable')
+
+    def held_alive():
+        try:
+            engine = psutil.Process(engine_pid)
+            return (device.app.poll() is None
+                    and kernel_birth(main.pid, 'linux_ticks') == main_birth
+                    and kernel_birth(engine_pid, 'linux_ticks') == engine_birth
+                    and Path(engine.exe()).resolve() == device.exe.resolve()
+                    and '--nb-dvizhok' in engine.cmdline())
+        except psutil.NoSuchProcess:
+            return False
+
+    env = {**os.environ, 'DISPLAY': device.display}
+    title = client.command('plugin:window|title', label='main')
+    listed = subprocess.run(
+        ['xdotool', 'search', '--onlyvisible', '--pid', str(main.pid),
+         '--name', '^' + re.escape(title) + '$'], env=env,
+        capture_output=True, text=True, timeout=3)
+    windows = [int(v) for v in listed.stdout.split() if v.isdecimal()]
+    require(len(windows) <= 8 and held_alive(), 'shell_unavailable')
+    native = NativeX11(device.display)
+    try:
+        shells = [window for window in windows
+                  if native.pid_of(window) == main.pid
+                  and native.geometry(window)['viewable']]
+    finally:
+        native.close()
+    require(len(shells) == 1, 'shell_window_ambiguous')
+    label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    origin = client.command('plugin:window|inner_position', label=label)
+    viewport = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();'
+                         'return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1}})()')
+    area = (round(origin['x'] + viewport['x'] * viewport['k']),
+            round(origin['y'] + viewport['y'] * viewport['k']),
+            round(viewport['w'] * viewport['k']), round(viewport['h'] * viewport['k']))
+    return focus_cef(device.display, shells[0], area,
+                     {engine_pid: engine_birth}, held_alive)

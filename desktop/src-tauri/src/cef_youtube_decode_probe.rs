@@ -175,13 +175,9 @@ impl State {
             return Ok(&mut self.players[index]);
         }
         if self.players.len() >= 4 {
-            // Authoritatively destroyed players (kWebMediaPlayerDestroyed) no
-            // longer occupy live slots; historical evidence stays counted in
-            // destroyed_total.
-            self.players.retain(|p| !p.destroyed);
-            if self.players.len() >= 4 {
-                return Err("decode_players_bound");
-            }
+            // Keep the original lifetime bound, including terminal records.
+            // A destroyed record cannot grant an unbounded stream of new IDs.
+            return Err("decode_players_bound");
         }
         self.players.push(Player {
             id: Zeroizing::new(id.to_owned()),
@@ -242,7 +238,7 @@ impl State {
                     // substring-matched against URLs or error text.
                     let raw = event["value"]
                         .as_str()
-                        .filter(|v| v.len() <= 1024)
+                        .filter(|v| v.len() <= CAP)
                         .ok_or("decode_event_invalid")?;
                     let params = parse(raw.as_bytes())?;
                     let name = params.0["event"]
@@ -953,9 +949,23 @@ mod tests {
         .is_ok());
         assert!(!s.players[0].destroyed);
         assert_eq!(s.destroyed_total, 0);
+        // Real kLoad events can contain long signed media URLs. Their private
+        // contents do not impose a new 1 KiB cap or become lifecycle evidence.
+        let private_url = format!(
+            "https://fixture.invalid/{}kWebMediaPlayerDestroyed",
+            "x".repeat(2048)
+        );
+        let params = json!({"event":"kLoad","url":private_url}).to_string();
+        assert!(event(
+            &mut s,
+            "Media.playerEventsAdded",
+            json!({"playerId":"opaque","events":[{"timestamp":3.0,"value":params}]})
+        )
+        .is_ok());
+        assert!(!s.players[0].destroyed);
     }
     #[test]
-    fn destroyed_players_free_live_slots() {
+    fn destroyed_players_preserve_total_observation_bound() {
         let mut s = software();
         for n in 0..3 {
             event(
@@ -966,24 +976,16 @@ mod tests {
             .unwrap();
             destroyed_event(&mut s, &format!("d{n}")).unwrap();
         }
-        // 4 entries exist but 3 are destroyed: a new player must fit.
-        event(
+        // Terminal records are excluded from evidence, but not from the
+        // lifetime admission bound. Even destroyed-ID churn stays bounded.
+        assert!(event(
             &mut s,
             "Media.playerCreated",
             json!({"player":{"playerId":"fresh","domNodeId":60}}),
         )
-        .unwrap();
-        assert!(s.players.iter().any(|p| p.id.as_str() == "fresh"));
+        .is_err());
+        assert_eq!(s.players.len(), 4);
         assert_eq!(s.destroyed_total, 3);
-        // Four LIVE players still refuse a fifth (opaque+fresh+l0+l1 = 4).
-        for n in 0..2 {
-            event(
-                &mut s,
-                "Media.playerCreated",
-                json!({"player":{"playerId":format!("l{n}"),"domNodeId":70+n}}),
-            )
-            .unwrap();
-        }
         assert!(event(
             &mut s,
             "Media.playerCreated",
