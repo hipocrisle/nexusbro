@@ -33,6 +33,7 @@ def main():
     checks['system32_notepad_known'] = m.is_known_notepad('C:\\Windows\\System32\\notepad.exe') is True
     checks['windowsapps_notepad_known'] = m.is_known_notepad(
         'C:\\Program Files\\WindowsApps\\Microsoft.WindowsNotepad_11.1_x64__8weky\\notepad.exe') is True
+    checks['temp_notepad_rejected'] = m.is_known_notepad('C:\\Windows\\Temp\\notepad.exe') is False
     checks['random_notepad_rejected'] = m.is_known_notepad('C:\\Tools\\notepad.exe') is False
     checks['other_editor_rejected'] = m.is_known_notepad('C:\\Windows\\System32\\cmd.exe') is False
 

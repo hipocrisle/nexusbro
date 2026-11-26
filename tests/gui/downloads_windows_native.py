@@ -14,6 +14,7 @@ or environment-file changes to force a PASS.
 import argparse
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -118,7 +119,7 @@ def is_known_notepad(exe_path):
     normalized = normalize_win_path(exe_path)
     if not normalized.endswith('\\notepad.exe'):
         return False
-    return any(normalized.startswith(prefix) for prefix in KNOWN_NOTEPAD_DIRS)
+    return normalized in ('c:\\windows\\system32\\notepad.exe','c:\\windows\\notepad.exe') or bool(re.fullmatch(r'c:\\program files\\windowsapps\\microsoft[.]windowsnotepad_[^\\]+\\(?:notepad\\)?notepad[.]exe', normalized))
 
 
 def own_born_editor(before, target_path, started_after):
@@ -216,7 +217,8 @@ def run(args):
         point = client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=a?.querySelector(".download-actions .download-primary");if(!b)return null;const r=b.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()')
         require(isinstance(point, list) and len(point) == 2, 'note.txt open button not found')
         before = processes_snapshot(); click_time = time.time()
-        win_click(client, point[0], point[1])
+        client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));a.querySelector(".download-primary").setAttribute("data-nb-open-target","1");return true})()')
+        click_control(client,'[data-nb-open-target="1"]',remaining(10))
         editor = wait_for(lambda: own_born_editor(before, target, click_time),
                           'Own-born editor with the exact private path not observed', remaining(30))
         require(editor['exe_known'], 'Editor executable is not the known notepad.exe')
@@ -240,14 +242,18 @@ def run(args):
         folder_point = client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=Array.from(a?.querySelectorAll(".download-actions button")||[]).find(x=>x.textContent.includes("Показать в папке"));if(!b)return null;const r=b.getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()')
         if isinstance(folder_point, list):
             before_explorer = processes_snapshot()
-            win_click(client, folder_point[0], folder_point[1])
+            client.js('(()=>{const a=Array.from(document.querySelectorAll(".library-panel article")).find(x=>x.textContent.includes("note.txt"));const b=Array.from(a.querySelectorAll("button")).find(b=>b.textContent.includes("Показать в папке"));b.setAttribute("data-nb-folder-target","1");return true})()')
+            click_control(client,'[data-nb-folder-target="1"]',remaining(10))
             try:
-                proof = wait_for(lambda: explorer_folder_proof(before_explorer, download_dir),
+                def observe_folder():
+                    try:return explorer_folder_proof(before_explorer, download_dir)
+                    except Blocked:return None
+                proof = wait_for(observe_folder,
                                  'Explorer folder proof unavailable', remaining(20))
                 report['folder_proof'] = proof
                 report['folder_completed'] = True
                 report['checks'].append('folder_opened_uia_proof')
-            except Blocked:
+            except Exception:
                 report['folder_proof'] = 'unclosed'
         report['stage'] = 'normal-owned-exit'; close_attempted = True
         close_for_privacy(client, device, report)
@@ -300,7 +306,7 @@ def run(args):
         if not report.get('owned_exit', {}).get('clean_shutdown_receipt_verified'): report['completed'] = False
         report['wall_seconds'] = round(time.monotonic() - started, 3)
         (out / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
-    return 0 if report['completed'] else 1
+    return 0 if report['completed'] and report['full_acceptance'] else 1
 
 
 def explorer_folder_proof(before, folder, snapshot=None):
@@ -334,7 +340,7 @@ def explorer_folder_proof(before, folder, snapshot=None):
                     text = control.window_text() or ''
                 except Exception:
                     continue
-                if wanted in normalize_win_path(text):
+                if normalize_win_path(text.removeprefix('Address: ').removeprefix('Адрес: ')) == wanted:
                     return {'explorer_pid': pid, 'address_match': 'uia_exact_path'}
     except Blocked:
         raise

@@ -860,6 +860,21 @@ jobs:
           path: .dev-check/hibernation-cookie/results.json
           retention-days: 14
 
+      - name: Native Windows saved-download open and folder actions
+        if: ${{ !inputs.runtime_memory_only && !inputs.runtime_baseline }}
+        timeout-minutes: 6
+        shell: pwsh
+        run: |
+          python tests/gui/downloads_windows_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/downloads-windows
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Upload Windows downloads action evidence
+        if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloads-windows-verification
+          path: .dev-check/downloads-windows/*.json
+          retention-days: 14
+
       - name: Native Windows per-tab routes and trusted HTTPS
         id: native-routes-windows
         if: matrix.os == 'windows-latest'
