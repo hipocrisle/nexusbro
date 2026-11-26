@@ -1,0 +1,54 @@
+{
+  "schema": 1,
+  "source": "7b8e1e60cc6c40ba611759dbbe6875a406c285d8",
+  "producer_run": 45780933571,
+  "native_run": 45803091776,
+  "test_source": "8ffa545",
+  "completed": true,
+  "checks": [
+    "known_length_progress_real",
+    "known_progress_visible_in_library",
+    "unknown_length_indeterminate_state",
+    "unknown_progress_visible_indeterminate",
+    "received_bytes_advance",
+    "real_files_completed",
+    "library_rows_and_actions_real",
+    "open_file_uses_saved_safe_path",
+    "record_removal_keeps_file",
+    "sections_isolated_real"
+  ],
+  "request_target_forms": {
+    "total": 9,
+    "origin": 0,
+    "absolute_same_origin": 9,
+    "absolute_foreign": 0,
+    "invalid": 0,
+    "unmatched_path": 5
+  },
+  "http_fixture_requests": {
+    "page": 1,
+    "doc": 1,
+    "known": 1,
+    "unknown": 1
+  },
+  "owned_exit": {
+    "parent_normal_exit": true,
+    "native_members_observed": 8,
+    "os_identities_observed": 14,
+    "all_known_native_executions_exited": true,
+    "native_members_complete": true,
+    "tracker_seconds": 0.02,
+    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
+    "harness_kill_used_for_acceptance": false,
+    "clean_shutdown_receipt_verified": true,
+    "actual_app_identity_bound": true,
+    "launcher_is_actual_app": false,
+    "actual_app_execution_exited": true,
+    "launcher_exit_zero": true
+  },
+  "raw_sha256": "d28e5abfe669f98cf11dc34d4842014c5cc7e09af7162616436fd71e94b3039e",
+  "file_open_scope": "test_shim_only",
+  "actual_os_file_association_proven": false,
+  "windows_open_and_folder_acceptance": false,
+  "current_candidate_acceptance": false
+}
