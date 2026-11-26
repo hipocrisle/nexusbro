@@ -1,0 +1,14 @@
+/* Компактная кнопка загрузок у адресной строки. Тёмная тема проекта, без
+ * перенасыщенных анимаций и без глобального busy-индикатора. */
+.downloads-button{position:relative;display:inline-flex;align-items:center;justify-content:center;
+ width:30px;height:30px;padding:0;border:0;border-radius:8px;background:transparent;
+ color:var(--tekst2,#9aa4b2);cursor:pointer;}
+.downloads-button:hover{background:var(--fon3,rgba(255,255,255,.07));color:var(--tekst,#e6e9ee);}
+.downloads-button.active{color:var(--tekst,#e6e9ee);}
+.downloads-button.paused{color:#c9b458;}
+.downloads-badge{position:absolute;top:1px;right:1px;min-width:13px;height:13px;padding:0 3px;
+ border-radius:7px;background:#5b8def;color:#10131a;font-size:9px;line-height:13px;font-weight:700;
+ pointer-events:none;}
+.downloads-progress{position:absolute;left:4px;right:auto;bottom:2px;height:2px;border-radius:1px;
+ background:#5b8def;pointer-events:none;}
+.downloads-progress.indeterminate{width:60%;opacity:.55;}
