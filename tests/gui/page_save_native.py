@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import sys
 import subprocess
 import threading
@@ -20,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from security_native import Device, call, require, wait_for
+from tab_routes import WindowsDevice
 from youtube_paired_native import (super_record, switch_super, rows,
     focus_normal_cef, click_control)
 from youtube_player_native import (OwnedWindowManager, foreground,
@@ -27,7 +29,7 @@ from youtube_player_native import (OwnedWindowManager, foreground,
 from youtube_download_native import dialogs, choose, keys
 from download_fixture_target import fixture_target
 
-COLORS = ((44, 190, 97), (41, 93, 219))
+COLORS = ((44, 190, 97), (41, 93, 219), (201,71,107))
 
 
 class Fixture:
@@ -43,9 +45,9 @@ class Fixture:
                 path, _ = fixture_target(self.path, outer.origin)
                 payloads = {
                     '/page.html': ('text/html', b'<!doctype html><meta charset=utf-8><title>Save fixture</title><link rel=stylesheet href=/style.css><div id=tile></div><img src=/image.png width=100 height=100><iframe src=/frame.html></iframe>'),
-                    '/style.css': ('text/css', b'body{margin:0;background:#fff}#tile{width:100px;height:100px;background:rgb(44,190,97)}img{display:block}'),
+                    '/style.css': ('text/css', b'body{margin:0;background:#fff}#tile{width:100px;height:100px;background:rgb(44,190,97)}img{display:block}iframe{display:block;width:100px;height:100px;border:0}'),
                     '/image.png': ('image/png', outer.png),
-                    '/frame.html': ('text/html', b'<!doctype html><title>Embedded fixture</title><p>OFFLINE_FRAME_MARKER</p>'),
+                    '/frame.html': ('text/html', b'<!doctype html><title>Embedded fixture</title><style>body{margin:0;background:rgb(201,71,107)}</style><p>OFFLINE_FRAME_MARKER</p>'),
                 }
                 kind, body = payloads.get(path, ('text/plain', b'not found'))
                 outer.counts[path] = outer.counts.get(path, 0) + 1
@@ -94,18 +96,45 @@ def archive_facts(path, png):
 def paint_matches(client, device):
     from PIL import ImageGrab
     pole = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height}})()')
-    require(pole['w'] > 150 and pole['h'] > 250, 'owned_viewport_missing')
+    require(pole['w'] > 150 and pole['h'] > 350, 'owned_viewport_missing')
     label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
     origin = call(client, 'plugin:window|inner_position', label=label)
     scale = client.js('devicePixelRatio||1')
-    for y, color in zip((50, 150), COLORS):
+    for y, color in zip((50, 150, 250), COLORS):
         x = round(origin['x'] + (pole['x'] + 50) * scale)
         sy = round(origin['y'] + (pole['y'] + y) * scale)
-        with ImageGrab.grab(bbox=(x, sy, x + 1, sy + 1), xdisplay=device.display) as image:
+        with ImageGrab.grab(bbox=(x, sy, x + 1, sy + 1), **({'xdisplay':device.display} if sys.platform=='linux' else {})) as image:
             pixel = image.convert('RGB').getpixel((0, 0))
         if any(abs(a-b) > 12 for a, b in zip(pixel, color)):
             return False
     return True
+
+
+def focus_page(client,device,identifier):
+    if sys.platform=='linux':
+        return focus_normal_cef(client,device)
+    import ctypes
+    from ctypes import wintypes as w
+    from youtube_paired_native import native_members
+    from youtube_player_native import native_app_window
+    identity=native_app_identity(device)
+    owner=native_app_window(device,identity)
+    members=native_members(client,identifier)
+    foreground(device)
+    pole=client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height}})()')
+    require(pole['w']>100 and pole['h']>100,'page_focus_bounds_invalid')
+    client.mouse(pole['x']+50,pole['y']+50)
+    class Info(ctypes.Structure):
+        _fields_=[('cbSize',w.DWORD),('flags',w.DWORD),('active',w.HWND),('focus',w.HWND),('capture',w.HWND),('menu',w.HWND),('move',w.HWND),('caret',w.HWND),('rect',w.RECT)]
+    user=ctypes.WinDLL('user32',use_last_error=True)
+    user.GetGUIThreadInfo.argtypes=[w.DWORD,ctypes.POINTER(Info)];user.GetGUIThreadInfo.restype=w.BOOL
+    user.GetWindowThreadProcessId.argtypes=[w.HWND,ctypes.POINTER(w.DWORD)];user.GetWindowThreadProcessId.restype=w.DWORD
+    user.GetAncestor.argtypes=[w.HWND,w.UINT];user.GetAncestor.restype=w.HWND
+    info=Info();info.cbSize=ctypes.sizeof(info)
+    require(user.GetGUIThreadInfo(0,ctypes.byref(info)) and info.focus,'page_focus_unavailable')
+    pid=w.DWORD();user.GetWindowThreadProcessId(info.focus,ctypes.byref(pid))
+    require(pid.value in {m['pid'] for m in members} and int(user.GetAncestor(info.focus,2) or 0)==int(owner.handle)
+            and native_app_identity_alive(device,identity),'page_focus_not_owned_cef')
 
 
 def run(args):
@@ -114,11 +143,11 @@ def run(args):
     report = {'completed': False, 'stage': 'preflight', 'checks': {}, 'native_execution': False}
     fixture = device = wm = client = None
     started = time.monotonic()
-    create_device = lambda root: Device('page-save', root, Path(args.exe).resolve(), Path(args.cef).resolve())
+    create_device = lambda root: (WindowsDevice(root,Path(args.exe).resolve(),Path(args.cef).resolve()) if sys.platform=='win32' else Device('page-save', root, Path(args.exe).resolve(), Path(args.cef).resolve()))
     create_wm = OwnedWindowManager
     normal_exit = close_for_privacy
     try:
-        require(sys.platform == 'linux', 'linux_fixture_only')
+        require(sys.platform in ('linux','win32'), 'native_fixture_platform_unavailable')
         if args.private_root:
             from youtube_embed_home_probe import validate_private_root, validate_inside_root, LocalWindowManager, local_close
             from youtube_paired_home import BenchmarkDevice
@@ -148,7 +177,7 @@ def run(args):
             (dev.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False,'memory_saver':False}))
             cli = dev.start()
             client = cli
-            manager = create_wm(dev, out/(name+'-wm'))
+            manager = create_wm(dev, out/(name+'-wm')) if sys.platform=='linux' else None
             wm = manager
             dev.player_wm = manager
             switch_super(cli, identifier)
@@ -165,7 +194,7 @@ def run(args):
         require(all(fixture.counts.get(p,0)>0 for p in ('/page.html','/style.css','/image.png','/frame.html')), 'resources_not_loaded')
         before = dialogs(device)
         report['stage'] = 'cancel-native-ctrl-s'
-        focus_normal_cef(client,device)
+        focus_page(client,device,identifier)
         keys(device,'ctrl+s')
         dialog = wait_for(lambda:next(iter(dialogs(device)-before),None),'save_dialog_missing',15)
         require(native_app_identity_alive(device,identity),'owned_app_changed')
@@ -173,7 +202,7 @@ def run(args):
         wait_for(lambda:dialog not in dialogs(device),'cancel_did_not_close',10)
         report['checks']['native_ctrl_s_dialog_cancel'] = True
         report['stage'] = 'save-native-ctrl-s'
-        focus_normal_cef(client,device)
+        focus_page(client,device,identifier)
         before = dialogs(device)
         keys(device,'ctrl+s')
         dialog = wait_for(lambda:next(iter(dialogs(device)-before),None),'save_dialog_missing',15)
@@ -187,6 +216,16 @@ def run(args):
         old_stamp = target.stat().st_mtime_ns
         click_control(client,'button[aria-label="Меню NexusBro"]',10)
         def own_menu_focus():
+            if sys.platform=='win32':
+                import ctypes
+                from ctypes import wintypes
+                from pywinauto import Desktop
+                user=ctypes.WinDLL('user32',use_last_error=True)
+                user.GetForegroundWindow.restype=wintypes.HWND
+                handle=int(user.GetForegroundWindow() or 0)
+                window=Desktop(backend='uia').window(handle=handle)
+                return (window.window_text()=='NexusBro — меню' and window.process_id()==identity['pid']
+                        and native_app_identity_alive(device,identity))
             env = {**os.environ,'DISPLAY':device.display}
             focus = subprocess.check_output(['xdotool','getwindowfocus'],env=env,text=True,timeout=3).strip()
             title = subprocess.check_output(['xdotool','getwindowname',focus],env=env,text=True,timeout=3).strip()
@@ -208,12 +247,14 @@ def run(args):
         exit_receipt = {}
         normal_exit(client,device,exit_receipt)
         report['online_exit'] = exit_receipt
-        device.close(); wm.close(); device = wm = client = None
+        device.close()
+        if wm:wm.close()
+        device = wm = client = None
         fixture.close()
         report['checks']['server_stopped_before_reopen'] = True
         report['stage'] = 'offline-fresh-profile'
         device, wm, client = launch('offline',target.as_uri())
-        report['checks']['offline_fresh_profile_css_and_image_painted'] = True
+        report['checks']['offline_fresh_profile_css_image_and_frame_painted'] = True
         receipt = {}
         normal_exit(client,device,receipt)
         report['offline_exit'] = receipt
@@ -223,6 +264,8 @@ def run(args):
         # The fixtures themselves contain no owner data, but don't export raw
         # exceptions: UI/file libraries may include paths in error messages.
         report['failure_type'] = type(error).__name__
+        if re.fullmatch(r'[a-z][a-z0-9_]{2,80}',str(error)):
+            report['failure_code'] = str(error)
         report['blocked_reason'] = report['stage'] + '_failed'
     finally:
         clean = True

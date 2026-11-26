@@ -900,6 +900,18 @@ jobs:
         run: |
           python tests/gui/downloads_windows_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/downloads-windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native Windows page save and offline MHTML reopen
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        run: python tests/gui/page_save_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/page-save-windows
+      - name: Preserve native Windows page save evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-save-windows-verification
+          path: .dev-check/page-save-windows/result.json
+          retention-days: 14
+
       - name: Upload Windows downloads action evidence
         if: always() && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
@@ -1313,6 +1325,18 @@ jobs:
         run: |
           python tests/gui/downloads_windows_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/downloads-windows
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Native Windows page save and offline MHTML reopen
+        if: runner.os == 'Windows'
+        timeout-minutes: 6
+        run: python tests/gui/page_save_native.py --exe .dev-check/installed/nexusbro.exe --cef .dev-check/installed --out .dev-check/page-save-windows
+      - name: Preserve native Windows page save evidence
+        if: always() && runner.os == 'Windows'
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-save-windows-verification
+          path: .dev-check/page-save-windows/result.json
+          retention-days: 14
+
       - name: Upload Windows downloads action evidence
         if: always() && !inputs.runtime_memory_only && !inputs.runtime_baseline
         uses: actions/upload-artifact@v4
