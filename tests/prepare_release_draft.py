@@ -112,11 +112,21 @@ def ensure_draft(repo,tag,source,notes,invoke=gh,read=optional_api):
     assert release and release.get('draft') is True,'Draft identity unconfirmed'
 
 
+def validate_runtime_bindings(build,linux,windows):
+    assert type(build) is str and re.fullmatch(r'[1-9][0-9]*',build),'Producer build identity invalid'
+    assert linux==build and windows==build,'Both native runtimes must use the exact producer build'
+
+
+def validate_light_binary(light,verified_binary_sha256):
+    assert light.get('binary_sha256')==verified_binary_sha256,'Public light playback binary differs from the verified producer artifact'
+
+
 def main():
     assert os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch','Preparation is CI-only'
     repo=os.environ['REPO'];tag=os.environ['TAG'];build=os.environ['BUILD_RUN']
     assert repo==os.environ['GITHUB_REPOSITORY'] and re.fullmatch(r'[1-9][0-9]*',build)
-    assert os.environ.get('LINUX_RUNTIME_BUILD')==build and os.environ.get('LINUX_RUNTIME_RESULT')=='success','Fresh exact-source Linux acceptance required'
+    validate_runtime_bindings(build,os.environ.get('LINUX_RUNTIME_BUILD'),os.environ.get('WINDOWS_RUNTIME_BUILD'))
+    assert os.environ.get('LINUX_RUNTIME_RESULT')=='success','Fresh exact-source Linux acceptance required'
     version=tag.removeprefix('v');assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag)
     assert json.loads(pathlib.Path('desktop/src-tauri/tauri.conf.json').read_text())['version']==version,'Candidate version mismatch'
     state=json.loads(pathlib.Path('docs/verification',version,'acceptance-state.json').read_text())
@@ -140,8 +150,10 @@ def main():
         gh('run','download',build,'--repo',repo,'--name','nexusbro-linux-runtime','--dir',directory)
         binaries=[p for p in pathlib.Path(directory).rglob('*') if p.is_file()]
         assert len(binaries)==1 and binaries[0].name=='nexusbro' and binaries[0].stat().st_size<=128*1024*1024, 'Unexpected producer binary artifact'
-        assert hashlib.sha256(binaries[0].read_bytes()).hexdigest()==paired_report['provenance']['exe_sha256'], 'Measured binary differs from actual build artifact'
+        verified_binary_sha256=hashlib.sha256(binaries[0].read_bytes()).hexdigest()
+        assert verified_binary_sha256==paired_report['provenance']['exe_sha256'], 'Measured binary differs from actual build artifact'
     light=json.loads(pathlib.Path('docs/verification',version,'light-home-summary.json').read_text())
+    validate_light_binary(light,verified_binary_sha256)
     assert light.get('desktop_source')==source and str(light.get('producer_run'))==build
     assert light.get('completed') is True and light.get('playing_observed') is True and light.get('extraction_completed') is True and light.get('decoded_frames_advanced') is True and light.get('position_delta_seconds',0)>=8
     delta=light['position_delta_seconds'];assert type(delta) in (int,float) and math.isfinite(delta) and delta>=8

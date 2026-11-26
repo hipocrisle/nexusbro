@@ -2,9 +2,17 @@
 import pathlib,tempfile,unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from prepare_release_draft import ensure_draft,validate_resource,validate_paired,optional_api,validate_native_jobs,NATIVE_REQUIRED
+from prepare_release_draft import ensure_draft,validate_resource,validate_paired,optional_api,validate_native_jobs,NATIVE_REQUIRED,validate_runtime_bindings,validate_light_binary
 SOURCE='a'*40
 class Evidence(unittest.TestCase):
+ def test_both_native_inputs_and_short_light_binary_are_bound(self):
+  validate_runtime_bindings('123','123','123')
+  for linux,windows in [('123','122'),('122','123'),('123',None)]:
+   with self.subTest(linux=linux,windows=windows),self.assertRaises(AssertionError):validate_runtime_bindings('123',linux,windows)
+  validate_light_binary({'binary_sha256':'b'*64},'b'*64)
+  for light in ({},{'binary_sha256':'c'*64}):
+   with self.subTest(light=light),self.assertRaises(AssertionError):validate_light_binary(light,'b'*64)
+
  def test_successful_job_without_new_native_steps_never_accepts(self):
   jobs=[dict(name=name,status='completed',conclusion='success',steps=[dict(name=title,status='completed',conclusion='success') for title in titles]) for name,titles in NATIVE_REQUIRED.items()]
   validate_native_jobs(jobs)

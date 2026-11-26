@@ -62,7 +62,7 @@ def _read_checked(path, cap):
     try:
         with open(path, 'rb') as stream:
             opened = os.fstat(stream.fileno())
-            if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+            if opened.st_nlink != 1 or not stat.S_ISREG(opened.st_mode) or (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
                 raise Rejected('changed_during_read')
             while True:
                 chunk = stream.read(1024 * 1024)
@@ -75,7 +75,7 @@ def _read_checked(path, cap):
                     head += chunk[:4 - len(head)]
                 digest.update(chunk)
             after = os.fstat(stream.fileno())
-            if (after.st_dev, after.st_ino, after.st_size) != (opened.st_dev, opened.st_ino, opened.st_size):
+            if after.st_nlink != 1 or (after.st_dev, after.st_ino, after.st_size) != (opened.st_dev, opened.st_ino, opened.st_size):
                 raise Rejected('changed_during_read')
     except OSError:
         raise Rejected('read_error')
@@ -125,7 +125,13 @@ def verify(directory):
         raise Rejected('manifest_size')
     try:
         with open(os.path.join(directory, MANIFEST), 'rb') as stream:
+            opened = os.fstat(stream.fileno())
+            if opened.st_nlink != 1 or (opened.st_dev, opened.st_ino, opened.st_size) != (manifest_info.st_dev, manifest_info.st_ino, manifest_info.st_size):
+                raise Rejected('changed_during_read')
             manifest_raw = stream.read(MAX_MANIFEST + 1)
+            after = os.fstat(stream.fileno())
+            if after.st_nlink != 1 or (after.st_dev, after.st_ino, after.st_size) != (opened.st_dev, opened.st_ino, opened.st_size):
+                raise Rejected('changed_during_read')
     except OSError:
         raise Rejected('read_error')
     if len(manifest_raw) > MAX_MANIFEST:

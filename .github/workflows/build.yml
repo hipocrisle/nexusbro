@@ -8,6 +8,10 @@ on:
     branches: [main]
   workflow_dispatch:
     inputs:
+      controlled_media_build:
+        description: Reuse verified synthetic streams from an owned run with identical generation commands
+        type: string
+        default: ""
       youtube_deno_cache_probe:
         description: Observe Deno cache fallback on disposable unprivileged runner
         type: boolean
@@ -234,12 +238,31 @@ jobs:
           python3 tests/memory_safety_browser.py
           python3 tests/memory_bootstrap_browser.py
   youtube-media-fixture:
+    permissions:
+      contents: read
+      actions: read
     if: >-
       inputs.youtube_native_reuse == '' && ((inputs.youtube_muxer_only || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
     timeout-minutes: 8
     steps:
+      - uses: actions/checkout@v4
+      - name: Verify existing controlled media provenance and recipe
+        if: inputs.controlled_media_build != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MEDIA_BUILD: ${{ inputs.controlled_media_build }}
+        run: python3 tests/controlled_media_provider.py --run "$MEDIA_BUILD" --repository "$GITHUB_REPOSITORY" --out .dev-check/youtube-media-source.json
+      - name: Download verified existing synthetic streams
+        if: inputs.controlled_media_build != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture
+          run-id: ${{ inputs.controlled_media_build }}
+          github-token: ${{ github.token }}
       - name: Generate controlled real VP9 and Opus streams (runner only)
+        if: inputs.controlled_media_build == ''
         shell: bash
         run: |
           set -euo pipefail
@@ -252,10 +275,21 @@ jobs:
           ffmpeg -hide_banner -loglevel error -f lavfi -i 'sine=frequency=440:sample_rate=48000' -t 120 -af volume=0.05 -vn -c:a libopus -b:a 32k -y .dev-check/youtube-media-fixture/audio.webm
           ffmpeg -hide_banner -loglevel error -f lavfi -i 'testsrc2=size=640x360:rate=12' -t 120 -an -c:v libvpx-vp9 -deadline realtime -cpu-used 8 -threads 1 -b:v 350k -y .dev-check/youtube-media-fixture/video-high.webm
           sha256sum .dev-check/youtube-media-fixture/*.webm > .dev-check/youtube-media-fixture/SHA256SUMS
+      - name: Verify exact controlled media byte bundle
+        run: python3 tests/verify_controlled_media_fixture.py --directory .dev-check/youtube-media-fixture --out .dev-check/youtube-media-verified.json
       - uses: actions/upload-artifact@v4
         with:
           name: youtube-controlled-media
           path: .dev-check/youtube-media-fixture/
+          retention-days: 7
+      - name: Preserve controlled media provenance
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-controlled-media-provenance
+          path: |
+            .dev-check/youtube-media-source.json
+            .dev-check/youtube-media-verified.json
           retention-days: 7
 
   build:
@@ -1707,6 +1741,7 @@ jobs:
           TAG: ${{ inputs.publish_tag }}
           BUILD_RUN: ${{ inputs.runtime_build }}
           LINUX_RUNTIME_BUILD: ${{ inputs.linux_runtime_build }}
+          WINDOWS_RUNTIME_BUILD: ${{ inputs.runtime_build }}
           LINUX_RUNTIME_RESULT: ${{ needs['linux-runtime'].result }}
         run: |
           python3 tests/prepare_release_draft.py
