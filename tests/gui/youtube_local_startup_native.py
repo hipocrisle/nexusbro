@@ -50,8 +50,10 @@ def run(a):
   for flag,command in [('class_ancestor',['xdotool','getwindowfocus']),('exact',['xdotool','getwindowfocus','-f'])]:
    focused=subprocess.check_output(command,env=env,text=True,timeout=3).strip()
    proc=subprocess.run(['xdotool','getwindowpid',focused],env=env,capture_output=True,text=True,timeout=3)
-   report['os_focus'][flag]={'xid':focused,'pid':proc.stdout.strip() if proc.returncode==0 else None,'is_shell_window':focused==str(window)}
+   report['os_focus'][flag]={'xid':focused,'pid':proc.stdout.strip() if proc.returncode==0 else None,'is_shell_window':int(focused)==int(str(window),0)}
   report['native_identity_pid']=identity['pid']
+  from youtube_paired_native import focus_normal_cef
+  report['owned_cef_focus']=focus_normal_cef(client,device)
   local_close(client,device,report);report['preflight_complete']=True;report['stage']='complete'
  except Exception as error:
   codes={'Tauri IPC did not initialize under the preserved sandbox':'tauri_ipc_not_ready','Sandboxed native application exited during startup':'app_exited','Native blank frame missing':'blank_frame_missing','sandbox_startup_blocked':'inspector_not_ready'}

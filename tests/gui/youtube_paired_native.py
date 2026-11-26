@@ -116,8 +116,41 @@ def native_members(client,identifier):
     return cleaned
 
 
-def normal_key(device,key):
+def focus_normal_cef(client,device):
+    from x11_owned_cef_focus import focus_cef
+    from youtube_player_native import native_app_identity,native_app_window,native_app_identity_alive
+    identity=native_app_identity(device);window=native_app_window(device,identity)
+    family=psutil.Process(device.app.pid).children(recursive=True)
+    engines={}
+    for process in family:
+        try:
+            if Path(process.exe()).resolve()==device.exe.resolve() and '--nb-dvizhok' in process.cmdline():
+                birth=kernel_birth(process.pid,'linux_ticks')
+                if birth:engines[process.pid]=birth
+        except psutil.NoSuchProcess:continue
+    def alive():
+        if not native_app_identity_alive(device,identity):return False
+        for pid,birth in engines.items():
+            try:
+                proc=psutil.Process(pid)
+                if kernel_birth(pid,'linux_ticks')!=birth or Path(proc.exe()).resolve()!=device.exe.resolve() or '--nb-dvizhok' not in proc.cmdline():return False
+            except psutil.NoSuchProcess:return False
+        return bool(engines)
+    rect=client.js('(()=>{const e=document.querySelector(".pole");if(!e)return null;const r=e.getBoundingClientRect();return {x:r.x,y:r.y,w:r.width,h:r.height,k:devicePixelRatio||1}})()')
+    if not isinstance(rect,dict) or not all(type(rect.get(k)) in (int,float) and math.isfinite(rect[k]) for k in ('x','y','w','h','k')) or min(rect['w'],rect['h'],rect['k'])<=0:raise Blocked('normal_viewport_unproven')
+    label=client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
+    origin=call(client,'plugin:window|inner_position',label=label)
+    viewport=(round(origin['x']+rect['x']*rect['k']),round(origin['y']+rect['y']*rect['k']),round(rect['w']*rect['k']),round(rect['h']*rect['k']))
+    return focus_cef(device.display,int(str(window),0),viewport,engines,alive)
+
+
+def normal_key(device,key,client=None,receipt=None):
     if key not in ('k','m'):raise Blocked('normal_key_invalid')
+    if sys.platform=='linux':
+        facts=focus_normal_cef(client,device)
+        if receipt is not None:receipt['normal_focus']=facts
+        subprocess.run(['xdotool','key','--clearmodifiers',key],env={**os.environ,'DISPLAY':device.display},check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+        return
     # No blind video/consent click. Require real CEF keyboard focus before the
     # single ordinary public-player keyboard shortcut.
     if sys.platform=='win32':
@@ -252,12 +285,12 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         video_state(state,observed_args,require_audio=False)
         if mode=='normal' and state.get('muted') is True:
             if state.get('ready_state',0)<2:raise Blocked('normal_audio_user_action_unavailable')
-            normal_key(device,'m')
+            normal_key(device,'m',client,result)
             state=wait_for(lambda:(lambda value:value if value.get('muted') is False else None)(snapshot(mode)),'Normal physical unmute not observed',8)
         audio_policy(state)
         if not state.get('playing'):
             if mode=='light':physical(client,device,'play',{})
-            elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_key(device,'k')
+            elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_key(device,'k',client,result)
             else:raise Blocked('normal_user_play_required')
         state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(snapshot(mode)),'Real public playback missing',15)
         decode=decode_state(snapshot('decode'));result['decode']=decode
