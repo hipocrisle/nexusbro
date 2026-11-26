@@ -1504,6 +1504,37 @@ jobs:
           python3 tests/backup_browser.py
           python3 tests/updater_startup_browser.py
           python3 tests/updater_app_startup_browser.py
+      - name: Fetch controlled media from the same producer
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: youtube-controlled-media
+          path: .dev-check/youtube-media-fixture
+          run-id: ${{ steps.producer_request.outputs.run }}
+          github-token: ${{ github.token }}
+      - name: Verify native media and normal owned exit with typed diagnostics
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
+        timeout-minutes: 8
+        run: |
+          python3 tests/gui/youtube_player_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+      - name: Preserve native player and exit evidence
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
+        uses: actions/upload-artifact@v4
+        with:
+          name: youtube-native-player-linux-reuse
+          path: .dev-check/youtube-player/result.json
+          retention-days: 7
+      - name: Verify ordinary download status and saved-file actions
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
+        timeout-minutes: 6
+        run: python3 tests/gui/downloads_library_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/downloads-library
+      - name: Preserve real downloads evidence
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
+        uses: actions/upload-artifact@v4
+        with:
+          name: downloads-library-linux-reuse
+          path: .dev-check/downloads-library/*.json
+          retention-days: 7
       - name: Native Linux smoke from exact existing binary
         if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         run: python3 tests/gui/linux_smoke.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/linux-runtime

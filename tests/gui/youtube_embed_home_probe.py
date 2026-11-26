@@ -247,7 +247,9 @@ def local_close(client, device, report):
                                 'actual_app_execution_exited': True, 'launcher_exit_zero': True}
         device.app = None
     finally:
-        witness.close()
+        try:witness.close()
+        finally:
+            if getattr(witness,'error_info',None):report['exit_witness_error']=witness.error_info
 
 
 def initial_local_report():
