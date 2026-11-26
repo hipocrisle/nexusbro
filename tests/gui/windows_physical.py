@@ -98,6 +98,23 @@ vpn_server=None
 app = None
 container = None
 
+def recovery_focus_role(focus_pid, app_pid, family_pids, process_name, cmdline):
+    """Чистая классификация роли клавиатурного фокуса для квитанции.
+    Наружу — только роль из {webkit,cef,shell,none,foreign}; никаких PID,
+    заголовков, путей или аргументов процессов."""
+    if not focus_pid:
+        return 'none'
+    if focus_pid == app_pid:
+        return 'shell'
+    if focus_pid not in family_pids:
+        return 'foreign'
+    if 'webview' in (process_name or '').lower():
+        return 'webkit'
+    if any(str(arg).startswith('--type=') or arg == '--nb-dvizhok' for arg in (cmdline or [])):
+        return 'cef'
+    return 'shell'
+
+
 def rect(h):
     r = wintypes.RECT()
     assert u.GetWindowRect(h, ctypes.byref(r))
@@ -1122,9 +1139,60 @@ try:
             recovery_control(name,['Edit']).click_input();gui.hotkey('ctrl','a')
             if unicode:native_keys(value,pause=.01,vk_packet=True)
             else:gui.write(value,interval=.005)
+        def recovery_focus_receipt():
+            # Санитизированная квитанция фокуса вокруг ЕДИНСТВЕННОГО shortcut:
+            # роли/булевы только; исходная ошибка никогда не подменяется.
+            receipt={'owned_foreground':False,'focus_role':'none','ctrl_released':True,
+                     'shift_released':True,'uia_gate':'missing'}
+            try:
+                app_pid=wintypes.DWORD()
+                u.GetWindowThreadProcessId(main_hwnd,ctypes.byref(app_pid))
+                family={app_pid.value}
+                try:
+                    parent=psutil.Process(app_pid.value)
+                    family|={child.pid for child in parent.children(recursive=True)}
+                except (psutil.NoSuchProcess,psutil.AccessDenied):
+                    pass
+                foreground_hwnd=u.GetForegroundWindow()
+                fg_pid=wintypes.DWORD()
+                if foreground_hwnd:
+                    u.GetWindowThreadProcessId(foreground_hwnd,ctypes.byref(fg_pid))
+                receipt['owned_foreground']=bool(foreground_hwnd) and fg_pid.value in family
+                class Info(ctypes.Structure):
+                    _fields_=[('cbSize',wintypes.DWORD),('flags',wintypes.DWORD),('hwndActive',wintypes.HWND),('hwndFocus',wintypes.HWND),('hwndCapture',wintypes.HWND),('hwndMenuOwner',wintypes.HWND),('hwndMoveSize',wintypes.HWND),('hwndCaret',wintypes.HWND),('rcCaret',wintypes.RECT)]
+                info=Info();info.cbSize=ctypes.sizeof(info)
+                if u.GetGUIThreadInfo(0,ctypes.byref(info)) and info.hwndFocus:
+                    focus_pid=wintypes.DWORD()
+                    u.GetWindowThreadProcessId(info.hwndFocus,ctypes.byref(focus_pid))
+                    name='';cmd=[]
+                    try:
+                        proc=psutil.Process(focus_pid.value)
+                        name=proc.name();cmd=proc.cmdline()
+                    except (psutil.NoSuchProcess,psutil.AccessDenied):
+                        pass
+                    receipt['focus_role']=recovery_focus_role(focus_pid.value,app_pid.value,family,name,cmd)
+                else:
+                    receipt['focus_role']='none'
+                receipt['ctrl_released']=(u.GetAsyncKeyState(0x11)&0x8000)==0
+                receipt['shift_released']=(u.GetAsyncKeyState(0x10)&0x8000)==0
+                receipt['uia_gate']='present' if any(
+                    x.element_info.name=='Мастер-пароль для разблокировки браузера'
+                    and x.element_info.control_type=='Edit' for x in uia_descendants(win)) else 'missing'
+            except Exception:
+                receipt['receipt']='unavailable'
+            return receipt
         def recovery_lock():
-            focus_ui('Адрес страницы',['Edit','ComboBox']);gui.hotkey('ctrl','shift','l')
-            recovery_control('Мастер-пароль для разблокировки браузера',['Edit'])
+            focus_ui('Адрес страницы',['Edit','ComboBox'])
+            before=receipt=recovery_focus_receipt()
+            gui.hotkey('ctrl','shift','l')
+            try:
+                recovery_control('Мастер-пароль для разблокировки браузера',['Edit'])
+            except Exception:
+                results.append({'recovery_lock_focus':{'stage':recovery_stage,
+                    'before':before,'after':recovery_focus_receipt()}})
+                raise  # первоначальная ошибка сохраняется без изменений
+            results.append({'recovery_lock_focus':{'stage':recovery_stage,
+                'before':before,'after':recovery_focus_receipt()}})
         def recovery_choose_original():
             # IDs encode creation nanos; the core returns this exact newest-first
             # order. Match ciphertext bytes, never guess from duplicate dates.
