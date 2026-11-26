@@ -1045,10 +1045,17 @@ def stall_receipt(client,device,fixture,lane,identifier,tab,track,report):
     finally:fixture.retire_stall(lane,track,policy)
 
 
-def trusted_fill(client,device,selector,text):
+def trusted_fill(client,device,selector,text,receipt=None):
+    # receipt (опционально): только булевы факты — никогда текст/значение/
+    # длину/хэш вводимого секрета.
     js_wait(client,'!!document.querySelector('+json.dumps(selector)+')','Native unlock input missing',10)
+    if receipt is not None:
+        receipt['input_present']=True
+        receipt['input_enabled']=client.js('(()=>{const e=document.querySelector('+json.dumps(selector)+');return !!e&&!e.disabled})()') is True
     client.js('document.querySelector('+json.dumps(selector)+').scrollIntoView({block:"center"});true')
     client.click(selector)
+    if receipt is not None:
+        receipt['form_focused']=client.js('document.activeElement===document.querySelector('+json.dumps(selector)+')') is True
     if sys.platform=='win32':
         import pyautogui
         pyautogui.hotkey('ctrl','a');pyautogui.write(text,interval=.01)
@@ -1056,6 +1063,8 @@ def trusted_fill(client,device,selector,text):
         env={**os.environ,'DISPLAY':device.display}
         subprocess.run(['xdotool','key','--clearmodifiers','ctrl+a'],env=env,check=True,timeout=5)
         subprocess.run(['xdotool','type','--clearmodifiers','--delay','8','--',text],env=env,check=True,timeout=15)
+    if receipt is not None:
+        receipt['value_matches']=client.js('document.querySelector('+json.dumps(selector)+').value==='+json.dumps(text)) is True
     js_wait(client,'document.querySelector('+json.dumps(selector)+').value==='+json.dumps(text),
             'Trusted unlock input did not match',5)
 
@@ -1127,21 +1136,45 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
             'Native post-lock clocks invalid')
     require(proof_counts_valid,'Native post-lock stable observations missing')
     report['stage']='physical-unlock-'+lane
+    # Санитизированная последовательность разблокировки: какие статические
+    # факты наблюдались и какой guard ожидался, когда упало. Ровно ОДИН
+    # trusted fill и один физический клик кнопки — как и прежде.
+    unlock=diagnostics.setdefault('unlock',{})
+    unlock['gate_present']=client.js('!!document.querySelector(".browser-lock-screen")') is True
     foreground(device)
-    trusted_fill(client,device,'[aria-label="Мастер-пароль для разблокировки браузера"]',master)
+    fill={}
+    unlock['guard_pending']='trusted_fill'
+    trusted_fill(client,device,'[aria-label="Мастер-пароль для разблокировки браузера"]',master,receipt=fill)
+    unlock['fill']=fill
+    unlock['button']=client.js('(()=>{const b=Array.from(document.querySelectorAll("button")).find(x=>x.textContent.trim()==="Разблокировать браузер");return b?{visible:b.getBoundingClientRect().width>0,enabled:!b.disabled}:null})()')
+    unlock['guard_pending']='unlock_button_click'
     client.text_button('Разблокировать браузер')
+    unlock['gate_closed']=client.js('!document.querySelector(".browser-lock-screen")') is True
+    unlock['okno_exists']=client.js('!!document.querySelector(".okno")') is True
+    unlock['guard_pending']='master_ui_unlock'
     js_wait(client,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
             'Actual master UI did not unlock browser',25)
-    require(next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)==browser_before,
+    browser_now=next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)
+    unlock['browser_unchanged']=browser_now==browser_before
+    unlock['browser_positive']=type(browser_now) is int and browser_now>0
+    unlock['guard_pending']='lock_browser_identity'
+    require(browser_now==browser_before,
             'Lock unexpectedly replaced the actual player browser')
     # Old authority must remain revoked after unlocking. This is distinct from
     # an explicit, new fixture admission below (no claim about production CtrlR).
     client.js('window.__playerObserved=[];true')
     call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_snapshot','id':tab})
+    unlock['guard_pending']='old_grant_refusal'
     old=wait_for(lambda:client.js('window.__playerObserved.find(x=>x.super_id==='+json.dumps(identifier)+'&&x.data?.id==='+str(tab)+')'),
                  'Old player authority refusal missing',10)
-    require('state' not in old.get('data',{}) and isinstance(old.get('data',{}).get('error'),str),
+    old_data=old.get('data',{})
+    unlock['old_refusal_received']=True
+    unlock['old_state_absent']='state' not in old_data
+    unlock['old_error_present']=isinstance(old_data.get('error'),str)
+    unlock['guard_pending']='old_grant_revoked'
+    require('state' not in old_data and isinstance(old_data.get('error'),str),
             'Old player authority survived browser lock')
+    unlock['guard_pending']=None
     report['stage']='new-fixture-admission-after-unlock-'+lane
     if sys.platform.startswith('linux'):client.js('window.__playerFixtureResults=[];true')
     call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_fixture','id':tab})
@@ -1647,6 +1680,14 @@ def run(args):
                'windows_fixture_chain_not_trusted':'windows_chain_untrusted',
                'windows_chain_operation_failed':'windows_chain_operation_failed'}
         report['failure_code']=codes.get(str(error),'unclassified')
+        # Тип ошибки из allowlist и ожидавшийся guard разблокировки — причина
+        # 'unclassified' больше не безликая; строки ошибок не пишутся.
+        allowed_types={'NativeFailure','AssertionError','RuntimeError','OSError','TimeoutExpired',
+                       'TypeError','KeyError','StopIteration','WebSocketException','Error'}
+        report['failure_type']=type(error).__name__ if type(error).__name__ in allowed_types else 'Other'
+        unlock_diag=report.get('player_diagnostics',{}).get('unlock')
+        if isinstance(unlock_diag,dict) and unlock_diag.get('guard_pending'):
+            report['unlock_guard_pending']=unlock_diag['guard_pending']
     finally:
         if device and getattr(device,'client',None):
             try:report['cef_focus_receipts']=focus_trace_receipt(device.client)
