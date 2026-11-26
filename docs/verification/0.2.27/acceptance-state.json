@@ -4,8 +4,8 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "b81058db248379408fcc465afc24e3d970f35328",
-    "build_run": 45823253972,
+    "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
+    "build_run": 45828933731,
     "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending",
@@ -37,12 +37,12 @@
     "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
-    "status": "native_quality_setup_passed_then_decode_pipeline_ambiguous",
+    "status": "native_destroyed_lifecycle_filter_prepared_actual_pending",
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
-    "source": "b81058db248379408fcc465afc24e3d970f35328",
-    "build_run": 45823253972,
+    "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
+    "build_run": 45828933731,
     "diagnostic_summary": "normal-sourceb810-summary.json",
     "long_playback_accepted": false
   },
@@ -249,8 +249,8 @@
   "page_save": {
     "implemented": true,
     "native_acceptance": false,
-    "source": "b81058db248379408fcc465afc24e3d970f35328",
-    "build_run": 45823253972,
+    "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
+    "build_run": 45828933731,
     "required": [
       "real_ctrl_s_native_dialog",
       "cancel_dialog",
@@ -260,9 +260,10 @@
     "test": "tests/gui/page_save_native.py",
     "previous_diagnostic": "page-save-source7c-diagnostic.json",
     "direct_file_bootstrap_fix": "native host navigation instead of blocked JS file navigation",
-    "home_native_acceptance": true,
+    "home_native_acceptance": false,
     "home_native_summary": "page-save-home-summary.json",
-    "status": "home_real_pass_windows_and_fresh_linux_ci_pending"
+    "status": "previous_b810_home_full_pass_new_source_requires_repeat",
+    "previous_home_summary": "page-save-home-summary.json"
   },
   "previous_candidates": [
     {
@@ -301,6 +302,15 @@
       "linux_failure": "Real draft input did not reach page; before native page-save stage",
       "windows_failure": "PermissionError reading own test profile JSON in link_session; before native page-save stage",
       "home_page_save_diagnostic": "five real checks passed, direct file restore not accepted; native initial-file bootstrap fix pending new binary",
+      "accepted_for_current_source": false
+    },
+    {
+      "source": "b81058db248379408fcc465afc24e3d970f35328",
+      "build_run": 45823253972,
+      "linux_failure": "draft input focus helper expected absent player_wm (test harness bug); now EWMH-independent XRes binding prepared and exercised via Home save scenario",
+      "windows_failure": "download real file passed; library-ui threw unspecified exception before file/folder actions; explicit CEF click/focus guard plus typed exception sites prepared",
+      "home_page_save_full_accepted": true,
+      "home_normal_youtube": "native8actions selected720p actual12frames/0drops at0.247806s, then decode_pipeline_ambiguous; no long comparison accepted",
       "accepted_for_current_source": false
     }
   ]
