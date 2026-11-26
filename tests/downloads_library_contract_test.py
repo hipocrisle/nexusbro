@@ -94,9 +94,11 @@ def main():
         and summary['records'][1]['total'] is None and summary['records'][1]['percent'] is None
     progress['summary_no_raw_fields'] = 'secret' not in blob and 'http' not in blob \
         and 'чужое' not in blob
-    progress['wait_messages_mapped'] = all(code in ('known_progress_timeout', 'unknown_total_timeout',
+    known_codes = {'known_progress_timeout', 'unknown_total_timeout',
         'received_stall_timeout', 'doc_complete_timeout', 'known_complete_timeout',
-        'unknown_complete_timeout', 'library_open_timeout') for code in dln.WAIT_MESSAGES.values())
+        'unknown_complete_timeout', 'library_open_timeout'}
+    progress['wait_messages_mapped'] = known_codes.issubset(set(dln.WAIT_MESSAGES.values())) \
+        and all(isinstance(code, str) and code.islower() for code in dln.WAIT_MESSAGES.values())
     native_src = (ROOT / 'tests/gui/downloads_library_native.py').read_text(encoding='utf-8')
     progress['native_failure_caught'] = 'WAIT_MESSAGES.get(message' in native_src \
         and "'native_assertion'" in native_src
@@ -150,6 +152,64 @@ def main():
     progress['counter_proof_required'] = 'http_branch_reached' in native_src \
         and 'did not reach the fixture HTTP branch' in native_src
     progress['utc_timestamp'] = 'datetime.now(timezone.utc)' in native_src
+
+    # --- Startup facts: pure parser (секреты не выходят, malformed typed) ---
+    import download_startup_facts as dsf
+    log = (
+        'noise line with http://secret.url/page?token=abc\n'
+        'NEXUSBRO_MEMORY_BOOTSTRAP stage=observer_ready browser=17\n'
+        'NEXUSBRO_MEMORY_BOOTSTRAP browser=17 registered=true safety=early\n'
+        'NEXUSBRO_MEMORY_BOOTSTRAP stage=deadline browser=18\n'
+        'NEXUSBRO_MEMORY_BOOTSTRAP stage=weird_stage browser=19\n'
+        'NEXUSBRO_MEMORY_DOCUMENT browser=17 accepted=true\n'
+        'NEXUSBRO_MEMORY_DOCUMENT browser=18 accepted=false nonce=deadbeefcafe\n'
+        'cef: tab 3 renderer terminated code=-5\n'
+        'NEXUSBRO_MEMORY_BOOTSTRAP stage=deadline browser=NOT_A_NUMBER\n'
+    )
+    facts = dsf.parse_native_facts(log)
+    kinds = [(e['kind'], e.get('stage'), e.get('registered'), e.get('accepted')) for e in facts['events']]
+    progress['parser_events'] = kinds == [
+        ('bootstrap', 'observer_ready', None, None),
+        ('bootstrap', 'finish', True, None),
+        ('bootstrap', 'deadline', None, None),
+        ('bootstrap', 'other', None, None),
+        ('document', None, None, True),
+        ('document', None, None, False),
+        ('renderer_terminated', None, None, None),
+    ]
+    blob = json.dumps(facts)
+    progress['parser_no_secrets'] = 'secret.url' not in blob and 'deadbeef' not in blob \
+        and 'token' not in blob and 'nonce' not in blob
+    progress['parser_malformed_ignored'] = len(facts['events']) == 7  # NOT_A_NUMBER строка отброшена
+    progress['parser_lines_seen'] = facts['lines_seen'] == 9 and facts['no_events'] is False
+    empty = dsf.parse_native_facts('')
+    progress['parser_no_events_explicit'] = empty['no_events'] is True and empty['lines_seen'] == 0
+    progress['parser_lines_cap'] = dsf.parse_native_facts('x\n' * 5000)['lines_seen'] == dsf.MAX_LINES
+    # collect_startup_facts: available/readable вместо 0=PASS
+    import tempfile as _tf
+    class FakeDevice:
+        pass
+    fd = FakeDevice()
+    with _tf.TemporaryDirectory() as tmp:
+        fd.root = tmp
+        fd.data = tmp + '/data'
+        import pathlib as _pl
+        (_pl.Path(tmp) / 'app-1.log').write_text('NEXUSBRO_MEMORY_BOOTSTRAP stage=deadline browser=1\n')
+        (_pl.Path(fd.data) / 'profili' / 'downloads').mkdir(parents=True)
+        (_pl.Path(fd.data) / 'profili' / 'downloads' / 'cef.log').write_text('')
+        collected = dsf.collect_startup_facts(fd, 'downloads')
+    progress['collect_app_event'] = collected['app']['available'] and collected['app']['events'][0]['stage'] == 'deadline'
+    progress['collect_engine_empty_explicit'] = collected['engine']['available'] is True \
+        and collected['engine']['no_events'] is True and collected['engine']['lines_seen'] == 0
+    # owned screenshot: source-факты строгости
+    shot_src = (ROOT / 'tests/gui/download_startup_facts.py').read_text(encoding='utf-8')
+    progress['shot_identity_before_after'] = shot_src.count('identity_check()') >= 2
+    progress['shot_own_display_only'] = 'xdisplay=device.display' in shot_src
+    progress['shot_size_capped'] = '3 * 1024 * 1024' in shot_src
+    progress['shot_no_second_inspector'] = 'inspector' not in shot_src
+    progress['shot_wired_on_failure_only'] = "if not report.get('completed')" in native_src \
+        and "report['owned_failure_capture']" in native_src
+    progress['startup_facts_wired'] = "report['startup_facts'] = collect_startup_facts(device, 'downloads')" in native_src
     report['progress_facts'] = progress
     ok = ok and all(progress.values())
     print(json.dumps(report, ensure_ascii=False))
