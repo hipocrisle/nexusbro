@@ -128,6 +128,117 @@ def main():
     checks['receipt_keys_fixed'] = set(receipt) == {'focused', 'candidates', 'candidate_depth',
         'geometry_match', 'viewable', 'focus_exact', 'pid_reverified', 'identity_before', 'identity_after'}
 
+    # --- fake-CDLL ABI регрессии: обе конвенции возвратов и cleanup ---
+    class FakeFn:
+        def __init__(self, impl):
+            self.impl = impl
+            self.argtypes = None
+            self.restype = None
+        def __call__(self, *args):
+            return self.impl(*args)
+
+    class FakeLib:
+        def __init__(self, **funcs):
+            for name, impl in funcs.items():
+                setattr(self, name, FakeFn(impl))
+
+    def fire_error(handler, code):
+        event = m._XErrorEvent()
+        event.error_code = code
+        handler(None, ctypes.byref(event))
+
+    import ctypes
+    def make_bare(version_ret=1, pid_status=0, translate_ret=1, query_fail=False):
+        inst = m.NativeX11.__new__(m.NativeX11)
+        state = {'closed': 0, 'destroyed': 0, 'handler': None}
+        buf_holder = {}
+        def open_display(name):
+            return 0xD15
+        def close_display(d):
+            state['closed'] += 1
+        def set_handler(h):
+            old = state['handler']
+            state['handler'] = h
+            return old if old is not None else m._XERRORHANDLER(lambda d, e: 0)
+        def query_version(d, major, minor):
+            major._obj.value = 1; minor._obj.value = 2
+            return version_ret
+        def query_client_ids(d, n, specs, count, values):
+            if pid_status != 0:
+                return pid_status
+            value = m._ClientIdValue()
+            value.length = 1
+            value.value = None
+            arr = (m._ClientIdValue * 1)(value)
+            count._obj.value = 1
+            out = ctypes.cast(values, ctypes.POINTER(ctypes.c_void_p))
+            out.contents.value = ctypes.addressof(arr)
+            buf_holder['arr'] = arr
+            return 0
+        def get_pid(value_ptr):
+            return 777
+        def destroy(n, values):
+            state['destroyed'] += 1
+        def translate(d, src, dst, sx, sy, dx, dy, child):
+            dx._obj.value = 180; dy._obj.value = 95
+            return translate_ret
+        x = FakeLib(XOpenDisplay=open_display, XCloseDisplay=close_display,
+                    XSetErrorHandler=set_handler,
+                    XQueryTree=lambda *a: 1, XFree=lambda p: None,
+                    XGetGeometry=lambda *a: 1, XTranslateCoordinates=translate,
+                    XGetWindowAttributes=lambda *a: 1, XSetInputFocus=lambda *a: None,
+                    XGetInputFocus=lambda *a: None, XSync=lambda *a: None)
+        r = FakeLib(XResQueryVersion=query_version, XResQueryClientIds=query_client_ids,
+                    XResGetClientPid=get_pid, XResClientIdsDestroy=destroy)
+        inst._bind(x, r, ':99')
+        return inst, state
+
+    bare, state = make_bare()
+    checks['abi_bind_version_success_is_one'] = bare.display == 0xD15
+    checks['abi_pid_success_is_zero'] = bare.pid_of(0xA) == 777 and state['destroyed'] == 1
+    try:
+        make_bare(version_ret=0)
+        checks['abi_version_zero_blocked'] = False
+    except m.FocusBlocked as error:
+        checks['abi_version_zero_blocked'] = str(error) == 'xres_extension_missing'
+    bare2, state2 = make_bare()
+    # cleanup при version fail: display закрыт внутри _bind
+    try:
+        inst = m.NativeX11.__new__(m.NativeX11)
+        inst._bind(FakeLib(XOpenDisplay=lambda n: 0xD16, XCloseDisplay=lambda d: state2.__setitem__('closed', state2['closed'] + 1),
+                           XSetErrorHandler=lambda h: m._XERRORHANDLER(lambda dd, e: 0),
+                           XQueryTree=lambda *a: 1, XFree=lambda p: None, XGetGeometry=lambda *a: 1,
+                           XTranslateCoordinates=lambda *a: 1, XGetWindowAttributes=lambda *a: 1,
+                           XSetInputFocus=lambda *a: None, XGetInputFocus=lambda *a: None,
+                           XSync=lambda *a: None),
+                   FakeLib(XResQueryVersion=lambda d, ma, mi: 0,
+                           XResQueryClientIds=lambda *a: 0, XResGetClientPid=lambda v: 1,
+                           XResClientIdsDestroy=lambda *a: None), ':99')
+        checks['abi_version_fail_cleanup'] = False
+    except m.FocusBlocked:
+        checks['abi_version_fail_cleanup'] = state2['closed'] == 1
+    # XTranslateCoordinates возврат проверяется
+    bare3, _ = make_bare(translate_ret=0)
+    try:
+        bare3.geometry(0xA)
+        checks['translate_zero_blocked'] = False
+    except m.FocusBlocked as error:
+        checks['translate_zero_blocked'] = str(error) == 'translate_failed'
+    # X error handler: BadWindow из меняющегося дерева -> typed, не смерть процесса
+    bare4, state4 = make_bare()
+    fire_error(state4['handler'], 3)  # BadWindow
+    try:
+        bare4._check_error()
+        checks['x_error_typed'] = False
+    except m.FocusBlocked as error:
+        checks['x_error_typed'] = str(error) == 'x_protocol_error'
+    checks['x_error_bounded_first_only'] = bare4.error_code == 3
+    fire_error(state4['handler'], 9)
+    checks['x_error_first_kept'] = bare4.error_code == 3
+    # close() восстанавливает прежний handler
+    bare4.close()
+    checks['close_restores_handler'] = bare4.display is None
+
     failed = [name for name, ok in checks.items() if not ok]
     print(json.dumps({'x11_focus_checks': 'PASS' if not failed else 'FAIL', 'failed': failed}))
     return 1 if failed else 0
