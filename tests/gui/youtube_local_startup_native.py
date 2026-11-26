@@ -6,7 +6,7 @@ from pathlib import Path
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from youtube_paired_home import BenchmarkDevice
 from youtube_embed_home_probe import validate_private_root,validate_inside_root,LocalWindowManager,local_close
-from youtube_paired_native import digest,super_record,switch_super,rows,click_control,wait_for,require,Blocked
+from youtube_paired_native import digest,super_record,switch_super,rows,click_control,wait_for,require,Blocked,call
 
 def run(a):
  require(sys.platform=='linux' and os.getuid()==os.geteuid()==a.expect_uid and a.expect_uid!=0,'Local uid invalid')
@@ -31,8 +31,14 @@ def run(a):
   client=device.start();report['stage']='blank-native-frame'
   wm=LocalWindowManager(device,out/'wm');device.player_wm=wm
   switch_super(client,identifier)
-  click_control(client,'.obychnaya[aria-selected="true"]',10)
-  wait_for(lambda:any(t.get('browser_id',0)>0 for t in rows(client,identifier)['vkladki']),'Native blank frame missing',30)
+  selected=rows(client,identifier)['aktivnaya']
+  call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'vybrat','id':selected})
+  report['fixture_wake']='ordinary_native_command_not_UI_acceptance'
+  def frame_ready():
+   current=rows(client,identifier)
+   report['native_tabs']=[{k:v for k,v in t.items() if k in ('id','browser_id','otlozhena','zagruzka','memory_pending','route_pending','route_generation')}|{'route_error_present':bool(t.get('route_error'))} for t in current['vkladki']]
+   return any(t.get('browser_id',0)>0 for t in current['vkladki'])
+  wait_for(frame_ready,'Native blank frame missing',30)
   local_close(client,device,report);report['preflight_complete']=True;report['stage']='complete'
  except Exception as error:
   codes={'Tauri IPC did not initialize under the preserved sandbox':'tauri_ipc_not_ready','Sandboxed native application exited during startup':'app_exited','Native blank frame missing':'blank_frame_missing','sandbox_startup_blocked':'inspector_not_ready'}
