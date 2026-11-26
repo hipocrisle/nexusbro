@@ -4,8 +4,8 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "build_run": 45780933571,
-    "source": "7b8e1e60cc6c40ba611759dbbe6875a406c285d8",
+    "source": "d80cb8cef649cd6257d1692743d65e1237672006",
+    "build_run": 45803287713,
     "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending"
@@ -36,12 +36,12 @@
     "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
-    "status": "prepared_new_native_local_opt_in_awaiting_new_binary",
+    "status": "awaiting_new_candidate_and_native_physical_UI_driver",
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
-    "source": "7b8e1e60cc6c40ba611759dbbe6875a406c285d8",
-    "build_run": 45780933571
+    "source": "d80cb8cef649cd6257d1692743d65e1237672006",
+    "build_run": 45803287713
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -49,7 +49,7 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-26T08:20:02.272912+00:00",
+  "observed_at_utc": "2026-11-26T10:42:09.394286+00:00",
   "native_summary": "native-summary.json",
   "frontend_recheck": {
     "run": 45554861820,
@@ -131,11 +131,12 @@
   "resource_soak_pending": {
     "run": null,
     "status": "not_started_for_new_source",
-    "source": "7b8e1e60cc6c40ba611759dbbe6875a406c285d8",
+    "source": "d80cb8cef649cd6257d1692743d65e1237672006",
     "required_seconds": 7200,
     "platform": "windows",
     "diagnostic_pilot": false,
-    "acceptance_passed": false
+    "acceptance_passed": false,
+    "build_run": 45803287713
   },
   "linux_strict_routes_pending": {
     "run": 45638466418,
@@ -209,5 +210,27 @@
     "actual_overlap": true,
     "input_rectangles": 0,
     "one_physical_trusted_click": true
+  },
+  "previous_candidate_source7b": {
+    "build_run": 45780933571,
+    "source": "7b8e1e60cc6c40ba611759dbbe6875a406c285d8",
+    "status": "failure",
+    "native_windows": "pending",
+    "native_linux": "pending",
+    "compiled_both_os": true,
+    "actual_native_media_both_os": "success_run45796472306",
+    "ordinary_downloads": "not_accepted_initial_HTTP404",
+    "new_candidate_required": true
+  },
+  "ordinary_home_diagnostic_source7b": {
+    "summary": "normal-home-diagnostic-summary.json",
+    "release_acceptance": false,
+    "reason": "native_decode_decoder_unknown",
+    "position_snapshot": 11.966404,
+    "decoded_snapshot": 417,
+    "dropped_snapshot": 0,
+    "video_width": 854,
+    "video_height": 480,
+    "current_candidate_proof": false
   }
 }
