@@ -82,7 +82,10 @@ def run(args):
     require(args.video_id=='M7lc1UVf-VE','Only fixed public sample admitted')
     require(math.isfinite(args.expected_duration) and args.expected_duration>=180 and 1<=args.expected_fps<=120,'Expected media metadata invalid')
     require(1<=args.width<=16384 and 1<=args.height<=16384 and 256<=args.memory_cap_mib<=4096,'Geometry or memory budget invalid')
-    out=root/'out'/('paired-'+str(time.time_ns()));out.mkdir(parents=True,mode=0o700)
+    out_parent=root/'out';out_parent.mkdir(mode=0o700,exist_ok=True)
+    require(not out_parent.is_symlink() and out_parent.stat().st_uid==args.expect_uid,'Private output directory invalid')
+    out_parent.chmod(0o700)
+    out=out_parent/('paired-'+str(time.time_ns()));out.mkdir(mode=0o700)
     parent=out/'arms';parent.mkdir(mode=0o700)
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'arms':[],
       'desktop_source':args.desktop_source,'producer_run':args.producer_run,'sandbox_preserved':True,'local_execution':True,
