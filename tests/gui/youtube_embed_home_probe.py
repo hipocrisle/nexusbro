@@ -172,10 +172,10 @@ class SandboxedDevice(Device):
         # Private benchmark bus: no desktop-service activation or owner keyring.
         # Both public-video arms use this identical fresh-session policy.
         # Missing Secret Service is explicit; no password-store/sandbox override.
-        from xml.sax.saxutils import escape
+        import uuid
         bus_config = self.root / 'private-session-bus.conf'
         bus_config.write_text('<busconfig><type>session</type><auth>EXTERNAL</auth>'
-                              '<listen>unix:tmpdir=' + escape(str(runtime)) + '</listen>'
+                              '<listen>unix:abstract=nexusbro-test-' + uuid.uuid4().hex + '</listen>'
                               '<policy context="default"><allow send_destination="*"/>'
                               '<allow receive_sender="*"/><allow own="*"/></policy></busconfig>')
         bus_config.chmod(0o600)
