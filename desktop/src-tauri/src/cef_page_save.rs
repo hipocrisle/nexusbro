@@ -906,7 +906,7 @@ mod tests {
         let target = dir.join("Отчёт.mhtml");
         let (_tx, rx) = watch::channel(false);
         let (temp, n) = write_temp(&target, b"MIME-Version: 1.0\nx", &rx).unwrap();
-        assert_eq!(n, 18);
+        assert_eq!(n, 19);
         assert!(temp.exists());
         assert!(!target.exists(), "worker must not publish by itself");
         publish_replace(&temp, &target).unwrap();
