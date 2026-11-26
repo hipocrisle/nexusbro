@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from security_native import require, wait_for
+from download_fixture_target import fixture_target
 from download_startup_facts import collect_startup_facts, owned_failure_screenshot
 from download_page_input import (TILES, tile_center, url_kind, tab_facts,
     painted_tile, trusted_tile_click, wait_counter)
@@ -54,18 +55,25 @@ class Fixture:
         self.origin = None
         self._lock = threading.Lock()
         self._counts = {'page': 0, 'doc': 0, 'known': 0, 'unknown': 0}
+        self._targets = {'total':0,'origin':0,'absolute_same_origin':0,'absolute_foreign':0,'invalid':0,'unmatched_path':0}
 
     def counts(self):
         with self._lock:
             return dict(self._counts)
+
+    def target_counts(self):
+        with self._lock:return dict(self._targets)
 
     def start(self):
         outer = self
 
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                path = self.path.split('?', 1)[0]
+                path,form = fixture_target(self.path,outer.origin)
                 kind = Fixture.PATH_KINDS.get(path)
+                with outer._lock:
+                    outer._targets['total']+=1;outer._targets[form]+=1
+                    if kind is None:outer._targets['unmatched_path']+=1
                 if kind:
                     with outer._lock:
                         outer._counts[kind] += 1
@@ -406,6 +414,7 @@ def run(args):
     finally:
         # Preserve the reached phase even if setup fails before the first click.
         report['fixture_counters_final'] = fixture.counts()
+        report['fixture_target_forms'] = fixture.target_counts()
         # Санитизированные native-факты ДО cleanup: app-N.log + profil/cef.log
         # (engine stderr, cef_dvizhok.rs:272). Только allowlisted префиксы.
         if device is not None:

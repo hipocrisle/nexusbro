@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from security_native import require, wait_for
+from download_fixture_target import fixture_target
 from tab_routes import WindowsDevice
 from youtube_paired_native import (
     rows, switch_super, click_control, Blocked, super_record, call, close_for_privacy,
@@ -43,9 +44,10 @@ class Fixture:
         self.origin = None
 
     def start(self):
+        outer=self
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
-                path = self.path.split('?', 1)[0]
+                path,_form = fixture_target(self.path,outer.origin)
                 if path == '/page.html':
                     body = b'<!doctype html><meta charset="utf-8"><title>dl win fixture</title>page'
                     self.send_response(200)
