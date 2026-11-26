@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "source": "7b8e1e60cc6c40ba611759dbbe6875a406c285d8",
+  "producer_run": 45780933571,
+  "exe_sha256": "1e4a9937b4182b4b412a75a874302a1b05d05bc0767297e281b817c58097b954",
+  "raw_sha256": "0eaf270be04087875164549edcb966154f8d07612b8d09896a5ebc139928963b",
+  "diagnostic_only": true,
+  "paired_accepted": false,
+  "release_acceptance": false,
+  "ordinary_public_video_snapshot": {
+    "playing": true,
+    "position": 11.966404,
+    "duration": 1343.661,
+    "decoded": 417,
+    "dropped": 0,
+    "video_width": 854,
+    "video_height": 480,
+    "volume": 1,
+    "muted": false,
+    "default_sink": true
+  },
+  "normal_focus": {
+    "focused": true,
+    "candidates": 3,
+    "candidate_depth": 3,
+    "geometry_match": true,
+    "viewable": true,
+    "focus_exact": true,
+    "pid_reverified": true,
+    "identity_before": true,
+    "identity_after": true
+  },
+  "operator_supervised_native_ui_actions": 5,
+  "cookie_choice": "reject_all_via_visible_native_UI",
+  "account_used": false,
+  "owner_cookies_imported": false,
+  "decoder_identified": false,
+  "blocked_reason": "native_decode_decode_decoder_unknown",
+  "cleanup_completed": true,
+  "limits": [
+    "Snapshot proves playback at one observed instant, not a continuous timed measurement",
+    "Native volume/mute/default sink policy, not physical speaker audio capture",
+    "Observed 480p does not match the planned 720p comparison",
+    "No same-codec/decoder comparison or resource acceptance"
+  ]
+}
