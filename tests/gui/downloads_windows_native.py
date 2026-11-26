@@ -278,37 +278,15 @@ def run(args):
         report['exception_sites'] = [{'file':Path(frame.filename).name[:100],'line':frame.lineno,'function':frame.name[:100]} for frame in traceback.extract_tb(error.__traceback__)[-4:]]
     finally:
         report['cleanup_components'] = {}
-        folder_gone = True
         proof = report.get('folder_proof')
         if isinstance(proof,dict):
-            try:
-                current = explorer_folder_proof(before_windows,download_dir)
-                require(current['hwnd']==proof['hwnd'] and current['pid']==proof['pid'] and current['birth']==proof['birth'], 'Owned Explorer identity changed')
-                from pywinauto import Desktop
-                window = Desktop(backend='uia').window(handle=proof['hwnd'])
-                require(window.process_id()==proof['pid'], 'Owned Explorer PID changed')
-                window.close()
-                wait_for(lambda:not window.exists(), 'Owned Explorer did not close',10)
-            except Exception as error:
-                folder_gone = False
-                report['cleanup_components']['folder_error_type'] = type(error).__name__
+            folder_gone = close_owned_explorer(proof, report['cleanup_components'])
+        else:
+            folder_gone = True
         report['cleanup_components']['folder_closed'] = folder_gone
         editor_gone = True
         if editor and editor.get('process') is not None:
-            try:
-                # Close ONLY the exact self-identified own-born editor and wait
-                # with a birth check; cleanup is not True while it lives.
-                editor['process'].terminate()
-                editor['process'].wait(timeout=10)
-            except Exception as error:
-                editor_gone = False
-                report['cleanup_components']['editor_error_type'] = type(error).__name__
-            try:
-                import psutil
-                if editor['process'].is_running():
-                    editor_gone = False
-            except Exception:
-                pass
+            editor_gone = close_owned_editor(editor['process'], report['cleanup_components'])
         if client is not None and not close_attempted and device is not None and device.app is not None:
             prior = report['stage']
             try:
@@ -419,6 +397,81 @@ def _known_explorer(info, recheck=None):
     if recheck is None or recheck != birth:
         return False
     return True
+
+
+def close_owned_editor(process, components, *, no_such_process=None):
+    """True only when the exact own-born editor process is proven absent.
+
+    psutil identity is (pid, create_time): NoSuchProcess from terminate/wait
+    means THIS very process already exited on its own — that absence is the
+    cleanup goal, not a failure. Any other error keeps cleanup False; a live
+    process is never reported gone.
+    """
+    if no_such_process is None:
+        import psutil
+        no_such_process = psutil.NoSuchProcess
+    gone = True
+    try:
+        # Close ONLY the exact self-identified own-born editor and wait with a
+        # birth check; cleanup is not True while it lives.
+        process.terminate()
+        process.wait(timeout=10)
+    except no_such_process:
+        gone = not process.is_running()
+    except Exception as error:
+        components['editor_error_type'] = type(error).__name__
+        gone = False
+    if gone:
+        try:
+            if process.is_running():
+                gone = False
+        except no_such_process:
+            pass
+    return gone
+
+
+def close_owned_explorer(proof, components, *, is_window=None, pid_of=None,
+                         birth_of=None, uia_close=None, wait=None):
+    """Close ONLY the exact proven own Explorer window (HWND+PID+birth).
+
+    A dead HWND, or an HWND now owned by a different PID, means the proven
+    window is already absent — verified through plain Win32 calls, never
+    assumed from a detached COM/UIA object. A live exact window (PID and
+    process birth re-verified) is closed through UIA; a COM/UIA failure on a
+    live window is NOT success. Foreign windows are never touched.
+    """
+    if is_window is None:
+        import win32gui
+        is_window = win32gui.IsWindow
+    if pid_of is None:
+        def pid_of(hwnd):
+            import win32process
+            return win32process.GetWindowThreadProcessId(hwnd)[1]
+    if birth_of is None:
+        def birth_of(pid):
+            import psutil
+            return psutil.Process(pid).create_time()
+    if wait is None:
+        def wait(check):
+            wait_for(check, 'Owned Explorer did not close', 10)
+    if not is_window(proof['hwnd']) or pid_of(proof['hwnd']) != proof['pid']:
+        # The proven own window no longer exists at OS level (closed earlier
+        # or the handle was reused by someone else): nothing of ours to close.
+        return True
+    try:
+        require(birth_of(proof['pid']) == proof['birth'], 'Owned Explorer birth changed')
+        if uia_close is None:
+            def uia_close(hwnd, pid):
+                from pywinauto import Desktop
+                window = Desktop(backend='uia').window(handle=hwnd)
+                require(window.process_id() == pid, 'Owned Explorer PID changed')
+                window.close()
+        uia_close(proof['hwnd'], proof['pid'])
+        wait(lambda: not is_window(proof['hwnd']) or pid_of(proof['hwnd']) != proof['pid'])
+        return True
+    except Exception as error:
+        components['folder_error_type'] = type(error).__name__
+        return False
 
 
 def explorer_folder_proof(before, folder, *, shell_windows=None, pid_of=None,
