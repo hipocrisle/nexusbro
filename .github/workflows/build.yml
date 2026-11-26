@@ -1516,7 +1516,11 @@ jobs:
         if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
         timeout-minutes: 8
         run: |
-          python3 tests/gui/youtube_player_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
+          test "$GITHUB_ACTIONS" = "true"
+          OLD_PORT_START=$(sysctl -n net.ipv4.ip_unprivileged_port_start)
+          trap 'sudo sysctl -w net.ipv4.ip_unprivileged_port_start="$OLD_PORT_START" >/dev/null' EXIT
+          sudo sysctl -w net.ipv4.ip_unprivileged_port_start=0 >/dev/null
+          NEXUSBRO_TEST_COLD_CEF=1 python3 tests/gui/youtube_player_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/youtube-player --video-webm .dev-check/youtube-media-fixture/video.webm --audio-webm .dev-check/youtube-media-fixture/audio.webm
       - name: Preserve native player and exit evidence
         if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
         uses: actions/upload-artifact@v4

@@ -213,10 +213,25 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
+        def playback_observation(value):
+            fields=('configured','disposed','hidden','playing','position','duration','decoded','dropped','video_width','video_height','video_paused','audio_paused','audio_position','skew','volume','muted','default_sink','quality_count','quality_index')
+            return {k:v for k,v in value.items() if k in fields and (type(v) is bool or type(v) in (int,float) and math.isfinite(v))}
+        def stalled(value):
+            # Remains an acceptance failure even if buffering recovers. This
+            # bounded read-only trace distinguishes recovery from a dead player.
+            result['stall_observations']=[playback_observation(value)]
+            until=time.monotonic()+15
+            while time.monotonic()<until:
+                time.sleep(.5);current=snapshot(mode)
+                result['stall_observations'].append(playback_observation(current))
+                if current.get('playing') and current.get('position',0)>value.get('position',0)+1:
+                    result['resumed_without_input']=True;break
+            raise Blocked('public_playback_stalled')
         result['stage']='warmup';warm=time.monotonic()
         while time.monotonic()-warm<30:
             state=snapshot(mode);video_state(state,args)
-            if not state.get('playing'):raise Blocked('public_playback_stalled')
+            result['last_player_state']=playback_observation(state)
+            if not state.get('playing'):stalled(state)
             time.sleep(min(5,max(0,30-(time.monotonic()-warm))))
         result['stage']='measurement';sampler=Sampler(device.app.pid,out/('arm-'+str(index)+'-samples.jsonl'),args.memory_cap_mib*1024*1024);sampler.started=time.monotonic()
         samples=[];video=[];stable_identities=None;route_generation=None;began=time.monotonic()
@@ -224,7 +239,8 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
             delay=began+step*5-time.monotonic()
             if delay>0:time.sleep(delay)
             state=snapshot(mode);video.append(video_state(state,args))
-            if not state.get('playing'):raise Blocked('public_playback_stalled')
+            result['last_player_state']=playback_observation(state)
+            if not state.get('playing'):stalled(state)
             members=native_members(client,identifier)
             session=rows(client,identifier);selected=next((v for v in session['vkladki'] if v['id']==tab),None)
             if not selected or selected.get('route_pending') or session['aktivnaya']!=tab:raise Blocked('route_or_selected_tab_changed')
@@ -257,8 +273,10 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
             if obj:
                 try:obj.close()
                 except Exception:cleanup=False
-        try:shutil.rmtree(root)
-        except OSError:cleanup=False
+        if private_parent and result.get('stage')!='complete':result['private_diagnostics_retained']=True
+        else:
+            try:shutil.rmtree(root)
+            except OSError:cleanup=False
         result['cleanup_completed']=cleanup
         if not cleanup:result['stage']='cleanup';result['blocked_reason']='cleanup_failed'
 
