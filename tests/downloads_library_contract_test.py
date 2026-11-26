@@ -105,6 +105,51 @@ def main():
     progress['downloads_serialized'] = 'time.sleep(.3)' not in native_src
     progress['preparation_false_on_real_run'] = "report['preparation'] = False" in native_src
     progress['shim_still_not_os_proof'] = "'open_launch': 'test_shim_only'" in native_src
+
+    # --- Trusted page click: счётчики fixture, чистая геометрия/цвет/url_kind ---
+    import download_page_input as dpi
+    fixture2 = dln.Fixture()
+    origin2 = fixture2.start()
+    try:
+        with urllib.request.urlopen(origin2 + '/page.html', timeout=10) as response:
+            page = response.read().decode('utf-8')
+        progress['page_counters'] = fixture2.counts()['page'] == 1
+        for kind, path in (('doc', '/note.txt'), ('known', '/file-known.bin'), ('unknown', '/file-unknown.bin')):
+            urllib.request.urlopen(origin2 + path, timeout=30).read()
+        counts = fixture2.counts()
+        progress['attachment_counters'] = counts['doc'] == 1 and counts['known'] == 1 and counts['unknown'] == 1
+    finally:
+        fixture2.close()
+    progress['tiles_in_page'] = all(f'id="{k}"' in page and f'#{k}' in page for k in ('doc', 'known', 'unknown')) \
+        and 'background:#123456' in page
+    centers = [dpi.tile_center(k) for k in ('doc', 'known', 'unknown')]
+    progress['tile_centers_fixed'] = centers == [(140, 80), (140, 200), (140, 320)]
+    progress['tile_centers_distinct'] = len({c[1] for c in centers}) == 3
+    origin_mock = {'x': 100, 'y': 50}
+    pole_mock = {'x': 10, 'y': 200, 'w': 900, 'h': 600}
+    progress['screen_point_math'] = dpi.screen_point(origin_mock, pole_mock, (140, 80), 1.0) == (250, 330)
+    progress['screen_point_scale'] = dpi.screen_point(origin_mock, pole_mock, (140, 80), 1.5) == (325, 470)
+    progress['color_match_positive'] = dpi.color_matches((0xC0, 0x20, 0x20), dpi.TILES['doc']['rgb']) is True
+    progress['color_match_negative'] = dpi.color_matches((0x20, 0xC0, 0x20), dpi.TILES['doc']['rgb']) is False \
+        and dpi.color_matches((0x12, 0x34, 0x56), dpi.TILES['known']['rgb']) is False
+    progress['url_kind_mapping'] = (
+        dpi.url_kind(origin2 + '/page.html', origin2) == 'page'
+        and dpi.url_kind(origin2 + '/file-known.bin', origin2) == 'known'
+        and dpi.url_kind('https://other.invalid/x', origin2) == 'other'
+        and dpi.url_kind(None, origin2) == 'other')
+    session_mock = {'vkladki': [{'id': 1, 'browser_id': 5, 'zagruzka': False, 'route_pending': False,
+                                 'route_error': None, 'adres': origin2 + '/page.html'}]}
+    facts = dpi.tab_facts(session_mock, 1, origin2)
+    progress['tab_facts_typed'] = facts == {'browser_positive': True, 'zagruzka': False,
+        'route_pending': False, 'route_error_present': False, 'url_kind': 'page'}
+    progress['no_pereyti_downloads'] = "origin + '/note.txt'" not in native_src \
+        and "origin + '/file-known.bin'" not in native_src and "origin + '/file-unknown.bin'" not in native_src
+    progress['trusted_click_wired'] = "trusted_download('doc', 'doc')" in native_src \
+        and "trusted_download('known', 'known')" in native_src \
+        and "trusted_download('unknown', 'unknown')" in native_src
+    progress['counter_proof_required'] = 'http_branch_reached' in native_src \
+        and 'did not reach the fixture HTTP branch' in native_src
+    progress['utc_timestamp'] = 'datetime.now(timezone.utc)' in native_src
     report['progress_facts'] = progress
     ok = ok and all(progress.values())
     print(json.dumps(report, ensure_ascii=False))

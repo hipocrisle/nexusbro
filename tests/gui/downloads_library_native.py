@@ -27,6 +27,9 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from security_native import require, wait_for
+from download_page_input import (TILES, tile_center, url_kind, tab_facts,
+    painted_tile, trusted_tile_click, wait_counter)
+from youtube_player_native import native_app_identity, native_app_identity_alive
 from youtube_paired_native import (
     Device, OwnedWindowManager, rows, switch_super, click_control, Blocked,
     foreground, super_record, call, close_for_privacy,
@@ -41,10 +44,19 @@ KNOWN_TOTAL = CHUNK * CHUNKS
 class Fixture:
     """Own loopback origin: page + two slow attachment downloads."""
 
+    PATH_KINDS = {'/page.html': 'page', '/note.txt': 'doc',
+                  '/file-known.bin': 'known', '/file-unknown.bin': 'unknown'}
+
     def __init__(self):
         self._server = None
         self._thread = None
         self.origin = None
+        self._lock = threading.Lock()
+        self._counts = {'page': 0, 'doc': 0, 'known': 0, 'unknown': 0}
+
+    def counts(self):
+        with self._lock:
+            return dict(self._counts)
 
     def start(self):
         outer = self
@@ -52,11 +64,24 @@ class Fixture:
         class Handler(BaseHTTPRequestHandler):
             def do_GET(self):
                 path = self.path.split('?', 1)[0]
+                kind = Fixture.PATH_KINDS.get(path)
+                if kind:
+                    with outer._lock:
+                        outer._counts[kind] += 1
                 if path == '/page.html':
-                    body = (b'<!doctype html><meta charset="utf-8"><title>dl fixture</title>'
-                            b'<a id="known" href="/file-known.bin">known</a>'
-                            b'<a id="unknown" href="/file-unknown.bin">unknown</a>'
-                            b'<a id="doc" href="/note.txt">doc</a>')
+                    # Три раздельные плитки фиксированных координат с уникальным
+                    # RGB на известном фоне — цель одного настоящего OS-клика.
+                    body = ('<!doctype html><meta charset="utf-8"><title>dl fixture</title>'
+                            '<style>html,body{margin:0;background:#123456;height:100%}'
+                            'a.tile{position:absolute;width:200px;height:80px;display:block;'
+                            'color:#ffffff;font:16px sans-serif;text-decoration:none;padding:4px}'
+                            '#doc{left:40px;top:40px;background:#c02020}'
+                            '#known{left:40px;top:160px;background:#20c020}'
+                            '#unknown{left:40px;top:280px;background:#2020c0}</style>'
+                            '<a id="doc" class="tile" href="/note.txt">doc</a>'
+                            '<a id="known" class="tile" href="/file-known.bin">known</a>'
+                            '<a id="unknown" class="tile" href="/file-unknown.bin">unknown</a>'
+                            ).encode('utf-8')
                     self.send_response(200)
                     self.send_header('Content-Type', 'text/html; charset=utf-8')
                     self.send_header('Content-Length', str(len(body)))
@@ -210,26 +235,57 @@ def run(args):
         deadline = time.monotonic() + remaining(60); tab = None
         while time.monotonic() < deadline:
             session = rows(client, identifier, timeout=remaining(3)); tab = session.get('aktivnaya')
-            if any(v.get('id') == tab and v.get('browser_id', 0) > 0 for v in session.get('vkladki', [])):
+            row = next((v for v in session.get('vkladki', []) if v.get('id') == tab), None) or {}
+            if (row.get('browser_id', 0) > 0 and row.get('zagruzka') is not True
+                    and row.get('route_pending') is not True):
                 break
             time.sleep(.5)
         else:
             raise Blocked('downloads_tab_not_live')
+        # Стартовая страница реально запрошена с fixture (счётчик own-origin).
+        require(wait_counter(fixture, 'page', 1, remaining(15)) is not None,
+                'Fixture page GET not observed')
+        report['fixture_counters_after_load'] = fixture.counts()
+        identity = native_app_identity(device)
+        def owned_alive():
+            return native_app_identity_alive(device, identity)
+        pole = None
+        deadline = time.monotonic() + remaining(20)
+        while time.monotonic() < deadline:
+            value = client.js('(()=>{const e=document.querySelector(".pole");if(!e)return null;const r=e.getBoundingClientRect();return r.width>300&&r.height>200?{x:r.x,y:r.y,w:r.width,h:r.height}:null})()')
+            if value:
+                pole = value; break
+            time.sleep(.25)
+        require(pole is not None, 'CEF area (.pole) unavailable for trusted clicks')
+        def trusted_download(kind, counter_kind):
+            """Один настоящий OS-клик по плитке своей страницы + факт достижения
+            HTTP-ветки (счётчик fixture) + typed tab facts до/после. Без JS,
+            без API-навигации, без повторов клика."""
+            session = rows(client, identifier, timeout=remaining(3))
+            before = tab_facts(session, tab, origin)
+            report.setdefault('tab_facts', {})['before_' + kind] = before
+            require(before['browser_positive'] and not before['route_pending'],
+                    'Tab not ready for trusted click')
+            before_count = fixture.counts().get(counter_kind, 0)
+            foreground(device)
+            point, _ = trusted_tile_click(device, client, pole, kind, owned_alive)
+            require(point is not None, 'Tile not painted or ownership lost before click')
+            reached = wait_counter(fixture, counter_kind, before_count + 1, remaining(20))
+            session = rows(client, identifier, timeout=remaining(3))
+            report['tab_facts']['after_' + kind] = tab_facts(session, tab, origin)
+            report.setdefault('clicks', {})[kind] = {'painted': True, 'http_branch_reached': reached is not None}
+            require(reached is not None, 'Trusted click did not reach the fixture HTTP branch')
         report['stage'] = 'downloads-start'
-        # Реальные скачивания: обычная нативная команда Pereyti на attachment URL
-        # в том же CEF-табе (DOM оболочки не содержит этих ссылок — клики по ней
-        # были бы ложными). Никакого synthetic download state.
-        # Сериализация: три навигации по 0.3с создавали гонку — новая
-        # навигация могла отменить предыдущую ДО on_before_download. Каждая
-        # загрузка стартует после подтверждения предыдущей; сами вложения и
-        # требование активного прогресса не ослаблены.
-        call(client, 'obychnaya_komanda', id=identifier,
-             komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/note.txt'})
+        # Проверяемая download-gesture — настоящий OS-клик по плитке своей
+        # HTTP-страницы в owned CEF-регионе (не API-навигация и не JS). Каждая
+        # загрузка стартует после подтверждения предыдущей; вложения реальные,
+        # требование активного прогресса не ослаблено. Attachment-навигация не
+        # заменяет документ страницы — плитки остаются кликабельными.
+        trusted_download('doc', 'doc')
         wait_download(client, 'note.txt',
             lambda d: d.get('status') == 'Готово' and (download_dir / 'note.txt').is_file(),
             'note.txt did not complete with a real file', remaining(30))
-        call(client, 'obychnaya_komanda', id=identifier,
-             komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/file-known.bin'})
+        trusted_download('known', 'known')
         report['stage'] = 'progress-observation'
         report['downloads_before_wait'] = download_summary(client)
         active_known = wait_download(client, 'file-known.bin',
@@ -244,8 +300,7 @@ def run(args):
         wait_download(client, 'file-known.bin',
             lambda d: d.get('status') == 'Готово' and (download_dir / 'file-known.bin').is_file(),
             'file-known.bin did not complete with a real file', remaining(60))
-        call(client, 'obychnaya_komanda', id=identifier,
-             komanda={'deystvie': 'pereyti', 'id': tab, 'adres': origin + '/file-unknown.bin'})
+        trusted_download('unknown', 'unknown')
         active_unknown = wait_download(client, 'file-unknown.bin',
             lambda d: d.get('status') == 'Загружается' and type(d.get('total')) is int and d['total'] <= 0,
             'Unknown-length download did not report unknown total', remaining(40))
@@ -370,6 +425,8 @@ def run(args):
         if not cleanup: report['completed'] = False; report['blocked_reason'] = 'cleanup_failed'
         if not report.get('owned_exit', {}).get('clean_shutdown_receipt_verified'): report['completed'] = False
         report['wall_seconds'] = round(time.monotonic() - started, 3)
+        from datetime import datetime, timezone
+        report['observed_at_utc'] = datetime.now(timezone.utc).isoformat()
         (out / 'result.json').write_text(json.dumps(report, indent=2, allow_nan=False) + '\n')
     return 0 if report['completed'] else 1
 
