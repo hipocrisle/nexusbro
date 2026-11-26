@@ -170,11 +170,11 @@ pub fn remap_command(before: &Sessiya, after: &Sessiya, mut command: crate::sess
         |Komanda::Pereyti{id,..}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Obnovit{id}
         |Komanda::ObnovitBezKesha{id}|Komanda::Instrumenty{id}|Komanda::Nayti{id,..}
         |Komanda::PoiskZakryt{id}|Komanda::Perevesti{id}|Komanda::PerevodOriginal{id}
-        |Komanda::PerevodAvto{id,..}|Komanda::Issledovat{id,..}|Komanda::Iskhodnik{id} => target(id)?,
+        |Komanda::PerevodAvto{id,..}|Komanda::Issledovat{id,..}|Komanda::Iskhodnik{id}|Komanda::SohranitStranitsu{id} => target(id)?,
         Komanda::OpenLink{opener_id,..} => target(opener_id)?,
         Komanda::Peremestit{id,pered} => { target(id)?; if let Some(id)=pered { target(id)?; } },
         Komanda::RouteApply{..}|Komanda::RouteFailed{..}|Komanda::PasswordForm{..}|Komanda::PerevodOtvet{..}
-        |Komanda::OknoKomanda{..} => return Err("Операция относится к прежнему движку".into()),
+        |Komanda::OknoKomanda{..}|Komanda::PageSaveTarget{..} => return Err("Операция относится к прежнему движку".into()),
         _ => {},
     }
     Ok(command)
@@ -190,5 +190,5 @@ pub fn user_command_can_wake(command: &crate::sessiya::Komanda) -> bool {
         |Komanda::Vpered{..}|Komanda::Obnovit{..}|Komanda::ObnovitBezKesha{..}|Komanda::Instrumenty{..}
         |Komanda::Nayti{..}|Komanda::PoiskZakryt{..}|Komanda::Perevesti{..}|Komanda::PerevodOriginal{..}
         |Komanda::PerevodAvto{..}|Komanda::Issledovat{..}|Komanda::Iskhodnik{..}
-        |Komanda::Peremestit{..}|Komanda::Sleduyushchaya{..}|Komanda::Masshtab{..})
+        |Komanda::Peremestit{..}|Komanda::Sleduyushchaya{..}|Komanda::Masshtab{..}|Komanda::SohranitStranitsu{..})
 }

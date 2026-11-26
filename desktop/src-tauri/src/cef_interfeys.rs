@@ -55,6 +55,7 @@ wrap_keyboard_handler! {
                 116 => Some(if ctrl { Komanda::ObnovitBezKesha { id: self.id } } else { Komanda::Obnovit { id: self.id } }),
                 123 => Some(Komanda::Instrumenty { id: self.id }),
                 73 if ctrl && shift => Some(Komanda::Instrumenty { id: self.id }),
+                83 if ctrl && !shift => Some(Komanda::SohranitStranitsu { id: self.id }),
                 85 if ctrl => Some(Komanda::Iskhodnik { id: self.id }),
                 87 if ctrl => Some(Komanda::Zakryt { id: self.id }),
                 84 if ctrl && shift => Some(Komanda::VosstanovitZakrytuyu),

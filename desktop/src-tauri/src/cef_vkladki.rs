@@ -179,6 +179,7 @@ wrap_life_span_handler! {
                 crate::cef_youtube_resume_fixture::closed(identity);
                 crate::cef_youtube_captions::closed(identity);
                 crate::cef_youtube_download::cancel(identity);
+                crate::cef_page_save::cancel(identity);
                 crate::cef_youtube::documents().revoke(identity);
                 crate::cef_youtube::forget_reload(identity);
                 self.bootstrap.close(identity);
@@ -248,7 +249,7 @@ wrap_request_handler! {
         fn on_before_browse(&self,browser:Option<&mut Browser>,frame:Option<&mut Frame>,request:Option<&mut Request>,_user_gesture:i32,_is_redirect:i32)->i32{
             if frame.as_ref().is_some_and(|f|f.is_main()!=0){if let Some(browser)=browser{
                 if let Some(request)=request.as_ref(){let url=CefString::from(&request.url()).to_string();if crate::cef_youtube::current_document(browser.identifier()).as_deref()!=Some(url.as_str()){crate::cef_youtube_fullscreen::leave_browser(&browser,self.id,&self.tx);}crate::cef_youtube::on_navigation(browser.identifier(),&url);if self.bootstrap.allow_initial_blank(&url){return 0;}if self.bootstrap.defer(&url){return 1;}}
-                crate::cef_interfeys::cancel_context(browser.identifier());
+                crate::cef_interfeys::cancel_context(browser.identifier());crate::cef_page_save::cancel(browser.identifier());
                 let url=request.as_ref().map(|r|CefString::from(&r.url()).to_string()).unwrap_or_default();
                 let method=request.as_ref().map(|r|CefString::from(&r.method()).to_string()).unwrap_or_default();
                 let get=method=="GET"||(method.is_empty()&&self.bootstrap.owned_blank_navigation(&url));
@@ -709,6 +710,7 @@ fn memory_blocked(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser
 fn memory_blocked_scoped(id:u64,automatic:bool,s:&Sessiya,browsers:&HashMap<u64,Browser>,pending_tools:&HashMap<u64,std::time::Instant>,force_private:bool,allow_selected:bool)->Option<&'static str>{
     let Some(tab)=s.vkladki.iter().find(|v|v.id==id)else{return Some("Вкладка уже закрыта");};
     let Some(browser)=browsers.get(&id)else{return Some("Вкладка уже выгружена");};
+    if crate::cef_page_save::active(browser.identifier()){return Some("Вкладка сохраняет страницу");}
     if crate::youtube_light_jobs::active(browser.identifier())||crate::cef_youtube_download::active(browser.identifier()){return Some("Вкладка подготавливает или скачивает видео");}
     if allow_selected&&browser.main_frame().map(|f|CefString::from(&f.url()).to_string()).as_deref()!=Some(tab.adres.as_str()){return Some("Адрес документа ещё не подтверждён");}
     if tab.route_pending{return Some("Вкладка меняет сетевой путь");}
@@ -833,6 +835,7 @@ impl Rabota {
             crate::youtube_light_aux::cancel(identity);
             crate::cef_youtube_resume_fixture::closed(identity);
             crate::cef_youtube_download::cancel(identity);
+                crate::cef_page_save::cancel(identity);
             crate::cef_youtube::stop(browser,*tab,&self.tx);
             if let Some(host)=browser.host(){host.close_dev_tools();host.close_browser(1);}
         }
@@ -873,9 +876,10 @@ impl Rabota {
             let events=extra.rx.try_iter().take(128).collect();extra.app_shutdown_tick(events)?;
         }
         crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
+        crate::cef_page_save::poll(&self.brauzery,&self.tx);
         let closed=self.app_shutdown_closed();
         if self.label.is_empty(){
-            crate::cef_app_shutdown::poll_drained(closed&&!crate::youtube_light_jobs::any_active()&&!crate::cef_youtube_download::any_active()&&!crate::cef_youtube_resume_fixture::any_pending());
+            crate::cef_app_shutdown::poll_drained(closed&&!crate::youtube_light_jobs::any_active()&&!(crate::cef_youtube_download::any_active()||crate::cef_page_save::any_active())&&!crate::cef_youtube_resume_fixture::any_pending());
         }
         Ok(())
     }
@@ -887,7 +891,7 @@ impl Rabota {
         self.label.is_empty()&&self.extras.is_empty()&&!self.force_private&&!self.browser_locked&&!self.closing
         &&self.route_attempts.is_empty()&&self.sleep_requests.is_empty()&&self.pending_downloads.is_empty()&&self.devtools.is_empty()&&self.devtools_pending.is_empty()&&self.perevody.is_empty()&&self.data_requests.is_empty()&&self.deferred_actions.is_empty()
         &&self.s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
-        &&!(crate::youtube_light_jobs::any_active()||crate::cef_youtube_download::any_active())
+        &&!(crate::youtube_light_jobs::any_active()||(crate::cef_youtube_download::any_active()||crate::cef_page_save::any_active()))
         &&self.brauzery.keys().all(|id|memory_blocked_scoped(*id,true,&self.s,&self.brauzery,&self.devtools_pending,self.force_private,true).is_none())
     }
     fn hibernate_shag(&mut self,events:Vec<Sobytie>)->anyhow::Result<()>{
@@ -1016,7 +1020,7 @@ impl Rabota {
         for extra in self.extras.values_mut(){extra.set_browser_locked(locked,generation);}
         if locked{
             if cancel_routes_for_lock(&mut self.s,&mut self.route_attempts,&self.brauzery,&self.tx){let _=self.route_publish();}
-            for (tab,browser) in &self.brauzery{crate::cef_youtube_fullscreen::leave_browser(browser,*tab,&self.tx);crate::cef_youtube::stop(browser,*tab,&self.tx);crate::cef_interfeys::cancel_context(browser.identifier());}
+            for (tab,browser) in &self.brauzery{crate::cef_youtube_fullscreen::leave_browser(browser,*tab,&self.tx);crate::cef_youtube::stop(browser,*tab,&self.tx);crate::cef_interfeys::cancel_context(browser.identifier());crate::cef_page_save::cancel(browser.identifier());}
             for browser in self.brauzery.values(){
                 if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}
                 let _=sistema::pokazat(handle(browser),false);
@@ -1033,6 +1037,7 @@ impl Rabota {
         crate::cef_youtube::poll_probes();
         crate::cef_youtube_resume::maintenance(&self.brauzery);
         crate::cef_youtube_download::poll(&self.brauzery,&self.tx);
+        crate::cef_page_save::poll(&self.brauzery,&self.tx);
         let incoming=self.rx.try_iter().take(128).collect::<Vec<_>>();
         for event in &incoming {if let Sobytie::Komanda(Komanda::AppShutdown{request})=event {
             if self.label.is_empty()&&crate::cef_app_shutdown::begin(request){
@@ -1102,8 +1107,8 @@ impl Rabota {
             if hibernate.active(){
                 if let Sobytie::Komanda(Komanda::BrowserLocked{locked,generation})=&sobytie{if *generation>=*browser_lock_generation{*browser_locked=*locked;*browser_lock_generation=*generation;}else{continue;}}
                 if matches!(&sobytie,Sobytie::Komanda(Komanda::GlavnoePokazat|Komanda::OknoNovoe{..})){hibernate.invalidate(brauzery);}
-                if let Sobytie::Komanda(command)=&sobytie{let safe=!(crate::youtube_light_jobs::any_active()||crate::cef_youtube_download::any_active())&&!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,k,brauzery,safe)?;}
-                let safe=!(crate::youtube_light_jobs::any_active()||crate::cef_youtube_download::any_active())&&!*browser_locked&&!*closing&&extras.is_empty();
+                if let Sobytie::Komanda(command)=&sobytie{let safe=!(crate::youtube_light_jobs::any_active()||(crate::cef_youtube_download::any_active()||crate::cef_page_save::any_active()))&&!*browser_locked&&!*closing&&extras.is_empty()&&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());hibernate.command(command,k,brauzery,safe)?;}
+                let safe=!(crate::youtube_light_jobs::any_active()||(crate::cef_youtube_download::any_active()||crate::cef_page_save::any_active()))&&!*browser_locked&&!*closing&&extras.is_empty();
                 if hibernate.event(&sobytie,k,s,brauzery,safe){continue;}
                 // Normal address/loading/UI updates are not committed after freeze.
                 continue;
@@ -1117,7 +1122,7 @@ impl Rabota {
             // No input or navigation reaches a WebContents after close was
             // committed. Selecting it records intent; the replacement waits.
             let target=match &sobytie {
-                Sobytie::Komanda(Komanda::Vybrat{id}|Komanda::Pereyti{id,..}|Komanda::Obnovit{id}|Komanda::ObnovitBezKesha{id}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Instrumenty{id}|Komanda::Issledovat{id,..}|Komanda::Nayti{id,..}|Komanda::Perevesti{id}|Komanda::PasswordForm{id,..}|Komanda::YoutubeLight{id})=>Some(*id),
+                Sobytie::Komanda(Komanda::Vybrat{id}|Komanda::Pereyti{id,..}|Komanda::Obnovit{id}|Komanda::ObnovitBezKesha{id}|Komanda::Nazad{id}|Komanda::Vpered{id}|Komanda::Instrumenty{id}|Komanda::Issledovat{id,..}|Komanda::Nayti{id,..}|Komanda::Perevesti{id}|Komanda::PasswordForm{id,..}|Komanda::YoutubeLight{id}|Komanda::SohranitStranitsu{id})=>Some(*id),
                 _=>None,
             };
             if let Some(id)=target {
@@ -1297,6 +1302,26 @@ impl Rabota {
                     continue;
                 }
                 Sobytie::YoutubeDownloadCancel{browser}=>{crate::cef_youtube_download::cancel_user(browser);continue;}
+                Sobytie::Komanda(Komanda::SohranitStranitsu{id})=>{
+                    if !*browser_locked && !*closing && s.aktivnaya==id {
+                        if let Some(tab)=s.vkladki.iter().find(|t|t.id==id&&!t.route_pending) {
+                            if let Some(browser)=brauzery.get(&id) {
+                                crate::cef_page_save::request(browser,id,tab.route_generation,tx);
+                            }
+                        }
+                    }
+                    continue;
+                }
+                Sobytie::Komanda(Komanda::PageSaveTarget{id,request,path})=>{
+                    if !*browser_locked && !*closing {
+                        if let Some(tab)=s.vkladki.iter().find(|t|t.id==id&&!t.route_pending) {
+                            if let Some(browser)=brauzery.get(&id) {
+                                crate::cef_page_save::target(browser,tab.route_generation,&request,path,tx);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 Sobytie::Komanda(Komanda::YoutubeDownloadTarget{id,request,path})=>{if let Some(tab)=s.vkladki.iter().find(|v|v.id==id&&!v.route_pending){if let Some(browser)=brauzery.get(&id){crate::cef_youtube_download::target(browser,tab.route_generation,&request,path);}}continue;}
                 Sobytie::YoutubeCaptionReady(ready)=>{
                     if !*browser_locked&&! *closing {if let Some(browser)=brauzery.values().find(|b|b.identifier()==crate::cef_youtube_captions::browser(&ready)){crate::cef_youtube_captions::ready(browser,ready);}}
@@ -1364,7 +1389,7 @@ impl Rabota {
                         let frame=crate::super_hibernation_protocol::Frame::Refused{token,reason:reason.into()};
                         println!("NB-HIBERNATE {}",serde_json::to_string(&frame)?);std::io::stdout().flush()?;continue;
                     }
-                    let safe=!(crate::youtube_light_jobs::any_active()||crate::cef_youtube_download::any_active())&&label.is_empty()&&extras.is_empty()&&!*force_private&&!*browser_locked&&!*closing
+                    let safe=!(crate::youtube_light_jobs::any_active()||(crate::cef_youtube_download::any_active()||crate::cef_page_save::any_active()))&&label.is_empty()&&extras.is_empty()&&!*force_private&&!*browser_locked&&!*closing
                         &&route_attempts.is_empty()&&sleep_requests.is_empty()&&pending_downloads.is_empty()&&devtools.is_empty()&&devtools_pending.is_empty()&&perevody.is_empty()&&data_requests.is_empty()&&deferred_actions.is_empty()
                         &&s.vkladki.iter().all(|v|!v.privatnaya&&!v.route_pending&&v.route_error.is_none())
                         &&brauzery.keys().all(|id|memory_blocked_scoped(*id,true,s,brauzery,devtools_pending,*force_private,true).is_none());
@@ -1826,7 +1851,7 @@ impl Rabota {
                     for extra in extras.values_mut(){extra.set_browser_locked(locked,generation);}
                     if locked{
                         izmeneno|=cancel_routes_for_lock(s,route_attempts,brauzery,tx);
-                        for (tab,browser) in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);crate::cef_youtube::stop(browser,*tab,tx);crate::cef_interfeys::cancel_context(browser.identifier());}
+                        for (tab,browser) in brauzery.iter(){crate::cef_youtube_fullscreen::leave_browser(browser,*tab,tx);crate::cef_youtube::stop(browser,*tab,tx);crate::cef_interfeys::cancel_context(browser.identifier());crate::cef_page_save::cancel(browser.identifier());}
                         for browser in brauzery.values(){if let Some(host)=browser.host(){host.set_focus(0);host.close_dev_tools();}let _=sistema::pokazat(handle(browser),false);}
                         for hwnd in devtools.values(){let _=sistema::pokazat(*hwnd,false);}
                         devtools_pending.clear();devtools.clear();

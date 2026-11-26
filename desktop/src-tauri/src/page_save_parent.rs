@@ -112,21 +112,23 @@ pub fn receive(
         };
         if let Some(channel) = channel {
             let matches = |session: &crate::sessiya::Sessiya| {
-                session.vkladki.iter().any(|t| {
-                    t.id == tab
-                        && t.browser_id as i64 == browser
-                        && t.route_generation == generation
-                        && !t.route_pending
-                })
+                session.aktivnaya == tab
+                    && session.vkladki.iter().any(|t| {
+                        t.id == tab
+                            && t.browser_id as i64 == browser
+                            && t.route_generation == generation
+                            && !t.route_pending
+                    })
             };
             let still_owned = if label == "main" {
-                state
-                    .vkladki
-                    .lock()
-                    .unwrap()
-                    .get(&super_id)
-                    .and_then(|v| v.obychnye.as_ref())
-                    .is_some_and(matches)
+                state.aktivnaya.lock().unwrap().as_deref() == Some(super_id.as_str())
+                    && state
+                        .vkladki
+                        .lock()
+                        .unwrap()
+                        .get(&super_id)
+                        .and_then(|v| v.obychnye.as_ref())
+                        .is_some_and(matches)
             } else {
                 state.okna.0.lock().unwrap().get(&label).is_some_and(|w| {
                     w.super_id == super_id

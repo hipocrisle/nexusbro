@@ -49,6 +49,8 @@ mod cef_focus_diagnostics;
 mod cef_youtube_fullscreen;
 mod youtube_fullscreen_parent;
 mod youtube_download_parent;
+mod cef_page_save;
+mod page_save_parent;
 mod youtube_download_diagnostics;
 mod cef_youtube_probe;
 mod cef_youtube_reference_probe;
@@ -660,6 +662,7 @@ async fn podgotovit_dvizhok(
             if tab_route_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if passwords::receive(&h_ui,&id_ui,&data){return;}
             if youtube_download_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
+            if page_save_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if youtube_fullscreen_parent::receive(&h_ui,&id_ui,zapusk_id,&data){return;}
             if dannye_saytov::otvet(&id_ui,&data)||dannye_statistika::otvet(&id_ui,&data){return;}
             {let s:State<Sostoyanie>=h_ui.state();if okna_app::sobytie(&h_ui,&s,&id_ui,&data){youtube_fullscreen_parent::reconcile(&h_ui);return;}}

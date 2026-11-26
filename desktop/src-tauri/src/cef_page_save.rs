@@ -49,7 +49,6 @@ enum SaveError {
     CdpResultAbsent,
     InvalidResult,
     TooLarge,
-    Exists,
     Storage,
     CaptureTimeout,
     StateUnavailable,
@@ -67,7 +66,6 @@ impl SaveError {
             SaveError::CdpResultAbsent => "cdp_result_absent",
             SaveError::InvalidResult => "invalid_result",
             SaveError::TooLarge => "too_large",
-            SaveError::Exists => "exists",
             SaveError::Storage => "storage",
             SaveError::CaptureTimeout => "capture_timeout",
             SaveError::StateUnavailable => "state_unavailable",
@@ -82,6 +80,7 @@ struct Completion {
 }
 
 struct Entry {
+    sender: Sender<Sobytie>,
     request: String,
     tab: u64,
     route_generation: u64,
@@ -106,8 +105,12 @@ thread_local! {
 }
 
 /// Shutdown/hibernation gate for the owner: true while any save is pending.
+pub fn active(browser: i32) -> bool {
+    jobs().lock().map_or(true, |all| all.contains_key(&browser))
+}
 pub fn any_active() -> bool {
-    jobs().lock().map_or(true, |all| !all.is_empty())
+    WRITERS.load(std::sync::atomic::Ordering::SeqCst) > 0
+        || jobs().lock().map_or(true, |all| !all.is_empty())
 }
 
 fn unix_now() -> u64 {
@@ -208,8 +211,11 @@ fn extract_mhtml_with_caps(
     if data.len() > data_cap {
         return Err(SaveError::TooLarge);
     }
-    let head = &data[..data.len().min(4096)];
-    if !head.contains("MIME-Version") {
+    let head = &data.as_bytes()[..data.len().min(4096)];
+    if !head
+        .windows(b"MIME-Version".len())
+        .any(|w| w == b"MIME-Version")
+    {
         return Err(SaveError::InvalidResult);
     }
     Ok(Zeroizing::new(data.to_owned()))
@@ -277,22 +283,35 @@ fn write_temp(
     Ok((temp, bytes_written))
 }
 
-/// UI-thread publish: atomic rename of the prepared temp onto the chosen
-/// path. On unix rename replaces atomically. On Windows std rename cannot
-/// replace; we refuse with a typed error rather than deleting user data in a
-/// non-atomic gap (a ReplaceFileW primitive needs a windows crate feature
-/// this module is not allowed to add).
+/// Publish immediately after UI-thread document validation. The temporary
+/// file was fsynced in the same directory; never delete the old destination.
 #[cfg(not(windows))]
 fn publish_replace(temp: &Path, target: &Path) -> Result<(), SaveError> {
     std::fs::rename(temp, target).map_err(|_| SaveError::Storage)
 }
-
 #[cfg(windows)]
 fn publish_replace(temp: &Path, target: &Path) -> Result<(), SaveError> {
-    if target.exists() {
-        return Err(SaveError::Exists);
+    use std::os::windows::ffi::OsStrExt;
+    use windows::{
+        core::PCWSTR,
+        Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_REPLACE_EXISTING, MOVEFILE_WRITE_THROUGH,
+        },
+    };
+    let source: Vec<u16> = temp.as_os_str().encode_wide().chain(Some(0)).collect();
+    let destination: Vec<u16> = target.as_os_str().encode_wide().chain(Some(0)).collect();
+    if source[..source.len() - 1].contains(&0) || destination[..destination.len() - 1].contains(&0)
+    {
+        return Err(SaveError::Storage);
     }
-    std::fs::rename(temp, target).map_err(|_| SaveError::Storage)
+    unsafe {
+        MoveFileExW(
+            PCWSTR(source.as_ptr()),
+            PCWSTR(destination.as_ptr()),
+            MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH,
+        )
+    }
+    .map_err(|_| SaveError::Storage)
 }
 
 wrap_dev_tools_message_observer! {
@@ -389,12 +408,16 @@ pub fn request(browser: &Browser, tab: u64, route_generation: u64, sender: &Send
     let filename = make_filename(unix_now());
     let (cancel, _) = watch::channel(false);
     let admitted = jobs().lock().is_ok_and(|mut all| {
-        if all.len() >= MAX_JOBS || all.contains_key(&identity) {
+        if all.len() >= MAX_JOBS
+            || WRITERS.load(std::sync::atomic::Ordering::SeqCst) >= MAX_JOBS
+            || all.contains_key(&identity)
+        {
             return false;
         }
         all.insert(
             identity,
             Entry {
+                sender: sender.clone(),
                 request: request.clone(),
                 tab,
                 route_generation,
@@ -521,24 +544,26 @@ pub fn target(
 /// is dropped silently; a running writer observes the flag before finishing;
 /// an already-written temp is removed here.
 pub fn cancel(browser: i32) {
-    let mut stale_temp: Option<PathBuf> = None;
     if let Ok(mut all) = jobs().lock() {
-        if let Some(entry) = all.get_mut(&browser) {
-            let _ = entry.cancel.send(true);
+        if let Some(mut entry) = all.remove(&browser) {
+            // send() does not retain the value with zero receivers (before
+            // writer startup). send_replace() always latches cancellation.
+            entry.cancel.send_replace(true);
             if let Some(Ok((temp, _))) = entry.result.take() {
-                stale_temp = Some(temp);
+                let _ = std::fs::remove_file(temp);
             }
         }
-        if all.get(&browser).is_some_and(|e| e.started.is_none()) {
-            all.remove(&browser);
-        }
-    }
-    if let Some(temp) = stale_temp {
-        let _ = std::fs::remove_file(temp);
     }
     REGISTRATIONS.with(|regs| regs.borrow_mut().remove(&browser));
 }
 
+static WRITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+struct WriterGuard;
+impl Drop for WriterGuard {
+    fn drop(&mut self) {
+        WRITERS.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
 fn spawn_writer(
     identity: i32,
     request: String,
@@ -546,18 +571,26 @@ fn spawn_writer(
     data: Zeroizing<String>,
     cancel: watch::Receiver<bool>,
 ) -> bool {
+    WRITERS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let guard = WriterGuard;
     std::thread::Builder::new()
         .name("page-save-write".into())
         .stack_size(512 * 1024)
         .spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                write_temp(&target, data.as_bytes(), &cancel)
-            }))
-            .unwrap_or(Err(SaveError::Storage));
+            let _guard = guard;
+            let mut result = Some(
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    write_temp(&target, data.as_bytes(), &cancel)
+                }))
+                .unwrap_or(Err(SaveError::Storage)),
+            );
             if let Ok(mut all) = jobs().lock() {
                 if let Some(entry) = all.get_mut(&identity).filter(|e| e.request == request) {
-                    entry.result = Some(result);
+                    entry.result = result.take();
                 }
+            }
+            if let Some(Ok((temp, _))) = result {
+                let _ = std::fs::remove_file(temp);
             }
         })
         .is_ok()
@@ -567,8 +600,8 @@ fn spawn_writer(
 /// UI thread: dialog timeout, CDP completion, temp publish, typed events. A
 /// browser absent from this local map belongs to another window's cycle and
 /// is skipped untouched, never cancelled by this one.
-pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
-    let mut updates: Vec<(u64, Value)> = Vec::new();
+pub fn poll(browsers: &HashMap<u64, Browser>, _sender: &Sender<Sobytie>) {
+    let mut updates: Vec<(Sender<Sobytie>, u64, Value)> = Vec::new();
     let mut drop_registration: Vec<i32> = Vec::new();
     {
         let Ok(mut all) = jobs().lock() else {
@@ -576,22 +609,46 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
         };
         let mut remove: Vec<i32> = Vec::new();
         for (&identity, entry) in all.iter_mut() {
+            // A crashed browser may disappear without on_before_close. Do not
+            // retain its ready temp, observer or shutdown blocker forever.
+            if entry.created.elapsed() > DIALOG_TIMEOUT + CAPTURE_TIMEOUT {
+                entry.cancel.send_replace(true);
+                if let Some(Ok((temp, _))) = entry.result.take() {
+                    let _ = std::fs::remove_file(temp);
+                }
+                updates.push((
+                    entry.sender.clone(),
+                    entry.tab,
+                    json!({"error":SaveError::CaptureTimeout.code()}),
+                ));
+                remove.push(identity);
+                drop_registration.push(identity);
+                continue;
+            }
             if let Some(result) = entry.result.take() {
                 match result {
                     Err(SaveError::Cancelled) => {
-                        updates.push((entry.tab, json!({"cancelled":true})));
+                        updates.push((entry.sender.clone(), entry.tab, json!({"cancelled":true})));
                         remove.push(identity);
                         drop_registration.push(identity);
                     }
                     Err(error) => {
-                        updates.push((entry.tab, json!({"error":error.code()})));
+                        updates.push((
+                            entry.sender.clone(),
+                            entry.tab,
+                            json!({"error":error.code()}),
+                        ));
                         remove.push(identity);
                         drop_registration.push(identity);
                     }
                     Ok((temp, bytes)) => {
                         if *entry.cancel.borrow() {
                             let _ = std::fs::remove_file(&temp);
-                            updates.push((entry.tab, json!({"cancelled":true})));
+                            updates.push((
+                                entry.sender.clone(),
+                                entry.tab,
+                                json!({"cancelled":true}),
+                            ));
                             remove.push(identity);
                             drop_registration.push(identity);
                             continue;
@@ -605,8 +662,11 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
                         };
                         if !document_matches(owner, identity, &entry.frame_id, &entry.document) {
                             let _ = std::fs::remove_file(&temp);
-                            updates
-                                .push((entry.tab, json!({"error":SaveError::PageChanged.code()})));
+                            updates.push((
+                                entry.sender.clone(),
+                                entry.tab,
+                                json!({"error":SaveError::PageChanged.code()}),
+                            ));
                             remove.push(identity);
                             drop_registration.push(identity);
                             continue;
@@ -614,6 +674,7 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
                         let Some(target) = entry.path.take() else {
                             let _ = std::fs::remove_file(&temp);
                             updates.push((
+                                entry.sender.clone(),
                                 entry.tab,
                                 json!({"error":SaveError::StateUnavailable.code()}),
                             ));
@@ -624,10 +685,18 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
                         // Fresh checks above; the atomic publish follows with
                         // no UI loop in between.
                         match publish_replace(&temp, &target) {
-                            Ok(()) => updates.push((entry.tab, json!({"done":true,"bytes":bytes}))),
+                            Ok(()) => updates.push((
+                                entry.sender.clone(),
+                                entry.tab,
+                                json!({"done":true,"bytes":bytes}),
+                            )),
                             Err(error) => {
                                 let _ = std::fs::remove_file(&temp);
-                                updates.push((entry.tab, json!({"error":error.code()})));
+                                updates.push((
+                                    entry.sender.clone(),
+                                    entry.tab,
+                                    json!({"error":error.code()}),
+                                ));
                             }
                         }
                         remove.push(identity);
@@ -638,7 +707,7 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
             }
             let Some(started) = entry.started else {
                 if entry.created.elapsed() > DIALOG_TIMEOUT {
-                    updates.push((entry.tab, json!({"cancelled":true})));
+                    updates.push((entry.sender.clone(), entry.tab, json!({"cancelled":true})));
                     remove.push(identity);
                 }
                 continue;
@@ -662,17 +731,25 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
                         continue;
                     };
                     if !document_matches(owner, identity, &entry.frame_id, &entry.document) {
-                        updates.push((entry.tab, json!({"error":SaveError::PageChanged.code()})));
+                        updates.push((
+                            entry.sender.clone(),
+                            entry.tab,
+                            json!({"error":SaveError::PageChanged.code()}),
+                        ));
                         remove.push(identity);
                         drop_registration.push(identity);
                         continue;
                     }
-                    let path = entry.path.take();
+                    let path = entry.path.clone();
                     if let Some(path) = path {
                         let (cancel_tx, cancel_rx) = watch::channel(false);
-                        std::mem::swap(&mut entry.cancel, &mut cancel_tx);
+                        entry.cancel = cancel_tx;
                         if !spawn_writer(identity, entry.request.clone(), path, data, cancel_rx) {
-                            updates.push((entry.tab, json!({"error":SaveError::Storage.code()})));
+                            updates.push((
+                                entry.sender.clone(),
+                                entry.tab,
+                                json!({"error":SaveError::Storage.code()}),
+                            ));
                             remove.push(identity);
                             drop_registration.push(identity);
                         }
@@ -680,14 +757,21 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
                     }
                 }
                 Some(Err(error)) => {
-                    updates.push((entry.tab, json!({"error":error.code()})));
+                    updates.push((
+                        entry.sender.clone(),
+                        entry.tab,
+                        json!({"error":error.code()}),
+                    ));
                     remove.push(identity);
                     drop_registration.push(identity);
                 }
                 None => {
                     if started.elapsed() > CAPTURE_TIMEOUT {
-                        updates
-                            .push((entry.tab, json!({"error":SaveError::CaptureTimeout.code()})));
+                        updates.push((
+                            entry.sender.clone(),
+                            entry.tab,
+                            json!({"error":SaveError::CaptureTimeout.code()}),
+                        ));
                         remove.push(identity);
                         drop_registration.push(identity);
                     }
@@ -701,8 +785,8 @@ pub fn poll(browsers: &HashMap<u64, Browser>, sender: &Sender<Sobytie>) {
     for identity in drop_registration {
         REGISTRATIONS.with(|regs| regs.borrow_mut().remove(&identity));
     }
-    for (tab, state) in updates {
-        send_state(sender, tab, state);
+    for (owner, tab, state) in updates {
+        send_state(&owner, tab, state);
     }
 }
 
@@ -881,7 +965,6 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[cfg(not(windows))]
     #[test]
     fn publish_replaces_existing_atomically() {
         let dir = temp_dir("overwrite");
@@ -894,19 +977,20 @@ mod tests {
         std::fs::remove_dir_all(&dir).unwrap();
     }
 
-    #[cfg(windows)]
     #[test]
-    fn publish_refuses_existing_without_touching_it() {
-        let dir = temp_dir("exists");
-        let target = dir.join("page-20261126-000000.mhtml");
-        std::fs::write(&target, b"user data").unwrap();
-        let (_tx, rx) = watch::channel(false);
-        let (temp, _) = write_temp(&target, b"MIME-Version: 1.0\nnew", &rx).unwrap();
+    fn cancel_before_worker_receiver_is_retained() {
+        let dir = temp_dir("latched-cancel");
+        let target = dir.join("my-page.mhtml");
+        let (tx, rx) = watch::channel(false);
+        drop(rx);
+        tx.send_replace(true);
+        let receiver = tx.subscribe();
         assert_eq!(
-            publish_replace(&temp, &target).unwrap_err(),
-            SaveError::Exists
+            write_temp(&target, b"private page", &receiver).unwrap_err(),
+            SaveError::Cancelled
         );
-        assert_eq!(std::fs::read(&target).unwrap(), b"user data");
-        std::fs::remove_dir_all(&dir).unwrap();
+        assert!(!target.exists());
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }

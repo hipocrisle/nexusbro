@@ -160,7 +160,7 @@ def initial_report():
 
 def run(args):
     report = initial_report(); device = None; root = None; client = None
-    fixture = Fixture(); close_attempted = False; editor = None
+    fixture = Fixture(); close_attempted = False; editor = None; before_windows = None; download_dir = None
     out = Path(args.out).resolve(); out.mkdir(parents=True, exist_ok=False)
     started = time.monotonic(); work_deadline = started + 240
     def remaining(cap):
@@ -269,6 +269,22 @@ def run(args):
     except Exception:
         report['blocked_reason'] = 'downloads_windows_unavailable'
     finally:
+        report['cleanup_components'] = {}
+        folder_gone = True
+        proof = report.get('folder_proof')
+        if isinstance(proof,dict):
+            try:
+                current = explorer_folder_proof(before_windows,download_dir)
+                require(current['hwnd']==proof['hwnd'] and current['pid']==proof['pid'] and current['birth']==proof['birth'], 'Owned Explorer identity changed')
+                from pywinauto import Desktop
+                window = Desktop(backend='uia').window(handle=proof['hwnd'])
+                require(window.process_id()==proof['pid'], 'Owned Explorer PID changed')
+                window.close()
+                wait_for(lambda:not window.exists(), 'Owned Explorer did not close',10)
+            except Exception as error:
+                folder_gone = False
+                report['cleanup_components']['folder_error_type'] = type(error).__name__
+        report['cleanup_components']['folder_closed'] = folder_gone
         editor_gone = True
         if editor and editor.get('process') is not None:
             try:
@@ -276,8 +292,9 @@ def run(args):
                 # with a birth check; cleanup is not True while it lives.
                 editor['process'].terminate()
                 editor['process'].wait(timeout=10)
-            except Exception:
+            except Exception as error:
                 editor_gone = False
+                report['cleanup_components']['editor_error_type'] = type(error).__name__
             try:
                 import psutil
                 if editor['process'].is_running():
@@ -291,20 +308,23 @@ def run(args):
             except Exception:
                 report['normal_exit_incomplete'] = True
             report['stage'] = prior
+        report['cleanup_components']['editor_gone'] = editor_gone
         cleanup = True
         fixture.close()
         if device:
             try:
                 device.close()
-            except Exception:
+            except Exception as error:
                 cleanup = False
+                report['cleanup_components']['device_error_type'] = type(error).__name__
         if root:
             try:
                 shutil.rmtree(root)
-            except OSError:
+            except OSError as error:
                 cleanup = False
+                report['cleanup_components']['root_error'] = {'type':type(error).__name__,'errno':error.errno,'winerror':getattr(error,'winerror',None)}
         os.environ.pop('NEXUSBRO_TEST_DOWNLOAD_DIR', None)
-        cleanup = cleanup and editor_gone
+        cleanup = cleanup and editor_gone and folder_gone
         report['cleanup_completed'] = cleanup
         if not cleanup: report['completed'] = False; report['blocked_reason'] = 'cleanup_failed'
         if not report.get('owned_exit', {}).get('clean_shutdown_receipt_verified'): report['completed'] = False
@@ -426,7 +446,7 @@ def explorer_folder_proof(before, folder, *, shell_windows=None, pid_of=None,
             info = info_of(pid)
             recheck = (info_of(pid) or {}).get('birth')
             if _known_explorer(info, recheck):
-                return {'hwnd': hwnd, 'pid': pid, 'proof': 'com_locationurl_exact'}
+                return {'hwnd': hwnd, 'pid': pid, 'birth':info['birth'], 'proof': 'com_locationurl_exact'}
     except Blocked:
         raise
     except Exception:
@@ -465,7 +485,7 @@ def explorer_folder_proof(before, folder, *, shell_windows=None, pid_of=None,
                     if cleaned.startswith(prefix):
                         cleaned = cleaned[len(prefix):]
                 if normalize_win_path(cleaned) == wanted:
-                    return {'hwnd': hwnd, 'pid': pid, 'proof': 'uia_new_hwnd_exact'}
+                    return {'hwnd': hwnd, 'pid': pid, 'birth':info['birth'], 'proof': 'uia_new_hwnd_exact'}
     except Blocked:
         raise
     except Exception:

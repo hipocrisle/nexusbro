@@ -68,6 +68,8 @@ pub enum Komanda {
     YoutubeFixture { id:u64 },
     YoutubeResumeFixture { id:u64 },
     YoutubeDownloadTarget {id:u64,request:String,path:Option<String>},
+    SohranitStranitsu { id:u64 },
+    PageSaveTarget { id:u64, request:String, path:Option<String> },
     YoutubeExitFullscreen,
     HibernatePrepare { request:crate::super_hibernation_protocol::Prepare },
     HibernateCommit { token:crate::super_hibernation_protocol::Token },

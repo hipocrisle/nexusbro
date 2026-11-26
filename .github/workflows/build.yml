@@ -525,6 +525,7 @@ jobs:
           cargo test --release --target ${{ matrix.target }} --lib youtube_light_sidecar::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_probe::tests -- --test-threads=1
+          cargo test --release --target ${{ matrix.target }} --lib cef_page_save::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_reference_probe::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_decode_probe::tests -- --test-threads=1
           cargo test --release --target ${{ matrix.target }} --lib cef_youtube_benchmark::tests -- --test-threads=1
@@ -1029,6 +1030,18 @@ jobs:
           path: |
             .dev-check/downloads-library/*.json
             .dev-check/downloads-library/owned-failure.png
+          retention-days: 14
+
+      - name: Native page save and offline MHTML reopen
+        if: runner.os == 'Linux'
+        timeout-minutes: 6
+        run: python3 tests/gui/page_save_native.py --exe desktop/src-tauri/target/${{ matrix.target }}/release/nexusbro --cef desktop/src-tauri/cef --out .dev-check/page-save
+      - name: Preserve native page save evidence
+        if: always() && runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-save-linux-verification
+          path: .dev-check/page-save/result.json
           retention-days: 14
 
       - name: Native search task metrics and network retry
@@ -1614,6 +1627,17 @@ jobs:
           path: |
             .dev-check/downloads-library/*.json
             .dev-check/downloads-library/owned-failure.png
+          retention-days: 7
+      - name: Verify native page save and offline MHTML reopen
+        if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}
+        timeout-minutes: 6
+        run: python3 tests/gui/page_save_native.py --exe .dev-check/native-binary/nexusbro --cef .dev-check/cef --out .dev-check/page-save
+      - name: Preserve native page save reuse evidence
+        if: always() && !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed'
+        uses: actions/upload-artifact@v4
+        with:
+          name: page-save-linux-reuse
+          path: .dev-check/page-save/result.json
           retention-days: 7
       - name: Native Linux smoke from exact existing binary
         if: ${{ !inputs.linux_memory_diagnostic && steps.producer_request.outputs.probe != 'official_embed' }}

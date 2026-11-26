@@ -32,6 +32,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
   const [suggestionIndex,setSuggestionIndex]=useState(-1);
   const completionAllowed=useRef(false),completedValue=useRef<string|null>(null),completionRange=useRef<number|null>(null);
   const [oshibka, setOshibka] = useState("");
+  const [pageSaveMessage,setPageSaveMessage] = useState("");
   const [youtubeBusy,setYoutubeBusy]=useState(false);
   const [networkFailure,setNetworkFailure]=useState<{owner:string;tabId:number;generation:number;code:number}|null>(null);
   useEffect(()=>{setNetworkFailure(null);},[id]);
@@ -139,6 +140,21 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
     });
     return()=>{alive=false;void off.then(stop=>stop());};
   },[id]);
+  useEffect(()=>{
+    setPageSaveMessage("");
+    const off=listen<{super_id:string;data:{tip:string;id:number;state?:{done?:boolean;cancelled?:boolean;error?:string}}}>("stranica-ui",e=>{
+      const d=e.payload.data;
+      if(e.payload.super_id!==id||d.id!==aktivnaya?.id||d.tip!=="page-save-state")return;
+      if(d.state?.cancelled){setPageSaveMessage("");return;}
+      if(d.state?.done){setPageSaveMessage("Страница сохранена");return;}
+      if(d.state?.error){
+        setPageSaveMessage("");
+        const reason=d.state.error;
+        setOshibka(reason==="busy"?"Страница уже сохраняется.":reason==="page_changed"?"Страница изменилась. Повторите сохранение.":reason==="too_large"?"Страница слишком велика для сохранения.":reason==="locked"?"Сначала разблокируйте браузер.":reason==="capture_timeout"?"Сохранение заняло слишком много времени. Повторите попытку.":"Не удалось сохранить страницу. Повторите попытку.");
+      }
+    });
+    return()=>{void off.then(f=>f());};
+  },[id,aktivnaya?.id,aktivnaya?.adres]);
   useEffect(()=>{setPasswordOffer(null);const off=listen<{super_id:string;data:{tip:string;id:number;draft_id:string;origin:string;username:string}}>('stranica-ui',e=>{if(e.payload.super_id===id&&e.payload.data.id===aktivnaya?.id&&e.payload.data.tip==='password-offer')setPasswordOffer(e.payload.data);});return()=>{void off.then(f=>f());};},[id,aktivnaya?.id]);
   const [bookmarked,setBookmarked]=useState(false);
   const [bookmarkMessage,setBookmarkMessage]=useState("");
@@ -221,7 +237,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       const k = shortcutKey(e);
       const ctrl = e.ctrlKey || e.metaKey;
       // F5 и Ctrl+F5 обязаны работать как в любом браузере, а не только ⟳.
-      if (k !== "f12" && k !== "f5" && !(ctrl && ["t", "w", "l", "u", "r", "tab", "i", "f", "d", "n"].includes(k))) return;
+      if (k !== "f12" && k !== "f5" && !(ctrl && ["t", "w", "l", "u", "r", "tab", "i", "f", "d", "n", "s"].includes(k))) return;
       e.preventDefault();
       if (document.querySelector(".zatemnenie")) return;
       if (ctrl && k === "n") {void invoke("novoe_okno",{id,privatnaya:e.shiftKey}).catch(e=>setOshibka(String(e)));return;}
@@ -229,7 +245,8 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       if (ctrl && k === "f") { openFind(); return; }
       if (ctrl && k === "l") { focusAddress(); return; }
       if (!id || !aktivnaya) return;
-      if (k === "f5") void poslat({ deystvie: e.shiftKey || ctrl ? "obnovit_bez_kesha" : "obnovit", id: aktivnaya.id });
+      if (ctrl && k === "s" && !e.shiftKey) void poslat({deystvie:"sohranit_stranitsu",id:aktivnaya.id});
+      else if (k === "f5") void poslat({ deystvie: e.shiftKey || ctrl ? "obnovit_bez_kesha" : "obnovit", id: aktivnaya.id });
       else if (k === "f12" || (ctrl && e.shiftKey && k === "i")) void poslat({ deystvie: "instrumenty", id: aktivnaya.id });
       else if (k === "t" && e.shiftKey) void poslat({deystvie:"vosstanovit_zakrytuyu"});
       else if (k === "t") void poslat({ deystvie: "novaya", adres: novayaStranica });
@@ -359,6 +376,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
       <TabRouteButton tab={aktivnaya} choices={routeOptions.choices} onOpen={()=>{if(aktivnaya)openTabRoute(aktivnaya);}}/><SetStatus id={id}/>{children}<BrowserMenu label="Меню NexusBro" items={[
        ...(youtubeCandidate(aktivnaya)?[{label:"Открыть в лёгком режиме YouTube",disabled:youtubeBusy,action:()=>poslat({deystvie:"youtube_light",id:aktivnaya!.id})},null]:[]),
        {label:`Удалить данные супер-вкладки «${nazvanie}»…`,shortcut:"Ctrl+Shift+Delete",keepsHidden:true,action:()=>{window.dispatchEvent(new CustomEvent("nexusbro-clear-data"));}},null,
+       {label:"Сохранить страницу…",shortcut:"Ctrl+S",disabled:!aktivnaya,action:()=>{if(aktivnaya)void poslat({deystvie:"sohranit_stranitsu",id:aktivnaya.id});}},
        {label:"Резервные копии",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-backup"))},
        {label:"Диспетчер задач",shortcut:"Shift+Esc",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-tasks"))},
        {label:"Поиск по вкладкам",shortcut:"Ctrl+Shift+A",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-tab-search"))},
@@ -369,6 +387,7 @@ export default function ObychnyeVkladki({ id, nazvanie, children, novayaStranica
        {label:"Пароли, аккаунт и синхронизация",keepsHidden:true,action:()=>window.dispatchEvent(new Event("nexusbro-security"))},
        {label:"Настройки NexusBro",keepsHidden:true,action:()=>{window.dispatchEvent(new Event('nexusbro-settings'));}}
       ]}><Icon name="menu" size={18}/></BrowserMenu>
+      {pageSaveMessage&&<span role="status" className="youtube-preparing">{pageSaveMessage}</span>}
       {youtubeBusy&&<span role="status" className="youtube-preparing">Подготовка видео…</span>}
       {bookmarkMessage&&<span className="sr-only" role="status">{bookmarkMessage}</span>}
 

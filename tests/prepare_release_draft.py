@@ -84,7 +84,7 @@ def validate_paired_report(value, source, build):
 
 NATIVE_REQUIRED={
  'runtime':('Extract installer and check actual Windows screen','Native Windows media playback lock and normal exit','Native Windows saved-download open and folder actions','Native Windows per-tab routes and trusted HTTPS'),
- 'Native Linux from existing matching binary':('Verify native media and normal owned exit with typed diagnostics','Verify ordinary download status and saved-file actions','Native per-tab routes, isolated profiles and trusted HTTPS','Native encrypted vault, UI lock and two-device sync','Native browser essentials from exact existing binary'),
+ 'Native Linux from existing matching binary':('Verify native media and normal owned exit with typed diagnostics','Verify ordinary download status and saved-file actions','Verify native page save and offline MHTML reopen','Native per-tab routes, isolated profiles and trusted HTTPS','Native encrypted vault, UI lock and two-device sync','Native browser essentials from exact existing binary'),
 }
 def validate_native_jobs(jobs):
     for name,required in NATIVE_REQUIRED.items():
