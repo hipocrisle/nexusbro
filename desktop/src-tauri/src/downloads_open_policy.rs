@@ -52,11 +52,18 @@ pub fn check_open_target(status: &str, stored_path: &str) -> Result<PathBuf, Str
     } else {
         return Err("Путь к файлу недействителен".into());
     }
+    // Проверяем ИСХОДНЫЙ путь до canonicalize: canonicalize сам разрешает
+    // symlink, поэтому проверка после него была бы недостижимой.
+    let original_meta = std::fs::symlink_metadata(path)
+        .map_err(|_| "Файл не найден: возможно, он был удалён или перемещён".to_string())?;
+    if original_meta.file_type().is_symlink() {
+        return Err("Открыть можно только обычный файл".into());
+    }
     let canonical = std::fs::canonicalize(path)
         .map_err(|_| "Файл не найден: возможно, он был удалён или перемещён".to_string())?;
-    let meta = std::fs::symlink_metadata(&canonical)
+    let meta = std::fs::metadata(&canonical)
         .map_err(|_| "Файл не найден: возможно, он был удалён или перемещён".to_string())?;
-    if meta.file_type().is_symlink() || !meta.is_file() {
+    if !meta.is_file() {
         return Err("Открыть можно только обычный файл".into());
     }
     let ext = canonical
@@ -184,6 +191,15 @@ mod tests {
         perms.set_mode(0o755);
         fs::set_permissions(&p, perms).unwrap();
         assert!(check_open_target("Готово", p.to_str().unwrap()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn symlink_rejected_before_canonicalize() {
+        let (d, p) = temp_file("real.txt");
+        let link = d.path().join("alias.txt");
+        std::os::unix::fs::symlink(&p, &link).unwrap();
+        assert!(check_open_target("Готово", link.to_str().unwrap()).is_err());
     }
 
     #[test]
