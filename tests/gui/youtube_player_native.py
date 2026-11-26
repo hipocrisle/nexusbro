@@ -1139,10 +1139,10 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     # Санитизированная последовательность разблокировки: какие статические
     # факты наблюдались и какой guard ожидался, когда упало. Ровно ОДИН
     # trusted fill и один физический клик кнопки — как и прежде.
-    unlock=diagnostics.setdefault('unlock',{})
+    unlock={'lane':lane};diagnostics['unlock']=unlock
     unlock['gate_present']=client.js('!!document.querySelector(".browser-lock-screen")') is True
     foreground(device)
-    fill={}
+    fill={};unlock['fill']=fill
     unlock['guard_pending']='trusted_fill'
     trusted_fill(client,device,'[aria-label="Мастер-пароль для разблокировки браузера"]',master,receipt=fill)
     unlock['fill']=fill
@@ -1154,6 +1154,7 @@ def lock_receipt(client,device,fixture,lane,identifier,tab,master,report):
     unlock['guard_pending']='master_ui_unlock'
     js_wait(client,'!document.querySelector(".browser-lock-screen")&&!!document.querySelector(".okno")',
             'Actual master UI did not unlock browser',25)
+    unlock['gate_closed']=True;unlock['okno_exists']=True
     browser_now=next(row['browser_id'] for row in rows(client,identifier)['vkladki'] if row['id']==tab)
     unlock['browser_unchanged']=browser_now==browser_before
     unlock['browser_positive']=type(browser_now) is int and browser_now>0
