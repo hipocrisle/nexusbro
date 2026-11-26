@@ -143,12 +143,15 @@
   },
   "resource_soak_pending": {
     "run": 45637553346,
-    "status": "in_progress",
+    "status": "success",
     "source": "1f8ece504f26328e561bf6baf1e55e00adc097ca",
     "platform": "windows",
     "required_seconds": 7200,
     "diagnostic_pilot": false,
-    "acceptance_passed": false
+    "acceptance_passed": true,
+    "summary": "resource-candidate-summary.json",
+    "wall_seconds": 7200.016,
+    "samples_count": 1438
   },
   "linux_strict_routes_pending": {
     "run": 45638466418,
@@ -189,6 +192,7 @@
   "publication_preparation": {
     "resource_gate_before_tag": true,
     "missing_tag_and_draft_created_only_in_github_token_job": true,
-    "published": false
+    "published": false,
+    "paired_gate_before_tag": true
   }
 }

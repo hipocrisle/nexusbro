@@ -26,7 +26,7 @@ import time
 import urllib.parse
 
 import psutil
-from security_native import Device, call, js_wait, require, super_record, wait_for
+from security_native import Device, NativeFailure, call, js_wait, require, super_record, wait_for
 from tab_routes import WindowsDevice, switch_super, rows, click_control
 from youtube_player_native import physical, foreground, OwnedWindowManager, close_for_privacy
 from resource_soak import Sampler, kernel_birth
@@ -154,11 +154,17 @@ def metrics(samples,video,args):
                 measurement_start_position=video[0]['position'],measurement_end_position=video[-1]['position'],peak_processes=max(r['owned']['processes'] for r in samples),observed_fps=fps,dropped_ratio=drops/frames,measurement_seconds=elapsed,media_seconds=media)
 
 
-def arm(args,proxy,mode,index,out):
-    root=Path(tempfile.mkdtemp(prefix='nb-player-'));device=wm=sampler=None;result={'index':index,'mode':mode,'stage':'startup'}
+def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private_parent=None,window_manager_factory=None,state_probe=None):
+    # Optional dependency injection for the local Home entry: every default
+    # below preserves the existing GHA behavior (temp root, stock
+    # Device/OwnedWindowManager, close_for_privacy, shared probe()).
+    root=(Path(private_parent)/('arm-'+str(index))) if private_parent else Path(tempfile.mkdtemp(prefix='nb-player-'))
+    if private_parent:root.mkdir(parents=True,exist_ok=False)
+    device=wm=sampler=None;result={'index':index,'mode':mode,'stage':'startup'}
     started=time.monotonic()
     try:
-        device=WindowsDevice(root/'device',Path(args.exe).resolve(),Path(args.cef).resolve()) if sys.platform=='win32' else Device('paired',root/'device',Path(args.exe).resolve(),Path(args.cef).resolve())
+        make_device=device_factory or (lambda device_root,exe,cef: WindowsDevice(device_root,exe,cef) if sys.platform=='win32' else Device('paired',device_root,exe,cef))
+        device=make_device(root/'device',Path(args.exe).resolve(),Path(args.cef).resolve())
         identifier='paired-'+str(index);url='https://www.youtube.com/watch?v='+args.video_id
         item=super_record(identifier,'Paired public video',url,proxy=proxy)
         folder=device.data/'profili'/identifier;folder.mkdir(parents=True)
@@ -166,9 +172,11 @@ def arm(args,proxy,mode,index,out):
         for name in ('vkladki.json','sohranennye.json'):(device.data/name).write_text(json.dumps([item]))
         (device.data/'nastrojki.json').write_text(json.dumps({'avtoobnovleniya':False,'apparatnoe_uskorenie':False,'memory_saver':False}))
         client=device.start()
-        if sys.platform!='win32':wm=OwnedWindowManager(device,root/'wm');device.player_wm=wm
+        if sys.platform!='win32':wm=(window_manager_factory or OwnedWindowManager)(device,root/'wm');device.player_wm=wm
         client.js('window.__paired=[];window.__pairedReady=false;const h=window.__TAURI_INTERNALS__.transformCallback(e=>{if(["youtube-state","youtube-reference-state","youtube-decode-state","youtube-result"].includes(e.payload?.data?.tip))window.__paired.push(e.payload)});window.__TAURI_INTERNALS__.invoke("plugin:event|listen",{event:"stranica-ui",target:{kind:"Window",label:"main"},handler:h}).then(()=>window.__pairedReady=true);true')
-        js_wait(client,'window.__pairedReady','Native paired listener missing');switch_super(client,identifier)
+        js_wait(client,'window.__pairedReady','Native paired listener missing')
+        snapshot=(lambda kind: state_probe(client,identifier,tab,kind)) if state_probe else (lambda kind: probe(client,identifier,tab,kind,args.video_id))
+        switch_super(client,identifier)
         if client.js('!!document.querySelector(".pusto button")'):click_control(client,'.pusto button',20)
         session=wait_for(lambda:rows(client,identifier) if any(v.get('browser_id',0)>0 and not v.get('zagruzka') for v in rows(client,identifier)['vkladki']) else None,'Public native page not ready',45);tab=session['aktivnaya']
         result['stage']='content-admission'
@@ -176,28 +184,28 @@ def arm(args,proxy,mode,index,out):
             call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_light','id':tab})
             deadline=time.monotonic()+60;state=None
             while time.monotonic()<deadline:
-                try:state=probe(client,identifier,tab,mode,args.video_id);break
-                except Blocked:time.sleep(.5)
+                try:state=snapshot(mode);break
+                except (Blocked,NativeFailure):time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
-        else:state=probe(client,identifier,tab,mode,args.video_id)
+        else:state=snapshot(mode)
         video_state(state,args,require_audio=False)
         if mode=='normal' and state.get('muted') is True:
             if state.get('ready_state',0)<2:raise Blocked('normal_audio_user_action_unavailable')
             normal_key(device,'m')
-            state=wait_for(lambda:(lambda value:value if value.get('muted') is False else None)(probe(client,identifier,tab,mode,args.video_id)),'Normal physical unmute not observed',8)
+            state=wait_for(lambda:(lambda value:value if value.get('muted') is False else None)(snapshot(mode)),'Normal physical unmute not observed',8)
         audio_policy(state)
         if not state.get('playing'):
             if mode=='light':physical(client,device,'play',{})
             elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_key(device,'k')
             else:raise Blocked('normal_user_play_required')
-        state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(probe(client,identifier,tab,mode,args.video_id)),'Real public playback missing',15)
-        decode=decode_state(probe(client,identifier,tab,'decode',args.video_id));result['decode']=decode
+        state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(snapshot(mode)),'Real public playback missing',15)
+        decode=decode_state(snapshot('decode'));result['decode']=decode
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
         result['stage']='warmup';warm=time.monotonic()
         while time.monotonic()-warm<30:
-            state=probe(client,identifier,tab,mode,args.video_id);video_state(state,args)
+            state=snapshot(mode);video_state(state,args)
             if not state.get('playing'):raise Blocked('public_playback_stalled')
             time.sleep(min(5,max(0,30-(time.monotonic()-warm))))
         result['stage']='measurement';sampler=Sampler(device.app.pid,out/('arm-'+str(index)+'-samples.jsonl'),args.memory_cap_mib*1024*1024);sampler.started=time.monotonic()
@@ -205,7 +213,7 @@ def arm(args,proxy,mode,index,out):
         for step in range(19):
             delay=began+step*5-time.monotonic()
             if delay>0:time.sleep(delay)
-            state=probe(client,identifier,tab,mode,args.video_id);video.append(video_state(state,args))
+            state=snapshot(mode);video.append(video_state(state,args))
             if not state.get('playing'):raise Blocked('public_playback_stalled')
             members=native_members(client,identifier)
             session=rows(client,identifier);selected=next((v for v in session['vkladki'] if v['id']==tab),None)
@@ -226,8 +234,8 @@ def arm(args,proxy,mode,index,out):
         # Sampler.sample is synchronous here; avoid a competing unrefreshed
         # thread. Persist only its existing safe OS-metrics record format.
         sampler.destination.write_text(''.join(json.dumps(v)+'\n' for v in samples));result['metrics']=metrics(samples,video,args);result['route_generation']=route_generation
-        if decode_state(probe(client,identifier,tab,'decode',args.video_id))!=decode:raise Blocked('decoder_changed')
-        close_for_privacy(client,device,result)
+        if decode_state(snapshot('decode'))!=decode:raise Blocked('decoder_changed')
+        (close_owned or close_for_privacy)(client,device,result)
         result['stage']='complete';return result
     except Exception as error:
         result['blocked_reason']=str(error) if isinstance(error,Blocked) else 'native_acceptance_unavailable'

@@ -2,9 +2,14 @@
 import pathlib,tempfile,unittest
 from types import SimpleNamespace
 from unittest.mock import patch
-from prepare_release_draft import ensure_draft,validate_resource,optional_api
+from prepare_release_draft import ensure_draft,validate_resource,validate_paired,optional_api
 SOURCE='a'*40
 class Evidence(unittest.TestCase):
+ def test_missing_or_diagnostic_paired_blocks_release(self):
+  good=dict(accepted=True,source=SOURCE,build_run='123',diagnostic_only=False,comparison_valid=True,measurement_valid=True,order=['light','normal','normal','light'],normal_owned_exit_all=True,same_video_quality_decoder=True,raw_report_sha256='d'*64)
+  validate_paired(good,SOURCE,'123')
+  for value in ({},dict(good,accepted=False),dict(good,diagnostic_only=True),dict(good,source='c'*40),dict(good,order=['light','normal']),dict(good,normal_owned_exit_all=False),dict(good,raw_report_sha256='')):
+   with self.subTest(value=value),self.assertRaises(AssertionError):validate_paired(value,SOURCE,'123')
  def test_service_error_is_not_missing_reference(self):
   with patch('prepare_release_draft.subprocess.run',return_value=SimpleNamespace(returncode=1,stderr='gh: server failure (HTTP 500)',stdout='')):
    with self.assertRaises(RuntimeError):optional_api('repos/owner/repo/git/ref/tags/v0.2.27')

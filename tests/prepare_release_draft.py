@@ -29,6 +29,19 @@ def validate_resource(value,source,build,test_source):
     assert type(value.get('samples_count')) is int and value['samples_count']>=1437,'Incomplete resource samples'
 
 
+
+def validate_paired(value, source, build):
+    """An incomplete or diagnostic comparison must block all release writes."""
+    assert value.get('accepted') is True, 'Mandatory paired YouTube measurement missing'
+    assert value.get('source') == source and str(value.get('build_run')) == build, 'Paired candidate mismatch'
+    assert value.get('diagnostic_only') is False, 'Diagnostic playback is not paired acceptance'
+    assert value.get('comparison_valid') is True and value.get('measurement_valid') is True, 'Paired comparison incomplete'
+    assert value.get('order') == ['light', 'normal', 'normal', 'light'], 'Four paired arms required'
+    assert value.get('normal_owned_exit_all') is True, 'Paired process cleanup unproven'
+    assert value.get('same_video_quality_decoder') is True, 'Paired playback conditions unproven'
+    assert value.get('raw_report_sha256') and re.fullmatch('[0-9a-f]{64}', value['raw_report_sha256']), 'Paired evidence digest missing'
+
+
 def ensure_draft(repo,tag,source,notes,invoke=gh,read=optional_api):
     assert re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+',repo) and re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag)
     assert re.fullmatch(r'[0-9a-f]{40}',source) and pathlib.Path(notes).is_file()
@@ -56,7 +69,9 @@ def main():
     state=json.loads(pathlib.Path('docs/verification',version,'acceptance-state.json').read_text())
     metadata=json.loads(gh('run','view',build,'--repo',repo,'--json','status,headSha'))
     assert metadata['status']=='completed' and state['candidate']['source']==metadata['headSha'] and str(state['candidate']['build_run'])==build
-    source=metadata['headSha'];light=json.loads(pathlib.Path('docs/verification',version,'light-home-summary.json').read_text())
+    source=metadata['headSha']
+    validate_paired(state.get('paired_public_measurement',{}),source,build)
+    light=json.loads(pathlib.Path('docs/verification',version,'light-home-summary.json').read_text())
     assert light.get('desktop_source')==source and str(light.get('producer_run'))==build
     assert light.get('completed') is True and light.get('playing_observed') is True and light.get('extraction_completed') is True and light.get('decoded_frames_advanced') is True and light.get('position_delta_seconds',0)>=8
     delta=light['position_delta_seconds'];assert type(delta) in (int,float) and math.isfinite(delta) and delta>=8

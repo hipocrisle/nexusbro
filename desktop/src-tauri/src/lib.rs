@@ -54,6 +54,7 @@ mod cef_youtube_probe;
 mod cef_youtube_reference_probe;
 mod cef_youtube_decode_probe;
 mod cef_youtube_benchmark;
+mod youtube_benchmark_fixture;
 mod cef_youtube_stop_probe;
 mod cef_youtube_privacy;
 mod tab_route_parent;

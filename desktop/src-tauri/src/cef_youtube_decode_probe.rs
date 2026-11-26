@@ -397,8 +397,7 @@ pub struct Probe {
 }
 impl Probe {
     pub fn start(browser: &Browser, expected: &VideoId) -> Result<Self, &'static str> {
-        if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
-            || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+        if !crate::youtube_benchmark_fixture::allowed()
         {
             return Err("decode_fixture_only");
         }

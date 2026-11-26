@@ -62,8 +62,7 @@ struct State {
 }
 thread_local! {static STATE:RefCell<State>=RefCell::new(State::default());}
 fn gate() -> Result<(), &'static str> {
-    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
-        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+    if !crate::youtube_benchmark_fixture::allowed()
     {
         return Err("benchmark_fixture_only");
     }
