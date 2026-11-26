@@ -54,6 +54,16 @@ def run(a):
   report['native_identity_pid']=identity['pid']
   from youtube_paired_native import focus_normal_cef
   report['owned_cef_focus']=focus_normal_cef(client,device)
+  if a.sample_memory:
+   from resource_soak import Sampler
+   from youtube_paired_native import native_members
+   sampler=Sampler(device.app.pid,out/'preflight-memory.jsonl',1024*1024*1024)
+   sampler.started=time.monotonic()
+   sampler.native_members=native_members(client,identifier)
+   sampler.native_members_at=time.monotonic()
+   sample=sampler.sample()
+   report['private_memory_preflight']={'scope':'single_loopback_snapshot_not_benchmark','owned':sample['owned'],'native_members_complete':sample['native_members_complete'],'skipped_stale_native_members':sample['skipped_stale_native_members']}
+
   local_close(client,device,report);report['preflight_complete']=True;report['stage']='complete'
  except Exception as error:
   codes={'Tauri IPC did not initialize under the preserved sandbox':'tauri_ipc_not_ready','Sandboxed native application exited during startup':'app_exited','Native blank frame missing':'blank_frame_missing','sandbox_startup_blocked':'inspector_not_ready'}
@@ -73,4 +83,5 @@ if __name__=='__main__':
  p=argparse.ArgumentParser(description=__doc__)
  for name in ('private-root','exe','cef','exe-sha256'):p.add_argument('--'+name,required=True)
  p.add_argument('--expect-uid',type=int,required=True)
+ p.add_argument('--sample-memory',action='store_true')
  raise SystemExit(run(p.parse_args()))
