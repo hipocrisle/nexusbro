@@ -4,8 +4,8 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
-    "build_run": 45817692476,
+    "source": "b81058db248379408fcc465afc24e3d970f35328",
+    "build_run": 45823253972,
     "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending",
@@ -37,12 +37,12 @@
     "ordinary_cef_bot_confirmation_run": 45565312152
   },
   "paired_public_measurement": {
-    "status": "not_accepted_new_source_requires_actual_measurement",
+    "status": "normal_quality_row_offscreen_owned_menu_scroll_prepared_new_native_pending",
     "accepted": false,
     "local_execution_performed": false,
     "gha_environment_spoofed": false,
-    "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
-    "build_run": 45817692476
+    "source": "b81058db248379408fcc465afc24e3d970f35328",
+    "build_run": 45823253972
   },
   "public_updater_verification": {
     "status": "not_run",
@@ -247,15 +247,17 @@
   "page_save": {
     "implemented": true,
     "native_acceptance": false,
-    "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
-    "build_run": 45817692476,
+    "source": "b81058db248379408fcc465afc24e3d970f35328",
+    "build_run": 45823253972,
     "required": [
       "real_ctrl_s_native_dialog",
       "cancel_dialog",
       "menu_save_and_confirm_overwrite",
       "fresh_profile_offline_css_image_and_frame"
     ],
-    "test": "tests/gui/page_save_native.py"
+    "test": "tests/gui/page_save_native.py",
+    "previous_diagnostic": "page-save-source7c-diagnostic.json",
+    "direct_file_bootstrap_fix": "native host navigation instead of blocked JS file navigation"
   },
   "previous_candidates": [
     {
@@ -284,6 +286,16 @@
       "page_save_unit_tests_failed": 1,
       "failure": "test expected18 but fixed literalactual19 bytes; corrected7c08ed3",
       "native_page_save_executed": false,
+      "accepted_for_current_source": false
+    },
+    {
+      "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
+      "build_run": 45817692476,
+      "compiled_linux_and_windows": true,
+      "page_save_rust_unit_tests": "11 passed on Linux",
+      "linux_failure": "Real draft input did not reach page; before native page-save stage",
+      "windows_failure": "PermissionError reading own test profile JSON in link_session; before native page-save stage",
+      "home_page_save_diagnostic": "five real checks passed, direct file restore not accepted; native initial-file bootstrap fix pending new binary",
       "accepted_for_current_source": false
     }
   ]

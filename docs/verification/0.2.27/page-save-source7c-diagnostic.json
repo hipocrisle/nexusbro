@@ -1,0 +1,64 @@
+{
+  "schema": 1,
+  "source": "7c08ed3ee187e4c21e28166136b6fe1dec4074b9",
+  "build_run": 45817692476,
+  "exe_sha256": "61f2ca0dd44b3a9bee60af22fb7a531c5912ce15a921b8b45847cde9a9e01139",
+  "observed_at_utc": "2026-11-26T12:42:07.297835+00:00",
+  "diagnostic_only": true,
+  "current_candidate_acceptance": false,
+  "direct_file_restore_accepted": false,
+  "native_file_navigation_diagnostic_complete": true,
+  "raw_report_sha256": "3f908d25c59d528b20f5ef41811e10c32dc757fd70172f6353e24d4cecbb00ae",
+  "checks": {
+    "native_ctrl_s_dialog_cancel": true,
+    "native_ctrl_s_saved_mhtml": true,
+    "menu_save_overwrite": true,
+    "server_stopped_before_reopen": true,
+    "offline_fresh_profile_css_image_and_frame_painted": true
+  },
+  "archive": {
+    "bytes": 2705,
+    "sha256": "180a4f8966720e52e0d201327f0e7c49a2a5ca4e25f0e62c03d85e84e8cf94fd",
+    "embedded_image": true,
+    "embedded_stylesheet": true,
+    "embedded_frame": true
+  },
+  "menu_archive": {
+    "bytes": 2705,
+    "sha256": "0a4c8be2a16eca976ed3837e6d5b0e683f6d2570f3648f01b2af32d1c2367aa3",
+    "embedded_image": true,
+    "embedded_stylesheet": true,
+    "embedded_frame": true
+  },
+  "online_native_exit": {
+    "parent_normal_exit": true,
+    "native_members_observed": 8,
+    "os_identities_observed": 13,
+    "all_known_native_executions_exited": true,
+    "native_members_complete": true,
+    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
+    "harness_kill_used_for_acceptance": false,
+    "clean_shutdown_receipt_verified": false,
+    "receipt_unavailable_in_local_mode": true,
+    "actual_app_identity_bound": true,
+    "launcher_is_actual_app": false,
+    "actual_app_execution_exited": true,
+    "launcher_exit_zero": true
+  },
+  "offline_native_exit": {
+    "parent_normal_exit": true,
+    "native_members_observed": 8,
+    "os_identities_observed": 13,
+    "all_known_native_executions_exited": true,
+    "native_members_complete": true,
+    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
+    "harness_kill_used_for_acceptance": false,
+    "clean_shutdown_receipt_verified": false,
+    "receipt_unavailable_in_local_mode": true,
+    "actual_app_identity_bound": true,
+    "launcher_is_actual_app": false,
+    "actual_app_execution_exited": true,
+    "launcher_exit_zero": true
+  },
+  "cleanup_completed": true
+}
