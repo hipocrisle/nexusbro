@@ -94,7 +94,8 @@ def run(args):
     def expired(signum,frame):raise Blocked('bounded_arm_deadline')
     previous=signal.signal(signal.SIGALRM,expired)
     try:
-        for index,mode in enumerate(ORDER):
+        order=('normal',) if args.normal_reference_preflight else ORDER
+        for index,mode in enumerate(order):
             require(digest(exe)==args.exe_sha256 and digest(cef/'libcef.so')==report['provenance']['cef_sha256'],'Same binary changed')
             signal.alarm(330)
             try:
@@ -102,8 +103,11 @@ def run(args):
             finally:signal.alarm(0)
             report['arms'].append(result)
             if result.get('stage')!='complete' or result.get('cleanup_completed') is not True:raise Blocked(result.get('blocked_reason','arm_incomplete'))
-        summarize_comparison(report,args)
-        report['provenance']['audio_output_policy_match_proven']=True
+        if args.normal_reference_preflight:
+            report['normal_reference_preflight_complete']=True
+        else:
+            summarize_comparison(report,args)
+            report['provenance']['audio_output_policy_match_proven']=True
     except Exception as error:
         report['blocked_reason']=str(error) if isinstance(error,Blocked) else 'local_paired_unavailable'
         report['failure_class']=type(error).__name__
@@ -111,13 +115,14 @@ def run(args):
         signal.signal(signal.SIGALRM,previous)
         report['wall_seconds']=round(time.monotonic()-began,3)
         (out/'result.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
-    print(json.dumps({'completed':report['completed'],'comparison_valid':report['comparison_valid'],'blocked_reason':report.get('blocked_reason'),'arms':len(report['arms'])}))
-    return 0 if report['accepted_measurement'] else 1
+    print(json.dumps({'completed':report['completed'],'comparison_valid':report['comparison_valid'],'blocked_reason':report.get('blocked_reason'),'arms':len(report['arms']),'normal_reference_preflight_complete':report.get('normal_reference_preflight_complete',False)}))
+    return 0 if report['accepted_measurement'] or report.get('normal_reference_preflight_complete') else 1
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('private-root','exe','cef','exe-sha256','desktop-source'):p.add_argument('--'+name,required=True)
     p.add_argument('--producer-run',type=int,required=True);p.add_argument('--expect-uid',type=int,required=True)
+    p.add_argument('--normal-reference-preflight',action='store_true')
     p.add_argument('--allow-local-virtual-display',action='store_true');p.add_argument('--video-id',default='M7lc1UVf-VE')
     p.add_argument('--expected-duration',type=float,default=1343.6);p.add_argument('--expected-fps',type=float,default=30)
     p.add_argument('--width',type=int,default=1280);p.add_argument('--height',type=int,default=720);p.add_argument('--memory-cap-mib',type=int,default=1024)

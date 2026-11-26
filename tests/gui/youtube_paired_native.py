@@ -217,9 +217,10 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         js_wait(client,'window.__pairedReady','Native paired listener missing')
         snapshot=(lambda kind: state_probe(client,identifier,tab,kind)) if state_probe else (lambda kind: probe(client,identifier,tab,kind,args.video_id))
         switch_super(client,identifier)
-        # Explicitly wake the selected saved tab. A one-shot placeholder query
-        # races React's deferred-content portal and can leave browser_id==0.
-        click_control(client,'.obychnaya[aria-selected="true"]',20)
+        # Ordinary command is fixture setup, not a claim about UI input.
+        selected=rows(client,identifier)['aktivnaya']
+        call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'vybrat','id':selected})
+        result['fixture_wake']='ordinary_native_command_not_UI_acceptance'
         session=wait_for(lambda:rows(client,identifier) if any(v.get('browser_id',0)>0 and not v.get('zagruzka') for v in rows(client,identifier)['vkladki']) else None,'Public native page not ready',45);tab=session['aktivnaya']
         result['stage']='content-admission'
         if mode=='light':
@@ -240,7 +241,15 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
                     time.sleep(.5)
             if state is None:raise Blocked('real_extraction_unavailable_or_challenged')
         else:state=snapshot(mode)
-        video_state(state,args,require_audio=False)
+        reference_preflight=getattr(args,'normal_reference_preflight',False)
+        if reference_preflight:
+            if mode!='normal':raise Blocked('reference_preflight_mode_invalid')
+            from types import SimpleNamespace
+            observed_args=SimpleNamespace(expected_duration=state.get('duration'),width=state.get('video_width'),height=state.get('video_height'))
+            if not all(type(v) in (int,float) and math.isfinite(v) and v>0 for v in (observed_args.expected_duration,observed_args.width,observed_args.height)):raise Blocked('reference_metadata_not_ready')
+            result['observed_metadata']={'duration':observed_args.expected_duration,'width':observed_args.width,'height':observed_args.height}
+        else:observed_args=args
+        video_state(state,observed_args,require_audio=False)
         if mode=='normal' and state.get('muted') is True:
             if state.get('ready_state',0)<2:raise Blocked('normal_audio_user_action_unavailable')
             normal_key(device,'m')
@@ -255,6 +264,16 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
+        if reference_preflight:
+            first=state;began=time.monotonic()
+            while time.monotonic()-began<8:
+                time.sleep(.5);state=snapshot(mode);audio_policy(state)
+                if not state.get('playing'):raise Blocked('reference_preflight_paused')
+            result['observed_last_state']={k:state.get(k) for k in ('position','duration','decoded','dropped','video_width','video_height','playing')}
+            if state['position']-first['position']<7 or state['decoded']<=first['decoded']:raise Blocked('reference_preflight_clock_or_frames_stalled')
+            result['reference_playback_observed']=True
+            (close_owned or close_for_privacy)(client,device,result)
+            result['stage']='complete';return result
         def playback_observation(value):
             fields=('configured','disposed','hidden','playing','position','duration','decoded','dropped','video_width','video_height','video_paused','audio_paused','audio_position','skew','volume','muted','default_sink','quality_count','quality_index')
             return {k:v for k,v in value.items() if k in fields and (type(v) is bool or type(v) in (int,float) and math.isfinite(v))}
@@ -305,7 +324,26 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         result['stage']='complete';return result
     except Exception as error:
         result['blocked_reason']=str(error) if isinstance(error,Blocked) else 'native_acceptance_unavailable'
-        result['failure_class']=type(error).__name__;return result
+        result['failure_class']=type(error).__name__
+        if private_parent and device and wm:
+            try:
+                from youtube_player_native import native_app_identity,native_app_identity_alive,native_app_window
+                from PIL import ImageGrab
+                identity=native_app_identity(device)
+                owner=native_app_window(device,identity)
+                facts=subprocess.check_output(['xwininfo','-id',str(owner)],env={**os.environ,'DISPLAY':device.display},text=True,timeout=3)
+                def number(label):
+                    match=re.search(r'^\s*'+re.escape(label)+r':\s*(-?\d+)',facts,re.M)
+                    if not match:raise ValueError('owned_geometry_missing')
+                    return int(match[1])
+                x,y=number('Absolute upper-left X'),number('Absolute upper-left Y')
+                width,height=number('Width'),number('Height')
+                if not (0<=x<1280 and 0<=y<900 and 1<=width<=1280 and 1<=height<=900):raise ValueError('owned_geometry_bound')
+                require(native_app_identity_alive(device,identity),'Owned app identity changed')
+                ImageGrab.grab(bbox=(x,y,min(1280,x+width),min(900,y+height)),xdisplay=device.display).save(out/('arm-'+str(index)+'-failure.png'))
+                result['failure_paint_retained']=True
+            except Exception:result['failure_paint_retained']=False
+        return result
     finally:
         cleanup=True
         for obj in (device,wm):
