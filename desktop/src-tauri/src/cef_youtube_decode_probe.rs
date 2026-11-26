@@ -87,6 +87,7 @@ enum Decoder {
     Ffmpeg,
     Vpx,
     Aom,
+    Dav1d,
     Mojo,
     Decrypting,
     D3d11,
@@ -112,6 +113,7 @@ fn decoder(value: &str) -> Option<Decoder> {
         "FFmpegVideoDecoder" => Decoder::Ffmpeg,
         "VpxVideoDecoder" => Decoder::Vpx,
         "AomVideoDecoder" => Decoder::Aom,
+        "Dav1dVideoDecoder" => Decoder::Dav1d,
         "MojoVideoDecoder" => Decoder::Mojo,
         "DecryptingVideoDecoder" => Decoder::Decrypting,
         "D3D11VideoDecoder" => Decoder::D3d11,
@@ -142,6 +144,7 @@ struct Evidence {
 struct Player {
     id: Zeroizing<String>,
     node: Option<i64>,
+    decoder_unknown: bool,
     codec: Option<Codec>,
     decoder: Option<Decoder>,
     platform: Option<bool>,
@@ -175,6 +178,7 @@ impl State {
         self.players.push(Player {
             id: Zeroizing::new(id.to_owned()),
             node: None,
+            decoder_unknown: false,
             codec: None,
             decoder: None,
             platform: None,
@@ -221,7 +225,10 @@ impl State {
                             p.codec = None;
                             p.tracks = None;
                         }
-                        "kVideoDecoderName" => p.decoder = None,
+                        "kVideoDecoderName" => {
+                            p.decoder = None;
+                            p.decoder_unknown = false;
+                        }
                         _ => p.platform = None,
                     }
                     continue;
@@ -232,7 +239,19 @@ impl State {
                     .ok_or("decode_property_invalid")?;
                 match name {
                     "kVideoDecoderName" => {
-                        p.decoder = Some(decoder(raw).ok_or("decode_decoder_unknown")?);
+                        // Неизвестное имя не обрывает probe: факт живёт в
+                        // per-player флаге, ошибка — только для целевого
+                        // player на этапе evidence. Сырое значение не копируется.
+                        match decoder(raw) {
+                            Some(kind) => {
+                                p.decoder = Some(kind);
+                                p.decoder_unknown = false;
+                            }
+                            None => {
+                                p.decoder = None;
+                                p.decoder_unknown = true;
+                            }
+                        }
                     }
                     "kIsPlatformVideoDecoder" => {
                         p.platform = Some(match raw {
@@ -290,6 +309,9 @@ impl State {
         let Some(p) = candidates.first() else {
             return Ok(None);
         };
+        if p.decoder_unknown {
+            return Err("decode_decoder_unknown");
+        }
         let (Some(codec), Some(decoder), Some(platform), Some(tracks)) =
             (p.codec, p.decoder, p.platform, p.tracks)
         else {
@@ -299,11 +321,17 @@ impl State {
             return Err("decode_video_track_missing");
         }
         let mode = if platform {
-            if matches!(decoder, Decoder::Ffmpeg | Decoder::Vpx | Decoder::Aom) {
+            if matches!(
+                decoder,
+                Decoder::Ffmpeg | Decoder::Vpx | Decoder::Aom | Decoder::Dav1d
+            ) {
                 return Err("decode_mode_inconsistent");
             }
             Mode::Platform
-        } else if matches!(decoder, Decoder::Ffmpeg | Decoder::Vpx | Decoder::Aom) {
+        } else if matches!(
+            decoder,
+            Decoder::Ffmpeg | Decoder::Vpx | Decoder::Aom | Decoder::Dav1d
+        ) {
             Mode::Software
         } else {
             return Err("decode_mode_unknown");
@@ -645,7 +673,59 @@ mod tests {
         s.node = Some(5);
         s.players[0].platform = None;
         assert!(s.evidence().unwrap().is_none());
-        assert!(event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"opaque","properties":[{"name":"kVideoDecoderName","value":"secret-unlisted-decoder"}]})).is_err());
+        assert!(event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"opaque","properties":[{"name":"kVideoDecoderName","value":"secret-unlisted-decoder"}]})).is_ok());
+        assert_eq!(s.evidence().unwrap_err(), "decode_decoder_unknown");
+    }
+    #[test]
+    fn dav1d_is_software_and_platform_true_is_inconsistent() {
+        let mut s = State {
+            enabled: true,
+            node: Some(5),
+            ..Default::default()
+        };
+        event(
+            &mut s,
+            "Media.playerCreated",
+            json!({"player":{"playerId":"opaque","domNodeId":5}}),
+        )
+        .unwrap();
+        event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"opaque","properties":[{"name":"kVideoTracks","value":"[{\"codec\":\"av1\"}]"},{"name":"kVideoDecoderName","value":"Dav1dVideoDecoder"},{"name":"kIsPlatformVideoDecoder","value":"false"}]})).unwrap();
+        let result = s.evidence().unwrap().unwrap();
+        assert_eq!(result["decoder"], "dav1d");
+        assert_eq!(result["codec"], "av1");
+        assert_eq!(result["decode_mode"], "software");
+        assert_eq!(result["hardware_activity_proven"], false);
+        s.players[0].platform = Some(true);
+        assert_eq!(s.evidence().unwrap_err(), "decode_mode_inconsistent");
+    }
+    #[test]
+    fn foreign_unknown_decoder_does_not_block_target() {
+        let mut s = software();
+        event(
+            &mut s,
+            "Media.playerCreated",
+            json!({"player":{"playerId":"ad","domNodeId":99}}),
+        )
+        .unwrap();
+        assert!(event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"ad","properties":[{"name":"kVideoDecoderName","value":"secret-unlisted-decoder"}]})).is_ok());
+        let result = s.evidence().unwrap().unwrap();
+        assert_eq!(result["decoder"], "vpx");
+        assert_eq!(result["decode_mode"], "software");
+    }
+    #[test]
+    fn unknown_then_known_or_null_leaves_no_stale_receipt() {
+        let mut s = software();
+        event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"opaque","properties":[{"name":"kVideoDecoderName","value":"secret-unlisted-decoder"}]})).unwrap();
+        assert_eq!(s.evidence().unwrap_err(), "decode_decoder_unknown");
+        event(&mut s,"Media.playerPropertiesChanged",json!({"playerId":"opaque","properties":[{"name":"kVideoDecoderName","value":"VpxVideoDecoder"}]})).unwrap();
+        assert_eq!(s.evidence().unwrap().unwrap()["decoder"], "vpx");
+        event(
+            &mut s,
+            "Media.playerPropertiesChanged",
+            json!({"playerId":"opaque","properties":[{"name":"kVideoDecoderName","value":null}]}),
+        )
+        .unwrap();
+        assert!(s.evidence().unwrap().is_none());
     }
     #[test]
     fn ambiguous_players_overflow_and_unsupported_tracks_refuse() {
