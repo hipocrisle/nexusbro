@@ -185,6 +185,19 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
             io.sleep(OBSERVE_STEP)
         raise UiBlocked(code)
 
+    def settled(predicate, budget):
+        """Bounded observation returning None on timeout instead of raising."""
+        deadline = io.monotonic() + min(budget, deadline_left())
+        while io.monotonic() < deadline:
+            state = snapshot()
+            deadline_left()
+            validate_controls(state)
+            value = predicate(state)
+            if value:
+                return state
+            io.sleep(OBSERVE_STEP)
+        return None
+
     def current():
         state = snapshot()
         validate_controls(state)
@@ -265,9 +278,14 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
     def menu_item(key, code):
         state=current()
         if state['controls'][key] is not None:return state
-        if state['controls']['settings_menu'] is None:
-            state=observe(lambda s:s if s['controls'][key] is not None or s['controls']['settings_menu'] is not None else None,code,5)
-        if state['controls'][key] is not None:return state
+        # The parent click rebuilds the menu through a real transition: always
+        # wait (bounded) for the target item itself before any wheel, so the
+        # scroll never fires against a stale pre-transition rect. A wheel over
+        # a closed or non-overflowing menu scrolls the whole page instead: the
+        # player leaves the viewport and every control rect becomes null.
+        state=settled(lambda s:s if s['controls'][key] is not None else None,5)
+        if state is not None:return state
+        state=current()
         scroll=state['controls']['settings_menu']
         if scroll is None or receipt['menu_scrolls']>=2:raise UiBlocked(code)
         checked(key+'_menu_scroll');spend()

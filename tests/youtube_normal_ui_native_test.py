@@ -100,8 +100,27 @@ def main():
 
     final, result, io = run(happy)
     checks['happy_path'] = final['playing'] is True
-    scrolled_final, scrolled_result, _ = run(happy[:7]+[state(settings_menu=rect(800,200,300,300)),with_quality,with_quality]+happy[9:])
-    checks['scrolled_quality_real_wheel_once'] = (scrolled_final['playing'] is True and scrolled_result['normal_ui_actions']['ledger'].count('quality_menu_scroll')==1)
+    menu_only=state(settings_menu=rect(800,200,300,300))
+    scrolled_final, scrolled_result, scrolled_io = run(happy[:7]+[menu_only]*22+[with_quality,with_quality]+happy[9:])
+    checks['scrolled_quality_real_wheel_once'] = (scrolled_final['playing'] is True and scrolled_result['normal_ui_actions']['ledger'].count('quality_menu_scroll')==1
+        and ('scroll', 950, 350, 4) in scrolled_io.actions)
+    # Delayed submenu transition: the target appears while waiting -> NO wheel
+    # against the stale pre-transition menu rect.
+    late_final, late_result, late_io = run(happy[:7]+[menu_only,menu_only,with_quality,with_quality]+happy[9:])
+    checks['delayed_quality_transition_no_scroll'] = (late_final['playing'] is True
+        and late_result['normal_ui_actions']['menu_scrolls']==0
+        and not any(a[0]=='scroll' for a in late_io.actions if isinstance(a,tuple)))
+    p720_late_final, p720_late_result, _ = run(happy[:9]+[with_quality,with_p720]+happy[9:])
+    checks['delayed_p720_transition_no_scroll'] = (p720_late_final['playing'] is True
+        and p720_late_result['normal_ui_actions']['menu_scrolls']==0)
+    # Menu vanished during the wait (page scrolled away): fail closed, no wheel.
+    gone_io = FakeIO(); gone_script = Script(gone_io, happy[:7]+[menu_only]*21+[state()]+[menu_only]*10)
+    try:
+        m.prepare_normal_playback(None, None, gone_script.snapshot, 1280, 720, {}, lambda: True, io=gone_io)
+        checks['menu_gone_fail_closed_no_wheel'] = False
+    except m.UiBlocked as error:
+        checks['menu_gone_fail_closed_no_wheel'] = (str(error)=='quality_menu_unavailable'
+            and not any(a[0]=='scroll' for a in gone_io.actions if isinstance(a,tuple)))
 
     late = state(reject_present=True, reject=REJECT)
     late_final, late_result, _ = run(happy[:5] + [late, late, base] + happy[6:])
