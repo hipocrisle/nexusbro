@@ -2,11 +2,12 @@
 """Home-native acceptance for the unified tab Network dialog (Direct vs
 unreachable inherit route through an OWN counting CONNECT-refusing proxy).
 
-Physical UI only; the invoke wrapper is a PASSIVE observer (never rewrites
-args/results). The observer keeps ONLY boolean facts: the private IP string
-lives solely inside its RAM closure while it verifies that the dialog shows
-the SAME ip/country label as the backend answer; nothing private is logged,
-persisted or committed. No page JS actions, no owner desktop/profile/cookies.
+Physical UI is the primary evidence; a SEPARATE readonly
+tab_route_check_ip invoke (same owner/tab/generation) independently confirms
+the backend answer. Values live solely inside the JS closure and python RAM
+while verifying that the dialog shows the SAME ip/country label; only
+booleans are recorded, nothing private is logged, persisted or committed.
+Nothing is intercepted or wrapped: pinned tauri makes invoke non-writable. No page JS actions, no owner desktop/profile/cookies.
 Local owned exit is recorded as local facts, never as a GHA receipt."""
 import argparse
 import json
@@ -304,9 +305,8 @@ def main():
         report['exception_type'] = type(error).__name__
         if client is not None:
             try:
-                report['observed_network_checks']=events()
+                # Readonly DOM facts at the failure point; booleans only.
                 report['dialog_at_failure']=dialog_state()
-                report['observer_still_ready']=client.js('window.__netReady===true') is True
             except Exception:
                 report['failure_observation_unavailable']=True
         code = str(error)
