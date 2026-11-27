@@ -128,6 +128,26 @@ class ExplorerCleanupTest(unittest.TestCase):
         self.assertFalse(result)
         self.assertEqual(components['folder_error_type'], 'COMError')
 
+    def test_uia_detaches_after_actual_close_verified_by_os(self):
+        state = {'alive': True}
+        def close(hwnd, pid):
+            state['alive'] = False
+            raise RuntimeError('UIA detached after close')
+        components = {}
+        self.assertTrue(close_owned_explorer(self.PROOF, components,
+            is_window=lambda hwnd: state['alive'], pid_of=lambda hwnd: 77,
+            birth_of=lambda pid: 1000.5, uia_close=close, wait=lambda check: None))
+
+    def test_window_disappears_between_iswindow_and_pid_lookup(self):
+        state = {'alive': True}
+        def pid_of(hwnd):
+            state['alive'] = False
+            raise RuntimeError('window disappeared')
+        self.assertTrue(close_owned_explorer(self.PROOF, {},
+            is_window=lambda hwnd: state['alive'], pid_of=pid_of,
+            birth_of=lambda pid: 1000.5, uia_close=lambda hwnd, pid: self.fail('must not close'),
+            wait=lambda check: None))
+
     def test_birth_mismatch_refuses_to_close(self):
         result, components, state = self.run_cleanup(alive=True, pid=77, birth=2000.0)
         self.assertFalse(result)

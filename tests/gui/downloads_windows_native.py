@@ -454,11 +454,11 @@ def close_owned_explorer(proof, components, *, is_window=None, pid_of=None,
     if wait is None:
         def wait(check):
             wait_for(check, 'Owned Explorer did not close', 10)
-    if not is_window(proof['hwnd']) or pid_of(proof['hwnd']) != proof['pid']:
-        # The proven own window no longer exists at OS level (closed earlier
-        # or the handle was reused by someone else): nothing of ours to close.
-        return True
+    def absent():
+        return not is_window(proof['hwnd']) or pid_of(proof['hwnd']) != proof['pid']
     try:
+        if absent():
+            return True
         require(birth_of(proof['pid']) == proof['birth'], 'Owned Explorer birth changed')
         if uia_close is None:
             def uia_close(hwnd, pid):
@@ -467,9 +467,16 @@ def close_owned_explorer(proof, components, *, is_window=None, pid_of=None,
                 require(window.process_id() == pid, 'Owned Explorer PID changed')
                 window.close()
         uia_close(proof['hwnd'], proof['pid'])
-        wait(lambda: not is_window(proof['hwnd']) or pid_of(proof['hwnd']) != proof['pid'])
+        wait(absent)
         return True
     except Exception as error:
+        # UIA can detach because the close succeeded. Recheck through Win32;
+        # an exception alone never proves that the owned window disappeared.
+        try:
+            if absent():
+                return True
+        except Exception:
+            pass
         components['folder_error_type'] = type(error).__name__
         return False
 
