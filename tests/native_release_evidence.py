@@ -20,6 +20,7 @@ Only small metadata/job logs are fetched; packages are never downloaded
 here (the signature publisher still downloads and verifies them in CI).
 """
 import json
+import os
 import re
 import subprocess
 
@@ -54,6 +55,15 @@ class EvidenceRejected(ValueError):
 
 def _default_invoke(command):
     result = subprocess.run(command, capture_output=True, text=True, timeout=180)
+    if result.returncode != 0 and command[:2]==['gh','api']:
+        match=re.fullmatch(r'repos/([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/actions/jobs/([0-9]+)/logs',command[-1])
+        if match:
+            # gh run view can retrieve the run-log archive when the direct
+            # per-job redirect endpoint is unavailable to the CI token.
+            fallback=subprocess.run(['gh','run','view','--repo',match[1],'--job',match[2],'--log'],capture_output=True,text=True,timeout=180)
+            if fallback.returncode==0:
+                return '\n'.join(line.split('\t',2)[-1] for line in fallback.stdout.splitlines())
+            result=fallback
     if result.returncode != 0:
         # Fixed facts only: gh stderr can contain signed redirect URLs.
         status=re.search(r'HTTP[ \t]+([0-9]{3})',result.stderr or '')
@@ -61,7 +71,14 @@ def _default_invoke(command):
         if 'Resource not accessible by integration' in (result.stderr or ''):reason+=':integration_scope'
         if 'Must have admin rights' in (result.stderr or ''):reason+=':admin_required'
         operation='job_logs' if command[-1].endswith('/logs') else command[0]
-        raise EvidenceRejected('evidence_command_failed:'+operation+':'+reason)
+        detail=result.stderr or ''
+        for key in ('GH_TOKEN','GITHUB_TOKEN'):
+            secret=os.environ.get(key,'')
+            if secret:detail=detail.replace(secret,'<credential>')
+        detail=re.sub(r'https?://\S+','<url>',detail)
+        detail=re.sub(r'\b(?:gh[pousr]_[A-Za-z0-9_]+|github_pat_[A-Za-z0-9_]+)','<credential>',detail)
+        detail=' '.join(detail.split())[:240]
+        raise EvidenceRejected('evidence_command_failed:'+operation+':'+reason+':'+detail)
     return result.stdout
 
 
