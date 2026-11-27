@@ -8,6 +8,10 @@ import {checkedRouteChoices,routeFromKey,routeKey,routeLabel,routeStateKnown,typ
 import './tabRoutes.css';
 
 // Serialize this overlay's native visibility requests, including late hides.
+function countryName(code?:string|null){
+ if(!code)return 'страна не определена';
+ try{const Names=Reflect.get(Intl,'DisplayNames');return typeof Names==='function'?new Names(['ru'],{type:'region'}).of(code)||code:code;}catch{return code;}
+}
 let visibilityEpoch=0;
 let visibilityQueue:Promise<unknown>=Promise.resolve();
 function routeVisibility(visible:boolean){
@@ -50,12 +54,12 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
 }){
  const [ready,setReady]=useState(false),[draft,setDraft]=useState(routeKey(tab.route));
  const [applying,setApplying]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState('');
- const [checking,setChecking]=useState(false),[exit,setExit]=useState<{ip:string;ms:number;checked:number}|null>(null),[exitError,setExitError]=useState('');
+ const [checking,setChecking]=useState(false),[exit,setExit]=useState<{ip:string;country?:string|null;ms:number;checked:number}|null>(null),[exitError,setExitError]=useState('');
  const probe=useRef(0);
  useEffect(()=>{++probe.current;setExit(null);setExitError('');setChecking(false);return()=>{++probe.current;};},[owner,tab.id,tab.route_generation]);
  async function checkExit(){
   if(checking||busy)return;const token=++probe.current;setChecking(true);setExit(null);setExitError('');
-  try{const value=await invoke<{ip:string;ms:number;checked:number}>('tab_route_check_ip',{id:owner,tabId:tab.id,expectedGeneration:tab.route_generation});if(alive.current&&token===probe.current)setExit(value);}
+  try{const value=await invoke<{ip:string;country?:string|null;ms:number;checked:number}>('tab_route_check_ip',{id:owner,tabId:tab.id,expectedGeneration:tab.route_generation});if(alive.current&&token===probe.current)setExit(value);}
   catch(value){if(alive.current&&token===probe.current)setExitError(String(value));}
   finally{if(alive.current&&token===probe.current)setChecking(false);}
  }
@@ -108,7 +112,7 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
     if(controls.length)controls[(current+(event.shiftKey?-1:1)+controls.length)%controls.length]?.focus();else dialog.current?.focus();
    }
   }}>
-   <header><h2>Сеть вкладки</h2><button type="button" aria-label="Закрыть выбор пути вкладки" disabled={busy} onClick={onClose}><Icon name="close" size={17}/></button></header>
+   <header><h2>Сеть вкладки</h2><button type="button" aria-label="Закрыть сеть вкладки" disabled={busy} onClick={onClose}><Icon name="close" size={17}/></button></header>
    <strong className="tab-route-tab-title">{tab.zagolovok||'Новая вкладка'}</strong>
    <p className="tab-route-current">Текущий путь: {routeStateKnown(tab)?routeLabel(tab.route,choices):'ещё не получен'}</p>
    <label className="tab-route-choice">Подключение<Vybor aria-label="Выберите путь вкладки" value={draft} disabled={busy||!choices} onChange={event=>{setDraft(event.target.value);setError('');setNotice('');}}>
@@ -119,7 +123,7 @@ export function TabRouteDialog({owner,tab,choices,choicesError,onRefresh,onApply
     {choices?.connections.map(value=><option key={value.id} value={'connection:'+value.id}>{value.name}</option>)}
    </Vybor></label>
    {draft!==routeKey(tab.route)&&<p id="tab-route-profile-warning" className="tab-route-warning">Страница перезагрузится. У другого пути отдельный профиль — может понадобиться повторный вход.</p>}
-   <div className="tab-route-exit"><span>Фактический выход: {checking?'проверяется…':exit?exit.ip:exitError?'ошибка проверки':'не проверен'}</span><button type="button" disabled={checking||busy} onClick={()=>void checkExit()}>{checking?'Проверяю…':'Проверить IP'}</button></div>
+   <div className="tab-route-exit"><span>Фактический выход: {checking?'проверяется…':exit?exit.ip+' · '+countryName(exit.country):exitError?'ошибка проверки':'не проверен'}</span><button type="button" disabled={checking||busy} onClick={()=>void checkExit()}>{checking?'Проверяю…':'Проверить IP'}</button></div>
    {exit&&<small className="muted">{exit.ms} мс · {new Date(exit.checked*1000).toLocaleTimeString()}</small>}
    {exitError&&<p className="tab-route-error" role="alert">{exitError}</p>}
    {!choices&&!choicesError&&<p role="status">Загружаю сохранённые подключения…</p>}

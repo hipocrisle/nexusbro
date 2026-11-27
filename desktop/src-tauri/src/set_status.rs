@@ -16,13 +16,66 @@ pub async fn set_proverit_ip(s:tauri::State<'_,crate::Sostoyanie>,id:String)->Re
     proverit_ip_port(port).await
 }
 
+// IP and country come from the same request through the confirmed tab route.
+fn trace_exit(text: &str) -> Option<(std::net::IpAddr, Option<String>)> {
+    if text.len()>4096 {return None;}
+    let (mut ip,mut country)=(None,None);
+    let (mut saw_ip,mut saw_country)=(false,false);
+    for line in text.lines() {
+        if let Some(value)=line.strip_prefix("ip=") {
+            if saw_ip{return None;} saw_ip=true;ip=Some(value.parse().ok()?);
+        } else if let Some(value)=line.strip_prefix("loc=") {
+            if saw_country{return None;} saw_country=true;
+            if value.len()==2 && value.bytes().all(|b|b.is_ascii_uppercase()) && value!="XX" {country=Some(value.to_owned());}
+        }
+    }
+    Some((ip?,country))
+}
+async fn small_body(mut response:reqwest::Response)->Option<String>{
+    if !response.status().is_success() || response.content_length().is_some_and(|n|n>4096){return None;}
+    let mut bytes=Vec::new();
+    while let Some(chunk)=response.chunk().await.ok()? {
+        if bytes.len()+chunk.len()>4096{return None;} bytes.extend_from_slice(&chunk);
+    }
+    String::from_utf8(bytes).ok()
+}
 pub(crate) async fn proverit_ip_port(port:u16)->Result<Value,String>{
     let client=reqwest::Client::builder().no_proxy().proxy(reqwest::Proxy::all(format!("http://127.0.0.1:{port}")).map_err(|_|"Ошибка прокси")?).timeout(std::time::Duration::from_secs(8)).build().map_err(|_|"Ошибка проверки")?;
+    let start=std::time::Instant::now();
+    if let Ok(response)=client.get("https://www.cloudflare.com/cdn-cgi/trace").timeout(std::time::Duration::from_secs(3)).send().await {
+        if let Some(text)=small_body(response).await {
+            if let Some((ip,country))=trace_exit(&text){return Ok(json!({"ip":ip.to_string(),"country":country,"ms":start.elapsed().as_millis(),"checked":crate::biblioteka::vremya()}));}
+        }
+    }
     for url in ["https://api.ipify.org?format=json","https://api64.ipify.org?format=json"]{
         let start=std::time::Instant::now();
-        if let Ok(r)=client.get(url).send().await{if r.status().is_success(){if let Ok(text)=r.text().await{if let Ok(v)=serde_json::from_str::<Value>(&text){if let Some(ip)=v["ip"].as_str().and_then(|s|s.parse::<std::net::IpAddr>().ok()){return Ok(json!({"ip":ip.to_string(),"ms":start.elapsed().as_millis(),"checked":crate::biblioteka::vremya()}));}}}}}
+        if let Ok(response)=client.get(url).send().await {
+            if let Some(text)=small_body(response).await {
+                if let Ok(value)=serde_json::from_str::<Value>(&text){
+                    if let Some(ip)=value["ip"].as_str().and_then(|v|v.parse::<std::net::IpAddr>().ok()){
+                        return Ok(json!({"ip":ip.to_string(),"country":null,"ms":start.elapsed().as_millis(),"checked":crate::biblioteka::vremya()}));
+                    }
+                }
+            }
+        }
     }
     Err("Не удалось проверить IP через выбранный выход. Прямое подключение не использовалось.".into())
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test] fn trace_pairs_ip_with_country_and_supports_ipv6(){
+        let (ip,country)=trace_exit("ip=2001:db8::1\ncolo=FRA\nloc=DE\n").unwrap();
+        assert!(ip.is_ipv6());assert_eq!(country.as_deref(),Some("DE"));
+    }
+    #[test] fn country_is_not_inferred_from_datacenter_or_malformed_codes(){
+        for code in ["XX","de","DE-extra",""]{
+            assert_eq!(trace_exit(&format!("ip=192.0.2.1\ncolo=FRA\nloc={code}\n")).unwrap().1,None);
+        }
+    }
+    #[test] fn invalid_or_ambiguous_trace_never_supplies_a_confirmed_exit(){
+        for text in ["ip=not-an-ip\nloc=DE", "loc=DE", "ip=192.0.2.1\nip=192.0.2.2", "ip=192.0.2.1\nloc=DE\nloc=RU"]{assert!(trace_exit(text).is_none());}
+    }
 }
 
 // Одна проверка на локальный выход за TTL, даже если открыто несколько окон.
