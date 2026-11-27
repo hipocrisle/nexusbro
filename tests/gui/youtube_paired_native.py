@@ -222,6 +222,32 @@ def metrics(samples,video,args):
                 measurement_start_position=video[0]['position'],measurement_end_position=video[-1]['position'],peak_processes=max(r['owned']['processes'] for r in samples),observed_fps=fps,dropped_ratio=drops/frames,measurement_seconds=elapsed,media_seconds=media)
 
 
+def reference_playback_window(snapshot, args, result, *, clock=time.monotonic, sleep=time.sleep):
+    """Diagnostic only: observe eight uninterrupted seconds after bounded buffering.
+
+    The same extraction keeps running; no play/seek/reload/retry is issued.
+    This does not alter the four-arm performance warmup or measurement gates.
+    """
+    began=clock();stable=None;first=None;previous=None;buffers=0
+    while clock()-began<=30:
+        state=snapshot();audio_policy(state);video_state(state,args)
+        result['reference_last_state']={k:state.get(k) for k in ('position','duration','decoded','dropped','playing','video_paused','audio_paused','hidden','video_width','video_height')}
+        if previous is not None and state['position']<previous['position']:
+            raise Blocked('reference_preflight_clock_discontinuity')
+        if state.get('playing') is True:
+            if stable is None:stable=clock();first=state
+            if clock()-stable>=8:
+                if state['position']-first['position']<7 or state['decoded']<=first['decoded']:
+                    raise Blocked('reference_preflight_clock_or_frames_stalled')
+                result['reference_startup_buffer_samples']=buffers
+                result['reference_continuous_wall_seconds']=clock()-stable
+                return state
+        else:
+            stable=first=None;buffers+=1
+        previous=state;sleep(.5)
+    raise Blocked('reference_preflight_continuous_playback_deadline')
+
+
 MEASUREMENT_START_POSITION=60
 MIN_STABLE_WARMUP_SECONDS=30
 WARMUP_MAX_SECONDS=90
@@ -338,6 +364,14 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         elif mode=='normal' and getattr(args,'native_normal_ui',False):
             result['stage']='normal-native-physical-ui'
             state=prepare_normal_native_ui(client,device,lambda:snapshot(mode),identifier,tab,args,result)
+            if getattr(args,'account_playback_diagnostic',False):
+                call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'pereyti','id':tab,'adres':'https://www.youtube.com/account_playback'})
+                wait_for(lambda:any(v.get('id')==tab and not v.get('zagruzka') for v in rows(client,identifier)['vkladki']),'Account settings navigation did not finish',20)
+                time.sleep(3)
+                from PIL import ImageGrab
+                with ImageGrab.grab(xdisplay=device.display) as shot:shot.save(out/'account-playback.png')
+                result['account_settings_screenshot_written']=True
+                raise Blocked('account_playback_diagnostic_only')
         reference_preflight=(getattr(args,'normal_reference_preflight',False)
                              or getattr(args,'light_reference_preflight',False))
         if reference_preflight:
@@ -369,12 +403,8 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
         if reference_preflight:
-            first=state;began=time.monotonic()
-            while time.monotonic()-began<8:
-                time.sleep(.5);state=snapshot(mode);audio_policy(state)
-                if not state.get('playing'):raise Blocked('reference_preflight_paused')
+            state=reference_playback_window(lambda:snapshot(mode),observed_args,result)
             result['observed_last_state']={k:state.get(k) for k in ('position','duration','decoded','dropped','video_width','video_height','playing')}
-            if state['position']-first['position']<7 or state['decoded']<=first['decoded']:raise Blocked('reference_preflight_clock_or_frames_stalled')
             result['reference_playback_observed']=True
             (close_owned or close_for_privacy)(client,device,result)
             result['stage']='complete';return result

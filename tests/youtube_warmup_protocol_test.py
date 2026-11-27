@@ -3,7 +3,7 @@ import sys,unittest
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0,str(Path(__file__).parent/'gui'))
-from youtube_paired_native import warmup_to_segment,Blocked
+from youtube_paired_native import warmup_to_segment,reference_playback_window,Blocked
 class Clock:
  def __init__(self):self.value=0.
  def now(self):return self.value
@@ -37,4 +37,26 @@ class Protocol(unittest.TestCase):
  def test_forward_seek_is_never_accepted_as_warmup(self):
   c=Clock()
   with self.assertRaisesRegex(Blocked,'clock_discontinuity'):warmup_to_segment(lambda:self.snapshot(c.value+(20 if c.value>=5 else 0)),self.args,{},clock=c.now,sleep=c.sleep)
+class ReferenceWindow(Protocol):
+ def test_startup_buffer_recovers_without_input_then_eight_continuous_seconds(self):
+  c=Clock();result={}
+  def observe():return self.snapshot(max(0,c.value-2),c.value>=2)
+  last=reference_playback_window(observe,self.args,result,clock=c.now,sleep=c.sleep)
+  self.assertGreaterEqual(result['reference_continuous_wall_seconds'],8)
+  self.assertGreaterEqual(last['position'],8)
+  self.assertEqual(result['reference_startup_buffer_samples'],4)
+ def test_reference_permanent_pause_is_bounded_and_never_passes(self):
+  c=Clock()
+  with self.assertRaisesRegex(Blocked,'continuous_playback_deadline'):
+   reference_playback_window(lambda:self.snapshot(0,False),self.args,{},clock=c.now,sleep=c.sleep)
+  self.assertLessEqual(c.value,30.5)
+ def test_reference_playing_flag_without_advancing_frames_fails(self):
+  c=Clock()
+  with self.assertRaisesRegex(Blocked,'clock_or_frames_stalled'):
+   reference_playback_window(lambda:self.snapshot(0),self.args,{},clock=c.now,sleep=c.sleep)
+ def test_reference_late_pause_restarts_the_continuous_window(self):
+  c=Clock();result={}
+  def observe():return self.snapshot(c.value if c.value<7 else max(7,c.value-1),not(7<=c.value<8))
+  reference_playback_window(observe,self.args,result,clock=c.now,sleep=c.sleep)
+  self.assertGreaterEqual(c.value,16)
 if __name__=='__main__':unittest.main()

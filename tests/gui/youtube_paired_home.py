@@ -97,6 +97,8 @@ def run(args):
     require(not out_parent.is_symlink() and out_parent.stat().st_uid==args.expect_uid,'Private output directory invalid')
     out_parent.chmod(0o700)
     out=out_parent/('paired-'+str(time.time_ns()));out.mkdir(mode=0o700)
+    if args.account_playback_diagnostic:
+        require(args.normal_reference_preflight and args.native_normal_ui,'Account settings probe is diagnostic-only')
     if args.quality_menu_diagnostic:
         require(args.normal_reference_preflight and args.native_normal_ui,'Quality diagnostic requires normal short preflight')
         args.quality_diagnostic_dir=str(out)
@@ -144,6 +146,7 @@ if __name__=='__main__':
     p.add_argument('--normal-reference-preflight',action='store_true')
     p.add_argument('--light-reference-preflight',action='store_true')
     p.add_argument('--quality-menu-diagnostic',action='store_true')
+    p.add_argument('--account-playback-diagnostic',action='store_true')
     p.add_argument('--manual-ui-setup',action='store_true')
     p.add_argument('--native-normal-ui',action='store_true')
     p.add_argument('--allow-local-virtual-display',action='store_true');p.add_argument('--video-id',default='M7lc1UVf-VE')

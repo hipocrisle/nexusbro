@@ -296,14 +296,22 @@ def run(args):
             # actual menuitem bounds, then send ONE physical OS click.
             from client import Client
             client.close()
-            popup=None
-            for index in range(2):
-                candidate=Client(display=device.display,port=device.inspector,page_index=index)
-                label=candidate.js('window.__TAURI_INTERNALS__?.metadata.currentWindow.label')
-                if isinstance(label,str) and label.startswith('menu-'):
-                    popup=candidate;break
-                candidate.close()
-            require(popup is not None,'owned_popup_page_missing')
+            def popup_page():
+                require(native_app_identity_alive(device,identity),'owned_app_changed')
+                for index in range(2):
+                    candidate=None
+                    try:
+                        candidate=Client(display=device.display,port=device.inspector,page_index=index)
+                        label=candidate.js('window.__TAURI_INTERNALS__?.metadata.currentWindow.label')
+                        if isinstance(label,str) and label.startswith('menu-'):
+                            return candidate
+                    except (ConnectionError,OSError):
+                        pass
+                    if candidate is not None:candidate.close()
+                return None
+            # Mapping an OS window can precede WebKit page/metadata creation.
+            # Observe that same menu, never click it open a second time.
+            popup=wait_for(popup_page,'owned_popup_page_missing',10)
             require(native_app_identity_alive(device,identity),'owned_app_changed')
             bounds=wait_for(lambda:popup.js("""(()=>{const e=document.querySelector('button[role="menuitem"][aria-label="Сохранить страницу…"]');if(!e)return null;const r=e.getBoundingClientRect(),x=r.x+r.width/2,y=r.y+r.height/2,h=document.elementFromPoint(x,y);return r.width>0&&r.height>0&&(h===e||e.contains(h))?{x,y,w:innerWidth,h:innerHeight,k:devicePixelRatio||1}:null})()"""),'save_menu_item_not_painted',10)
             from x11_owned_cef_focus import NativeX11
