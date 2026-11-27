@@ -272,6 +272,37 @@ def reference_playback_window(snapshot, args, result, *, clock=time.monotonic, s
     raise Blocked('reference_preflight_continuous_playback_deadline')
 
 
+def functional_playback_window(snapshot,args,result,*,clock=time.monotonic,sleep=time.sleep):
+    """120 seconds of actual content within 180 wall seconds, not a benchmark.
+
+    No seeks, retries or input. Buffering is recorded, not represented as
+    uninterrupted playback or a performance result. One stall over 20s fails.
+    """
+    began=clock();first=None;previous=None;previous_wall=None;stall=None;events=[]
+    while True:
+        state=snapshot();now=clock();video_state(state,args)
+        if now-began>180:raise Blocked('functional_playback_deadline')
+        if first is None:first=state
+        if previous is not None:
+            delta=state['position']-previous['position']
+            if delta<0 or delta>now-previous_wall+1:raise Blocked('functional_clock_discontinuity')
+            if state['decoded']<previous['decoded']:raise Blocked('functional_frame_counter_regressed')
+            advancing=state.get('playing') is True and delta>0
+            if not advancing:
+                if stall is None:
+                    stall=now;events.append({'position':state['position'],'duration_seconds':0,'resumed_without_input':False})
+                events[-1]['duration_seconds']=now-stall
+                if now-stall>20:raise Blocked('functional_stall_deadline')
+            elif stall is not None:
+                events[-1]['duration_seconds']=now-stall;events[-1]['resumed_without_input']=True;stall=None
+        result['functional_playback']={'played_media_seconds':state['position']-first['position'],'wall_seconds':now-began,'buffer_events':events,'last_state':video_state(state,args),'first_state':video_state(first,args),'completed':False}
+        if state['position']-first['position']>=120 and state.get('playing') is True:
+            if state['decoded']<=first['decoded']:raise Blocked('functional_frames_not_advanced')
+            result['functional_playback']['completed']=True
+            return state
+        previous=state;previous_wall=now;sleep(.5)
+
+
 MEASUREMENT_START_POSITION=60
 MIN_STABLE_WARMUP_SECONDS=30
 WARMUP_MAX_SECONDS=90
@@ -438,6 +469,11 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False
+        if getattr(args,'light_functional_check',False):
+            if mode!='light':raise Blocked('functional_mode_invalid')
+            functional_playback_window(lambda:snapshot(mode),args,result)
+            (close_owned or close_for_privacy)(client,device,result)
+            result['stage']='complete';return result
         if reference_preflight:
             state=reference_playback_window(lambda:snapshot(mode),observed_args,result)
             result['observed_last_state']={k:state.get(k) for k in ('position','duration','decoded','dropped','video_width','video_height','playing')}
