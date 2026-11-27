@@ -37,7 +37,15 @@ PUBLICATION_ONLY_PREFIXES = ('docs/verification/',)
 LINUX_EXTRA_IGNORE = frozenset({'tests/gui/windows_physical.py'})
 RUN_ID = re.compile(r'^[1-9][0-9]{0,19}$')
 SHA = re.compile(r'^[0-9a-f]{40}$')
-BUILD_RUN_IN_LOG = re.compile(r'\bBUILD_RUN: ([1-9][0-9]{0,19})\b')
+REPO_NAME = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
+WORKFLOW_PATH = '.github/workflows/build.yml'
+# Anchored whole log lines with an optional ISO timestamp prefix, exactly as
+# the runner prints env lines; never an arbitrary substring match.
+ENV_PREFIX = r'(?:^\d{4}-\d{2}-\d{2}T[0-9:.]+Z )?'
+BUILD_RUN_LINE = re.compile(
+    r'(?m)^' + ENV_PREFIX + r'BUILD_RUN: ([1-9][0-9]{0,19})\s*$')
+LINUX_REQUEST_LINE = re.compile(
+    r'(?m)^' + ENV_PREFIX + r'REQUEST: build\s*$')
 
 
 class EvidenceRejected(ValueError):
@@ -55,14 +63,27 @@ def _api(invoke, repo, path):
     return json.loads(invoke(['gh', 'api', f'repos/{repo}/{path}']))
 
 
+def _run_meta(invoke, repo, run_id, code):
+    meta = _api(invoke, repo, f'actions/runs/{run_id}')
+    if (not isinstance(meta, dict)
+            or str(meta.get('path', '')) != WORKFLOW_PATH
+            or meta.get('repository', {}).get('full_name') != repo):
+        raise EvidenceRejected(code)
+    return meta
+
+
+def _fetch(invoke, sha):
+    invoke(['git', 'fetch', '--no-tags', 'origin', sha])
+
+
 def _validate_request(request):
     if not isinstance(request, dict) or set(request) != {'windows', 'linux'}:
         raise EvidenceRejected('native_evidence_request_invalid')
     for value in request.values():
         if not isinstance(value, str) or not RUN_ID.fullmatch(value):
             raise EvidenceRejected('native_evidence_run_id_invalid')
-    if request['windows'] == request['linux']:
-        raise EvidenceRejected('native_evidence_runs_ambiguous')
+    # The SAME run may legitimately carry both acceptance jobs (a combined
+    # run); job-name uniqueness below still forbids any ambiguity.
     return request
 
 
@@ -85,7 +106,7 @@ def _recipe_block(text, key):
 
 def verified_native_jobs(repo, build, source, current_run, request, invoke=None):
     invoke = invoke or _default_invoke
-    if not (isinstance(repo, str) and repo.count('/') == 1):
+    if not (isinstance(repo, str) and REPO_NAME.fullmatch(repo)):
         raise EvidenceRejected('repo_invalid')
     if not (isinstance(build, str) and RUN_ID.fullmatch(build)):
         raise EvidenceRejected('build_invalid')
@@ -94,24 +115,26 @@ def verified_native_jobs(repo, build, source, current_run, request, invoke=None)
     if not (isinstance(current_run, str) and RUN_ID.fullmatch(current_run)):
         raise EvidenceRejected('current_run_invalid')
     request = _validate_request(request)
-    current_meta = _api(invoke, repo, f'actions/runs/{current_run}')
-    if not str(current_meta.get('path', '')).endswith('build.yml'):
-        raise EvidenceRejected('current_run_invalid')
-    producer = _api(invoke, repo, f'actions/runs/{build}')
-    if producer.get('status') != 'completed' or producer.get('head_sha') != source:
-        raise EvidenceRejected('producer_mismatch')
     current_head = invoke(['git', 'rev-parse', 'HEAD']).strip()
     if not SHA.fullmatch(current_head):
         raise EvidenceRejected('current_head_invalid')
+    current_meta = _run_meta(invoke, repo, current_run, 'current_run_invalid')
+    if (current_meta.get('event') != 'workflow_dispatch'
+            or current_meta.get('head_sha') != current_head):
+        raise EvidenceRejected('current_run_invalid')
+    producer = _run_meta(invoke, repo, build, 'producer_mismatch')
+    if producer.get('status') != 'completed' or producer.get('head_sha') != source:
+        raise EvidenceRejected('producer_mismatch')
+    _fetch(invoke, source)
     current_recipe_text = invoke(
-        ['git', 'show', f'{current_head}:.github/workflows/build.yml'])
+        ['git', 'show', f'{current_head}:{WORKFLOW_PATH}'])
     normalized = []
     for platform in ('windows', 'linux'):
         run_id = request[platform]
-        meta = _api(invoke, repo, f'actions/runs/{run_id}')
+        meta = _run_meta(invoke, repo, run_id,
+                         'evidence_run_invalid:' + platform)
         if (meta.get('status') != 'completed'
-                or meta.get('event') != 'workflow_dispatch'
-                or not str(meta.get('path', '')).endswith('build.yml')):
+                or meta.get('event') != 'workflow_dispatch'):
             raise EvidenceRejected('evidence_run_invalid:' + platform)
         evidence_head = meta.get('head_sha')
         if not (isinstance(evidence_head, str) and SHA.fullmatch(evidence_head)):
@@ -131,8 +154,14 @@ def verified_native_jobs(repo, build, source, current_run, request, invoke=None)
             raise EvidenceRejected('evidence_steps_missing:' + platform)
         log = invoke(
             ['gh', 'api', f'repos/{repo}/actions/jobs/{job["id"]}/logs'])
-        if set(BUILD_RUN_IN_LOG.findall(log)) != {build}:
+        if set(BUILD_RUN_LINE.findall(log)) != {build}:
             raise EvidenceRejected('evidence_producer_binding:' + platform)
+        if platform == 'linux' and not LINUX_REQUEST_LINE.search(log):
+            # A diagnostic/partial reuse request (JSON REQUEST) can pass all
+            # of its own steps while skipping routes; only the plain full
+            # native request line is acceptable evidence.
+            raise EvidenceRejected('evidence_linux_request_not_full')
+        _fetch(invoke, evidence_head)
         if invoke(['git', 'diff', '--name-only',
                    f'{source}..{evidence_head}', '--', 'desktop/']).strip():
             raise EvidenceRejected('desktop_changed_before_evidence:' + platform)
