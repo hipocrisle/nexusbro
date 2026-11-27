@@ -1122,7 +1122,11 @@ try:
     # cannot prove which process owns physical keyboard focus.
     results.append({'shell_keyboard_native_focus':{'active':int(keyboard_info.hwndActive or 0),'focus':int(keyboard_info.hwndFocus or 0),'class':native_focus_class.value,'main':int(main_hwnd),'focus_pid':focus_pid.value,'focus_thread':focus_thread,'focus_process':focus_process}})
     assert keyboard_info.hwndActive==main_hwnd,'Physical keyboard target is not the main browser window'
-    gui.hotkey('ctrl','shift','l')
+    # A real user cannot press three keys in zero milliseconds: 50 ms between
+    # the physical key events of the SAME single chord mirrors human input
+    # timing (WebView2 evaluates accelerator modifiers per event). Same lock
+    # gate, no retry, no programmatic lock; native journal gates unchanged.
+    gui.hotkey('ctrl','shift','l',interval=.05)
     ui('Мастер-пароль для разблокировки браузера',['Edit'])
     ImageGrab.grab().save(run/'browser-shell-locked.png')
     ui('Мастер-пароль для разблокировки браузера',['Edit']).click_input();gui.write(browser_master,interval=.01)
@@ -1265,7 +1269,7 @@ try:
         def recovery_lock():
             focus_ui('Адрес страницы',['Edit','ComboBox'])
             before=receipt=recovery_focus_receipt()
-            gui.hotkey('ctrl','shift','l')
+            gui.hotkey('ctrl','shift','l',interval=.05)
             try:
                 recovery_control('Мастер-пароль для разблокировки браузера',['Edit'])
             except Exception:
