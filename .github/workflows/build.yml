@@ -104,6 +104,14 @@ on:
         description: Publish existing tagged packages after successful runtime check (requires runtime_build)
         required: false
         default: ""
+      publish_existing_build:
+        description: Producer build run id for evidence-reuse publish (requires native_evidence)
+        required: false
+        default: ""
+      native_evidence:
+        description: JSON {"windows":"<run>","linux":"<run>"} of verified native acceptance runs
+        required: false
+        default: ""
       runtime_baseline:
         description: Existing package predates NEXUSBRO_TEST_DATA (ephemeral runner only)
         type: boolean
@@ -1800,6 +1808,43 @@ jobs:
           LINUX_RUNTIME_BUILD: ${{ inputs.linux_runtime_build }}
           WINDOWS_RUNTIME_BUILD: ${{ inputs.runtime_build }}
           LINUX_RUNTIME_RESULT: ${{ needs['linux-runtime'].result }}
+        run: |
+          python3 tests/prepare_release_draft.py
+          python3 tests/publish_tested_release.py
+      - name: Preserve small public updater verification receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: public-updater-verification-${{ github.run_attempt }}
+          path: |
+            .dev-check/publish/latest.json
+            .dev-check/publish/signature-verification.json
+            .dev-check/publish/public-verification.json
+            .dev-check/publish/resource-acceptance.json
+            .dev-check/publish/*.sig
+          retention-days: 14
+
+  publish-from-evidence:
+    name: Publish verified packages from reused native evidence
+    if: >-
+      github.event_name == 'workflow_dispatch' &&
+      inputs.publish_existing_build != '' && inputs.native_evidence != '' &&
+      inputs.publish_tag != '' && inputs.runtime_build == '' &&
+      inputs.linux_runtime_build == ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    steps:
+      - uses: actions/checkout@v4
+      - run: python3 -m pip install cryptography
+      - name: Verify reused native evidence and publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ inputs.publish_tag }}
+          BUILD_RUN: ${{ inputs.publish_existing_build }}
+          NATIVE_EVIDENCE: ${{ inputs.native_evidence }}
         run: |
           python3 tests/prepare_release_draft.py
           python3 tests/publish_tested_release.py
