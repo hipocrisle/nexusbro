@@ -213,9 +213,11 @@ class NativeEvidenceTest(unittest.TestCase):
         import yaml
         workflow = yaml.safe_load((Path(__file__).resolve().parents[1]
                                    / '.github' / 'workflows' / 'build.yml').read_text())
+        trigger=workflow.get('on',workflow.get(True))
+        self.assertLessEqual(len(trigger['workflow_dispatch']['inputs']),25)
         jobs = workflow['jobs']
         self.assertIn('publish-from-evidence', jobs)
-        skip_markers = ("inputs.publish_existing_build == ''",
+        skip_markers = ("!startsWith(inputs.publish_tag, '{')",
                         "inputs.runtime_build != ''",
                         "inputs.linux_runtime_build != ''",
                         "inputs.performance_build != ''",
@@ -228,7 +230,7 @@ class NativeEvidenceTest(unittest.TestCase):
         for name, job in jobs.items():
             condition = ' '.join(str(job.get('if', '')).split())
             if name == 'publish-from-evidence':
-                self.assertIn("inputs.publish_existing_build != ''", condition)
+                self.assertIn("startsWith(inputs.publish_tag, '{')", condition)
                 continue
             self.assertTrue(any(m in condition for m in skip_markers),
                             (name, condition[:90]))

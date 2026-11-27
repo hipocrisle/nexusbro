@@ -104,14 +104,6 @@ on:
         description: Publish existing tagged packages after successful runtime check (requires runtime_build)
         required: false
         default: ""
-      publish_existing_build:
-        description: Producer build run id for evidence-reuse publish (requires native_evidence)
-        required: false
-        default: ""
-      native_evidence:
-        description: JSON {"windows":"<run>","linux":"<run>"} of verified native acceptance runs
-        required: false
-        default: ""
       runtime_baseline:
         description: Existing package predates NEXUSBRO_TEST_DATA (ephemeral runner only)
         type: boolean
@@ -145,7 +137,7 @@ jobs:
       impersonate_chrome: false
   process-ownership:
     if: >-
-      inputs.publish_existing_build == '' &&
+      !startsWith(inputs.publish_tag, '{') &&
       inputs.youtube_native_reuse == '' && (!(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     strategy:
       fail-fast: false
@@ -160,12 +152,12 @@ jobs:
         run: cargo test --manifest-path tests/super_process_harness/Cargo.toml -- --test-threads=1
   youtube-sources:
     if: >-
-      inputs.publish_existing_build == '' &&
+      !startsWith(inputs.publish_tag, '{') &&
       inputs.youtube_native_reuse == '' && (inputs.youtube_sources_inventory || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)))
     uses: ./.github/workflows/youtube-sources.yml
   youtube-minimal-muxer:
     if: >-
-      inputs.publish_existing_build == '' &&
+      !startsWith(inputs.publish_tag, '{') &&
       inputs.youtube_native_reuse == '' && ((inputs.youtube_muxer_only && inputs.youtube_muxer_reuse == '') || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)))
     needs: [youtube-media-fixture]
     uses: ./.github/workflows/youtube-muxer.yml
@@ -182,7 +174,7 @@ jobs:
       source_run: ${{ inputs.youtube_muxer_reuse }}
   security:
     if: >-
-      inputs.publish_existing_build == '' &&
+      !startsWith(inputs.publish_tag, '{') &&
       inputs.youtube_native_reuse == '' && (!(inputs.frontend_only && (inputs.youtube_muxer_only || inputs.youtube_sources_inventory) && !inputs.youtube_probe_only) && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-22.04
     steps:
@@ -252,7 +244,7 @@ jobs:
     env:
       CONTROLLED_MEDIA_BUILD: ${{ startsWith(inputs.youtube_muxer_reuse, '{') && fromJSON(inputs.youtube_muxer_reuse).controlled_media_build || '' }}
     if: >-
-      inputs.publish_existing_build == '' &&
+      !startsWith(inputs.publish_tag, '{') &&
       inputs.youtube_native_reuse == '' && ((inputs.youtube_muxer_only || (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build)) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     runs-on: ubuntu-24.04
     timeout-minutes: 8
@@ -308,7 +300,7 @@ jobs:
     # ⛔ Не запускать сборку для запросов из ЧУЖИХ копий репозитория: она
     # выполняет их же скрипты. Свои ветки и запросы собираются как обычно.
     if: >-
-      inputs.publish_existing_build == '' &&
+      !startsWith(inputs.publish_tag, '{') &&
       inputs.youtube_native_reuse == '' && (!inputs.frontend_only && !inputs.runtime_build && !inputs.linux_runtime_build && !inputs.performance_build && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository))
     strategy:
       fail-fast: false
@@ -1834,8 +1826,7 @@ jobs:
     name: Publish verified packages from reused native evidence
     if: >-
       github.event_name == 'workflow_dispatch' &&
-      inputs.publish_existing_build != '' && inputs.native_evidence != '' &&
-      inputs.publish_tag != '' && inputs.runtime_build == '' &&
+      startsWith(inputs.publish_tag, '{') && inputs.runtime_build == '' &&
       inputs.linux_runtime_build == ''
     runs-on: ubuntu-latest
     permissions:
@@ -1848,9 +1839,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
-          TAG: ${{ inputs.publish_tag }}
-          BUILD_RUN: ${{ inputs.publish_existing_build }}
-          NATIVE_EVIDENCE: ${{ inputs.native_evidence }}
+          TAG: ${{ fromJSON(inputs.publish_tag).tag }}
+          BUILD_RUN: ${{ fromJSON(inputs.publish_tag).build }}
+          NATIVE_EVIDENCE: ${{ toJSON(fromJSON(inputs.publish_tag).evidence) }}
         run: |
           python3 tests/prepare_release_draft.py
           python3 tests/publish_tested_release.py
