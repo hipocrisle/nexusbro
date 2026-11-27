@@ -20,9 +20,9 @@ CURRENT_HEAD = 'c' * 40
 RECIPE = 'jobs:\n  runtime:\n    steps: [win]\n  linux-runtime:\n    steps: [lin]\n  other:\n    x: 1\n'
 STEPS = [{'name': 'Verify native page save and offline MHTML reopen',
           'status': 'completed', 'conclusion': 'success'}]
-TS = '2026-11-27T11:00:00.1234567Z '
+TS = '2026-11-27T11:00:00.1234567Z   '
 WIN_LOG = TS + 'BUILD_RUN: ' + BUILD + '\n' + TS + 'other env\n'
-LINUX_LOG = TS + 'BUILD_RUN: ' + BUILD + '\n' + TS + 'REQUEST: build\n'
+LINUX_LOG = TS + 'BUILD_RUN: ' + BUILD + '\n' + TS + 'REQUEST: ' + BUILD + '\n'
 
 
 def make_invoke(*, producer_head=SOURCE, evidence_meta=None, jobs=None,
@@ -121,8 +121,8 @@ class NativeEvidenceTest(unittest.TestCase):
                  'conclusion': 'success', 'steps': STEPS},
                 {'id': 2, 'name': JOB_NAMES['linux'], 'status': 'completed',
                  'conclusion': 'success', 'steps': STEPS}]
-        logs = {'windows': WIN_LOG + TS + 'REQUEST: build\n',
-                'linux': WIN_LOG + TS + 'REQUEST: build\n'}
+        logs = {'windows': WIN_LOG + TS + 'REQUEST: ' + BUILD + '\n',
+                'linux': WIN_LOG + TS + 'REQUEST: ' + BUILD + '\n'}
         result = verified_native_jobs(
             REPO, BUILD, SOURCE, CURRENT_RUN, combined,
             invoke=make_invoke(jobs={'windows': both, 'linux': both},

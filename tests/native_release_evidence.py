@@ -41,11 +41,11 @@ REPO_NAME = re.compile(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$')
 WORKFLOW_PATH = '.github/workflows/build.yml'
 # Anchored whole log lines with an optional ISO timestamp prefix, exactly as
 # the runner prints env lines; never an arbitrary substring match.
-ENV_PREFIX = r'(?:^\d{4}-\d{2}-\d{2}T[0-9:.]+Z )?'
+ENV_PREFIX = r'(?:\d{4}-\d{2}-\d{2}T[0-9:.]+Z[ \t]+)?[ \t]*'
 BUILD_RUN_LINE = re.compile(
-    r'(?m)^' + ENV_PREFIX + r'BUILD_RUN: ([1-9][0-9]{0,19})\s*$')
+    r'(?m)^' + ENV_PREFIX + r'BUILD_RUN: ([1-9][0-9]{0,19})[ \t]*\r?$')
 LINUX_REQUEST_LINE = re.compile(
-    r'(?m)^' + ENV_PREFIX + r'REQUEST: build\s*$')
+    r'(?m)^' + ENV_PREFIX + r'REQUEST: ([^\r\n]+)[ \t]*\r?$')
 
 
 class EvidenceRejected(ValueError):
@@ -156,7 +156,7 @@ def verified_native_jobs(repo, build, source, current_run, request, invoke=None)
             ['gh', 'api', f'repos/{repo}/actions/jobs/{job["id"]}/logs'])
         if set(BUILD_RUN_LINE.findall(log)) != {build}:
             raise EvidenceRejected('evidence_producer_binding:' + platform)
-        if platform == 'linux' and not LINUX_REQUEST_LINE.search(log):
+        if platform == 'linux' and {value.strip() for value in LINUX_REQUEST_LINE.findall(log)} != {build}:
             # A diagnostic/partial reuse request (JSON REQUEST) can pass all
             # of its own steps while skipping routes; only the plain full
             # native request line is acceptable evidence.
