@@ -1,17 +1,17 @@
 {
   "schema": 1,
-  "source": "b81058db248379408fcc465afc24e3d970f35328",
-  "build_run": 45823253972,
-  "exe_sha256": "945952592bbbac21048318df7acc5bfae45eb7922e7e4b6cfcb442972ea2b68b",
-  "artifact_sha256": "c67815dcf50af12963f2d487e75ab9589c4673fa132ab2d1b6454932f7af6759",
-  "observed_at_utc": "2026-11-26T13:02:02.659065+00:00",
+  "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
+  "build_run": 45961659921,
+  "exe_sha256": "c1417dec44d12678c9c5242fb6e51c4c3c2ac17506ee5e61fdbb39cac16cbc7f",
+  "artifact_sha256": "08cae6b77b47c344f31ba249402275582e7873694ec97d7b6dafe8a80c472eb9",
+  "observed_at_utc": "2026-11-27T08:29:53.429863+00:00",
   "native_page_save_home_accepted": true,
   "direct_file_restore_accepted": true,
   "release_acceptance": false,
   "windows_native_acceptance": false,
   "diagnostic_only": false,
-  "raw_report_sha256": "36b0fddbe537052c07f925d047aefd057ea6b4231ee98ce0218e9f94da7dd519",
-  "test_sha256": "7abcf957c934c312acb2740570d7f71a50a1a9e2cac050a5c1aef4fca87eb48a",
+  "raw_report_sha256": "ce33e744146eae7ef03ac6a98d120ebb269a86a86e504aaac2d1308e3a6fca07",
+  "test_sha256": "d5024b9a498bc0bbdb985fd449541fa027eb5ca333811e9b7d5466334076aa10",
   "checks": {
     "native_ctrl_s_dialog_cancel": true,
     "native_ctrl_s_saved_mhtml": true,
@@ -19,49 +19,6 @@
     "server_stopped_before_reopen": true,
     "offline_fresh_profile_css_image_and_frame_painted": true
   },
-  "archive": {
-    "bytes": 2705,
-    "sha256": "8472ae8c1e54f8c5ae6b8478a19e89913041593f29de5c01e3393fbe216a1516",
-    "embedded_image": true,
-    "embedded_stylesheet": true,
-    "embedded_frame": true
-  },
-  "menu_archive": {
-    "bytes": 2705,
-    "sha256": "02643a38015c652763239c39952956d38546e853365e564cdc62e6f38cab9a70",
-    "embedded_image": true,
-    "embedded_stylesheet": true,
-    "embedded_frame": true
-  },
-  "online_native_exit": {
-    "parent_normal_exit": true,
-    "native_members_observed": 8,
-    "os_identities_observed": 13,
-    "all_known_native_executions_exited": true,
-    "native_members_complete": true,
-    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
-    "harness_kill_used_for_acceptance": false,
-    "clean_shutdown_receipt_verified": false,
-    "receipt_unavailable_in_local_mode": true,
-    "actual_app_identity_bound": true,
-    "launcher_is_actual_app": false,
-    "actual_app_execution_exited": true,
-    "launcher_exit_zero": true
-  },
-  "offline_native_exit": {
-    "parent_normal_exit": true,
-    "native_members_observed": 8,
-    "os_identities_observed": 13,
-    "all_known_native_executions_exited": true,
-    "native_members_complete": true,
-    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
-    "harness_kill_used_for_acceptance": false,
-    "clean_shutdown_receipt_verified": false,
-    "receipt_unavailable_in_local_mode": true,
-    "actual_app_identity_bound": true,
-    "launcher_is_actual_app": false,
-    "actual_app_execution_exited": true,
-    "launcher_exit_zero": true
-  },
-  "cleanup_completed": true
+  "cleanup_completed": true,
+  "note": "Current-source full native Home result accepted; historical archive/exit details omitted to avoid attaching old values."
 }

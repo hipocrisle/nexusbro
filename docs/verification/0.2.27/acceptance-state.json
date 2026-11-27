@@ -6,10 +6,10 @@
   "candidate": {
     "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
     "build_run": 45961659921,
-    "status": "in_progress",
-    "native_windows": "pending",
-    "native_linux": "pending",
-    "page_save": "pending_current_source_native"
+    "status": "producer_failed_fresh_native_running",
+    "native_windows": "pending_fresh_runtime",
+    "native_linux": "pending_fresh_runtime",
+    "page_save": "home_current_source_five_native_checks_passed_windows_pending"
   },
   "resource_soak": {
     "run": 45844965597,
@@ -155,14 +155,14 @@
     "owner_profile_or_cookies_used": false
   },
   "resource_soak_pending": {
-    "run": null,
-    "status": "not_started_for_new_source",
-    "source": "7a28b51b5e2a6f2f852d777d6c1ba9a000489063",
+    "run": 45965405826,
+    "status": "in_progress",
+    "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
     "required_seconds": 7200,
     "platform": "windows",
     "diagnostic_pilot": false,
     "acceptance_passed": false,
-    "build_run": 45809541954
+    "build_run": 45961659921
   },
   "linux_strict_routes_pending": {
     "run": 45638466418,
@@ -336,5 +336,10 @@
       "home_normal_youtube": "native8actions selected720p actual12frames/0drops at0.247806s, then decode_pipeline_ambiguous; no long comparison accepted",
       "accepted_for_current_source": false
     }
-  ]
+  ],
+  "fresh_native_pending": {
+    "run": 45965385909,
+    "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
+    "status": "in_progress"
+  }
 }
