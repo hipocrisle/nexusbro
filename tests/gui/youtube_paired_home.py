@@ -114,8 +114,8 @@ def run(args):
     def expired(signum,frame):raise Blocked('bounded_arm_deadline')
     previous=signal.signal(signal.SIGALRM,expired)
     try:
-        require(not(args.normal_reference_preflight and args.light_reference_preflight),'Conflicting diagnostic modes')
-        order=('light',) if args.light_reference_preflight else (('normal',) if args.normal_reference_preflight else ORDER)
+        require(sum(bool(x) for x in (args.normal_reference_preflight,args.light_reference_preflight,args.light_long_diagnostic))<=1,'Conflicting diagnostic modes')
+        order=('light',) if args.light_reference_preflight or args.light_long_diagnostic else (('normal',) if args.normal_reference_preflight else ORDER)
         for index,mode in enumerate(order):
             require(digest(exe)==args.exe_sha256 and digest(cef/'libcef.so')==report['provenance']['cef_sha256'],'Same binary changed')
             signal.alarm(330)
@@ -124,7 +124,9 @@ def run(args):
             finally:signal.alarm(0)
             report['arms'].append(result)
             if result.get('stage')!='complete' or result.get('cleanup_completed') is not True:raise Blocked(result.get('blocked_reason','arm_incomplete'))
-        if args.normal_reference_preflight or args.light_reference_preflight:
+        if args.light_long_diagnostic:
+            report['light_long_playback_complete']=True
+        elif args.normal_reference_preflight or args.light_reference_preflight:
             report['light_reference_preflight_complete' if args.light_reference_preflight else 'normal_reference_preflight_complete']=True
         else:
             summarize_comparison(report,args)
@@ -136,8 +138,8 @@ def run(args):
         signal.signal(signal.SIGALRM,previous)
         report['wall_seconds']=round(time.monotonic()-began,3)
         (out/'result.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
-    print(json.dumps({'completed':report['completed'],'comparison_valid':report['comparison_valid'],'blocked_reason':report.get('blocked_reason'),'arms':len(report['arms']),'normal_reference_preflight_complete':report.get('normal_reference_preflight_complete',False),'light_reference_preflight_complete':report.get('light_reference_preflight_complete',False)}))
-    return 0 if report['accepted_measurement'] or report.get('normal_reference_preflight_complete') or report.get('light_reference_preflight_complete') else 1
+    print(json.dumps({'completed':report['completed'],'comparison_valid':report['comparison_valid'],'blocked_reason':report.get('blocked_reason'),'arms':len(report['arms']),'normal_reference_preflight_complete':report.get('normal_reference_preflight_complete',False),'light_reference_preflight_complete':report.get('light_reference_preflight_complete',False),'light_long_playback_complete':report.get('light_long_playback_complete',False)}))
+    return 0 if report['accepted_measurement'] or report.get('normal_reference_preflight_complete') or report.get('light_reference_preflight_complete') or report.get('light_long_playback_complete') else 1
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
@@ -145,6 +147,7 @@ if __name__=='__main__':
     p.add_argument('--producer-run',type=int,required=True);p.add_argument('--expect-uid',type=int,required=True)
     p.add_argument('--normal-reference-preflight',action='store_true')
     p.add_argument('--light-reference-preflight',action='store_true')
+    p.add_argument('--light-long-diagnostic',action='store_true')
     p.add_argument('--quality-menu-diagnostic',action='store_true')
     p.add_argument('--account-playback-diagnostic',action='store_true')
     p.add_argument('--manual-ui-setup',action='store_true')
