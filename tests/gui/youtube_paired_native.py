@@ -144,7 +144,7 @@ def focus_normal_cef(client,device):
     return focus_cef(device.display,int(str(window),0),viewport,engines,alive)
 
 
-def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result):
+def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result,*,consent_only=False):
     if sys.platform!='linux':raise Blocked('normal_native_ui_linux_only')
     from youtube_normal_ui_native import prepare_normal_playback,UiBlocked
     from youtube_player_native import native_app_identity,native_app_window,native_app_identity_alive
@@ -175,7 +175,7 @@ def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result):
                     and row.get('route_pending') is not True and not row.get('route_error'))
         except Exception:return False
     try:
-        return prepare_normal_playback(client,device,snapshot,args.width,args.height,result,binding,quality_diagnostic_dir=getattr(args,"quality_diagnostic_dir",None))
+        return prepare_normal_playback(client,device,snapshot,args.width,args.height,result,binding,quality_diagnostic_dir=getattr(args,"quality_diagnostic_dir",None),stop_after_consent=consent_only)
     except UiBlocked as error:raise Blocked('normal_ui_'+str(error)) from None
 
 
@@ -317,8 +317,29 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'vybrat','id':selected})
         result['fixture_wake']='ordinary_native_command_not_UI_acceptance'
         session=wait_for(lambda:rows(client,identifier) if any(v.get('browser_id',0)>0 and not v.get('zagruzka') for v in rows(client,identifier)['vkladki']) else None,'Public native page not ready',45);tab=session['aktivnaya']
+        def stable_document():
+            quiet_since=None; previous=None; deadline=time.monotonic()+15
+            while time.monotonic()<deadline:
+                current=rows(client,identifier)
+                row=next((r for r in current['vkladki'] if r.get('id')==tab),None)
+                key=(row.get('browser_id'),row.get('route_generation'),row.get('adres')) if row else None
+                if not row or row.get('zagruzka') or row.get('route_pending') or not row.get('browser_id'):
+                    quiet_since=None
+                elif key!=previous or quiet_since is None:
+                    quiet_since=time.monotonic()
+                elif time.monotonic()-quiet_since>=2:
+                    result['normal_initial_document_quiet_seconds']=2
+                    break
+                previous=key
+                time.sleep(.25)
+            else:raise Blocked('normal_initial_document_not_stable')
         result['stage']='content-admission'
         if mode=='light':
+            if getattr(args,'native_normal_ui',False):
+                stable_document()
+                prepare_normal_native_ui(client,device,lambda:snapshot('normal'),identifier,tab,args,result,consent_only=True)
+                stable_document()
+                result['light_consent_setup_complete']=True
             call(client,'obychnaya_komanda',id=identifier,komanda={'deystvie':'youtube_light','id':tab})
             deadline=time.monotonic()+60;state=None
             while time.monotonic()<deadline:
@@ -341,21 +362,7 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
                 # correctly bound CDP observation. Synchronize on the actual
                 # native session before taking the first observation; never
                 # retry an already-refused probe or re-extract public media.
-                quiet_since=None; previous=None; deadline=time.monotonic()+15
-                while time.monotonic()<deadline:
-                    current=rows(client,identifier)
-                    row=next((r for r in current['vkladki'] if r.get('id')==tab),None)
-                    key=(row.get('browser_id'),row.get('route_generation'),row.get('adres')) if row else None
-                    if not row or row.get('zagruzka') or row.get('route_pending') or not row.get('browser_id'):
-                        quiet_since=None
-                    elif key!=previous or quiet_since is None:
-                        quiet_since=time.monotonic()
-                    elif time.monotonic()-quiet_since>=2:
-                        result['normal_initial_document_quiet_seconds']=2
-                        break
-                    previous=key
-                    time.sleep(.25)
-                else:raise Blocked('normal_initial_document_not_stable')
+                stable_document()
             state=snapshot(mode)
         setup_hook=getattr(args,'normal_setup_hook',None)
         if mode=='normal' and setup_hook is not None:
