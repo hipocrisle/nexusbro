@@ -1,8 +1,8 @@
 {
   "schema": 1,
-  "desktop_source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
-  "producer_run": 45961659921,
-  "binary_sha256": "c1417dec44d12678c9c5242fb6e51c4c3c2ac17506ee5e61fdbb39cac16cbc7f",
+  "desktop_source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+  "producer_run": 45971903126,
+  "binary_sha256": "67d1c843767aa304b4eb26acec97a719633076c075dd671d8aed470dae1a7051",
   "completed": true,
   "diagnostic_only": true,
   "full_playback_acceptance": false,
@@ -10,23 +10,20 @@
   "playing_observed": true,
   "extraction_completed": true,
   "decoded_frames_advanced": true,
-  "position_delta_seconds": 8.666400000000001,
+  "position_delta_seconds": 120.354,
   "first_light_state": {
-    "playing": true,
-    "position": 0.177,
+    "position": 0.2336,
     "duration": 1343.6,
-    "decoded": 14,
+    "decoded": 16,
     "dropped": 0,
     "video_width": 1280,
     "video_height": 720,
-    "volume": 1,
-    "muted": false,
-    "default_sink": true
+    "playing": true
   },
   "last_light_state": {
-    "position": 8.8434,
+    "position": 120.5876,
     "duration": 1343.6,
-    "decoded": 274,
+    "decoded": 3627,
     "dropped": 0,
     "video_width": 1280,
     "video_height": 720,
@@ -34,16 +31,8 @@
   },
   "owned_exit": {
     "parent_normal_exit": true,
-    "native_members_observed": 9,
-    "os_identities_observed": 14,
     "all_known_native_executions_exited": true,
-    "native_members_complete": true,
-    "scope": "bounded_owned_fixture_not_universal_noescape_proof",
-    "harness_kill_used_for_acceptance": false,
-    "clean_shutdown_receipt_verified": false,
-    "receipt_unavailable_in_local_mode": true,
     "actual_app_identity_bound": true,
-    "launcher_is_actual_app": false,
     "actual_app_execution_exited": true,
     "launcher_exit_zero": true
   },
@@ -56,9 +45,36 @@
     "hardware_activity_proven": false,
     "video_pipelines": 1
   },
-  "raw_report_sha256": "e18b0c8b7b2e21661b723cbf6e1f4ce335de986ff0c7333a287ccc733c36b55e",
-  "continuous_wall_seconds": 8.456792207000035,
-  "startup_buffer_samples": 0,
+  "raw_report_sha256": "608b71184b8a11ff549b9c2d8f08bce01cbc631896c4c6694a64b5ae3e52e2ca",
+  "functional_wall_seconds": 134.83109654000145,
+  "buffer_events": [
+    {
+      "position": 15.6335,
+      "duration_seconds": 3.6220400299989706,
+      "resumed_without_input": true
+    },
+    {
+      "position": 20.1191,
+      "duration_seconds": 1.8123731539999426,
+      "resumed_without_input": true
+    },
+    {
+      "position": 22.3616,
+      "duration_seconds": 4.8312101579995215,
+      "resumed_without_input": true
+    },
+    {
+      "position": 29.0915,
+      "duration_seconds": 1.8117401569998037,
+      "resumed_without_input": true
+    },
+    {
+      "position": 85.3556,
+      "duration_seconds": 1.811567353999635,
+      "resumed_without_input": true
+    }
+  ],
+  "uninterrupted_playback_claimed": false,
   "audio_policy_observed": true,
   "sandbox": "preserved_no_gha_disable",
   "owner_profile_or_cookies_used": false

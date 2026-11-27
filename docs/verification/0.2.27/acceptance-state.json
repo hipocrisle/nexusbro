@@ -78,7 +78,7 @@
     }
   },
   "paired_public_measurement": {
-    "status": "native_AV1_user_quality_selection_prepared_actual_pending",
+    "status": "not_required_no_performance_claim",
     "accepted": false,
     "local_execution_performed": true,
     "gha_environment_spoofed": false,
@@ -385,5 +385,12 @@
     "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
     "producer_run": 45971903126,
     "raw_result_sha256": "15c6f3d6e39297b816c539ff0f883d6a03450c915c5f204e75961c77e1f73d22"
-  }
+  },
+  "release_policy": {
+    "mode": "functional",
+    "memory_process_changed": true,
+    "performance_claim": false,
+    "justification": "Functional release with actual default VP9 playback; this bundle changes lifecycle/hibernation, so exact-source resource acceptance remains required. No speed or memory advantage is claimed."
+  },
+  "functional_youtube_summary": "light-functional-home-summary.json"
 }
