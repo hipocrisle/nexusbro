@@ -402,8 +402,10 @@ def focus_selected_cef(client, device, super_id):
 
     env = {**os.environ, 'DISPLAY': device.display}
     title = client.command('plugin:window|title', label='main')
+    # xdotool defaults to OR between --pid and --name; --all is required
+    # to bind both the native owner and the exact shell title.
     listed = subprocess.run(
-        ['xdotool', 'search', '--onlyvisible', '--pid', str(main.pid),
+        ['xdotool', 'search', '--all', '--onlyvisible', '--pid', str(main.pid),
          '--name', '^' + re.escape(title) + '$'], env=env,
         capture_output=True, text=True, timeout=3)
     windows = [int(v) for v in listed.stdout.split() if v.isdecimal()]
@@ -415,6 +417,7 @@ def focus_selected_cef(client, device, super_id):
                   and native.geometry(window)['viewable']]
     finally:
         native.close()
+    require(bool(shells), 'shell_window_missing')
     require(len(shells) == 1, 'shell_window_ambiguous')
     label = client.js('window.__TAURI_INTERNALS__.metadata.currentWindow.label')
     origin = client.command('plugin:window|inner_position', label=label)
