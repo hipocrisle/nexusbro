@@ -15,7 +15,22 @@ def gh(*args):
 def optional_api(path):
     result=subprocess.run(['gh','api',path],capture_output=True,text=True)
     if result.returncode:
-        if '(HTTP 404)' in result.stderr:return None
+        if '(HTTP 404)' in result.stderr:
+            release=re.fullmatch(r'(repos/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/releases)/tags/(v[0-9]+\.[0-9]+\.[0-9]+)',path)
+            if release:
+                # The by-tag endpoint omits drafts. The authenticated release
+                # listing includes them; never create a duplicate draft from 404.
+                for page in range(1,11):
+                    listing=subprocess.run(['gh','api',release[1]+f'?per_page=100&page={page}'],capture_output=True,text=True)
+                    if listing.returncode:raise RuntimeError('Draft release listing failed')
+                    rows=json.loads(listing.stdout)
+                    assert isinstance(rows,list) and len(rows)<=100,'Draft release listing invalid'
+                    matches=[row for row in rows if row.get('tag_name')==release[2]]
+                    assert len(matches)<=1,'Draft release identity ambiguous'
+                    if matches:return matches[0]
+                    if len(rows)<100:return None
+                raise RuntimeError('Draft release listing incomplete')
+            return None
         raise RuntimeError('GitHub optional read failed; not treated as missing')
     return json.loads(result.stdout)
 

@@ -88,6 +88,17 @@ class Evidence(unittest.TestCase):
   validate_resource(value,SOURCE,'123','b'*40)
   for key,bad in [('wall_seconds',7199.9),('source','c'*40),('diagnostic_pilot',True),('baseline',True),('samples_count',12),('acceptance_passed',False)]:
    with self.subTest(key=key),self.assertRaises(AssertionError):validate_resource(dict(value,**{key:bad}),SOURCE,'123','b'*40)
+ def test_draft_is_found_in_authenticated_listing_after_tag_endpoint_404(self):
+  import json
+  missing=SimpleNamespace(returncode=1,stderr='gh: Not Found (HTTP 404)',stdout='')
+  found=SimpleNamespace(returncode=0,stderr='',stdout=json.dumps([{'tag_name':'v0.2.27','draft':True,'id':123}]))
+  with patch('prepare_release_draft.subprocess.run',side_effect=[missing,found]):
+   self.assertEqual(optional_api('repos/owner/repo/releases/tags/v0.2.27')['id'],123)
+ def test_failed_draft_listing_is_never_treated_as_no_release(self):
+  missing=SimpleNamespace(returncode=1,stderr='gh: Not Found (HTTP 404)',stdout='')
+  failed=SimpleNamespace(returncode=1,stderr='HTTP 500',stdout='')
+  with patch('prepare_release_draft.subprocess.run',side_effect=[missing,failed]),self.assertRaises(RuntimeError):
+   optional_api('repos/owner/repo/releases/tags/v0.2.27')
  def test_existing_public_release_never_written(self):
   with tempfile.TemporaryDirectory() as d:
    notes=pathlib.Path(d)/'notes';notes.write_text('notes');writes=[]

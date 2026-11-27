@@ -209,6 +209,32 @@ class NativeEvidenceTest(unittest.TestCase):
         with self.assertRaisesRegex(EvidenceRejected, 'evidence_run_invalid:windows'):
             run(evidence_meta={'windows': {'path': '.github/workflows/other.yml'}})
 
+    def test_job_log_archive_fallback_preserves_real_environment_line(self):
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        from native_release_evidence import _default_invoke,BUILD_RUN_LINE
+        failed=SimpleNamespace(returncode=1,stdout='',stderr='endpoint unavailable')
+        good=SimpleNamespace(returncode=0,stdout='runtime\tVerify source\t'+TS+'BUILD_RUN: '+BUILD+'\n',stderr='')
+        with patch('native_release_evidence.subprocess.run',side_effect=[failed,good]) as run:
+            text=_default_invoke(['gh','api','repos/owner/repo/actions/jobs/123/logs'])
+        self.assertEqual(set(BUILD_RUN_LINE.findall(text)),{BUILD})
+        self.assertEqual(run.call_args_list[1].args[0],['gh','run','view','--repo','owner/repo','--job','123','--log'])
+
+    def test_error_diagnostics_never_expose_redirect_or_credential(self):
+        import os
+        from unittest.mock import patch
+        from types import SimpleNamespace
+        from native_release_evidence import _default_invoke
+        failed=SimpleNamespace(returncode=1,stdout='',stderr='HTTP 403 https://signed.example/private?token=value ghp_examplecredential token-known-to-env')
+        with patch.dict(os.environ,{'GH_TOKEN':'token-known-to-env'}),patch('native_release_evidence.subprocess.run',return_value=failed):
+            with self.assertRaises(EvidenceRejected) as ctx:
+                _default_invoke(['gh','api','repos/owner/repo/actions/runs/123'])
+        text=str(ctx.exception)
+        self.assertNotIn('signed.example',text)
+        self.assertNotIn('ghp_examplecredential',text)
+        self.assertNotIn('token-known-to-env',text)
+        self.assertIn('http_403',text)
+
     def test_workflow_predicates_skip_normal_build_on_evidence_dispatch(self):
         import yaml
         workflow = yaml.safe_load((Path(__file__).resolve().parents[1]
