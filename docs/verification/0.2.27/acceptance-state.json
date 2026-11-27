@@ -4,20 +4,22 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
-    "build_run": 45828933731,
+    "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
+    "build_run": 45961659921,
     "status": "in_progress",
     "native_windows": "pending",
     "native_linux": "pending",
-    "page_save": "pending_real_native_ctrl_s_menu_and_offline_archive"
+    "page_save": "pending_current_source_native"
   },
   "resource_soak": {
-    "run": 45549296137,
+    "run": 45844965597,
     "status": "success",
+    "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
     "required_seconds": 7200,
+    "actual_seconds": 7200.016,
+    "samples_count": 1438,
+    "raw_results_sha256": "b40ea97118b4d6b05e88cc85ef5f1633c2e8aedf046fe7b3349e3a9c2064d242",
     "accepted": false,
-    "actual_seconds": 7200.094,
-    "summary": "resource-summary.json",
     "accepted_for_previous_candidate_only": true,
     "new_candidate_requires_full_repeat": true
   },
@@ -34,12 +36,33 @@
     },
     "summary": "public-youtube-summary.json",
     "status": "not_accepted",
-    "ordinary_cef_bot_confirmation_run": 45565312152
+    "ordinary_cef_bot_confirmation_run": 45565312152,
+    "current_home_short_preflight": {
+      "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
+      "normal": {
+        "playing": true,
+        "width": 1280,
+        "height": 720,
+        "codec": "av1",
+        "decoder": "dav1d"
+      },
+      "light": {
+        "playing": true,
+        "width": 1280,
+        "height": 720,
+        "codec": "vp9",
+        "decoder": "vpx",
+        "decoded_frames": 272,
+        "dropped_frames": 0
+      },
+      "fair_long_comparison_accepted": false,
+      "note": "Historical challenge failures above are not current short-playback results; exact-source long acceptance remains pending."
+    }
   },
   "paired_public_measurement": {
-    "status": "native_destroyed_lifecycle_filter_prepared_actual_pending",
+    "status": "same_codec_sample_unresolved",
     "accepted": false,
-    "local_execution_performed": false,
+    "local_execution_performed": true,
     "gha_environment_spoofed": false,
     "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
     "build_run": 45828933731,
@@ -52,7 +75,7 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-26T11:25:13.397466+00:00",
+  "observed_at_utc": "2026-11-27T07:57:08.681664+00:00",
   "native_summary": "native-summary.json",
   "frontend_recheck": {
     "run": 45554861820,
