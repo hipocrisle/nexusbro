@@ -181,6 +181,9 @@ try:
             time.sleep(.1)
         assert initial_address is not None,'Initial native address control unavailable or ambiguous'
         initial_address.click_input()
+        # Match focus_ui used later in this same fixture: a mouse/UIA focus
+        # indication alone does not establish the WebView2 keyboard target.
+        initial_address.set_focus()
         # Тест-предусловие: РЕАЛЬНЫЙ клавиатурный фокус именно в этом поле
         # (тот же UIA-API, что :284/:636). Без фокуса ввод не отправляется.
         u.GetForegroundWindow.argtypes = []
