@@ -1,18 +1,19 @@
 {
   "schema": 1,
   "version": "0.2.27",
-  "published": false,
-  "machine_acceptance_complete": false,
+  "published": true,
+  "machine_acceptance_complete": true,
   "candidate": {
     "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
     "build_run": 45971903126,
-    "status": "completed_with_windows_physical_failure",
-    "native_windows": "failed_shell_ctrl_shift_l_from_address_bar",
+    "status": "published_and_public_crypto_verified",
+    "native_windows": "success",
     "native_linux": "success",
-    "page_save": "pending_current_source",
+    "page_save": "accepted_current_source",
     "windows_recheck_run": 45992046638,
-    "windows_recheck_status": "physical_pass_remaining_native_checks_running",
-    "linux_acceptance_run": 45990676700
+    "windows_recheck_status": "success_all_native_checks",
+    "linux_acceptance_run": 45990676700,
+    "windows_acceptance_run": 45992046638
   },
   "resource_soak": {
     "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
@@ -402,5 +403,7 @@
     "performance_claim": false,
     "justification": "Functional release with actual default VP9 playback; this bundle changes lifecycle/hibernation, so exact-source resource acceptance remains required. No speed or memory advantage is claimed."
   },
-  "functional_youtube_summary": "light-functional-home-summary.json"
+  "functional_youtube_summary": "light-functional-home-summary.json",
+  "publisher_run": 45995151420,
+  "public_proof": "release-public.json"
 }

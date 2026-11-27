@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "completed": true,
+  "repository": "hipocrisle/nexusbro",
+  "packages": [
+    {
+      "file": "NexusBro_0.2.27_x64-setup.exe",
+      "bytes": 213728270,
+      "sha256": "0bf770769ee0964f7d86718bc423343fde57c0175dd86f859b126f8e0b911540",
+      "ed25519_payload_and_comment_verified": true,
+      "public_download_verified": true,
+      "manifest_signature_matches": true
+    },
+    {
+      "file": "NexusBro_0.2.27_amd64.deb",
+      "bytes": 491506572,
+      "sha256": "9731292edecf8ec7cbeb92c71681b304367cd0348096e726eb4bbcb05344a023",
+      "ed25519_payload_and_comment_verified": true,
+      "public_download_verified": true,
+      "manifest_signature_matches": true
+    },
+    {
+      "file": "NexusBro-0.2.27-1.x86_64.rpm",
+      "bytes": 491639900,
+      "sha256": "bfbae580aa8c72d680201c12abe7301cc884bce52854ac7b0608846e0ea19da6",
+      "ed25519_payload_and_comment_verified": true,
+      "public_download_verified": true,
+      "manifest_signature_matches": true
+    }
+  ],
+  "version": "0.2.27",
+  "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+  "build_run": 45971903126,
+  "canonical_latest_verified": true,
+  "public_receipt_matches": true,
+  "actual_public_downloads_verified": 3,
+  "latest_endpoint_verified": true,
+  "public_packages_downloaded_and_crypto_verified": true,
+  "published": true,
+  "publication_receipt_matches": true,
+  "public_updater_verified": true
+}

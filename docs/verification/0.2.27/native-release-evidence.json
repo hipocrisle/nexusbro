@@ -1,0 +1,10 @@
+{
+  "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+  "build_run": "45971903126",
+  "verification_run": "45995151420",
+  "evidence_runs": {
+    "windows": "45992046638",
+    "linux": "45990676700"
+  },
+  "all_required_native_checks_verified": true
+}
