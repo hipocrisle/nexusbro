@@ -74,6 +74,48 @@ class Fixture:
             self.closed = True
 
 
+def windows_app_window_handles(pid, *, enum_top=None, enum_children=None,
+                               pid_of=None, visible=None):
+    """All VISIBLE windows of the exact app PID: top-level AND child windows.
+
+    Tauri popup_menu uses builder.parent() (popup_menu.rs:231), which on
+    Windows creates a WS_CHILD window: the real menu popup is never a
+    top-level window, so a top-level-only enumeration can never see it.
+    Identity stays strictly PID-bound; foreign processes are never included.
+    """
+    if enum_top is None:
+        import win32gui
+        enum_top = lambda collect: win32gui.EnumWindows(lambda h, _: collect(h), None)
+    if enum_children is None:
+        import win32gui
+        enum_children = lambda parent, collect: win32gui.EnumChildWindows(
+            parent, lambda h, _: collect(h), None)
+    if pid_of is None:
+        def pid_of(hwnd):
+            import win32process
+            return win32process.GetWindowThreadProcessId(hwnd)[1]
+    if visible is None:
+        import win32gui
+        visible = win32gui.IsWindowVisible
+    owned = set()
+    def consider(hwnd):
+        try:
+            if pid_of(hwnd) == pid and visible(hwnd):
+                owned.add(int(hwnd))
+        except Exception:
+            pass
+    tops = []
+    enum_top(tops.append)
+    for hwnd in tops:
+        consider(hwnd)
+        try:
+            enum_children(hwnd, consider)
+        except Exception:
+            pass
+    return owned
+
+
+
 def archive_facts(path, png):
     require(path.is_file() and not path.is_symlink(), 'archive_not_regular')
     require(0 < path.stat().st_size < 1024 * 1024, 'archive_size_invalid')
@@ -229,8 +271,7 @@ def run(args):
         old_stamp = target.stat().st_mtime_ns
         def visible_app_windows():
             if sys.platform=='win32':
-                from pywinauto import Desktop
-                return {int(w.handle) for w in Desktop(backend='uia').windows() if w.is_visible() and w.process_id()==identity['pid']}
+                return windows_app_window_handles(identity['pid'])
             result=subprocess.run(['xdotool','search','--onlyvisible','--pid',str(identity['pid'])],env={**os.environ,'DISPLAY':device.display},capture_output=True,text=True,timeout=3)
             return {int(n) for n in result.stdout.split() if n.isdecimal()}
         previous_app_windows=visible_app_windows()
