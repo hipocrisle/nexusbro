@@ -6,10 +6,11 @@
   "candidate": {
     "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
     "build_run": 45971903126,
-    "status": "in_progress",
-    "native_windows": "pending",
-    "native_linux": "pending",
-    "page_save": "pending_current_source"
+    "status": "completed_with_windows_physical_failure",
+    "native_windows": "failed_shell_ctrl_shift_l_from_address_bar",
+    "native_linux": "success",
+    "page_save": "pending_current_source",
+    "windows_recheck_run": 45982705533
   },
   "resource_soak": {
     "run": 45844965597,
@@ -57,6 +58,22 @@
       },
       "fair_long_comparison_accepted": false,
       "note": "Historical challenge failures above are not current short-playback results; exact-source long acceptance remains pending."
+    },
+    "current_home_av1_check": {
+      "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+      "producer_run": 45971903126,
+      "short_playback_observed": true,
+      "width": 1280,
+      "height": 720,
+      "codec": "av1",
+      "decoder": "dav1d",
+      "long_playback_accepted": false,
+      "long_failure": "continuous_warmup_incomplete_at_fixed_segment",
+      "stalls_seconds": [
+        1.81,
+        5.091
+      ],
+      "note": "Short native playback does not establish sustained playback or a resource advantage."
     }
   },
   "paired_public_measurement": {
@@ -155,10 +172,10 @@
     "owner_profile_or_cookies_used": false
   },
   "resource_soak_pending": {
-    "run": null,
+    "run": 45976120999,
     "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
     "build_run": 45971903126,
-    "status": "not_started_until_current_build_artifact",
+    "status": "in_progress",
     "required_seconds": 7200,
     "platform": "windows",
     "diagnostic_pilot": false,
@@ -360,5 +377,13 @@
     "diagnostic_pilot": false,
     "acceptance_passed": false,
     "build_run": 45961659921
+  },
+  "network_home_current": {
+    "completed": false,
+    "first_failure": "direct_tab_not_loaded",
+    "first_owned_exit_complete": true,
+    "recheck": "physical_tab_selection_in_progress",
+    "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+    "producer_run": 45971903126
   }
 }
