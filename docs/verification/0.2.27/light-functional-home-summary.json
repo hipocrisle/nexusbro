@@ -1,0 +1,76 @@
+{
+  "desktop_source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+  "producer_run": 45971903126,
+  "binary_sha256": "67d1c843767aa304b4eb26acec97a719633076c075dd671d8aed470dae1a7051",
+  "raw_result_sha256": "608b71184b8a11ff549b9c2d8f08bce01cbc631896c4c6694a64b5ae3e52e2ca",
+  "functional_playback": {
+    "played_media_seconds": 120.354,
+    "wall_seconds": 134.83109654000145,
+    "buffer_events": [
+      {
+        "position": 15.6335,
+        "duration_seconds": 3.6220400299989706,
+        "resumed_without_input": true
+      },
+      {
+        "position": 20.1191,
+        "duration_seconds": 1.8123731539999426,
+        "resumed_without_input": true
+      },
+      {
+        "position": 22.3616,
+        "duration_seconds": 4.8312101579995215,
+        "resumed_without_input": true
+      },
+      {
+        "position": 29.0915,
+        "duration_seconds": 1.8117401569998037,
+        "resumed_without_input": true
+      },
+      {
+        "position": 85.3556,
+        "duration_seconds": 1.811567353999635,
+        "resumed_without_input": true
+      }
+    ],
+    "last_state": {
+      "position": 120.5876,
+      "duration": 1343.6,
+      "decoded": 3627,
+      "dropped": 0,
+      "video_width": 1280,
+      "video_height": 720,
+      "playing": true
+    },
+    "first_state": {
+      "position": 0.2336,
+      "duration": 1343.6,
+      "decoded": 16,
+      "dropped": 0,
+      "video_width": 1280,
+      "video_height": 720,
+      "playing": true
+    },
+    "completed": true
+  },
+  "decode": {
+    "codec": "vp9",
+    "decoder": "vpx",
+    "platform_decoder": false,
+    "decode_mode": "software",
+    "hardware_activity_proven": false,
+    "video_pipelines": 1
+  },
+  "owned_exit": {
+    "parent_normal_exit": true,
+    "all_known_native_executions_exited": true,
+    "actual_app_identity_bound": true,
+    "actual_app_execution_exited": true,
+    "launcher_exit_zero": true
+  },
+  "cleanup_completed": true,
+  "quality_selection": "default_vp9",
+  "performance_comparison_accepted": false,
+  "test_source": "3ebc8e5",
+  "environment": "private_home_linux"
+}
