@@ -220,11 +220,13 @@ pub fn open_webm(
         Option<std::path::PathBuf>,
     )>,
 ) -> Result<(), &'static str> {
-    let video = data
-        .formats
-        .iter()
-        .filter(|f|crate::youtube_light_download::supports_video(f)&&f.height.is_some_and(|h|h<=1080))
-        .max_by_key(|f| f.height);
+    let facts:Vec<_>=data.formats.iter().map(|f|crate::youtube_light_download::PlaybackFacts{
+        legacy_vp9:crate::youtube_light_download::supports_video(f),
+        av1:crate::youtube_light_download::playback_av1(f),
+        height:f.height,fps:f.fps,
+    }).collect();
+    let picked=crate::youtube_light_download::playback_pick(&facts);
+    let video=picked.as_ref().map(|(default,_)|&data.formats[*default]);
     // The pinned yt-dlp emits formats in increasing preference order, as the
     // download selector also expects. Keep playback on its best supported Opus.
     let audio = data.formats.iter().rev().find(|f| {
@@ -263,13 +265,13 @@ pub fn open_webm(
         None
     };
     let position = restored.unwrap_or(0.0);
-    let mut qualities: Vec<_> = data
-        .formats
-        .iter()
-        .filter(|f|crate::youtube_light_download::supports_video(f)&&f.height.is_some_and(|h|h<=4320))
-        .collect();
-    qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32));
-    let choices:Vec<_>=qualities.into_iter().map(|f|serde_json::json!({"id":f.format_id,"label":format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32),"url":f.url.as_str()})).collect();
+    let mut qualities:Vec<_>=picked.map(|(_,indices)|indices).unwrap_or_default().into_iter().map(|i|&data.formats[i]).collect();
+    qualities.sort_by_key(|f| (f.height.unwrap_or(0), f.fps.unwrap_or(0.0) as u32, f.ext=="mp4"));
+    let choices:Vec<_>=qualities.into_iter().map(|f|{
+        let base=format!("{}p · {} к/с",f.height.unwrap_or(0),f.fps.unwrap_or(0.0).round() as u32);
+        let label=if f.ext=="mp4"{format!("{base} · AV1")}else{base};
+        serde_json::json!({"id":f.format_id,"label":label,"url":f.url.as_str()})
+    }).collect();
     let config = serde_json::json!({"title":data.metadata.title(),"video":video.url.as_str(),"audio":audio.url.as_str(),"qualities":choices,"captions":data.captions.iter().map(|t|t.metadata()).collect::<Vec<_>>(),"position":position,"resume_available":restored.is_some(),"source":data.metadata.id().watch_url()});
     let json = zeroize::Zeroizing::new(
         serde_json::to_string(&config).map_err(|_| "Не удалось подготовить видео")?,
