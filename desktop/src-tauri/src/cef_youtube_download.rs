@@ -90,6 +90,10 @@ pub fn request(
         trace::child(sender,tab,Stage::RequestReceived,Reason::MediaNotAdmitted);
         return;
     };
+    let format=if audio {format} else {
+        download::video_for_download(&data.formats,&format)
+            .map(|selected|selected.format_id.clone()).unwrap_or(format)
+    };
     let allowed = if audio {
         data.formats.iter().any(download::supports_audio)
     } else {

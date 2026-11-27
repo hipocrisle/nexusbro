@@ -401,6 +401,18 @@ pub(crate) fn playback_pick(facts: &[PlaybackFacts]) -> Option<(usize, Vec<usize
     }
     Some((default, qualities))
 }
+/// A downloaded AV1-selected quality is saved by the verified VP9/Opus
+/// WebM pipeline only when its actual dimensions and frame rate match.
+/// No lower quality, new extraction, or unsupported muxer is substituted.
+pub(crate) fn video_for_download<'a>(formats: &'a [MediaFormat], requested: &str) -> Option<&'a MediaFormat> {
+    let selected=formats.iter().find(|f|f.format_id==requested)?;
+    if supports_video(selected){return Some(selected);}
+    if !playback_av1(selected){return None;}
+    let (Some(width),Some(height),Some(fps))=(selected.width,selected.height,selected.fps) else{return None;};
+    if width==0 || height==0 || !fps.is_finite() || fps<=0.0{return None;}
+    formats.iter().rev().find(|f|supports_video(f) && f.width==Some(width) && f.height==Some(height) && f.fps==Some(fps))
+}
+
 fn selection_valid(selection: &Selection<'_>) -> bool {
     match selection {
         Selection::Audio(a) => supports_audio(a),
@@ -439,40 +451,20 @@ fn parse_range(text: &str) -> Result<(u64, u64, u64), DownloadError> {
 }
 // Strict additional test CA for the fixed disposable fixture only. Normal
 // certificate/hostname validation stays enabled; no production host is affected.
-fn fixture_trust(
-    builder: reqwest::ClientBuilder,
-    format: &MediaFormat,
-) -> Result<reqwest::ClientBuilder, DownloadError> {
-    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
-        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
-    {
-        return Ok(builder);
-    }
-    let url = reqwest::Url::parse(format.url.as_str()).map_err(|_| DownloadError::InvalidRange)?;
-    if url.host_str() != Some("fixture.googlevideo.com") {
-        return Ok(builder);
-    }
-    let Some(path) = std::env::var_os("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA") else {
-        return Ok(builder);
-    };
-    let path = PathBuf::from(path);
-    let metadata = std::fs::symlink_metadata(&path).map_err(|_| DownloadError::Storage)?;
-    if !path.is_absolute()
-        || !metadata.is_file()
-        || metadata.file_type().is_symlink()
-        || metadata.len() > 16384
-    {
-        return Err(DownloadError::Storage);
-    }
-    let pem = std::fs::read(path).map_err(|_| DownloadError::Storage)?;
-    let expected = std::env::var("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA_SHA256")
-        .map_err(|_| DownloadError::Storage)?;
+fn fixture_trust(builder:reqwest::ClientBuilder,format:&MediaFormat)->Result<reqwest::ClientBuilder,DownloadError>{
+    if std::env::var("GITHUB_ACTIONS").as_deref()!=Ok("true")||std::env::var_os("NEXUSBRO_TEST_DATA").is_none(){return Ok(builder);}
+    let url=reqwest::Url::parse(format.url.as_str()).map_err(|_|DownloadError::InvalidRange)?;
+    if url.host_str()!=Some("fixture.googlevideo.com"){return Ok(builder);}
+    let Some(path)=std::env::var_os("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA") else{return Ok(builder);};
+    let path=PathBuf::from(path);
+    let metadata=std::fs::symlink_metadata(&path).map_err(|_|DownloadError::Storage)?;
+    if !path.is_absolute()||!metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>16384{return Err(DownloadError::Storage);}
+    let pem=std::fs::read(path).map_err(|_|DownloadError::Storage)?;
+    let expected=std::env::var("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA_SHA256").map_err(|_|DownloadError::Storage)?;
     use sha2::Digest;
-    let actual = format!("{:x}", sha2::Sha256::digest(&pem));
-    if expected.len() != 64 || expected != actual {
-        return Err(DownloadError::Storage);
-    }
-    let cert = reqwest::Certificate::from_pem(&pem).map_err(|_| DownloadError::Storage)?;
+    let actual=format!("{:x}",sha2::Sha256::digest(&pem));
+    if expected.len()!=64||expected!=actual{return Err(DownloadError::Storage);}
+    let cert=reqwest::Certificate::from_pem(&pem).map_err(|_|DownloadError::Storage)?;
     Ok(builder.add_root_certificate(cert))
 }
 async fn stream(
@@ -491,7 +483,7 @@ async fn stream(
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(45));
-    let client = fixture_trust(builder, format)?
+    let client = fixture_trust(builder,format)?
         .build()
         .map_err(|_| DownloadError::RouteUnavailable)?;
     let mut file = new_file(path)?;
@@ -1027,7 +1019,7 @@ mod tests {
         let (default, qualities) = playback_pick(&facts).unwrap();
         assert_eq!(qualities.len(), 26, "legacy list is never truncated");
         assert!(!qualities.contains(&26));
-        assert_eq!(default, 0);
+        assert_eq!(default, 25, "equal-preference VP9 retains the last extractor track");
     }
 
     #[test]
@@ -1050,4 +1042,26 @@ mod tests {
         }];
         assert!(playback_pick(&facts).is_none());
     }
+    fn paired_codec_formats(vp9_height:u32,vp9_fps:f64)->crate::youtube_light_extract::ExtractedVideo{
+        use serde_json::json;
+        let id=crate::youtube_light::VideoId::parse("aB3_dE-9xY0").unwrap();
+        let value=json!({"id":id.as_str(),"title":"Public video","channel":"Public channel","duration":600,"is_live":false,"formats":[
+          {"format_id":"247","ext":"webm","vcodec":"vp9","acodec":"none","width":1280,"height":vp9_height,"fps":vp9_fps,"protocol":"https","url":"https://rr1---sn-test.googlevideo.com/videoplayback?track=vp9"},
+          {"format_id":"398","ext":"mp4","vcodec":"av01.0.05M.08","acodec":"none","width":1280,"height":720,"fps":30,"protocol":"https","url":"https://rr1---sn-test.googlevideo.com/videoplayback?track=av1"}
+        ]});
+        crate::youtube_light_extract::parse(&serde_json::to_vec(&value).unwrap(),&id).unwrap()
+    }
+    #[test] fn av1_download_uses_verified_vp9_at_the_same_quality(){
+        let data=paired_codec_formats(720,30.0);
+        assert_eq!(video_for_download(&data.formats,"398").unwrap().format_id,"247");
+        assert_eq!(video_for_download(&data.formats,"247").unwrap().format_id,"247");
+        assert!(video_for_download(&data.formats,"not-admitted").is_none());
+    }
+    #[test] fn av1_download_never_silently_changes_resolution_or_frame_rate(){
+        for (height,fps) in [(480,30.0),(720,60.0)]{
+            let data=paired_codec_formats(height,fps);
+            assert!(video_for_download(&data.formats,"398").is_none());
+        }
+    }
+
 }
