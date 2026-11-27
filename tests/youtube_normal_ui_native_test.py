@@ -189,6 +189,31 @@ def main():
         and ('scroll', 960, 540, 8) in io.actions \
         and result['normal_ui_actions']['ledger'][:2] == ['reject_scroll', 'reject_all_click']
 
+    # Consent-only setup mode (owner-requested): exactly the existing consent
+    # actions and nothing else; default contract untouched.
+    def run_consent(steps):
+        c_io = FakeIO(); c_script = Script(c_io, steps); c_result = {}
+        state_out = m.prepare_normal_playback(None, None, c_script.snapshot, 1280, 720,
+                                              c_result, lambda: True, io=c_io,
+                                              stop_after_consent=True)
+        return state_out, c_result, c_io
+
+    co_final, co_result, co_io = run_consent([reject_rect, reject_rect, base])
+    checks['consent_only_present'] = (co_result['normal_ui_actions']['reject_all_clicked'] is True
+        and co_result['normal_ui_actions']['scrolls'] == 0
+        and co_result['normal_ui_actions']['ui_actions'] == 1
+        and [a for a in co_io.actions if isinstance(a, tuple)] == [('click', 620, 318)]
+        and co_final['controls']['reject_all_present'] is False)
+    co2_final, co2_result, co2_io = run_consent([base])
+    checks['consent_only_absent_no_actions'] = (co2_result['normal_ui_actions']['ui_actions'] == 0
+        and not [a for a in co2_io.actions if isinstance(a, tuple)]
+        and co2_final is not None)
+    try:
+        run_consent([reject_rect, reject_rect] + [state(reject_present=True, reject=REJECT)] * 30)
+        checks['consent_only_reappearance_fail_closed'] = False
+    except m.UiBlocked as error:
+        checks['consent_only_reappearance_fail_closed'] = str(error) == 'reject_all_still_present'
+
     # Негативы
     checks['reject_unreachable'] = expect_blocked([reject_none] * 30, 'reject_all_unreachable')
     checks['viewport_mismatch'] = expect_blocked([state(vw=1000, play=PLAY)], 'viewport_mismatch')

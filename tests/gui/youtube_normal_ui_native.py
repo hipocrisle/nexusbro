@@ -148,7 +148,8 @@ class RealIO:
 
 
 def prepare_normal_playback(client, device, snapshot, expected_width, expected_height,
-                            result, binding_check, io=None, quality_diagnostic_dir=None):
+                            result, binding_check, io=None, quality_diagnostic_dir=None,
+                            stop_after_consent=False):
     """Physical preparation of normal playback. Returns the final native state.
     snapshot()/binding_check() are ROOT-held closures; io is injectable for
     offline controller tests (defaults to RealIO)."""
@@ -273,7 +274,14 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
                        'reject_all_still_present', 5)
 
     # 1) Known consent only, including late arrival during control revelation.
-    consent(current())
+    state = consent(current())
+    if stop_after_consent:
+        # Owner-requested consent-only setup: perform EXACTLY the existing
+        # physical consent handling (one Reject-all click / one scroll at
+        # most, same budgets and binding checks) and return the snapshot.
+        # No pause/settings/quality/play and no extra JS actions; this mode
+        # itself claims no playback and no release PASS.
+        return state
 
     # 2) Pause при playing; позиция до старта не позже 29с.
     state = current()
