@@ -338,9 +338,11 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
         elif mode=='normal' and getattr(args,'native_normal_ui',False):
             result['stage']='normal-native-physical-ui'
             state=prepare_normal_native_ui(client,device,lambda:snapshot(mode),identifier,tab,args,result)
-        reference_preflight=getattr(args,'normal_reference_preflight',False)
+        reference_preflight=(getattr(args,'normal_reference_preflight',False)
+                             or getattr(args,'light_reference_preflight',False))
         if reference_preflight:
-            if mode!='normal':raise Blocked('reference_preflight_mode_invalid')
+            expected_mode='light' if getattr(args,'light_reference_preflight',False) else 'normal'
+            if mode!=expected_mode:raise Blocked('reference_preflight_mode_invalid')
             from types import SimpleNamespace
             observed_args=SimpleNamespace(expected_duration=state.get('duration'),width=state.get('video_width'),height=state.get('video_height'))
             if not all(type(v) in (int,float) and math.isfinite(v) and v>0 for v in (observed_args.expected_duration,observed_args.width,observed_args.height)):raise Blocked('reference_metadata_not_ready')

@@ -89,7 +89,8 @@ def run(args):
     exe=validate_inside_root(args.exe,root,'exe');cef=validate_inside_root(args.cef,root,'cef')
     require(digest(exe)==args.exe_sha256,'Candidate binary mismatch')
     require(len(args.desktop_source)==40 and all(c in '0123456789abcdef' for c in args.desktop_source),'Source invalid')
-    require(args.video_id=='M7lc1UVf-VE','Only fixed public sample admitted')
+    require(args.video_id in ('M7lc1UVf-VE','js_0wjzuMfc','5nXmq1PsoJ0'),'Only predeclared public samples admitted')
+    require(args.video_id=='M7lc1UVf-VE' or args.normal_reference_preflight or args.light_reference_preflight,'Alternative samples are diagnostic-only until release protocol is declared')
     require(math.isfinite(args.expected_duration) and args.expected_duration>=180 and 1<=args.expected_fps<=120,'Expected media metadata invalid')
     require(1<=args.width<=16384 and 1<=args.height<=16384 and 256<=args.memory_cap_mib<=4096,'Geometry or memory budget invalid')
     out_parent=root/'out';out_parent.mkdir(mode=0o700,exist_ok=True)
@@ -108,7 +109,8 @@ def run(args):
     def expired(signum,frame):raise Blocked('bounded_arm_deadline')
     previous=signal.signal(signal.SIGALRM,expired)
     try:
-        order=('normal',) if args.normal_reference_preflight else ORDER
+        require(not(args.normal_reference_preflight and args.light_reference_preflight),'Conflicting diagnostic modes')
+        order=('light',) if args.light_reference_preflight else (('normal',) if args.normal_reference_preflight else ORDER)
         for index,mode in enumerate(order):
             require(digest(exe)==args.exe_sha256 and digest(cef/'libcef.so')==report['provenance']['cef_sha256'],'Same binary changed')
             signal.alarm(330)
@@ -117,8 +119,8 @@ def run(args):
             finally:signal.alarm(0)
             report['arms'].append(result)
             if result.get('stage')!='complete' or result.get('cleanup_completed') is not True:raise Blocked(result.get('blocked_reason','arm_incomplete'))
-        if args.normal_reference_preflight:
-            report['normal_reference_preflight_complete']=True
+        if args.normal_reference_preflight or args.light_reference_preflight:
+            report['light_reference_preflight_complete' if args.light_reference_preflight else 'normal_reference_preflight_complete']=True
         else:
             summarize_comparison(report,args)
             report['provenance']['audio_output_policy_match_proven']=True
@@ -129,14 +131,15 @@ def run(args):
         signal.signal(signal.SIGALRM,previous)
         report['wall_seconds']=round(time.monotonic()-began,3)
         (out/'result.json').write_text(json.dumps(report,indent=2,allow_nan=False)+'\n')
-    print(json.dumps({'completed':report['completed'],'comparison_valid':report['comparison_valid'],'blocked_reason':report.get('blocked_reason'),'arms':len(report['arms']),'normal_reference_preflight_complete':report.get('normal_reference_preflight_complete',False)}))
-    return 0 if report['accepted_measurement'] or report.get('normal_reference_preflight_complete') else 1
+    print(json.dumps({'completed':report['completed'],'comparison_valid':report['comparison_valid'],'blocked_reason':report.get('blocked_reason'),'arms':len(report['arms']),'normal_reference_preflight_complete':report.get('normal_reference_preflight_complete',False),'light_reference_preflight_complete':report.get('light_reference_preflight_complete',False)}))
+    return 0 if report['accepted_measurement'] or report.get('normal_reference_preflight_complete') or report.get('light_reference_preflight_complete') else 1
 
 if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     for name in ('private-root','exe','cef','exe-sha256','desktop-source'):p.add_argument('--'+name,required=True)
     p.add_argument('--producer-run',type=int,required=True);p.add_argument('--expect-uid',type=int,required=True)
     p.add_argument('--normal-reference-preflight',action='store_true')
+    p.add_argument('--light-reference-preflight',action='store_true')
     p.add_argument('--manual-ui-setup',action='store_true')
     p.add_argument('--native-normal-ui',action='store_true')
     p.add_argument('--allow-local-virtual-display',action='store_true');p.add_argument('--video-id',default='M7lc1UVf-VE')
