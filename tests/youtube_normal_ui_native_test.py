@@ -39,6 +39,9 @@ class FakeIO:
         self.actions.append(('move', round(x), round(y)))
     def scroll_css(self, x, y, notches):
         self.actions.append(('scroll', round(x), round(y), notches))
+    def screenshot(self, path):
+        self.actions.append(('screenshot', path.rsplit('/', 1)[-1]))
+        return True
     def monotonic(self):
         return self.clock
     def sleep(self, seconds):
@@ -113,6 +116,26 @@ def main():
     p720_late_final, p720_late_result, _ = run(happy[:9]+[with_quality,with_p720]+happy[9:])
     checks['delayed_p720_transition_no_scroll'] = (p720_late_final['playing'] is True
         and p720_late_result['normal_ui_actions']['menu_scrolls']==0)
+    # Diagnostic stop after quality_click: frames + screenshot, no wheel/clicks after.
+    diag_io = FakeIO(); diag_script = Script(diag_io, happy[:9]+[with_p720]*12)
+    diag_result = {}
+    try:
+        m.prepare_normal_playback(None, None, diag_script.snapshot, 1280, 720, diag_result,
+                                  lambda: True, io=diag_io, quality_diagnostic_dir='/tmp/diag')
+        checks['quality_diagnostic_stop'] = False
+    except m.UiBlocked as error:
+        diag = diag_result.get('quality_diagnostic', {})
+        clicks = [a for a in diag_io.actions if isinstance(a, tuple) and a[0] == 'click']
+        shot_at = diag_io.actions.index(('screenshot', 'quality-submenu.png')) if ('screenshot', 'quality-submenu.png') in diag_io.actions else -1
+        checks['quality_diagnostic_stop'] = (str(error) == 'quality_submenu_diagnostic'
+            and len(diag.get('frames', [])) == 6
+            and diag.get('screenshot_written') is True
+            and diag.get('stopped_before') == 'p720_wheel_or_click'
+            and shot_at > -1
+            # pause+settings+quality only; NOTHING after the screenshot
+            and len(clicks) == 3
+            and not any(isinstance(a, tuple) and a[0] in ('scroll', 'click')
+                        for a in diag_io.actions[shot_at + 1:]))
     # Menu vanished during the wait (page scrolled away): fail closed, no wheel.
     gone_io = FakeIO(); gone_script = Script(gone_io, happy[:7]+[menu_only]*21+[state()]+[menu_only]*10)
     try:

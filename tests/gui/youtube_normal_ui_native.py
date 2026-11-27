@@ -19,6 +19,7 @@ import json
 import os
 import subprocess
 import time
+from pathlib import Path
 
 MAX_WALL_SECONDS = 90
 MAX_UI_ACTIONS = 10
@@ -129,6 +130,16 @@ class RealIO:
                        ['click', '5'] * int(notches), env=env, check=True,
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=5)
 
+    def screenshot(self, path):
+        """OS screenshot of the fixture display; True only when a file was written."""
+        try:
+            from PIL import ImageGrab
+            with ImageGrab.grab(xdisplay=self.device.display) as shot:
+                shot.save(path)
+            return True
+        except Exception:
+            return False
+
     def monotonic(self):
         return time.monotonic()
 
@@ -137,7 +148,7 @@ class RealIO:
 
 
 def prepare_normal_playback(client, device, snapshot, expected_width, expected_height,
-                            result, binding_check, io=None):
+                            result, binding_check, io=None, quality_diagnostic_dir=None):
     """Physical preparation of normal playback. Returns the final native state.
     snapshot()/binding_check() are ROOT-held closures; io is injectable for
     offline controller tests (defaults to RealIO)."""
@@ -300,6 +311,32 @@ def prepare_normal_playback(client, device, snapshot, expected_width, expected_h
     click('settings', 'settings_click')
     menu_item('quality','quality_menu_unavailable')
     click('quality', 'quality_click')
+    if quality_diagnostic_dir is not None:
+        # Bounded read-only stop requested by the owner: NO wheel and no
+        # further clicks. Capture how the real submenu looks to the probe
+        # (geometry facts only, no page data) plus one OS screenshot, then
+        # stop; the caller records completed=false with this evidence.
+        frames = []
+        for _ in range(6):
+            state = snapshot()
+            validate_controls(state)
+            controls = state['controls']
+            frames.append({'viewport': controls['viewport'],
+                           'settings_menu': controls['settings_menu'],
+                           'quality': controls['quality'],
+                           'p720': controls['p720'],
+                           'playing': state.get('playing'),
+                           'position': state.get('position')})
+            io.sleep(0.5)
+        shot_path = str(Path(quality_diagnostic_dir) / 'quality-submenu.png')
+        captured = io.screenshot(shot_path)
+        result['quality_diagnostic'] = {
+            'frames': frames,
+            'screenshot_written': captured,
+            'screenshot': shot_path if captured else None,
+            'stopped_before': 'p720_wheel_or_click',
+        }
+        raise UiBlocked('quality_submenu_diagnostic')
     menu_item('p720','p720_unavailable')
     click('p720', 'p720_click')
     receipt['quality_720_clicked'] = True
