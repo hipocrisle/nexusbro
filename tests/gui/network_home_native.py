@@ -81,12 +81,13 @@ class RefusingProxy(BaseHTTPRequestHandler):
 # wrapped or replaced (pinned tauri core.js makes invoke non-writable).
 DOM_PROBE_JS = r"""
 (()=>{const s=document.querySelector('.tab-route-dialog .tab-route-exit span');
-const t=s?s.textContent:'';
+if(!s)return null;
+const t=s.textContent||'';
 const m=t.match(/(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{2,45})/);
 const validIp=x=>{if(!x)return false;const v4=x.split('.');
  if(v4.length===4&&v4.every(p=>/^\d{1,3}$/.test(p)&&+p<=255))return true;
  try{new URL('http://['+x+']/');return x.includes(':');}catch(e){return false;}};
-return {hasText:t.length>0,
+return {open:true,hasText:t.length>0,
  checking:t.includes('проверяется'),error:t.includes('ошибка проверки'),
  none:t.includes('не проверен'),domIpValid:validIp(m&&m[0])};})()
 """
@@ -238,7 +239,7 @@ def main():
             wait_for(lambda: (dialog_state() or {}).get('open') is True,
                      'network_dialog_missing', 10)
             physical('.tab-route-exit button', 'check_ip_click')
-            wait_for(lambda: (dialog_state() or {}).get('checking') is False,
+            wait_for(lambda: (lambda state: state.get('checking') is False and (state.get('error') is True or state.get('domIpValid') is True))(dialog_state() or {}),
                      'check_ip_ui_busy', 30)
             return dialog_state() or {}
 
