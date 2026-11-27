@@ -74,6 +74,60 @@ class Fixture:
             self.closed = True
 
 
+def unique_menu_item(matches):
+    """Deduplicate UIA matches by runtime id; return the single element only
+    when EXACTLY ONE unique control matched. Nested popup HWNDs can surface
+    the same MenuItem through parent and child enumeration; true ambiguity
+    (two different controls) stays None — never pick the first of many."""
+    unique = {}
+    for rid, payload in matches:
+        if rid:
+            unique.setdefault(rid, payload)
+    return next(iter(unique.values())) if len(unique) == 1 else None
+
+
+def windows_owned_window_screenshot(pid, out_dir, *, enum_top=None, pid_of=None,
+                                    title_of=None, rect_of=None, grab=None):
+    """Windows failure capture of ONLY our own app's window (PID-bound),
+    preferring the proven menu popup by its fixed app title; never the whole
+    desktop. Bounded bbox, typed reasons, no arbitrary titles/sites logged."""
+    receipt = {'saved': False, 'reason': 'not_attempted'}
+    try:
+        if enum_top is None:
+            import win32gui
+            enum_top = lambda collect: win32gui.EnumWindows(lambda h, _: collect(h), None)
+        if pid_of is None:
+            def pid_of(hwnd):
+                import win32process
+                return win32process.GetWindowThreadProcessId(hwnd)[1]
+        if title_of is None:
+            import win32gui
+            title_of = win32gui.GetWindowText
+        if rect_of is None:
+            import win32gui
+            rect_of = win32gui.GetWindowRect
+        candidates = []
+        enum_top(candidates)
+        own = [h for h in candidates if pid_of(h) == pid]
+        menu = [h for h in own if title_of(h) == 'NexusBro — меню']
+        chosen = menu or own
+        if not chosen:
+            return {'saved': False, 'reason': 'owned_window_missing'}
+        left, top, right, bottom = rect_of(chosen[0])
+        if right - left <= 0 or bottom - top <= 0:
+            return {'saved': False, 'reason': 'geometry_unavailable'}
+        if grab is None:
+            def grab(box, path):
+                from PIL import ImageGrab
+                ImageGrab.grab(bbox=box).save(path)
+        target = str(Path(out_dir) / 'owned-failure.png')
+        grab((left, top, min(right, left + 1600), min(bottom, top + 1000)), target)
+        return {'saved': True, 'reason': 'ok',
+                'scope': 'own_popup' if menu else 'own_main'}
+    except Exception as error:
+        return {'saved': False, 'reason': type(error).__name__}
+
+
 def windows_app_window_handles(pid, *, enum_top=None, enum_children=None,
                                pid_of=None, visible=None):
     """All VISIBLE windows of the exact app PID: top-level AND child windows.
@@ -279,14 +333,32 @@ def run(args):
         wait_for(lambda:len(visible_app_windows()-previous_app_windows)>0,'owned_menu_window_missing',10)
         if sys.platform=='win32':
             from pywinauto import Desktop
+            menu_diag = report.setdefault('menu_diag', {})
             def save_item():
                 if not native_app_identity_alive(device,identity):return None
-                found=[]
-                for handle in visible_app_windows()-previous_app_windows:
+                new_handles=sorted(visible_app_windows()-previous_app_windows)
+                matches=[];raw=0;type_counts={}
+                for handle in new_handles:
                     window=Desktop(backend='uia').window(handle=handle)
-                    for item in window.descendants(control_type='MenuItem'):
-                        if item.window_text()=='Сохранить страницу…' and item.is_visible() and item.is_enabled():found.append(item)
-                return found[0] if len(found)==1 else None
+                    try:popup_rect=window.rectangle()
+                    except Exception:continue
+                    for element in window.descendants():
+                        ctype=element.element_info.control_type
+                        type_counts[ctype]=type_counts.get(ctype,0)+1
+                        if ctype!='MenuItem':continue
+                        if element.window_text()!='Сохранить страницу…':continue
+                        if not (element.is_visible() and element.is_enabled()):continue
+                        raw+=1
+                        rect=element.rectangle()
+                        inside=(rect.left>=popup_rect.left-2 and rect.top>=popup_rect.top-2
+                                and rect.right<=popup_rect.right+2 and rect.bottom<=popup_rect.bottom+2)
+                        try:rid=tuple(element.element_info.runtime_id or ()) or None
+                        except Exception:rid=None
+                        if inside and rid:matches.append((rid,element))
+                menu_diag.update({'own_new_hwnd_count':len(new_handles),'match_count':raw,
+                                  'unique_count':len({r for r,_ in matches}),
+                                  'control_types':type_counts})
+                return unique_menu_item(matches)
             item=wait_for(save_item,'owned_save_menu_item_missing',10)
             require(native_app_identity_alive(device,identity),'owned_app_changed')
             item.click_input()
@@ -370,10 +442,13 @@ def run(args):
             try:report['save_events']=client.js('window.__saveEvents||[]')
             except Exception:pass
         if device is not None and identity is not None:
-            from download_startup_facts import owned_failure_screenshot
-            check=lambda:native_app_identity_alive(device,identity)
-            check.identity=identity
-            report['owned_failure_capture']=owned_failure_screenshot(device,out,check)
+            if sys.platform=='win32':
+                report['owned_failure_capture']=windows_owned_window_screenshot(identity['pid'],out)
+            else:
+                from download_startup_facts import owned_failure_screenshot
+                check=lambda:native_app_identity_alive(device,identity)
+                check.identity=identity
+                report['owned_failure_capture']=owned_failure_screenshot(device,out,check)
     finally:
         clean = True
         for obj in (device,wm,fixture):
