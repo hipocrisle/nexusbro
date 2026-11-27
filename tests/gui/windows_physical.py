@@ -1125,6 +1125,42 @@ try:
     # cannot prove which process owns physical keyboard focus.
     results.append({'shell_keyboard_native_focus':{'active':int(keyboard_info.hwndActive or 0),'focus':int(keyboard_info.hwndFocus or 0),'class':native_focus_class.value,'main':int(main_hwnd),'focus_pid':focus_pid.value,'focus_thread':focus_thread,'focus_process':focus_process}})
     assert keyboard_info.hwndActive==main_hwnd,'Physical keyboard target is not the main browser window'
+    # active==main does NOT prove the keyboard focus window belongs to the
+    # main window: an owned/hidden popup render widget can keep focus while
+    # another top-level is active. UIA HasFocus may be DOM-only. Collect the
+    # real ancestry facts (handles/bools only, GA_ROOT=2, GW_OWNER=4).
+    u.GetAncestor.argtypes=[wintypes.HWND,wintypes.UINT];u.GetAncestor.restype=wintypes.HWND
+    u.GetWindow.argtypes=[wintypes.HWND,wintypes.UINT];u.GetWindow.restype=wintypes.HWND
+    u.IsChild.argtypes=[wintypes.HWND,wintypes.HWND];u.IsChild.restype=wintypes.BOOL
+    def focus_root_facts(info):
+        focus=int(info.hwndFocus or 0)
+        root=int(u.GetAncestor(info.hwndFocus,2) or 0) if focus else 0
+        owner=int(u.GetWindow(wintypes.HWND(root),4) or 0) if root else 0
+        root_pid=wintypes.DWORD()
+        if root:u.GetWindowThreadProcessId(wintypes.HWND(root),ctypes.byref(root_pid))
+        try:root_birth=psutil.Process(root_pid.value).create_time() if root else None
+        except (psutil.NoSuchProcess,psutil.AccessDenied):root_birth=None
+        root_class=ctypes.create_unicode_buffer(256)
+        if root:u.GetClassNameW(wintypes.HWND(root),root_class,len(root_class))
+        return {'focus':focus,'focus_root':root,'focus_root_is_main':root==int(main_hwnd),
+                'focus_is_child_of_main':bool(u.IsChild(wintypes.HWND(main_hwnd),info.hwndFocus)) if focus else False,
+                'focus_root_owner':owner,'focus_root_class':root_class.value,
+                'focus_root_pid':root_pid.value,'focus_root_birth':root_birth}
+    facts=focus_root_facts(keyboard_info)
+    if not facts['focus_root_is_main']:
+        # Legitimate user recovery: a real physical click into the address
+        # field of the MAIN window moves keyboard focus into it. No synthetic
+        # key press, no programmatic lock, no invoke.
+        address=ui('Адрес страницы',['Edit','ComboBox'])
+        box_addr=address.rectangle()
+        gui.click((box_addr.left+box_addr.right)//2,(box_addr.top+box_addr.bottom)//2)
+        time.sleep(.3)
+        assert u.GetGUIThreadInfo(0,ctypes.byref(keyboard_info)),'Native keyboard focus requery failed'
+        refocused=focus_root_facts(keyboard_info)
+        results.append({'shell_focus_root_before':facts,'shell_focus_root_after_physical_click':refocused})
+        assert refocused['focus_root_is_main'],'Shell keyboard focus root is not the main window'
+    else:
+        results.append({'shell_focus_root_before':facts})
     # A real user cannot press three keys in zero milliseconds: 50 ms between
     # the physical key events of the SAME single chord mirrors human input
     # timing (WebView2 evaluates accelerator modifiers per event). Same lock
