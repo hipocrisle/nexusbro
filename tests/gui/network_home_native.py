@@ -203,14 +203,10 @@ def main():
 
         own('switch_super')
         switch_super(client, SUPER_ID)
-        # Both seeded tabs are otlozhena=True: a real user gesture must wake
-        # the active one before any load can happen (same physical .pole
-        # click as the working page_save fixture). No JS/invoke wake-up.
+        # Select the lazy tab through its real tab button. Clicking the
+        # empty page viewport cannot wake a tab with no WebContents yet.
         own('wake_tab1')
-        pole = client.js('(()=>{const r=document.querySelector(".pole").getBoundingClientRect();return {x:r.x,y:r.y}})()')
-        require(isinstance(pole, dict) and 'x' in pole and 'y' in pole,
-                'pole_geometry_missing')
-        client.mouse(pole['x'] + 50, pole['y'] + 50)
+        click_control(client, '.obychnaya[data-id="1"][aria-selected="true"]', 10)
         wait_for(lambda: Page.hits > 0, 'direct_tab_not_loaded', 30)
         report['checks']['tab1_direct_loaded_in_cef'] = True
         own('observer')
