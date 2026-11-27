@@ -296,7 +296,7 @@ def functional_playback_window(snapshot,args,result,*,clock=time.monotonic,sleep
             elif stall is not None:
                 events[-1]['duration_seconds']=now-stall;events[-1]['resumed_without_input']=True;stall=None
         result['functional_playback']={'played_media_seconds':state['position']-first['position'],'wall_seconds':now-began,'buffer_events':events,'last_state':video_state(state,args),'first_state':video_state(first,args),'completed':False}
-        if state['position']-first['position']>=120 and state.get('playing') is True:
+        if now-began>=120 and state['position']-first['position']>=120 and state.get('playing') is True:
             if state['decoded']<=first['decoded']:raise Blocked('functional_frames_not_advanced')
             result['functional_playback']['completed']=True
             return state
