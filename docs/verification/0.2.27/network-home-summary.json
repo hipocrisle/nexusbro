@@ -1,0 +1,32 @@
+{
+  "completed": true,
+  "checks": {
+    "tab1_direct_loaded_in_cef": true,
+    "tab1_direct_real_ip": true,
+    "tab1_ui_shows_same_ip": true,
+    "separate_readonly_confirmation": true,
+    "country_from_cf_trace": true,
+    "tab1_ui_shows_same_country": true,
+    "dialog_closed_physically": true,
+    "tab2_inherit_real_error": true,
+    "inherit_readonly_confirm_error": true,
+    "no_success_record_for_inherit": true,
+    "inherit_attempted_own_proxy": true
+  },
+  "stage": "complete",
+  "exe_sha256": "67d1c843767aa304b4eb26acec97a719633076c075dd671d8aed470dae1a7051",
+  "country_proof": "cf_trace_loc",
+  "wall_seconds": 2.898,
+  "owned_exit": {
+    "parent_normal_exit": true,
+    "all_known_native_executions_exited": true,
+    "native_members_complete": true,
+    "launcher_exit_zero": true
+  },
+  "cleanup_completed": true,
+  "desktop_source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+  "producer_run": 45971903126,
+  "raw_result_sha256": "15c6f3d6e39297b816c539ff0f883d6a03450c915c5f204e75961c77e1f73d22",
+  "test_source": "b7409e0ec646b74fce808fd0573e3005ab1a10bd",
+  "environment": "private_home_linux"
+}

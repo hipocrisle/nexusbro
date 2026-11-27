@@ -10,7 +10,8 @@
     "native_windows": "failed_shell_ctrl_shift_l_from_address_bar",
     "native_linux": "success",
     "page_save": "pending_current_source",
-    "windows_recheck_run": 45982705533
+    "windows_recheck_run": 45982705533,
+    "windows_recheck_status": "failed_same_shell_shortcut"
   },
   "resource_soak": {
     "run": 45844965597,
@@ -379,11 +380,10 @@
     "build_run": 45961659921
   },
   "network_home_current": {
-    "completed": false,
-    "first_failure": "direct_tab_not_loaded",
-    "first_owned_exit_complete": true,
-    "recheck": "physical_tab_selection_in_progress",
+    "completed": true,
+    "summary": "network-home-summary.json",
     "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
-    "producer_run": 45971903126
+    "producer_run": 45971903126,
+    "raw_result_sha256": "15c6f3d6e39297b816c539ff0f883d6a03450c915c5f204e75961c77e1f73d22"
   }
 }
