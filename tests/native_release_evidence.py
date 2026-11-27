@@ -55,7 +55,13 @@ class EvidenceRejected(ValueError):
 def _default_invoke(command):
     result = subprocess.run(command, capture_output=True, text=True, timeout=180)
     if result.returncode != 0:
-        raise EvidenceRejected('evidence_command_failed:' + command[0])
+        # Fixed facts only: gh stderr can contain signed redirect URLs.
+        status=re.search(r'HTTP[ \t]+([0-9]{3})',result.stderr or '')
+        reason='http_'+status.group(1) if status else 'unclassified'
+        if 'Resource not accessible by integration' in (result.stderr or ''):reason+=':integration_scope'
+        if 'Must have admin rights' in (result.stderr or ''):reason+=':admin_required'
+        operation='job_logs' if command[-1].endswith('/logs') else command[0]
+        raise EvidenceRejected('evidence_command_failed:'+operation+':'+reason)
     return result.stdout
 
 
