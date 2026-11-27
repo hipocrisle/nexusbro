@@ -1429,7 +1429,12 @@ finally:
             journal_tail=journal_file.read(1024*1024).decode('utf-8',errors='replace')
         flags=[int(v) for v in re.findall(r'NEXUSBRO_BROWSER_LOCK callback_diag=physical_l flags=(\d{1,4})(?!\d)',journal_tail) if int(v)<=1023]
         errors={code:len(re.findall('NEXUSBRO_BROWSER_LOCK callback_diag='+code+r'(?![a-z_])',journal_tail)) for code in ('kind_failed','virtual_key_failed','physical_status_failed','set_handled_failed')}
-        results.append({'native_lock_callback_diagnostics':{'physical_l_flags':flags[-256:],'api_errors':errors}})
+        # Distinguish "handler never fired" from "L arrived but was rejected":
+        # webview2-installed counts handler registrations, webview2-key counts
+        # accepted Ctrl+Shift+L key events (journal markers, counts only).
+        handler_facts={'installed_count':len(re.findall(r'NEXUSBRO_BROWSER_LOCK shortcut=webview2-installed(?![a-z-])',journal_tail)),
+                       'accepted_key_count':len(re.findall(r'NEXUSBRO_BROWSER_LOCK shortcut=webview2-key(?![a-z-])',journal_tail))}
+        results.append({'native_lock_callback_diagnostics':{'physical_l_flags':flags[-256:],'api_errors':errors,'handler_facts':handler_facts}})
     (run/'ad-reports.json').write_text(json.dumps(ad_reports,indent=2),encoding='utf-8')
     (run/'fixture-hits.json').write_text(json.dumps(hits,indent=2),encoding='utf-8')
     server.shutdown()
