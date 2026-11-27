@@ -78,10 +78,10 @@ def windows_app_window_handles(pid, *, enum_top=None, enum_children=None,
                                pid_of=None, visible=None):
     """All VISIBLE windows of the exact app PID: top-level AND child windows.
 
-    Tauri popup_menu uses builder.parent() (popup_menu.rs:231), which on
-    Windows creates a WS_CHILD window: the real menu popup is never a
-    top-level window, so a top-level-only enumeration can never see it.
-    Identity stays strictly PID-bound; foreign processes are never included.
+    Enumerate native HWNDs independently of UIA's desktop window projection.
+    Tauri parent() sets an OWNER on Windows, not WS_CHILD (tauri window.rs).
+    Include descendants too; the exact menu item and app identity are still
+    checked before one physical click. Foreign PIDs are never included.
     """
     if enum_top is None:
         import win32gui

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Pure tests for windows_app_window_handles (page_save_native menu fix).
 
-Stubbed Win32: proves the enumeration sees the WS_CHILD popup window that a
-top-level-only enumeration can never see (Tauri builder.parent() on Windows),
-and that identity stays strictly PID/visibility-bound.
+Stubbed Win32: proves native top-level and child HWNDs are enumerated with
+strict PID/visibility binding. It does not establish the real popup style
+or prove why UIA's earlier desktop projection omitted the menu.
 """
 import sys
 import unittest
