@@ -121,6 +121,52 @@ def validate_light_binary(light,verified_binary_sha256):
     assert light.get('binary_sha256')==verified_binary_sha256,'Public light playback binary differs from the verified producer artifact'
 
 
+def release_gates(state):
+    """Declared release policy; absence means the strict historical behavior."""
+    policy=state.get('release_policy')
+    if policy is None:return ('full',True,True)
+    assert isinstance(policy,dict),'Release policy invalid'
+    mode=policy.get('mode');performance=policy.get('performance_claim');memory=policy.get('memory_process_changed')
+    assert mode in ('full','functional'),'Release policy mode invalid'
+    assert type(performance) is bool and type(memory) is bool,'Release policy flags undeclared'
+    return (mode,mode=='full' or performance,mode=='full' or memory)
+
+
+def validate_functional_playback(value,source,build,verified_binary_sha256):
+    """Real two-minute default-VP9 playback. Never a performance comparison:
+    buffering is disclosed per event, nothing claims uninterrupted playback."""
+    assert value.get('desktop_source')==source and str(value.get('producer_run'))==build,'Functional candidate mismatch'
+    assert value.get('binary_sha256')==verified_binary_sha256,'Functional binary differs from the verified producer artifact'
+    assert value.get('performance_comparison_accepted') is False,'Functional proof must not claim a performance comparison'
+    assert value.get('quality_selection')=='default_vp9','Functional proof must use the default VP9 path'
+    playback=value.get('functional_playback',{})
+    assert playback.get('completed') is True,'Functional playback incomplete'
+    played=playback.get('played_media_seconds');wall=playback.get('wall_seconds')
+    assert type(played) in (int,float) and math.isfinite(played) and played>=120,'Functional playback too short'
+    assert type(wall) in (int,float) and math.isfinite(wall) and 120<=wall<=181,'Functional wall bound violated'
+    first=playback.get('first_state',{});last=playback.get('last_state',{})
+    for snapshot in (first,last):
+        assert snapshot.get('video_width')==1280 and snapshot.get('video_height')==720,'Functional geometry differs'
+    duration=last.get('duration')
+    assert type(duration) in (int,float) and math.isfinite(duration) and duration>0 and first.get('duration')==duration,'Functional duration unstable'
+    assert type(first.get('position')) in (int,float) and type(last.get('position')) in (int,float),'Functional positions invalid'
+    assert abs((last['position']-first['position'])-played)<=0.5,'Functional played seconds do not match positions'
+    assert last.get('playing') is True,'Functional playback did not end playing'
+    decoded_first=first.get('decoded');decoded_last=last.get('decoded')
+    assert type(decoded_first) is int and type(decoded_last) is int and decoded_last>decoded_first,'Functional frames did not advance'
+    decode=value.get('decode',{})
+    assert decode.get('codec')=='vp9' and decode.get('decoder')=='vpx' and decode.get('decode_mode')=='software' and decode.get('platform_decoder') is False and decode.get('video_pipelines')==1,'Functional decode facts differ'
+    owned=value.get('owned_exit',{})
+    assert all(owned.get(k) is True for k in ('parent_normal_exit','all_known_native_executions_exited','actual_app_identity_bound','actual_app_execution_exited','launcher_exit_zero')),'Functional owned exit unproven'
+    assert value.get('cleanup_completed') is True,'Functional cleanup incomplete'
+    events=playback.get('buffer_events')
+    assert isinstance(events,list) and len(events)<=64,'Functional buffer events unbounded'
+    for event in events:
+        duration_seconds=event.get('duration_seconds')
+        assert type(duration_seconds) in (int,float) and math.isfinite(duration_seconds) and 0<=duration_seconds<=20,'Functional stall bound violated'
+        assert event.get('resumed_without_input') is True,'Functional stall without self-resume'
+
+
 def main():
     assert os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch','Preparation is CI-only'
     repo=os.environ['REPO'];tag=os.environ['TAG'];build=os.environ['BUILD_RUN']
@@ -137,21 +183,30 @@ def main():
     native=json.loads(gh('api',f'repos/{repo}/actions/runs/{current}/jobs?filter=latest&per_page=100'))
     assert native.get('total_count',101)<=100, 'Native job listing incomplete'
     validate_native_jobs(native['jobs'])
-    validate_paired(state.get('paired_public_measurement',{}),source,build)
-    paired_path=pathlib.Path('docs/verification',version,'paired-home-result.json')
-    assert paired_path.is_file() and not paired_path.is_symlink() and paired_path.stat().st_size<=1024*1024, 'Raw paired report missing'
-    paired_bytes=paired_path.read_bytes()
-    assert hashlib.sha256(paired_bytes).hexdigest()==state['paired_public_measurement']['raw_report_sha256'], 'Raw paired evidence digest mismatch'
-    validate_paired_report(json.loads(paired_bytes),source,build)
+    mode,need_abba,need_soak=release_gates(state)
     # Bind the measured ELF to the actual producer artifact, not just a SHA
-    # string supplied by the measurement report. Download only on the CI VM.
-    paired_report=json.loads(paired_bytes)
+    # string supplied by a report. This binding ALWAYS runs, in every mode.
     with tempfile.TemporaryDirectory(prefix='nb-paired-binary-') as directory:
         gh('run','download',build,'--repo',repo,'--name','nexusbro-linux-runtime','--dir',directory)
         binaries=[p for p in pathlib.Path(directory).rglob('*') if p.is_file()]
         assert len(binaries)==1 and binaries[0].name=='nexusbro' and binaries[0].stat().st_size<=128*1024*1024, 'Unexpected producer binary artifact'
         verified_binary_sha256=hashlib.sha256(binaries[0].read_bytes()).hexdigest()
+    if need_abba:
+        validate_paired(state.get('paired_public_measurement',{}),source,build)
+        paired_path=pathlib.Path('docs/verification',version,'paired-home-result.json')
+        assert paired_path.is_file() and not paired_path.is_symlink() and paired_path.stat().st_size<=1024*1024, 'Raw paired report missing'
+        paired_bytes=paired_path.read_bytes()
+        assert hashlib.sha256(paired_bytes).hexdigest()==state['paired_public_measurement']['raw_report_sha256'], 'Raw paired evidence digest mismatch'
+        paired_report=json.loads(paired_bytes)
+        validate_paired_report(paired_report,source,build)
         assert verified_binary_sha256==paired_report['provenance']['exe_sha256'], 'Measured binary differs from actual build artifact'
+    else:
+        # Without an ABBA measurement a performance acceptance can never be
+        # claimed; the functional proof replaces it, never imitates it.
+        assert state.get('paired_public_measurement',{}).get('accepted') is not True,'Performance accepted cannot be claimed without ABBA'
+        functional_path=pathlib.Path('docs/verification',version,'light-functional-home-summary.json')
+        assert functional_path.is_file() and not functional_path.is_symlink() and functional_path.stat().st_size<=1024*1024,'Functional playback evidence missing'
+        validate_functional_playback(json.loads(functional_path.read_text()),source,build,verified_binary_sha256)
     light=json.loads(pathlib.Path('docs/verification',version,'light-home-summary.json').read_text())
     validate_light_binary(light,verified_binary_sha256)
     assert light.get('desktop_source')==source and str(light.get('producer_run'))==build
@@ -159,22 +214,29 @@ def main():
     delta=light['position_delta_seconds'];assert type(delta) in (int,float) and math.isfinite(delta) and delta>=8
     assert light['last_light_state']['decoded']>light['first_light_state']['decoded'] and light['last_light_state']['position']-light['first_light_state']['position']>=8
     assert light.get('owned_exit',{}).get('parent_normal_exit') is True and light['owned_exit'].get('all_known_native_executions_exited') is True,'Public light playback exit unproven'
-    resource=str(state['resource_soak_pending']['run']);assert re.fullmatch('[1-9][0-9]*',resource)
-    deadline=time.monotonic()+2700
-    while True:
-        record=json.loads(gh('run','view',resource,'--repo',repo,'--json','status,conclusion,headSha'))
-        if record['status']=='completed':
-            assert record['conclusion']=='success','Resource run did not pass';break
-        assert time.monotonic()<deadline,'Resource acceptance wait expired'
-        time.sleep(30)
-    with tempfile.TemporaryDirectory(prefix='nb-release-resource-') as directory:
-        gh('run','download',resource,'--repo',repo,'--name','resource-soak-windows-two-hours','--dir',directory)
-        files=list(pathlib.Path(directory).rglob('results.json'));assert len(files)==1 and files[0].stat().st_size<=2*1024*1024
-        value=json.loads(files[0].read_text());validate_resource(value,source,build,record['headSha'])
     out=pathlib.Path('.dev-check/publish');out.mkdir(parents=True,exist_ok=True)
-    receipt={k:value[k] for k in ('source','test_source','build_run','platform','completed','acceptance_passed','hibernation_acceptance','wall_seconds','requested_seconds','samples_count','exe_sha256','package_sha256')}
-    receipt['run']=resource;(out/'resource-acceptance.json').write_text(json.dumps(receipt,indent=2)+'\n')
+    if need_soak:
+        resource=str(state['resource_soak_pending']['run']);assert re.fullmatch('[1-9][0-9]*',resource)
+        deadline=time.monotonic()+2700
+        while True:
+            record=json.loads(gh('run','view',resource,'--repo',repo,'--json','status,conclusion,headSha'))
+            if record['status']=='completed':
+                assert record['conclusion']=='success','Resource run did not pass';break
+            assert time.monotonic()<deadline,'Resource acceptance wait expired'
+            time.sleep(30)
+        with tempfile.TemporaryDirectory(prefix='nb-release-resource-') as directory:
+            gh('run','download',resource,'--repo',repo,'--name','resource-soak-windows-two-hours','--dir',directory)
+            files=list(pathlib.Path(directory).rglob('results.json'));assert len(files)==1 and files[0].stat().st_size<=2*1024*1024
+            value=json.loads(files[0].read_text());validate_resource(value,source,build,record['headSha'])
+        receipt={k:value[k] for k in ('source','test_source','build_run','platform','completed','acceptance_passed','hibernation_acceptance','wall_seconds','requested_seconds','samples_count','exe_sha256','package_sha256')}
+        receipt['run']=resource;(out/'resource-acceptance.json').write_text(json.dumps(receipt,indent=2)+'\n')
+        resource_verified=True
+    else:
+        # Honest receipt: no two-hour soak was required by the declared policy
+        # (memory/process unchanged); no acceptance is fabricated.
+        (out/'resource-acceptance.json').write_text(json.dumps({'resource_soak':'not_required_by_policy','memory_process_changed':False},indent=2)+'\n')
+        resource_verified=False
     ensure_draft(repo,tag,source,pathlib.Path('docs','RELEASE-'+version+'.md'))
-    print(json.dumps({'candidate_draft_prepared':True,'resource_acceptance_verified':True,'public_light_playback_evidence_verified':True,'published':False}))
+    print(json.dumps({'candidate_draft_prepared':True,'release_mode':mode,'performance_claim':need_abba,'resource_acceptance_verified':resource_verified,'public_light_playback_evidence_verified':True,'published':False}))
 
 if __name__=='__main__':main()
