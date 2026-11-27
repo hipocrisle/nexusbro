@@ -85,6 +85,8 @@ def run(args):
     require(os.environ.get('GITHUB_ACTIONS')!='true','Local benchmark forbids GHA spoofing')
     require(not os.environ.get('WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS'),'Local benchmark preserves sandbox')
     require(args.allow_local_virtual_display,'Explicit private virtual-display consent required')
+    if args.light_av1_quality:
+        require(args.video_id=='M7lc1UVf-VE' and args.native_normal_ui and not args.normal_reference_preflight,'AV1 option requires the declared clip and native input')
     root=validate_private_root(args.private_root,args.expect_uid)
     exe=validate_inside_root(args.exe,root,'exe');cef=validate_inside_root(args.cef,root,'cef')
     require(digest(exe)==args.exe_sha256,'Candidate binary mismatch')
@@ -106,6 +108,7 @@ def run(args):
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'arms':[],
       'desktop_source':args.desktop_source,'producer_run':args.producer_run,'sandbox_preserved':True,'local_execution':True,
       'provenance':{'exe_sha256':digest(exe),'cef_sha256':digest(cef/'libcef.so'),'video_id':args.video_id,'expected_width':args.width,'expected_height':args.height,'expected_duration':args.expected_duration,'expected_fps':args.expected_fps,'route_mode':'direct','order':list(ORDER),'hardware_acceleration_setting':False,'audio_output_policy_match_proven':False,'physical_audio_capture_proven':False,'warmup_seconds':30,'min_continuous_stable_seconds':30,'warmup_max_elapsed_seconds':90,'measurement_start_content_position':60,'measurement_seconds':90,'sample_period_seconds':5,'private_metric':'linux_uss'}}
+    report['provenance']['light_quality_selection']='native_720p_av1_option' if args.light_av1_quality else 'default_vp9'
     if getattr(args,'manual_ui_setup',False):
         require(args.normal_reference_preflight,'Manual UI controller is diagnostic only')
         from youtube_manual_ui_setup import manual_setup
@@ -148,6 +151,7 @@ if __name__=='__main__':
     p.add_argument('--normal-reference-preflight',action='store_true')
     p.add_argument('--light-reference-preflight',action='store_true')
     p.add_argument('--light-long-diagnostic',action='store_true')
+    p.add_argument('--light-av1-quality',action='store_true')
     p.add_argument('--quality-menu-diagnostic',action='store_true')
     p.add_argument('--account-playback-diagnostic',action='store_true')
     p.add_argument('--manual-ui-setup',action='store_true')

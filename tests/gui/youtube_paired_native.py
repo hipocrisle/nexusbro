@@ -144,9 +144,7 @@ def focus_normal_cef(client,device):
     return focus_cef(device.display,int(str(window),0),viewport,engines,alive)
 
 
-def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result,*,consent_only=False):
-    if sys.platform!='linux':raise Blocked('normal_native_ui_linux_only')
-    from youtube_normal_ui_native import prepare_normal_playback,UiBlocked
+def selected_native_binding(client,device,identifier,tab):
     from youtube_player_native import native_app_identity,native_app_window,native_app_identity_alive
     owner=native_app_identity(device);native_app_window(device,owner)
     def engine_record():
@@ -174,9 +172,34 @@ def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result,*
                     and row.get('browser_id')==initial['browser_id'] and row.get('route_generation')==initial.get('route_generation')
                     and row.get('route_pending') is not True and not row.get('route_error'))
         except Exception:return False
+    return binding,(pid,birth)
+
+
+def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result,*,consent_only=False):
+    if sys.platform!='linux':raise Blocked('normal_native_ui_linux_only')
+    from youtube_normal_ui_native import prepare_normal_playback,UiBlocked
+    binding,_=selected_native_binding(client,device,identifier,tab)
     try:
         return prepare_normal_playback(client,device,snapshot,args.width,args.height,result,binding,quality_diagnostic_dir=getattr(args,"quality_diagnostic_dir",None),stop_after_consent=consent_only)
     except UiBlocked as error:raise Blocked('normal_ui_'+str(error)) from None
+
+
+def prepare_light_av1_native(client,device,snapshot,identifier,tab,result):
+    if sys.platform!='linux':raise Blocked('light_av1_input_linux_only')
+    from youtube_light_quality_native import prepare_light_av1,LightQualityBlocked
+    from x11_owned_cef_focus import NativeX11
+    binding,(pid,birth)=selected_native_binding(client,device,identifier,tab)
+    def key(name):
+        if name not in ('Tab','Down') or not binding():raise Blocked('light_av1_input_binding_unproven')
+        native=NativeX11(device.display)
+        try:
+            focus=native.input_focus()
+            if native.pid_of(focus)!=pid or kernel_birth(pid,'linux_ticks')!=birth:
+                raise Blocked('light_av1_native_focus_unproven')
+        finally:native.close()
+        subprocess.run(['xdotool','key','--clearmodifiers',name],env={**os.environ,'DISPLAY':device.display},check=True,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL,timeout=3)
+    try:return prepare_light_av1(snapshot,key,binding,result)
+    except LightQualityBlocked as error:raise Blocked('light_av1_'+str(error)) from None
 
 
 def normal_key(device,key,client=None,receipt=None):
@@ -401,12 +424,17 @@ def arm(args,proxy,mode,index,out,*,device_factory=None,close_owned=None,private
             elif state.get('paused') is True and state.get('ready_state',0)>=2:normal_key(device,'k',client,result)
             else:raise Blocked('normal_user_play_required')
         state=wait_for(lambda:(lambda s:s if s.get('playing') and s['position']>0 else None)(snapshot(mode)),'Real public playback missing',15)
+        if mode=='light' and getattr(args,'light_av1_quality',False):
+            state=prepare_light_av1_native(client,device,lambda:snapshot('light'),identifier,tab,result)
+            video_state(state,observed_args)
         result['public_playback_before_decode']={k:state.get(k) for k in ('playing','position','duration','decoded','dropped','video_width','video_height','volume','muted','default_sink')}
         result['stage']='native-decode'
         decode_raw=snapshot('decode')
         if isinstance(decode_raw.get('native_diagnostic'),dict):
             result['native_decode_diagnostic']=decode_raw['native_diagnostic']
         decode=decode_state(decode_raw);result['decode']=decode
+        if mode=='light' and getattr(args,'light_av1_quality',False) and (decode['codec']!='av1' or decode['decoder']!='dav1d'):
+            raise Blocked('light_av1_actual_decoder_unproven')
         result['startup_wall_seconds']=time.monotonic()-started
         result['startup_cpu_total_proven']=False
         result['audio_policy']=audio_policy(state);result['audio_policy_proven']=True;result['physical_audio_capture_proven']=False

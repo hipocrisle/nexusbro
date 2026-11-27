@@ -63,7 +63,7 @@ def prepare_light_av1(snapshot, send_key, binding_check, result, *,
     _require(0 <= index <= count - 2, 'quality_index_out_of_range')
     _require(index == count - 2, 'default_not_predeclared_position')
     _require(state['active_control'] == 1, 'unexpected_focus_before_start')
-    _require(state.get('width') == 1280 and state.get('height') == 720,
+    _require(state.get('video_width') == 1280 and state.get('video_height') == 720,
              'unexpected_geometry')
     _require(state.get('playing') is True, 'not_playing_before_switch')
     receipt['quality_count'] = count
@@ -78,22 +78,25 @@ def prepare_light_av1(snapshot, send_key, binding_check, result, *,
         return take('after_' + name)
 
     state = key('Tab')
-    _require(state['active_control'] == 2, 'focus_not_on_quality_after_first_tab')
+    _require(state['active_control'] == 2, 'focus_not_on_seek_after_first_tab')
     state = key('Tab')
-    _require(state['active_control'] == 3, 'focus_not_on_switch_after_second_tab')
+    _require(state['active_control'] == 3, 'focus_not_on_quality_after_second_tab')
     state = key('Down')
     _require(state['quality_count'] == count, 'quality_count_changed')
     _require(state['quality_index'] == index + 1, 'quality_index_not_advanced')
 
     deadline = clock() + OBSERVE_BUDGET_SECONDS
     while True:
+        bound('before_observe')
         state = take('observe')
+        bound('after_observe')
+        if clock()>deadline:raise LightQualityBlocked('av1_switch_not_confirmed')
         _require(state['quality_count'] == count, 'quality_count_changed')
         # The native src switch may reset the decoded counter, so the check is
         # an absolute floor, never a comparison with the pre-switch counter.
         if (state.get('playing') is True and state['position'] > 0
                 and state['decoded'] >= 6
-                and state.get('width') == 1280 and state.get('height') == 720
+                and state.get('video_width') == 1280 and state.get('video_height') == 720
                 and state['quality_index'] == count - 1
                 and state['active_control'] == 3):
             receipt['final_index'] = state['quality_index']

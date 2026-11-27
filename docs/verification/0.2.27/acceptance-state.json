@@ -4,12 +4,12 @@
   "published": false,
   "machine_acceptance_complete": false,
   "candidate": {
-    "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
-    "build_run": 45961659921,
-    "status": "producer_failed_fresh_native_running",
-    "native_windows": "pending_fresh_runtime",
-    "native_linux": "pending_fresh_runtime",
-    "page_save": "home_current_source_five_native_checks_passed_windows_pending"
+    "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+    "build_run": 45971903126,
+    "status": "in_progress",
+    "native_windows": "pending",
+    "native_linux": "pending",
+    "page_save": "pending_current_source"
   },
   "resource_soak": {
     "run": 45844965597,
@@ -60,12 +60,12 @@
     }
   },
   "paired_public_measurement": {
-    "status": "same_codec_sample_unresolved",
+    "status": "native_AV1_user_quality_selection_prepared_actual_pending",
     "accepted": false,
     "local_execution_performed": true,
     "gha_environment_spoofed": false,
-    "source": "a48bdd01af97813d20e15a3e561e327b287c8190",
-    "build_run": 45828933731,
+    "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+    "build_run": 45971903126,
     "diagnostic_summary": "normal-sourceb810-summary.json",
     "long_playback_accepted": false
   },
@@ -75,7 +75,7 @@
     "required_public_packages": 3,
     "accepted": false
   },
-  "observed_at_utc": "2026-11-27T07:57:08.681664+00:00",
+  "observed_at_utc": "2026-11-27T09:21:07.096751+00:00",
   "native_summary": "native-summary.json",
   "frontend_recheck": {
     "run": 45554861820,
@@ -155,14 +155,14 @@
     "owner_profile_or_cookies_used": false
   },
   "resource_soak_pending": {
-    "run": 45965405826,
-    "status": "in_progress",
-    "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
+    "run": null,
+    "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+    "build_run": 45971903126,
+    "status": "not_started_until_current_build_artifact",
     "required_seconds": 7200,
     "platform": "windows",
     "diagnostic_pilot": false,
-    "acceptance_passed": false,
-    "build_run": 45961659921
+    "acceptance_passed": false
   },
   "linux_strict_routes_pending": {
     "run": 45638466418,
@@ -338,8 +338,27 @@
     }
   ],
   "fresh_native_pending": {
-    "run": 45965385909,
+    "status": "awaiting_current_build",
+    "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a"
+  },
+  "previous_native_accepted_candidate": {
     "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
-    "status": "in_progress"
+    "producer_run": 45961659921,
+    "windows_native_run": 45967489303,
+    "linux_native_run": 45968283173,
+    "windows_native": "success",
+    "linux_native": "success",
+    "page_save_both_platforms": "success",
+    "accepted_for_current_source": false
+  },
+  "previous_resource_soak_pending": {
+    "run": 45965405826,
+    "status": "in_progress",
+    "source": "5d6ba061c530904e9afb39ca90188f268fd888aa",
+    "required_seconds": 7200,
+    "platform": "windows",
+    "diagnostic_pilot": false,
+    "acceptance_passed": false,
+    "build_run": 45961659921
   }
 }

@@ -11,7 +11,7 @@ from youtube_light_quality_native import prepare_light_av1, LightQualityBlocked
 def state(*, active=1, count=5, index=3, width=1280, height=720,
           playing=True, position=10.0, decoded=100):
     return {'active_control': active, 'quality_count': count,
-            'quality_index': index, 'width': width, 'height': height,
+            'quality_index': index, 'video_width': width, 'video_height': height,
             'playing': playing, 'position': position, 'decoded': decoded}
 
 
@@ -75,7 +75,7 @@ class LightAv1InputTest(unittest.TestCase):
         steps = [state(), state(active=1)] + list(self.HAPPY)
         keys = []
         clock = Clock()
-        with self.assertRaisesRegex(LightQualityBlocked, 'focus_not_on_quality_after_first_tab'):
+        with self.assertRaisesRegex(LightQualityBlocked, 'focus_not_on_seek_after_first_tab'):
             prepare_light_av1(Script(steps).snapshot, keys.append,
                               lambda: True, {}, clock=clock.now, sleep=clock.sleep)
         self.assertEqual(keys, ['Tab'])
