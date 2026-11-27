@@ -231,6 +231,7 @@ def reference_playback_window(snapshot, args, result, *, clock=time.monotonic, s
     began=clock();stable=None;first=None;previous=None;buffers=0
     while clock()-began<=30:
         state=snapshot();audio_policy(state);video_state(state,args)
+        if clock()-began>30:raise Blocked('reference_preflight_continuous_playback_deadline')
         result['reference_last_state']={k:state.get(k) for k in ('position','duration','decoded','dropped','playing','video_paused','audio_paused','hidden','video_width','video_height')}
         if previous is not None and state['position']<previous['position']:
             raise Blocked('reference_preflight_clock_discontinuity')

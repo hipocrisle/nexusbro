@@ -37,7 +37,9 @@ class Protocol(unittest.TestCase):
  def test_forward_seek_is_never_accepted_as_warmup(self):
   c=Clock()
   with self.assertRaisesRegex(Blocked,'clock_discontinuity'):warmup_to_segment(lambda:self.snapshot(c.value+(20 if c.value>=5 else 0)),self.args,{},clock=c.now,sleep=c.sleep)
-class ReferenceWindow(Protocol):
+class ReferenceWindow(unittest.TestCase):
+ args=Protocol.args
+ snapshot=Protocol.snapshot
  def test_startup_buffer_recovers_without_input_then_eight_continuous_seconds(self):
   c=Clock();result={}
   def observe():return self.snapshot(max(0,c.value-2),c.value>=2)
@@ -59,4 +61,11 @@ class ReferenceWindow(Protocol):
   def observe():return self.snapshot(c.value if c.value<7 else max(7,c.value-1),not(7<=c.value<8))
   reference_playback_window(observe,self.args,result,clock=c.now,sleep=c.sleep)
   self.assertGreaterEqual(c.value,16)
+ def test_slow_snapshot_cannot_pass_after_the_deadline(self):
+  c=Clock()
+  def observe():
+   if c.value>0:c.value+=35
+   return self.snapshot(c.value)
+  with self.assertRaisesRegex(Blocked,'continuous_playback_deadline'):
+   reference_playback_window(observe,self.args,{},clock=c.now,sleep=c.sleep)
 if __name__=='__main__':unittest.main()

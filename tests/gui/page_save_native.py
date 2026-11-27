@@ -372,15 +372,16 @@ def run(args):
             def popup_page():
                 require(native_app_identity_alive(device,identity),'owned_app_changed')
                 for index in range(2):
-                    candidate=None
+                    candidate=None;keep=False
                     try:
                         candidate=Client(display=device.display,port=device.inspector,page_index=index)
                         label=candidate.js('window.__TAURI_INTERNALS__?.metadata.currentWindow.label')
                         if isinstance(label,str) and label.startswith('menu-'):
-                            return candidate
+                            keep=True;return candidate
                     except (ConnectionError,OSError):
                         pass
-                    if candidate is not None:candidate.close()
+                    finally:
+                        if candidate is not None and not keep:candidate.close()
                 return None
             # Mapping an OS window can precede WebKit page/metadata creation.
             # Observe that same menu, never click it open a second time.
