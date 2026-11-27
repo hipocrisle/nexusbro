@@ -107,7 +107,7 @@ def windows_owned_window_screenshot(pid, out_dir, *, enum_top=None, pid_of=None,
             import win32gui
             rect_of = win32gui.GetWindowRect
         candidates = []
-        enum_top(candidates)
+        enum_top(candidates.append)
         own = [h for h in candidates if pid_of(h) == pid]
         menu = [h for h in own if title_of(h) == 'NexusBro — меню']
         chosen = menu or own
