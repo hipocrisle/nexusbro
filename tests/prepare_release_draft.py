@@ -172,8 +172,10 @@ def main():
     assert os.environ.get('GITHUB_ACTIONS')=='true' and os.environ.get('GITHUB_EVENT_NAME')=='workflow_dispatch','Preparation is CI-only'
     repo=os.environ['REPO'];tag=os.environ['TAG'];build=os.environ['BUILD_RUN']
     assert repo==os.environ['GITHUB_REPOSITORY'] and re.fullmatch(r'[1-9][0-9]*',build)
-    validate_runtime_bindings(build,os.environ.get('LINUX_RUNTIME_BUILD'),os.environ.get('WINDOWS_RUNTIME_BUILD'))
-    assert os.environ.get('LINUX_RUNTIME_RESULT')=='success','Fresh exact-source Linux acceptance required'
+    evidence_request=os.environ.get('NATIVE_EVIDENCE','')
+    if not evidence_request:
+        validate_runtime_bindings(build,os.environ.get('LINUX_RUNTIME_BUILD'),os.environ.get('WINDOWS_RUNTIME_BUILD'))
+        assert os.environ.get('LINUX_RUNTIME_RESULT')=='success','Fresh exact-source Linux acceptance required'
     version=tag.removeprefix('v');assert re.fullmatch(r'v[0-9]+\.[0-9]+\.[0-9]+',tag)
     assert json.loads(pathlib.Path('desktop/src-tauri/tauri.conf.json').read_text())['version']==version,'Candidate version mismatch'
     state=json.loads(pathlib.Path('docs/verification',version,'acceptance-state.json').read_text())
@@ -181,9 +183,15 @@ def main():
     assert metadata['status']=='completed' and state['candidate']['source']==metadata['headSha'] and str(state['candidate']['build_run'])==build
     source=metadata['headSha']
     current=os.environ['GITHUB_RUN_ID'];assert re.fullmatch('[1-9][0-9]*',current)
-    native=json.loads(gh('api',f'repos/{repo}/actions/runs/{current}/jobs?filter=latest&per_page=100'))
-    assert native.get('total_count',101)<=100, 'Native job listing incomplete'
-    validate_native_jobs(native['jobs'])
+    if evidence_request:
+        assert len(evidence_request)<=512,'Native evidence request too large'
+        from native_release_evidence import verified_native_jobs
+        native_jobs=verified_native_jobs(repo,build,source,current,json.loads(evidence_request))
+    else:
+        native=json.loads(gh('api',f'repos/{repo}/actions/runs/{current}/jobs?filter=latest&per_page=100'))
+        assert native.get('total_count',101)<=100, 'Native job listing incomplete'
+        native_jobs=native['jobs']
+    validate_native_jobs(native_jobs)
     mode,need_abba,need_soak=release_gates(state)
     # Bind the measured ELF to the actual producer artifact, not just a SHA
     # string supplied by a report. This binding ALWAYS runs, in every mode.
@@ -216,6 +224,8 @@ def main():
     assert light['last_light_state']['decoded']>light['first_light_state']['decoded'] and light['last_light_state']['position']-light['first_light_state']['position']>=8
     assert light.get('owned_exit',{}).get('parent_normal_exit') is True and light['owned_exit'].get('all_known_native_executions_exited') is True,'Public light playback exit unproven'
     out=pathlib.Path('.dev-check/publish');out.mkdir(parents=True,exist_ok=True)
+    if evidence_request:
+        (out/'native-evidence.json').write_text(json.dumps({'source':source,'build_run':build,'verification_run':current,'evidence_runs':json.loads(evidence_request),'all_required_native_checks_verified':True},indent=2)+'\n')
     if need_soak:
         resource=str(state['resource_soak_pending']['run']);assert re.fullmatch('[1-9][0-9]*',resource)
         deadline=time.monotonic()+2700

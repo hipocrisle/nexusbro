@@ -1,0 +1,18 @@
+{
+  "source": "b3d0b1edd30a89f1de159a6c6544b46dc683427a",
+  "test_source": "9a0eefb6af913c063104e4a90adda0142efd1772",
+  "build_run": "45971903126",
+  "platform": "win32",
+  "completed": true,
+  "acceptance_passed": true,
+  "hibernation_acceptance": true,
+  "wall_seconds": 7200.078,
+  "requested_seconds": 7200,
+  "samples_count": 1438,
+  "exe_sha256": "99e3f18c01874bf86f424e0be970970fe2eccca9331cfdda1c781b93955d12aa",
+  "package_sha256": "0bf770769ee0964f7d86718bc423343fde57c0175dd86f859b126f8e0b911540",
+  "diagnostic_pilot": false,
+  "run": 45976120999,
+  "artifact": 15194322495,
+  "raw_results_sha256": "53beb0a17cda88a69776612dc27cc868ace5d3204aac073b1710d2347423cff6"
+}

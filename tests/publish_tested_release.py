@@ -10,9 +10,16 @@ def linux_accepted(jobs,build_run,runtime_build,runtime_result):
  # runtime_result is a needs.* result supplied by this workflow, never an input.
  if runtime_build:return runtime_build==build_run and runtime_result=='success'
  return any(j['conclusion']=='success' and 'ubuntu-24.04' in j['name'] for j in jobs)
-assert linux_accepted(metadata['jobs'],run,os.environ.get('LINUX_RUNTIME_BUILD',''),os.environ.get('LINUX_RUNTIME_RESULT','')),'Missing Linux acceptance of the exact candidate binary'
+external_native_verified=False
+if os.environ.get('NATIVE_EVIDENCE'):
+ request=os.environ['NATIVE_EVIDENCE'];assert len(request)<=512,'Native evidence request too large'
+ from native_release_evidence import verified_native_jobs
+ from prepare_release_draft import validate_native_jobs
+ validate_native_jobs(verified_native_jobs(repo,run,metadata['headSha'],os.environ['GITHUB_RUN_ID'],json.loads(request)))
+ external_native_verified=True
+assert external_native_verified or linux_accepted(metadata['jobs'],run,os.environ.get('LINUX_RUNTIME_BUILD',''),os.environ.get('LINUX_RUNTIME_RESULT','')),'Missing Linux acceptance of the exact candidate binary'
 # The replacement job verifies this too; retain an independent publication gate.
-if os.environ.get('LINUX_RUNTIME_BUILD'):
+if os.environ.get('LINUX_RUNTIME_BUILD') and not external_native_verified:
  assert os.environ['LINUX_RUNTIME_BUILD']==run and os.environ.get('LINUX_RUNTIME_RESULT')=='success','Linux runtime check did not accept this build'
  subprocess.run(['git','fetch','--no-tags','origin',metadata['headSha']],check=True)
  subprocess.run(['git','diff','--exit-code',metadata['headSha'],'HEAD','--','desktop'],check=True)
