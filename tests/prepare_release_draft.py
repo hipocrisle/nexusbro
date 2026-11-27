@@ -143,15 +143,16 @@ def validate_functional_playback(value,source,build,verified_binary_sha256):
     assert playback.get('completed') is True,'Functional playback incomplete'
     played=playback.get('played_media_seconds');wall=playback.get('wall_seconds')
     assert type(played) in (int,float) and math.isfinite(played) and played>=120,'Functional playback too short'
-    assert type(wall) in (int,float) and math.isfinite(wall) and 120<=wall<=181,'Functional wall bound violated'
+    assert type(wall) in (int,float) and math.isfinite(wall) and 120<=wall<=180,'Functional wall bound violated'
     first=playback.get('first_state',{});last=playback.get('last_state',{})
     for snapshot in (first,last):
         assert snapshot.get('video_width')==1280 and snapshot.get('video_height')==720,'Functional geometry differs'
     duration=last.get('duration')
-    assert type(duration) in (int,float) and math.isfinite(duration) and duration>0 and first.get('duration')==duration,'Functional duration unstable'
+    assert type(duration) in (int,float) and math.isfinite(duration) and abs(duration-1343.6)<=2 and first.get('duration')==duration,'Functional duration unstable'
     assert type(first.get('position')) in (int,float) and type(last.get('position')) in (int,float),'Functional positions invalid'
     assert abs((last['position']-first['position'])-played)<=0.5,'Functional played seconds do not match positions'
-    assert last.get('playing') is True,'Functional playback did not end playing'
+    assert first.get('playing') is True and last.get('playing') is True,'Functional playback endpoints are not playing'
+    assert math.isfinite(first['position']) and math.isfinite(last['position']) and 0<=first['position']<last['position']<=duration,'Functional positions outside content'
     decoded_first=first.get('decoded');decoded_last=last.get('decoded')
     assert type(decoded_first) is int and type(decoded_last) is int and decoded_last>decoded_first,'Functional frames did not advance'
     decode=value.get('decode',{})
