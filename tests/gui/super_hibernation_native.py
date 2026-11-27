@@ -338,13 +338,15 @@ def run(args):
             require(state['phase']!='Sleeping','Preparing/stopping interval finished before observation')
             time.sleep(.02)
         require(transition is not None,'No actual preparing/stopping interval observed')
+        report['rapid_wake_transition']=safe_row('hb-a',transition)
         observer.thread.start()
         try:
             activate('hb-a');after=running('hb-a')
             if after['generation']>before['generation']:require(gone(owners),'Rapid wake started replacement before old tree exit')
             else:require(after['pid']==before['pid'],'Cancelled prepare changed writer without generation')
-        finally:observer.finish()
-        report['rapid_wake_writer_observation']={'samples':observer.samples,'peak_same_profile_writers':observer.peak,'period_seconds':.02}
+        finally:
+            try:observer.finish()
+            finally:report['rapid_wake_writer_observation']={'samples':observer.samples,'peak_same_profile_writers':observer.peak,'period_seconds':.02,'error_type':observer.error}
         report['checks'].append('physical_wake_during_observed_prepare_or_stopping_keeps_single_native_writer')
         stage='private-native-refusal'
         activate('pvt-hb-private')
@@ -414,6 +416,17 @@ def run(args):
         report['completed']=True;report['product_hibernation_accepted']=True;code=0
     except Exception as error:
         report.update(failure_stage=stage,failure_class=type(error).__name__)
+        fixed_errors={
+            'Preparing/stopping interval finished before observation':'transition_missed',
+            'No actual preparing/stopping interval observed':'transition_not_observed',
+            'Rapid wake started replacement before old tree exit':'replacement_before_old_exit',
+            'Cancelled prepare changed writer without generation':'writer_changed_without_generation',
+            'Native profile writer observation incomplete':'writer_observation_incomplete',
+            'Two OS writers held the same native profile during rapid wake':'overlapping_profile_writers',
+        }
+        report['failure_code']=fixed_errors.get(str(error),'other_native_failure')
+        import traceback
+        report['failure_sites']=[{'file':pathlib.Path(f.filename).name,'line':f.lineno,'function':f.name} for f in traceback.extract_tb(error.__traceback__)[-3:]]
         if device and device.client:
             try:
                 state=snapshot(device.client)

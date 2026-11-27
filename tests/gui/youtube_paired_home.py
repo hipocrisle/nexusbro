@@ -89,7 +89,7 @@ def run(args):
     exe=validate_inside_root(args.exe,root,'exe');cef=validate_inside_root(args.cef,root,'cef')
     require(digest(exe)==args.exe_sha256,'Candidate binary mismatch')
     require(len(args.desktop_source)==40 and all(c in '0123456789abcdef' for c in args.desktop_source),'Source invalid')
-    require(args.video_id in ('M7lc1UVf-VE','js_0wjzuMfc','5nXmq1PsoJ0'),'Only predeclared public samples admitted')
+    require(args.video_id in ('M7lc1UVf-VE','js_0wjzuMfc','5nXmq1PsoJ0','cyIZ1qFN0aw'),'Only predeclared public samples admitted')
     require(args.video_id=='M7lc1UVf-VE' or args.normal_reference_preflight or args.light_reference_preflight,'Alternative samples are diagnostic-only until release protocol is declared')
     require(math.isfinite(args.expected_duration) and args.expected_duration>=180 and 1<=args.expected_fps<=120,'Expected media metadata invalid')
     require(1<=args.width<=16384 and 1<=args.height<=16384 and 256<=args.memory_cap_mib<=4096,'Geometry or memory budget invalid')
@@ -97,6 +97,9 @@ def run(args):
     require(not out_parent.is_symlink() and out_parent.stat().st_uid==args.expect_uid,'Private output directory invalid')
     out_parent.chmod(0o700)
     out=out_parent/('paired-'+str(time.time_ns()));out.mkdir(mode=0o700)
+    if args.quality_menu_diagnostic:
+        require(args.normal_reference_preflight and args.native_normal_ui,'Quality diagnostic requires normal short preflight')
+        args.quality_diagnostic_dir=str(out)
     parent=out/'arms';parent.mkdir(mode=0o700)
     report={'schema':1,'completed':False,'measurement_valid':False,'comparison_valid':False,'accepted_measurement':False,'diagnostic_only':True,'acceptance_passed':False,'fixture_used':False,'arms':[],
       'desktop_source':args.desktop_source,'producer_run':args.producer_run,'sandbox_preserved':True,'local_execution':True,
@@ -140,6 +143,7 @@ if __name__=='__main__':
     p.add_argument('--producer-run',type=int,required=True);p.add_argument('--expect-uid',type=int,required=True)
     p.add_argument('--normal-reference-preflight',action='store_true')
     p.add_argument('--light-reference-preflight',action='store_true')
+    p.add_argument('--quality-menu-diagnostic',action='store_true')
     p.add_argument('--manual-ui-setup',action='store_true')
     p.add_argument('--native-normal-ui',action='store_true')
     p.add_argument('--allow-local-virtual-display',action='store_true');p.add_argument('--video-id',default='M7lc1UVf-VE')

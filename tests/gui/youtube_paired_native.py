@@ -175,7 +175,7 @@ def prepare_normal_native_ui(client,device,snapshot,identifier,tab,args,result):
                     and row.get('route_pending') is not True and not row.get('route_error'))
         except Exception:return False
     try:
-        return prepare_normal_playback(client,device,snapshot,args.width,args.height,result,binding)
+        return prepare_normal_playback(client,device,snapshot,args.width,args.height,result,binding,quality_diagnostic_dir=getattr(args,"quality_diagnostic_dir",None))
     except UiBlocked as error:raise Blocked('normal_ui_'+str(error)) from None
 
 
