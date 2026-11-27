@@ -309,6 +309,98 @@ pub(crate) fn supports_audio(a: &MediaFormat) -> bool {
 pub(crate) fn supports_video(v: &MediaFormat) -> bool {
     v.ext == "webm" && v.kind == MediaKind::VideoOnly && vp9(&v.vcodec) && v.acodec.is_none()
 }
+
+/// Playback-only AV1 admission: MP4 video-only track without audio whose
+/// codec string carries a real av01 profile prefix (e.g. "av01.0.05M.08").
+/// Download support intentionally stays VP9-WebM-only; this helper never
+/// widens any download path and no muxer/transcode is involved.
+pub(crate) fn playback_av1_parts(
+    ext: &str,
+    vcodec: Option<&str>,
+    acodec: Option<&str>,
+    kind: MediaKind,
+) -> bool {
+    ext == "mp4"
+        && kind == MediaKind::VideoOnly
+        && acodec.is_none()
+        && vcodec.is_some_and(|v| v.starts_with("av01."))
+}
+pub(crate) fn playback_av1(f: &MediaFormat) -> bool {
+    playback_av1_parts(&f.ext, f.vcodec.as_deref(), f.acodec.as_deref(), f.kind)
+}
+
+/// Codec/geometry facts for the playback picker, computed by the caller from
+/// the original MediaFormat so legacy VP9 admission stays byte-identical to
+/// the download rule and no SignedUrl is needed in tests.
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct PlaybackFacts {
+    pub legacy_vp9: bool,
+    pub av1: bool,
+    pub height: Option<u32>,
+    pub fps: Option<f64>,
+}
+
+pub(crate) const MAX_PLAYBACK_QUALITIES: usize = 24;
+
+/// Playback selection policy (pure): returns (default_index, quality_indices).
+/// - Default is STRICTLY the legacy VP9 track with the highest height<=1080
+///   whenever any exists — even if an AV1 track has a higher resolution.
+///   Only when no VP9 exists does AV1 (highest height<=1080) become default.
+/// - Qualities keep EVERY legacy VP9 track (height<=4320, as before); AV1
+///   tracks are appended afterwards by priority 720 -> <=1080 -> higher,
+///   never exceeding MAX_PLAYBACK_QUALITIES total additions, and the default
+///   is always present in the returned qualities.
+pub(crate) fn playback_pick(facts: &[PlaybackFacts]) -> Option<(usize, Vec<usize>)> {
+    let default = facts
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.legacy_vp9 && f.height.is_some_and(|h| h <= 1080))
+        .max_by_key(|(_, f)| f.height.unwrap_or(0))
+        .map(|(i, _)| i)
+        .or_else(|| {
+            facts
+                .iter()
+                .enumerate()
+                .filter(|(_, f)| f.av1 && f.height.is_some_and(|h| h <= 1080))
+                .max_by_key(|(_, f)| f.height.unwrap_or(0))
+                .map(|(i, _)| i)
+        })?;
+    let mut qualities: Vec<usize> = facts
+        .iter()
+        .enumerate()
+        .filter(|(_, f)| f.legacy_vp9 && f.height.is_some_and(|h| h <= 4320))
+        .map(|(i, _)| i)
+        .collect();
+    let capacity = MAX_PLAYBACK_QUALITIES.saturating_sub(qualities.len());
+    if capacity > 0 {
+        let mut av1: Vec<usize> = facts
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.av1 && f.height.is_some_and(|h| h <= 4320))
+            .map(|(i, _)| i)
+            .collect();
+        av1.sort_by_key(|&i| {
+            let f = &facts[i];
+            let h = f.height.unwrap_or(0);
+            (
+                i != default,
+                if h == 720 {
+                    0u8
+                } else if h <= 1080 {
+                    1
+                } else {
+                    2
+                },
+                h,
+            )
+        });
+        qualities.extend(av1.into_iter().take(capacity));
+    }
+    if !qualities.contains(&default) {
+        qualities.push(default);
+    }
+    Some((default, qualities))
+}
 fn selection_valid(selection: &Selection<'_>) -> bool {
     match selection {
         Selection::Audio(a) => supports_audio(a),
@@ -347,20 +439,40 @@ fn parse_range(text: &str) -> Result<(u64, u64, u64), DownloadError> {
 }
 // Strict additional test CA for the fixed disposable fixture only. Normal
 // certificate/hostname validation stays enabled; no production host is affected.
-fn fixture_trust(builder:reqwest::ClientBuilder,format:&MediaFormat)->Result<reqwest::ClientBuilder,DownloadError>{
-    if std::env::var("GITHUB_ACTIONS").as_deref()!=Ok("true")||std::env::var_os("NEXUSBRO_TEST_DATA").is_none(){return Ok(builder);}
-    let url=reqwest::Url::parse(format.url.as_str()).map_err(|_|DownloadError::InvalidRange)?;
-    if url.host_str()!=Some("fixture.googlevideo.com"){return Ok(builder);}
-    let Some(path)=std::env::var_os("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA") else{return Ok(builder);};
-    let path=PathBuf::from(path);
-    let metadata=std::fs::symlink_metadata(&path).map_err(|_|DownloadError::Storage)?;
-    if !path.is_absolute()||!metadata.is_file()||metadata.file_type().is_symlink()||metadata.len()>16384{return Err(DownloadError::Storage);}
-    let pem=std::fs::read(path).map_err(|_|DownloadError::Storage)?;
-    let expected=std::env::var("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA_SHA256").map_err(|_|DownloadError::Storage)?;
+fn fixture_trust(
+    builder: reqwest::ClientBuilder,
+    format: &MediaFormat,
+) -> Result<reqwest::ClientBuilder, DownloadError> {
+    if std::env::var("GITHUB_ACTIONS").as_deref() != Ok("true")
+        || std::env::var_os("NEXUSBRO_TEST_DATA").is_none()
+    {
+        return Ok(builder);
+    }
+    let url = reqwest::Url::parse(format.url.as_str()).map_err(|_| DownloadError::InvalidRange)?;
+    if url.host_str() != Some("fixture.googlevideo.com") {
+        return Ok(builder);
+    }
+    let Some(path) = std::env::var_os("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA") else {
+        return Ok(builder);
+    };
+    let path = PathBuf::from(path);
+    let metadata = std::fs::symlink_metadata(&path).map_err(|_| DownloadError::Storage)?;
+    if !path.is_absolute()
+        || !metadata.is_file()
+        || metadata.file_type().is_symlink()
+        || metadata.len() > 16384
+    {
+        return Err(DownloadError::Storage);
+    }
+    let pem = std::fs::read(path).map_err(|_| DownloadError::Storage)?;
+    let expected = std::env::var("NEXUSBRO_TEST_YOUTUBE_DOWNLOAD_CA_SHA256")
+        .map_err(|_| DownloadError::Storage)?;
     use sha2::Digest;
-    let actual=format!("{:x}",sha2::Sha256::digest(&pem));
-    if expected.len()!=64||expected!=actual{return Err(DownloadError::Storage);}
-    let cert=reqwest::Certificate::from_pem(&pem).map_err(|_|DownloadError::Storage)?;
+    let actual = format!("{:x}", sha2::Sha256::digest(&pem));
+    if expected.len() != 64 || expected != actual {
+        return Err(DownloadError::Storage);
+    }
+    let cert = reqwest::Certificate::from_pem(&pem).map_err(|_| DownloadError::Storage)?;
     Ok(builder.add_root_certificate(cert))
 }
 async fn stream(
@@ -379,7 +491,7 @@ async fn stream(
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(5))
         .timeout(Duration::from_secs(45));
-    let client = fixture_trust(builder,format)?
+    let client = fixture_trust(builder, format)?
         .build()
         .map_err(|_| DownloadError::RouteUnavailable)?;
     let mut file = new_file(path)?;
@@ -809,5 +921,133 @@ mod tests {
         assert!(Target::new(root.join("alias"), "video.webm".into()).is_err());
         std::fs::remove_file(root.join("alias")).unwrap();
         std::fs::remove_dir(root).unwrap();
+    }
+
+    fn vp9_fact(height: u32) -> PlaybackFacts {
+        PlaybackFacts {
+            legacy_vp9: true,
+            av1: false,
+            height: Some(height),
+            fps: Some(30.0),
+        }
+    }
+    fn av1_fact(height: u32) -> PlaybackFacts {
+        PlaybackFacts {
+            legacy_vp9: false,
+            av1: true,
+            height: Some(height),
+            fps: Some(30.0),
+        }
+    }
+
+    #[test]
+    fn playback_av1_parts_admits_only_real_av1_mp4_video_only() {
+        assert!(playback_av1_parts(
+            "mp4",
+            Some("av01.0.05M.08"),
+            None,
+            MediaKind::VideoOnly
+        ));
+        assert!(!playback_av1_parts(
+            "mp4",
+            Some("avc1.4D401F"),
+            None,
+            MediaKind::VideoOnly
+        ));
+        assert!(!playback_av1_parts(
+            "mp4",
+            Some("hvc1.1.6.L93"),
+            None,
+            MediaKind::VideoOnly
+        ));
+        assert!(!playback_av1_parts(
+            "webm",
+            Some("vp9"),
+            None,
+            MediaKind::VideoOnly
+        ));
+        assert!(!playback_av1_parts(
+            "mp4",
+            Some("av01.0.05M.08"),
+            Some("opus"),
+            MediaKind::VideoOnly
+        ));
+        assert!(!playback_av1_parts(
+            "mp4",
+            Some("av01.0.05M.08"),
+            None,
+            MediaKind::Muxed
+        ));
+        assert!(!playback_av1_parts(
+            "mp4",
+            Some("av01x"),
+            None,
+            MediaKind::VideoOnly
+        ));
+        assert!(!playback_av1_parts("mp4", None, None, MediaKind::VideoOnly));
+    }
+
+    #[test]
+    fn default_is_legacy_vp9_even_when_av1_has_higher_resolution() {
+        let facts = [vp9_fact(480), av1_fact(1080), av1_fact(720)];
+        let (default, qualities) = playback_pick(&facts).unwrap();
+        assert_eq!(default, 0, "default must stay the old VP9 track");
+        assert!(qualities.contains(&0));
+        assert!(qualities.contains(&1) && qualities.contains(&2));
+    }
+
+    #[test]
+    fn default_falls_back_to_av1_only_without_any_vp9() {
+        let facts = [av1_fact(720), av1_fact(1080), av1_fact(1440)];
+        let (default, qualities) = playback_pick(&facts).unwrap();
+        assert_eq!(default, 1, "highest AV1 <=1080 becomes default");
+        assert!(qualities.contains(&default));
+    }
+
+    #[test]
+    fn qualities_keep_all_legacy_vp9_and_respect_capacity() {
+        let mut facts: Vec<_> = (0..23).map(|_| vp9_fact(360)).collect();
+        facts.push(av1_fact(1080));
+        facts.push(av1_fact(720));
+        facts.push(av1_fact(1440));
+        let (_, qualities) = playback_pick(&facts).unwrap();
+        assert_eq!(qualities.len(), MAX_PLAYBACK_QUALITIES);
+        assert_eq!(
+            &qualities[..23],
+            (0..23).collect::<Vec<usize>>().as_slice(),
+            "every legacy VP9 entry is preserved in order"
+        );
+        assert_eq!(qualities[23], 24, "720p AV1 fills the single free slot");
+    }
+
+    #[test]
+    fn more_legacy_vp9_than_capacity_keeps_all_and_adds_no_av1() {
+        let mut facts: Vec<_> = (0..26).map(|_| vp9_fact(240)).collect();
+        facts.push(av1_fact(720));
+        let (default, qualities) = playback_pick(&facts).unwrap();
+        assert_eq!(qualities.len(), 26, "legacy list is never truncated");
+        assert!(!qualities.contains(&26));
+        assert_eq!(default, 0);
+    }
+
+    #[test]
+    fn av1_default_survives_capacity_cut() {
+        let mut facts: Vec<_> = (0..30).map(|h| av1_fact(1440 + h)).collect();
+        facts.push(av1_fact(1080));
+        let (default, qualities) = playback_pick(&facts).unwrap();
+        assert_eq!(facts[default].height, Some(1080));
+        assert!(qualities.contains(&default));
+        assert!(qualities.len() <= MAX_PLAYBACK_QUALITIES);
+    }
+
+    #[test]
+    fn no_supported_tracks_means_no_pick() {
+        let facts = [PlaybackFacts {
+            legacy_vp9: false,
+            av1: false,
+            height: Some(720),
+            fps: Some(30.0),
+        }];
+        assert!(playback_pick(&facts).is_none());
     }
 }
