@@ -83,8 +83,8 @@ window.__TAURI_INTERNALS__.invoke=function(cmd,args){
  const p=orig(cmd,args);
  if(cmd==='tab_route_check_ip'){
   const rec={tabId:(args&&typeof args.tabId==='number')?args.tabId:null,
-   hasId:typeof (args&&args.id)==='string'&&(args.id||'').length>0,
-   hasGen:typeof (args&&args.expectedGeneration)==='number'};
+   hasId:args?.id==='network-test',
+   hasGen:Number.isSafeInteger(args?.expectedGeneration)&&args.expectedGeneration>=0};
   const push=()=>{window.__netEvents.push(rec);if(window.__netEvents.length>16)window.__netEvents.shift();};
   p.then(v=>{
    rec.ok=true;rec.ipValid=validIp(v?.ip);rec.msNum=typeof v?.ms==='number';
@@ -126,6 +126,7 @@ def main():
     guards_ok = False
     out = None
     started = time.monotonic()
+    work_complete=False
     device = wm = client = identity = None
     servers = []
     exit_receipt = {}
@@ -150,8 +151,14 @@ def main():
         cef = validate_inside_root(Path(args.cef), root, 'cef')
         require(cef.is_dir() and not Path(args.cef).is_symlink(), 'cef_invalid')
         require(stat.S_IMODE(root.stat().st_mode) == 0o700, 'private_root_mode')
-        out = validate_inside_root(Path(args.out), root, 'out')
+        exe_raw = validate_inside_root(exe_raw, root, 'exe')
+        requested_out=Path(args.out)
+        require(requested_out.is_absolute() and not requested_out.exists() and not requested_out.is_symlink(),'output_must_be_new')
+        parent=validate_inside_root(requested_out.parent,root,'out_parent')
+        out=parent/requested_out.name
         out.mkdir(mode=0o700, exist_ok=False)
+        out=validate_inside_root(out,root,'out')
+        report['exe_sha256']=args.exe_sha256
         guards_ok = True
         signal.signal(signal.SIGALRM, alarm_handler)
         signal.alarm(WALL_BUDGET_SECONDS)
@@ -278,6 +285,7 @@ def main():
         else:
             report['checks']['inherit_attempted_own_proxy'] = False
         report['stage'] = 'complete'
+        work_complete=True
     except Exception as error:
         report['blocked_reason'] = report['stage'] + '_failed'
         report['exception_type'] = type(error).__name__
@@ -304,6 +312,8 @@ def main():
                 report['local_exit_error'] = type(error).__name__
                 clean = False
         owned = exit_receipt.get('owned_exit')
+        if not isinstance(owned,dict) or owned.get('parent_normal_exit') is not True or owned.get('all_known_native_executions_exited') is not True:
+            clean=False
         if isinstance(owned, dict):
             report['owned_exit'] = {key: owned.get(key) for key in EXIT_UI_KEYS
                                     if isinstance(owned.get(key), (bool, int))}
@@ -319,7 +329,7 @@ def main():
                 clean = False
         signal.alarm(0)
         report['cleanup_completed'] = clean
-        if (report.get('blocked_reason') or not clean
+        if (not work_complete or report.get('blocked_reason') or not clean
                 or report.get('wall_budget_exceeded')
                 or report.get('country_proof') != 'cf_trace_loc'):
             report['completed'] = False
