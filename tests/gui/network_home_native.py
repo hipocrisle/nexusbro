@@ -72,43 +72,58 @@ class RefusingProxy(BaseHTTPRequestHandler):
         pass
 
 
-OBSERVER_JS = r"""
-window.__netEvents=[];window.__netReady=false;
-const orig=window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__);
-const validIp=s=>{if(typeof s!=='string'||!s.length||s.length>45)return false;
- const v4=s.split('.');if(v4.length===4&&v4.every(p=>/^\d{1,3}$/.test(p)&&+p<=255))return true;
- try{new URL('http://['+s+']/');return s.includes(':');}catch(e){return false;}};
-const spanText=()=>{const s=document.querySelector('.tab-route-dialog .tab-route-exit span');return s?s.textContent:'';};
-window.__TAURI_INTERNALS__.invoke=function(cmd,args){
- const p=orig(cmd,args);
- if(cmd==='tab_route_check_ip'){
-  const rec={tabId:(args&&typeof args.tabId==='number')?args.tabId:null,
-   hasId:args?.id==='network-test',
-   hasGen:Number.isSafeInteger(args?.expectedGeneration)&&args.expectedGeneration>=0};
-  const push=()=>{window.__netEvents.push(rec);if(window.__netEvents.length>16)window.__netEvents.shift();};
-  p.then(v=>{
-   rec.ok=true;rec.ipValid=validIp(v?.ip);rec.msNum=typeof v?.ms==='number';
-   rec.countryOk=typeof v?.country==='string'&&/^[A-Z]{2}$/.test(v.country);
-   rec.countryNull=v?.country===null;
-   // Verify the dialog shows the SAME ip (and country label) as the answer.
-   // The private value stays in this closure; only booleans are recorded.
-   let label=null;
-   if(rec.countryOk){try{label=new Intl.DisplayNames(['ru'],{type:'region'}).of(v.country)||v.country;}catch(e){label=v.country;}}
-   const started=Date.now();
-   const poll=()=>{
-    const text=spanText();
-    const ipShown=text.includes(v.ip);
-    const countryShown=!rec.countryOk||text.includes(label)||text.includes(v.country);
-    if(ipShown&&countryShown){rec.uiSameIp=true;rec.uiCountryLabel=rec.countryOk;push();return;}
-    if(Date.now()-started>=3000){rec.uiSameIp=ipShown;rec.uiCountryLabel=countryShown&&rec.countryOk;push();return;}
-    setTimeout(poll,100);
-   };
-   poll();
-  },()=>{rec.ok=false;push();});
- }
- return p;
-};
-window.__netReady=true;true
+# Readonly UI/confirm probes. The app's own physical Check-IP click produces
+# the dialog text; a SEPARATE readonly tab_route_check_ip invoke (same
+# owner/tab/generation, exactly what the UI itself calls) independently
+# confirms the backend answer. Values live only inside the JS closure and
+# python RAM; only booleans are ever recorded. Nothing is intercepted,
+# wrapped or replaced (pinned tauri core.js makes invoke non-writable).
+DOM_PROBE_JS = r"""
+(()=>{const s=document.querySelector('.tab-route-dialog .tab-route-exit span');
+const t=s?s.textContent:'';
+const m=t.match(/(\d{1,3}(?:\.\d{1,3}){3}|[0-9a-fA-F:]{2,45})/);
+const validIp=x=>{if(!x)return false;const v4=x.split('.');
+ if(v4.length===4&&v4.every(p=>/^\d{1,3}$/.test(p)&&+p<=255))return true;
+ try{new URL('http://['+x+']/');return x.includes(':');}catch(e){return false;}};
+return {hasText:t.length>0,
+ checking:t.includes('проверяется'),error:t.includes('ошибка проверки'),
+ none:t.includes('не проверен'),domIpValid:validIp(m&&m[0])};})()
+"""
+
+CONFIRM_JS = r"""
+window.__netConfirm=null;
+(async()=>{
+ const out={done:false};
+ try{
+  const sess=await window.__TAURI_INTERNALS__.invoke('obychnye_spisok',{id:'network-test'});
+  const tab=(sess&&sess.vkladki||[]).find(t=>t.id===__TAB_ID__);
+  if(!tab||typeof tab.route_generation!=='number'){out.genOk=false;out.done=true;window.__netConfirm=out;return;}
+  out.genOk=true;
+  try{
+   const v=await window.__TAURI_INTERNALS__.invoke('tab_route_check_ip',
+    {id:'network-test',tabId:__TAB_ID__,expectedGeneration:tab.route_generation});
+   const s=document.querySelector('.tab-route-dialog .tab-route-exit span');
+   const text=s?s.textContent:'';
+   const validIp=x=>{if(typeof x!=='string'||!x.length||x.length>45)return false;
+    const v4=x.split('.');
+    if(v4.length===4&&v4.every(p=>/^\d{1,3}$/.test(p)&&+p<=255))return true;
+    try{new URL('http://['+x+']/');return x.includes(':');}catch(e){return false;}};
+   out.ok=true;
+   out.ipValid=validIp(v&&v.ip);
+   out.uiSameIp=out.ipValid&&text.includes(v.ip);
+   out.countryNull=v&&v.country===null;
+   out.countryOk=typeof (v&&v.country)==='string'&&/^[A-Z]{2}$/.test(v.country);
+   if(out.countryOk){
+    let label=null;
+    try{label=new Intl.DisplayNames(['ru'],{type:'region'}).of(v.country)||v.country;}catch(e){label=v.country;}
+    out.uiSameCountry=text.includes(label)||text.includes(v.country);
+   } else { out.uiSameCountry=true; }
+   out.msNum=typeof (v&&v.ms)==='number';
+  }catch(e){out.ok=false;}
+ }catch(e){out.outerError=true;}
+ out.done=true;window.__netConfirm=out;
+})();
+true
 """
 
 
@@ -209,23 +224,9 @@ def main():
         click_control(client, '.obychnaya[data-id="1"][aria-selected="true"]', 10)
         wait_for(lambda: Page.hits > 0, 'direct_tab_not_loaded', 30)
         report['checks']['tab1_direct_loaded_in_cef'] = True
-        own('observer')
-        client.js(OBSERVER_JS)
-        wait_for(lambda: client.js('window.__netReady') is True, 'observer_missing', 5)
-
         def dialog_state():
-            return client.js(
-                "(()=>{const d=document.querySelector('.tab-route-dialog');"
-                "if(!d)return null;const s=d.querySelector('.tab-route-exit span');"
-                "const t=s?s.textContent:'';"
-                "return {open:true,checking:t.includes('проверяется'),"
-                "error:t.includes('ошибка проверки'),none:t.includes('не проверен'),"
-                "shown:!t.includes('проверяется')&&!t.includes('ошибка проверки')"
-                "&&!t.includes('не проверен')&&t.length>0};})()")
-
-        def events():
-            value = client.js('window.__netEvents||[]')
-            return value if isinstance(value, list) else []
+            value = client.js(DOM_PROBE_JS)
+            return value if isinstance(value, dict) else None
 
         def physical(selector, action, timeout=10):
             own(action)
@@ -235,28 +236,37 @@ def main():
             physical('button[aria-label="Сеть вкладки"]', 'open_network_dialog')
             wait_for(lambda: (dialog_state() or {}).get('open') is True,
                      'network_dialog_missing', 10)
-            before = len(events())
             physical('.tab-route-exit button', 'check_ip_click')
+            wait_for(lambda: (dialog_state() or {}).get('checking') is False,
+                     'check_ip_ui_busy', 30)
+            return dialog_state() or {}
+
+        def readonly_confirm(tab_id):
+            own('readonly_confirm')
+            client.js(CONFIRM_JS.replace('__TAB_ID__', str(int(tab_id))))
             record = wait_for(
-                lambda: next((e for e in reversed(events()[before:])
-                              if e.get('tabId') == tab_id), None),
-                'check_ip_not_observed', 30)
-            require(record.get('hasId') is True and record.get('hasGen') is True,
-                    'check_ip_args_unproven')
+                lambda: client.js('window.__netConfirm||null'),
+                'readonly_confirm_missing', 30)
+            require(isinstance(record, dict) and record.get('done') is True,
+                    'readonly_confirm_invalid')
             return record
 
         report['stage'] = 'tab1-direct-check'
-        record = open_dialog_and_check(1)
-        require(record.get('ok') is True, 'direct_check_failed')
+        ui = open_dialog_and_check(1)
+        require(ui.get('domIpValid') is True, 'direct_ui_ip_invalid')
+        require(ui.get('shown', ui.get('hasText')) is True and ui.get('error') is False
+                and ui.get('none') is False, 'direct_ui_not_shown')
+        record = readonly_confirm(1)
+        require(record.get('genOk') is True, 'direct_generation_unproven')
+        require(record.get('ok') is True, 'direct_readonly_confirm_failed')
         require(record.get('ipValid') is True, 'direct_ip_unproven')
         require(record.get('msNum') is True, 'direct_ms_unproven')
         require(record.get('uiSameIp') is True, 'direct_ui_ip_differs_from_answer')
-        ui = dialog_state() or {}
-        require(ui.get('shown') is True, 'direct_ui_not_shown')
         report['checks']['tab1_direct_real_ip'] = True
         report['checks']['tab1_ui_shows_same_ip'] = True
+        report['checks']['separate_readonly_confirmation'] = True
         if record.get('countryOk') is True:
-            require(record.get('uiCountryLabel') is True,
+            require(record.get('uiSameCountry') is True,
                     'direct_ui_country_differs_from_answer')
             report['checks']['country_from_cf_trace'] = True
             report['checks']['tab1_ui_shows_same_country'] = True
@@ -274,20 +284,19 @@ def main():
             "document.querySelector('.obychnaya[aria-selected=\"true\"]')"
             "?.dataset.id||null") == '2', 'tab2_not_active', 10)
         proxy_before = RefusingProxy.connects
-        record = open_dialog_and_check(2)
-        require(record.get('ok') is False, 'inherit_check_unexpectedly_succeeded')
-        ui = dialog_state() or {}
-        require(ui.get('error') is True and ui.get('shown') is not True,
+        ui = open_dialog_and_check(2)
+        require(ui.get('error') is True and ui.get('domIpValid') is not True,
                 'inherit_ui_not_error')
+        record = readonly_confirm(2)
+        require(record.get('genOk') is True, 'inherit_generation_unproven')
+        require(record.get('ok') is False, 'inherit_readonly_confirm_unexpectedly_succeeded')
         report['checks']['tab2_inherit_real_error'] = True
+        report['checks']['inherit_readonly_confirm_error'] = True
         report['checks']['no_success_record_for_inherit'] = True
         # Scoped claim: the inherit attempt really went through the OWN proxy
-        # (counted CONNECT attempts) and produced an error. No universal claim
-        # about the absence of any direct packets is made.
-        if RefusingProxy.connects > proxy_before:
-            report['checks']['inherit_attempted_own_proxy'] = True
-        else:
-            report['checks']['inherit_attempted_own_proxy'] = False
+        # (counted CONNECT attempts) and produced a real error in the physical
+        # UI. No universal claim about the absence of any direct packets.
+        report['checks']['inherit_attempted_own_proxy'] = RefusingProxy.connects > proxy_before
         report['stage'] = 'complete'
         work_complete=True
     except Exception as error:
