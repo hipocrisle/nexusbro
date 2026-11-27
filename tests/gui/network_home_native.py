@@ -293,6 +293,13 @@ def main():
     except Exception as error:
         report['blocked_reason'] = report['stage'] + '_failed'
         report['exception_type'] = type(error).__name__
+        if client is not None:
+            try:
+                report['observed_network_checks']=events()
+                report['dialog_at_failure']=dialog_state()
+                report['observer_still_ready']=client.js('window.__netReady===true') is True
+            except Exception:
+                report['failure_observation_unavailable']=True
         code = str(error)
         if re.fullmatch(r'[a-z0-9_]{3,64}', code):
             report['typed_code'] = code
