@@ -24,6 +24,10 @@ class UniqueMenuItemTest(unittest.TestCase):
         el = object()
         self.assertIs(unique_menu_item([((7, 9), el)]), el)
 
+    def test_known_control_plus_unidentified_match_is_not_unique(self):
+        known = object()
+        self.assertIsNone(unique_menu_item([((1,2),known),(None,object())]))
+
 
 class OwnedScreenshotTest(unittest.TestCase):
     def run_shot(self, table, out='/tmp'):

@@ -81,8 +81,8 @@ def unique_menu_item(matches):
     (two different controls) stays None — never pick the first of many."""
     unique = {}
     for rid, payload in matches:
-        if rid:
-            unique.setdefault(rid, payload)
+        if not rid:return None
+        unique.setdefault(rid, payload)
     return next(iter(unique.values())) if len(unique) == 1 else None
 
 
@@ -350,13 +350,14 @@ def run(args):
                         if not (element.is_visible() and element.is_enabled()):continue
                         raw+=1
                         rect=element.rectangle()
-                        inside=(rect.left>=popup_rect.left-2 and rect.top>=popup_rect.top-2
+                        inside=(rect.right>rect.left and rect.bottom>rect.top and rect.left>=popup_rect.left-2 and rect.top>=popup_rect.top-2
                                 and rect.right<=popup_rect.right+2 and rect.bottom<=popup_rect.bottom+2)
                         try:rid=tuple(element.element_info.runtime_id or ()) or None
                         except Exception:rid=None
-                        if inside and rid:matches.append((rid,element))
+                        if inside:matches.append((rid,element))
                 menu_diag.update({'own_new_hwnd_count':len(new_handles),'match_count':raw,
-                                  'unique_count':len({r for r,_ in matches}),
+                                  'unique_count':len({r for r,_ in matches if r}),
+                                  'unknown_identity_matches':sum(r is None for r,_ in matches),
                                   'control_types':type_counts})
                 return unique_menu_item(matches)
             item=wait_for(save_item,'owned_save_menu_item_missing',10)
@@ -443,7 +444,7 @@ def run(args):
             except Exception:pass
         if device is not None and identity is not None:
             if sys.platform=='win32':
-                report['owned_failure_capture']=windows_owned_window_screenshot(identity['pid'],out)
+                report['owned_failure_capture']=(windows_owned_window_screenshot(identity['pid'],out) if native_app_identity_alive(device,identity) else {'saved':False,'reason':'owned_app_changed'})
             else:
                 from download_startup_facts import owned_failure_screenshot
                 check=lambda:native_app_identity_alive(device,identity)
